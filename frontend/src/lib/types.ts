@@ -127,7 +127,6 @@ export const UserResponseSchema = z.object({
   groups: z.array(GroupInfoSchema).default([]),
   roles: z.array(z.string()).default([]),
 });
-export type UserResponse = z.infer<typeof UserResponseSchema>;
 
 export const ScratchClearedResponseSchema = z.object({
   files_removed: z.number(),
@@ -237,7 +236,6 @@ export const TransparencyConfigSchema = z.object({
   contact_email: z.string().nullable(),
   minimum_watermark_tokens: z.number(),
 });
-export type TransparencyConfig = z.infer<typeof TransparencyConfigSchema>;
 
 export const TransparencyDetectionResponseSchema = z.object({
   status: z.enum(["detected", "not_detected", "inconclusive"]),
@@ -279,7 +277,6 @@ export const ChunkInfoSchema = z.object({
   start_line: z.number(),
   end_line: z.number(),
 });
-export type ChunkInfo = z.infer<typeof ChunkInfoSchema>;
 
 /** Response from the chunks endpoint. */
 export const ChunkedDocumentResponseSchema = z.object({
@@ -333,13 +330,11 @@ export const DocumentStatsSchema = z.object({
   word_count: z.number(),
   char_count: z.number(),
 });
-export type DocumentStats = z.infer<typeof DocumentStatsSchema>;
 
 /** Batch document line counts, keyed by the requested workspace path. */
 export const DocumentLineCountsResponseSchema = z.object({
   line_counts: z.record(z.string(), z.number()),
 });
-export type DocumentLineCountsResponse = z.infer<typeof DocumentLineCountsResponseSchema>;
 
 export const DocumentRangeSchema = z.object({
   start_line: z.number(),
@@ -355,7 +350,6 @@ export const GrepLineSchema = z.object({
   text: z.string(),
   is_match: z.boolean(),
 });
-export type GrepLine = z.infer<typeof GrepLineSchema>;
 
 export const GrepMatchSchema = z.object({
   filename: z.string(),
@@ -376,7 +370,6 @@ export const RetrievedChunkSchema = z.object({
   end_index: z.number(),
   image_path: z.string().nullable().optional(),
 });
-export type RetrievedChunk = z.infer<typeof RetrievedChunkSchema>;
 
 /** Summary information for listing conversations. */
 export const ConversationSummarySchema = z.object({
@@ -393,7 +386,6 @@ export const ConversationListResponseSchema = z.object({
   conversations: z.array(ConversationSummarySchema),
   total_count: z.number(),
 });
-export type ConversationListResponse = z.infer<typeof ConversationListResponseSchema>;
 
 /** Response for conversation compaction. */
 export const CompactConversationResponseSchema = z.object({
@@ -413,7 +405,6 @@ export type GenerateTitleResponse = z.infer<typeof GenerateTitleResponseSchema>;
 export const TranscriptionResponseSchema = z.object({
   text: z.string(),
 });
-export type TranscriptionResponse = z.infer<typeof TranscriptionResponseSchema>;
 
 /** A file or directory entry in the document tree (recursive). */
 export interface DirectoryEntry {
@@ -462,7 +453,6 @@ export const JobProgressSchema = z.object({
   current: z.number(),
   total: z.number(),
 });
-export type JobProgress = z.infer<typeof JobProgressSchema>;
 
 /**
  * Snapshot of a background job — the generic shape the `/jobs` feed emits
@@ -490,11 +480,9 @@ export const ScopeChangedSchema = z.object({
   type: z.literal("scope-changed"),
   scope: z.string(),
 });
-export type ScopeChanged = z.infer<typeof ScopeChangedSchema>;
 
 /** A job feed event: a job snapshot, the seed-complete marker, or a change. */
 export const FeedEventSchema = z.union([JobViewSchema, FeedReadySchema, ScopeChangedSchema]);
-export type FeedEvent = z.infer<typeof FeedEventSchema>;
 
 /** Terminal job statuses — no further updates will arrive. */
 export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
@@ -767,11 +755,6 @@ export function sortChunks(chunks: FetchedChunk[]): FetchedChunk[] {
 // ============================================================
 // Request types (sent to backend, no validation needed)
 // ============================================================
-
-export interface SearchDocumentsInput {
-  query: string;
-  top_k?: number;
-}
 
 /** Bundled conversion + chunking pipeline selection with configuration. */
 export interface PipelineSpec {

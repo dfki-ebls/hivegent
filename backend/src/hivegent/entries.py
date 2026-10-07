@@ -26,7 +26,6 @@ __all__ = [
     "original_path_for_stem",
     "repoint_asset_refs",
     "resolve_entry_paths",
-    "stem_display_name",
     "stem_path_from_reference",
 ]
 
@@ -322,8 +321,3 @@ def entry_exists(workspace_dir: Path, reference: str) -> bool:
     if resolved.original_path is not None:
         return True
     return resolved.assets_dir is not None
-
-
-def stem_display_name(stem_path: str) -> str:
-    """Return the user-facing basename for a logical stem."""
-    return PurePosixPath(stem_path).name

@@ -17,7 +17,6 @@ import logfire
 from .chunkers import ChunkingPipeline, ChunkingSpec, get_chunker
 from .chunkers.base import (
     ChunkData,
-    ChunkSummary,
     DocumentMetadata,
     EntryMetadata,
 )
@@ -33,7 +32,6 @@ from .store import Casebase
 
 __all__ = [
     "ChunkData",
-    "ChunkSummary",
     "DocumentMetadata",
     "chunk_and_index_document",
     "delete_document",

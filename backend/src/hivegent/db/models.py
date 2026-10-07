@@ -57,7 +57,6 @@ __all__ = [
     "IndexState",
     "Memory",
     "Message",
-    "MessageKind",
     "Origin",
     "Timestamped",
     "User",
@@ -163,11 +162,6 @@ class GeneratedBy(enum.StrEnum):
     CONVERTER = "converter"
     VISION = "vision"
     STUB = "stub"
-
-
-class MessageKind(enum.StrEnum):
-    REQUEST = "request"
-    RESPONSE = "response"
 
 
 # ─── Identity ──────────────────────────────────────────────────────────

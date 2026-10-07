@@ -11,7 +11,6 @@ from ..workers.pool import run_offloaded
 
 __all__ = [
     "ChunkData",
-    "ChunkSummary",
     "DocumentChunker",
     "DocumentMetadata",
     "EntryGeneratedBy",
@@ -120,20 +119,6 @@ class DocumentMetadata(EntryMetadata):
             "and the future shell fold-back skip re-indexing an entry whose "
             "on-disk bytes are unchanged."
         ),
-    )
-
-
-class ChunkSummary(BaseModel):
-    """Summary metadata for a single chunk used by agent tools."""
-
-    token_count: int = Field(description="Number of tokens in the chunk")
-    start_index: int = Field(description="Start character index in original document")
-    end_index: int = Field(description="End character index in original document")
-    start_line: int = Field(
-        description="1-based start line number in the original document"
-    )
-    end_line: int = Field(
-        description="1-based end line number in the original document"
     )
 
 
