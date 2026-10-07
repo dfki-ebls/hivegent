@@ -11,8 +11,10 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path, PurePosixPath
 
+from ..config import settings
 from ..converters.asset_processing import caption_frames, caption_image
 from ..converters.video import (
+    MAX_FRAMES,
     animation_frame_count,
     sample_animated_image,
     sample_video,
@@ -22,6 +24,13 @@ from ..llm_config import LlmConfig, resolve_llm_config
 __all__: list[str] = []
 
 logger = logging.getLogger(__name__)
+
+
+def _frame_budget() -> int:
+    """Frames one caption request carries, within the gateway's image cap."""
+    cap = settings.multimodal.max_images
+
+    return MAX_FRAMES if cap is None else min(MAX_FRAMES, cap)
 
 
 async def _describe_with_fallback(
@@ -74,7 +83,10 @@ async def _build_image_description(
         if not media_type:
             return ""
         if await asyncio.to_thread(animation_frame_count, content, media_type) > 1:
-            sample = await asyncio.to_thread(sample_animated_image, content)
+            sample = await asyncio.to_thread(
+                sample_animated_image, content, max_frames=_frame_budget()
+            )
+
             return await caption_frames(sample, contexts, aux)
         return await caption_image(content, media_type, contexts, aux)
 
@@ -90,7 +102,8 @@ async def _build_video_description(
     """Generate markdown describing a video from sampled frames, with fallback."""
 
     async def describe(aux: LlmConfig) -> str:
-        sample = await sample_video(full_path)
+        sample = await sample_video(full_path, max_frames=_frame_budget())
+
         return await caption_frames(sample, contexts, aux)
 
     return await _describe_with_fallback(filepath, "Video", llm, describe)

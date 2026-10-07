@@ -19,7 +19,6 @@ surrounding text of every occurrence and asked to *describe* illustrative
 images but *transcribe* load-bearing figures (tables, diagrams, charts).
 """
 
-import asyncio
 import logging
 import re
 from collections.abc import Sequence
@@ -29,11 +28,9 @@ from io import BytesIO
 import PIL.Image
 from pydantic_ai import BinaryContent
 
-from ..agents.app import base_agent
-from ..llm import model_from_config, thinking_model_settings
 from ..llm_config import LlmConfig
 from .base import AssetRole, ExtractedImage
-from .images import sanitize_image_bytes
+from .llm import describe
 from .video import MediaSample
 
 __all__ = [
@@ -197,7 +194,7 @@ def image_context_windows(markdown: str) -> dict[str, list[str]]:
 
 # --- Context-aware captioning -------------------------------------------------
 
-_VISION_TIMEOUT_S = 120.0
+_CAPTION_TIMEOUT_SECONDS = 120.0
 
 _CAPTION_INSTRUCTIONS = (
     "You are writing the canonical, reusable description of an image from "
@@ -255,12 +252,8 @@ async def caption_image(
     passed in *contexts*, so one image yields exactly one caption — the single
     source of truth shared by all its occurrences.
 
-    Thinking is disabled for this call (``thinking=False``): pydantic_ai
-    discards a ``<think>`` block and keeps only the ``TextPart``, so on a
-    small-context aux model an unbounded reasoning trace would otherwise fill
-    the window before any description is emitted (raising
-    ``UnexpectedModelBehavior``).  ``llm_options.max_tokens`` further bounds
-    the output.
+    Sent through :func:`~hivegent.converters.llm.describe`, which sanitizes
+    the image and bounds the call.
 
     Args:
         image_bytes: The raw image bytes.
@@ -270,22 +263,13 @@ async def caption_image(
 
     Returns:
         A concise description, or a faithful transcription for data figures.
-
-    Raises:
-        asyncio.TimeoutError: If the vision model does not respond within
-            :data:`_VISION_TIMEOUT_S` seconds.
     """
-    sanitized = sanitize_image_bytes(image_bytes, media_type)
-    content = BinaryContent(data=sanitized, media_type=media_type)
-    result = await asyncio.wait_for(
-        base_agent.run(
-            [_build_caption_prompt(_CAPTION_INSTRUCTIONS, contexts), content],
-            model=model_from_config(llm_options),
-            model_settings=thinking_model_settings(False, llm_options),
-        ),
-        timeout=_VISION_TIMEOUT_S,
+    prompt = _build_caption_prompt(_CAPTION_INSTRUCTIONS, contexts)
+    content = BinaryContent(data=image_bytes, media_type=media_type)
+
+    return await describe(
+        [prompt, content], llm_options, timeout=_CAPTION_TIMEOUT_SECONDS
     )
-    return str(result.output).strip()
 
 
 async def caption_frames(
@@ -308,24 +292,14 @@ async def caption_frames(
 
     Returns:
         A concise description of the video or animation.
-
-    Raises:
-        asyncio.TimeoutError: If the vision model does not respond within
-            :data:`_VISION_TIMEOUT_S` seconds.
     """
     prompt = _build_caption_prompt(_ANIMATION_CAPTION_INSTRUCTIONS, contexts)
     parts: list[str | BinaryContent] = [
         f"{prompt}\n\nTotal duration: {sample.duration:.1f}s."
     ]
+
     for frame in sample.frames:
         parts.append(f"Frame at {frame.timestamp:.1f}s:")
         parts.append(BinaryContent(data=frame.data, media_type="image/png"))
-    result = await asyncio.wait_for(
-        base_agent.run(
-            parts,
-            model=model_from_config(llm_options),
-            model_settings=thinking_model_settings(False, llm_options),
-        ),
-        timeout=_VISION_TIMEOUT_S,
-    )
-    return str(result.output).strip()
+
+    return await describe(parts, llm_options, timeout=_CAPTION_TIMEOUT_SECONDS)

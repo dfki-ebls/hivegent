@@ -1,11 +1,13 @@
 """LLM client construction helpers, including the quirk compensation that
 self-hosted OpenAI-compatible endpoints need."""
 
-from collections.abc import Callable, Iterable, Mapping
+import asyncio
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import override
 
 from openai import AsyncOpenAI
 from openai.types.chat import chat_completion_chunk
+from pydantic_ai import Agent, UserContent
 from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelHTTPError,
@@ -25,13 +27,14 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 
-from .config import InferenceProvider
+from .config import InferenceProvider, settings
 from .http_client import get_trusted_http_client, get_user_http_client
 from .llm_config import LlmConfig, ReasoningEffort
 
 __all__ = [
     "AUTO_REASONING_EFFORT",
     "SUMMARY_MAX_TOKENS",
+    "complete",
     "create_openai_chat_model",
     "create_openai_client",
     "create_openai_provider",
@@ -394,19 +397,22 @@ def thinking_model_settings(
     per tier in :func:`resolve_llm_config`) is forwarded as the completion
     cap whenever set, regardless of the thinking level.
     """
-    settings = ModelSettings()
+    model_settings = ModelSettings()
+
     if config.max_tokens is not None:
-        settings["max_tokens"] = config.max_tokens
+        model_settings["max_tokens"] = config.max_tokens
+
     if thinking is not None:
-        settings["thinking"] = (
+        model_settings["thinking"] = (
             _map_reasoning_effort(config.model, thinking)
             if isinstance(thinking, str)
             else thinking
         )
         extra_body = _reasoning_extra_body(thinking, config.inference_provider)
         if extra_body is not None:
-            settings["extra_body"] = extra_body
-    return settings
+            model_settings["extra_body"] = extra_body
+
+    return model_settings
 
 
 # Completion cap for a one-shot summary request: a ceiling that fits a
@@ -434,3 +440,32 @@ def summary_model_settings(config: LlmConfig) -> ModelSettings:
         SUMMARY_MAX_TOKENS, model_settings.get("max_tokens", SUMMARY_MAX_TOKENS)
     )
     return model_settings
+
+
+# Deliberately not ``agents.app.base_agent``, so converters can run it without
+# importing the agents.  The guards that agent carries have nothing to act on in
+# a single tool-free completion, and callers cap the images they send themselves.
+_completion_agent: Agent[None, str] = Agent(
+    retries=settings.llm.retries,
+    model_settings=ModelSettings(timeout=settings.llm.request_timeout_seconds),
+)
+
+
+async def complete(
+    prompt: Sequence[UserContent], config: LlmConfig, *, timeout: float
+) -> str:
+    """Run one tool-free completion with thinking disabled.
+
+    Meant for single-shot vision work such as converting a page or captioning
+    an image, where a reasoning trace would only fill a small model's window
+    before any text is emitted.  ``config.max_tokens`` bounds the output and
+    *timeout* the seconds spent across every retry, raising ``TimeoutError``.
+    """
+    async with asyncio.timeout(timeout):
+        result = await _completion_agent.run(
+            prompt,
+            model=model_from_config(config),
+            model_settings=thinking_model_settings(False, config),
+        )
+
+    return result.output

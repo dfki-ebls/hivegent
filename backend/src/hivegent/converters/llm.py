@@ -1,31 +1,42 @@
 """LLM-based document converter using Pydantic AI with vision models."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, BinaryContent
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import BinaryContent
 
 from ..config import settings
-from ..llm import model_from_config, thinking_model_settings
+from ..llm import complete
 from ..llm_config import LlmConfig
 from .base import ConversionResult, DocumentConverter
 from .formats import LLM_MEDIA_TYPES
 from .images import sanitize_image_bytes
 
-__all__ = ["LLMConverter", "LlmConverterConfig"]
+__all__ = ["LLMConverter", "LlmConverterConfig", "describe"]
 
 
-# Deliberately not ``agents.app.base_agent``: importing it here would close the
-# cycle converters.llm -> agents.app -> agents.common -> types -> converters.
-# The defaults it would bring beyond these two are inapplicable anyway, since
-# this run is a single tool-free completion: ``tool_timeout`` has nothing to
-# bound and ``IncompleteToolCallGuard`` no tool call to catch.
-_conversion_agent: Agent[None, str] = Agent(
-    retries=settings.llm.retries,
-    model_settings=ModelSettings(timeout=settings.llm.request_timeout_seconds),
-)
+async def describe(
+    prompt: Sequence[str | BinaryContent], config: LlmConfig, *, timeout: float
+) -> str:
+    """Answer *prompt*, images or documents among its parts, with the vision model.
+
+    The one policy every vision call goes through: PNG parts are sanitized
+    before they are sent, and :func:`~hivegent.llm.complete` bounds the call
+    to *timeout* seconds and turns thinking off.
+    """
+    parts = [
+        BinaryContent(
+            data=sanitize_image_bytes(part.data, part.media_type),
+            media_type=part.media_type,
+        )
+        if isinstance(part, BinaryContent)
+        else part
+        for part in prompt
+    ]
+
+    return (await complete(parts, config, timeout=timeout)).strip()
 
 
 class LlmConverterConfig(BaseModel):
@@ -67,19 +78,12 @@ class LLMConverter(DocumentConverter):
         if media_type is None:
             raise ValueError(f"Unsupported extension: {suffix!r}")
 
-        raw_bytes = path.read_bytes()
-        content = BinaryContent(
-            data=sanitize_image_bytes(raw_bytes, media_type),
-            media_type=media_type,
-        )
-
-        # `thinking=False` is layered on top of the agent's default
-        # ``model_settings`` (request timeout) via pydantic-ai's
-        # ``merge_model_settings``; no need to restate the timeout here.
-        result = await _conversion_agent.run(
+        content = BinaryContent(data=path.read_bytes(), media_type=media_type)
+        # A whole document may take as long as one model request is allowed.
+        markdown = await describe(
             [self.config.prompt, content],
-            model=model_from_config(self.llm_options),
-            model_settings=thinking_model_settings(False, self.llm_options),
+            self.llm_options,
+            timeout=settings.llm.request_timeout_seconds,
         )
 
-        return ConversionResult(markdown=str(result.output))
+        return ConversionResult(markdown=markdown)
