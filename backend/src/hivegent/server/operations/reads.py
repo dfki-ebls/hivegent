@@ -93,7 +93,12 @@ def _file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
     media_type = mimetypes.guess_type(file_path.name)[0]
 
     if not media_type or media_type.startswith("text/"):
-        decoded = read_text_file(file_path)
+        try:
+            decoded = read_text_file(file_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=document_not_found(shown).current) from exc
+        except IsADirectoryError as exc:
+            raise HTTPException(status_code=400, detail=_NOT_A_FILE.current) from exc
 
         # Undecodable content falls through to the attachment response below.
         if decoded is not None:

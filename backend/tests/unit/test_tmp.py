@@ -18,8 +18,10 @@ from hivegent.changes import Changeset, ChangesetSummary, Delete, Move, Write
 from hivegent.config import settings
 from hivegent.mcp.tools import documents as mcp_documents
 from hivegent.mcp.tools import mutations as mcp_mutations
+from hivegent.server.operations import reads
 from hivegent.server.routes import documents
 from hivegent.store import Casebase
+from hivegent.text import DecodedText
 from hivegent.tmp import save_result, sweep_tmp, tmp_dir, tmp_root, tmp_search_path
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.changeset import PendingChanges
@@ -331,3 +333,47 @@ async def test_the_sweep_drops_expired_and_orphaned_folders(
         "first-turn",
         "fresh",
     ]
+
+
+async def test_the_sweep_keeps_an_orphan_used_during_its_lookup(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_dir(data_dir, "first-turn")
+    folder.mkdir(parents=True)
+    touched = time.time() - settings.tmp.sweep_interval_hours * 3600 - 60
+    os.utime(folder, (touched, touched))
+
+    async def live(ids: list[str]) -> set[str]:
+        assert ids == ["first-turn"]
+        (folder / "active.txt").write_text("working")
+
+        return set()
+
+    monkeypatch.setattr("hivegent.tmp.existing_conversation_ids", live)
+
+    assert await sweep_tmp() == 0
+    assert (folder / "active.txt").read_text() == "working"
+
+
+@pytest.mark.parametrize(("directory", "status"), [(False, 404), (True, 400)])
+async def test_a_file_replaced_during_a_read_returns_its_http_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: bool, status: int
+) -> None:
+    target = tmp_path / "document.md"
+    target.write_text("hello")
+    read = reads.read_text_file
+
+    def concurrent_read(path: Path) -> DecodedText | None:
+        path.unlink()
+
+        if directory:
+            path.mkdir()
+
+        return read(path)
+
+    monkeypatch.setattr(reads, "read_text_file", concurrent_read)
+
+    with pytest.raises(HTTPException) as exc:
+        await reads.get_file_response(lambda: target, "~/document.md")
+
+    assert exc.value.status_code == status

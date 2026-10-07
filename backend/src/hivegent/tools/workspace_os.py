@@ -60,6 +60,7 @@ from ..config import normalize_unicode
 from ..converters import BINARY_WRITE_REASON, writes_as_text
 from ..entries import (
     ContentStat,
+    TreeStat,
     is_assets_dir,
     is_below,
     is_reserved_path,
@@ -315,14 +316,15 @@ class WorkspaceOS(AbstractOS):
     nodes: dict[str, Node] = field(default_factory=dict)
     """The program's changes, by canonical path, consulted before the disk."""
 
-    bases: dict[str, ContentStat] = field(default_factory=dict)
-    """The stat each disk file had when the program first touched it.
+    bases: dict[str, ContentStat | TreeStat] = field(default_factory=dict)
+    """The file stat or directory snapshot a staged change commits against.
 
     The basis its change commits against, so a version landing between the
     program's read and the commit is refused rather than overwritten.  A stat
     rather than a content hash, since every read would otherwise hash what it
     decodes, and a program walking the workspace reads far more than it
     changes.
+    A directory change records the entire tree to detect edits to its contents.
     """
 
     written: int = 0
@@ -757,7 +759,31 @@ class WorkspaceOS(AbstractOS):
 
     def _remember(self, entry: Entry) -> Entry:
         """Keep the stat *entry* has when the program first touches it, its change's basis."""
-        _ = self.bases.setdefault(entry.canonical, entry.basis)
+        if entry.canonical in self.bases:
+            return entry
+
+        basis: ContentStat | TreeStat = entry.basis
+
+        if entry.is_dir:
+            tree = TreeStat.from_path(entry.absolute)
+
+            if tree is None:
+                raise FileNotFoundError(entry.canonical)
+
+            parts = dict(tree.parts)
+            parts["."] = entry.basis
+
+            for path, observed in self.bases.items():
+                if not is_below(path, entry.canonical):
+                    continue
+
+                relative = PurePosixPath(path).relative_to(entry.canonical)
+                prior = observed.parts if isinstance(observed, TreeStat) else ((".", observed),)
+                parts.update((str(relative / part), stat) for part, stat in prior)
+
+            basis = TreeStat(tuple(sorted(parts.items())))
+
+        self.bases[entry.canonical] = basis
 
         return entry
 
@@ -989,6 +1015,7 @@ class WorkspaceOS(AbstractOS):
             raise _os_error(OSError, errno.ENOTEMPTY, key)
 
         if isinstance(view, Entry):
+            _ = self._remember(view)
             self._charge(key, deleting=True)
 
         self._vacate(key)
@@ -1059,7 +1086,7 @@ class WorkspaceOS(AbstractOS):
         origin = self._origin(source, node, view)
 
         for entry in (view, replaced):
-            if isinstance(entry, Entry) and not entry.is_dir:
+            if isinstance(entry, Entry):
                 _ = self._remember(entry)
 
         if not isinstance(node, Text | Ref):

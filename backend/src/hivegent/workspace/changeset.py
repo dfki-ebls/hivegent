@@ -147,6 +147,7 @@ from ..entries import (
     path_key,
     rebase,
     repoint_asset_refs,
+    resolve_entry_paths,
     respell,
     stem_path_from_reference,
 )
@@ -790,7 +791,17 @@ def _landing(operation: Move[Location], index: int, source: _Unit, plan: _Plan) 
 
 
 def _check_landing(index: int, destination: _Unit, plan: _Plan) -> None:
-    for path in destination.files:
+    paths = set(destination.files)
+    origin = plan.origin(destination.root, destination.files[0], skip=index)
+
+    if destination.entry is not None and origin is not None:
+        paths.update(
+            resolve_entry_paths(
+                origin.root.path, origin.path, plan.listdir
+            ).at(destination.path).files
+        )
+
+    for path in sorted(paths):
         if plan.occupied(destination.root, path, skip=index) is not None:
             raise HTTPException(
                 status_code=409,

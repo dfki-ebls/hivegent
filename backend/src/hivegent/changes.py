@@ -19,7 +19,7 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from .chunkers import ChunkingSpec
-from .entries import ContentStat
+from .entries import ContentStat, TreeStat
 
 __all__ = [
     "MAX_DIFF_CHARS",
@@ -48,13 +48,14 @@ type WriteMode = Literal["replace", "create", "append", "prepend"]
 type DeleteKind = Literal["entry", "dir"]
 """What a delete expects its target to be, refused when it is the other."""
 
-type Basis = str | ContentStat
-"""What a caller saw when it last read a file, to refuse a change made since.
+type Basis = str | ContentStat | TreeStat
+"""What a caller saw of a path, to refuse a change made since.
 
 Either the content hash the read tools report, or the file's
 :class:`~hivegent.entries.ContentStat` for a caller that never decoded it (a
-sandbox overlay diffing a mount).  Always about a path as it is before the
-changeset, whatever else the changeset does to it.
+sandbox overlay diffing a mount), or a directory's :class:`~hivegent.entries.TreeStat`.
+Always about a path as it is before the changeset, whatever else the changeset
+does to it.
 """
 
 
@@ -131,7 +132,7 @@ class Move[L]:
             as it is now.
         destination: Where it ends up.  An existing directory that stays
             where it is means into it.
-        basis: What the caller last saw of the source file, if anything.
+        basis: What the caller last saw of the source, if anything.
     """
 
     source: L
@@ -146,7 +147,7 @@ class Delete[L]:
 
     Attributes:
         target: What to remove, as it is now.
-        basis: What the caller last saw of the file, if anything.
+        basis: What the caller last saw of the target, if anything.
         expect: What *target* has to be, either kind when ``None``.
     """
 

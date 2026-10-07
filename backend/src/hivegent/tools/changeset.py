@@ -252,7 +252,7 @@ class _Stager:
             if origin is not None and entry is None:
                 self.refusals.append(f"'{origin}' disappeared while the program ran.")
             elif entry is not None and entry.is_dir:
-                self.operations.append(Move(entry.canonical, key))
+                self.operations.append(Move(entry.canonical, key, fs.bases.get(entry.canonical)))
             elif entry is not None:
                 moved.setdefault(_stem(entry), (entry, {}))[1][entry.canonical] = key
 

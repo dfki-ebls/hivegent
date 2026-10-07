@@ -38,6 +38,7 @@ from .tools.base import Direct, SearchPath, ToolRetry
 from .tools.mutations import mutation_errors
 from .tools.scope import PrefixScope
 from .workspace import Gateway
+from .workspace.locks import _locked
 from .workspace.operations import Folder, Quota
 
 __all__ = [
@@ -175,6 +176,15 @@ def _mtime(path: Path) -> float:
         return time.time()
 
 
+def _remove_if_idle(folder: Path, cutoff: float) -> bool:
+    if _touched_since(folder, cutoff):
+        return False
+
+    remove_path(folder)
+
+    return True
+
+
 async def sweep_tmp() -> int:
     """Delete stale and orphaned folders, returning how many went.
 
@@ -193,21 +203,28 @@ async def sweep_tmp() -> int:
     stale = now - settings.tmp.ttl_hours * 3600
     orphaned = now - settings.tmp.sweep_interval_hours * 3600
 
-    def expire() -> tuple[int, list[Path]]:
-        expired, idle = 0, []
+    def candidates() -> tuple[list[Path], list[Path]]:
+        expired: list[Path] = []
+        idle: list[Path] = []
 
         for folder in root.iterdir():
             if not _touched_since(folder, stale):
-                remove_path(folder)
-                expired += 1
+                expired.append(folder)
             elif not _touched_since(folder, orphaned):
                 idle.append(folder)
 
         return expired, idle
 
-    expired, idle = await asyncio.to_thread(expire)
+    expired, idle = await asyncio.to_thread(candidates)
     live = await existing_conversation_ids([folder.name for folder in idle])
     orphans = [folder for folder in idle if folder.name not in live]
-    await asyncio.to_thread(lambda: [remove_path(folder) for folder in orphans])
+    removed = 0
 
-    return expired + len(orphans)
+    for folder, cutoff in chain(
+        ((folder, stale) for folder in expired),
+        ((folder, orphaned) for folder in orphans),
+    ):
+        async with _locked(tmp_root(folder)):
+            removed += await asyncio.to_thread(_remove_if_idle, folder, cutoff)
+
+    return removed

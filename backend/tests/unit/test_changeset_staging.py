@@ -138,7 +138,7 @@ def test_directories_move_and_go_whole(mount: WorkspaceOS) -> None:
     staged = _staged(mount)
 
     assert staged.operations == (
-        Move("~/old", "~/new"),
+        Move("~/old", "~/new", mount.bases["~/old"]),
         Delete("~/notes.md", mount.bases["~/notes.md"]),
         Write("~/new/b.md", "b\n", "create"),
     )
@@ -151,7 +151,7 @@ def test_a_change_inside_a_moved_directory_names_the_file_as_it_is_now(
     mount.path_unlink(_virtual("new/a.md"))
 
     assert _staged(mount).operations == (
-        Move("~/old", "~/new"),
+        Move("~/old", "~/new", mount.bases["~/old"]),
         Delete("~/old/a.md", mount.bases["~/old/a.md"]),
     )
 
@@ -164,7 +164,7 @@ def test_emptying_a_directory_moves_its_documents_then_removes_it(
 
     assert _staged(mount).operations == (
         Move("~/old/a.md", "~/a.md", mount.bases["~/old/a.md"]),
-        Delete("~/old"),
+        Delete("~/old", mount.bases["~/old"]),
     )
 
 

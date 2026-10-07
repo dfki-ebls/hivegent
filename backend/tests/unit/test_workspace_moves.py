@@ -19,10 +19,12 @@ from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from pydantic_monty import OSAccess
 
 from hivegent import workspace, workspace_events
 from hivegent.auth import User
@@ -51,8 +53,12 @@ from hivegent.jobs import FeedReady, JobManager
 from hivegent.server.models import ChangesRequest, MoveDestination, WorkspacePath
 from hivegent.server.routes import documents as documents_routes
 from hivegent.store import Casebase
+from hivegent.tools.base import SearchPath
+from hivegent.tools.changeset import stage_changes
+from hivegent.tools.workspace_os import WORKSPACE_MOUNT, WorkspaceOS
 from hivegent.workspace import Location, changeset
 from hivegent.workspace import locks as workspace_locks
+from tests.helpers import LIMITS
 
 _USER = User(id="testuser")
 
@@ -220,6 +226,26 @@ def layout(workspace_dir: Path, repo: FakeRepository) -> Path:
 
 
 class TestMoveDocument:
+    @pytest.mark.parametrize("companion", ["b.pdf", "b.assets"])
+    async def test_rejects_an_original_or_assets_without_a_description(
+        self, user_store: Casebase, workspace_dir: Path, repo: FakeRepository, companion: str
+    ) -> None:
+        (workspace_dir / "a.md").write_text("a")
+        target = workspace_dir / companion
+
+        if target.suffix == ".assets":
+            target.mkdir()
+        else:
+            target.write_bytes(b"%PDF")
+
+        with pytest.raises(HTTPException) as exc:
+            await _move_one(user_store, user_store, "a.md", "b.md")
+
+        assert exc.value.status_code == 409
+        assert (workspace_dir / "a.md").read_text() == "a"
+        assert target.exists()
+        assert repo.calls == []
+
     async def test_moves_entry_with_original_and_leaves_sibling_directory(
         self, user_store: Casebase, workspace_dir: Path, repo: FakeRepository
     ) -> None:
@@ -705,6 +731,48 @@ class TestChangesets:
             await _apply(Delete(Location(user_store, "a.md"), seen))
 
         assert exc.value.status_code == 409
+
+    @pytest.mark.parametrize("operation", ["delete", "move"])
+    @pytest.mark.parametrize("change", ["add", "edit", "replace"])
+    async def test_staged_directories_reject_changed_contents_or_kind(
+        self,
+        user_store: Casebase,
+        layout: Path,
+        repo: FakeRepository,
+        operation: Literal["delete", "move"],
+        change: Literal["add", "edit", "replace"],
+    ) -> None:
+        root = SearchPath(path=layout, scope=user_store.scope)
+        mount = WorkspaceOS(paths=(root,), writable=(root,), inner=OSAccess([]), limits=LIMITS)
+        directory = WORKSPACE_MOUNT / "~/dir"
+
+        if operation == "delete":
+            mount.path_unlink(directory / "c.md")
+            mount.path_rmdir(directory)
+        else:
+            mount.path_rename(directory, WORKSPACE_MOUNT / "~/moved")
+
+        staged = stage_changes(mount)
+        assert staged is not None
+        gateway = workspace.Gateway((user_store,))
+        await gateway.plan(staged)
+
+        match change:
+            case "add":
+                (layout / "dir/new.md").write_text("new")
+            case "edit":
+                (layout / "dir/c.md").write_text("updated")
+            case "replace":
+                (layout / "dir").rename(layout / "saved")
+                (layout / "dir").write_text("replacement")
+
+        with pytest.raises(HTTPException) as exc:
+            await gateway.apply(staged)
+
+        assert exc.value.status_code == 409
+        assert (layout / "dir").exists()
+        assert not (layout / "moved").exists()
+        assert repo.calls == []
 
     async def test_plan_resolves_move_into_directory(
         self, user_store: Casebase, layout: Path

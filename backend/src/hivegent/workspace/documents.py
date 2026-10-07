@@ -18,7 +18,7 @@ from ..chunkers.base import DocumentMetadata
 from ..concurrency import shield_to_completion
 from ..config import content_hash, settings
 from ..converters import BINARY_WRITE_REASON, vision_media_type
-from ..entries import ContentStat
+from ..entries import ContentStat, TreeStat
 from ..humanize import pluralize
 from ..l10n import Localized
 from ..store import Casebase
@@ -239,6 +239,9 @@ def _fingerprint(basis: Basis) -> str:
     if isinstance(basis, str):
         return basis
 
+    if isinstance(basis, TreeStat):
+        return f"directory snapshot {content_hash(repr(basis))}"
+
     return f"mtime {basis.mtime_ns}, size {basis.size}, inode {basis.inode}"
 
 
@@ -257,13 +260,17 @@ def _check_basis(
     if basis is None:
         return
 
-    if file_path is None or not file_path.is_file():
+    exists = file_path is not None and (
+        file_path.is_dir() if isinstance(basis, TreeStat) else file_path.is_file()
+    )
+
+    if not exists or file_path is None:
         raise HTTPException(
             status_code=409, detail=_hash_unread(shown, _fingerprint(basis)).current
         )
 
-    if isinstance(basis, ContentStat):
-        actual = ContentStat.from_path(file_path)
+    if isinstance(basis, ContentStat | TreeStat):
+        actual = type(basis).from_path(file_path)
         found = _fingerprint(actual) if actual is not None else "nothing"
         matches = actual == basis
     else:

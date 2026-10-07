@@ -3,6 +3,7 @@
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path, PurePosixPath
 from typing import Self
 
@@ -14,6 +15,7 @@ __all__ = [
     "ContentStat",
     "EntryPaths",
     "Listdir",
+    "TreeStat",
     "asset_ref_for",
     "assets_dir_for_stem",
     "description_path_for_stem",
@@ -72,6 +74,29 @@ class ContentStat:
         """Return the stat fingerprint of *path*, or ``None`` if it is unreadable."""
         try:
             return cls.of(path.stat())
+        except OSError:
+            return None
+
+
+@dataclass(slots=True, frozen=True)
+class TreeStat:
+    """The relative paths and stat fingerprints of a directory and its contents."""
+
+    parts: tuple[tuple[str, ContentStat], ...]
+
+    @classmethod
+    def from_path(cls, path: Path) -> Self | None:
+        """Snapshot *path* without following symlinks, or return ``None`` if unreadable."""
+        if not path.is_dir() or path.is_symlink():
+            return None
+
+        try:
+            parts = (
+                (str(part.relative_to(path)), ContentStat.of(part.lstat()))
+                for part in chain((path,), path.rglob("*"))
+            )
+
+            return cls(tuple(sorted(parts)))
         except OSError:
             return None
 
@@ -497,4 +522,3 @@ def entry_exists(workspace_dir: Path, reference: str) -> bool:
     if resolved.original_path is not None:
         return True
     return resolved.assets_dir is not None
-
