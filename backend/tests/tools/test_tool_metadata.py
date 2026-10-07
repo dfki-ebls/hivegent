@@ -1,7 +1,7 @@
 from pydantic import TypeAdapter
 
 from hivegent.agents import explore_toolset
-from hivegent.agents.tools import compute_toolset
+from hivegent.agents.tools import python_toolset
 from hivegent.mcp import mcp_app
 from hivegent.tools.base import tool_description
 from hivegent.tools.documents import (
@@ -57,7 +57,7 @@ def test_agent_table_tool_exposes_configurable_row_limit() -> None:
 
 
 def test_agent_python_tool_describes_monty_constraints() -> None:
-    tool = compute_toolset.tools["run_python"]
+    tool = python_toolset.tools["run_python"]
     schema = tool.function_schema.json_schema
     description = tool.description
 

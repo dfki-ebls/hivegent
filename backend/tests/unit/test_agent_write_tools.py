@@ -18,7 +18,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
-import hivegent.agents.tools.compute as compute_tools
+import hivegent.agents.tools.python as python_tools
 from hivegent import staging
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import (
@@ -270,7 +270,7 @@ async def test_output_path_approval_depends_on_mode(deps: UserDeps) -> None:
 def test_invalid_program_is_refused_before_it_runs(
     deps: UserDeps, arguments: dict[str, str | None], message: str
 ) -> None:
-    tool = compute_tools.compute_toolset.tools["run_python"]
+    tool = python_tools.python_toolset.tools["run_python"]
     validated = tool.function_schema.validator.validate_python(arguments)
     assert tool.args_validator is compute_tools.validate_run_python
 

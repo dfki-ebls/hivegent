@@ -43,7 +43,7 @@ export const settings = {
     },
     toolGroups: {
       explore: "Explore",
-      compute: "Compute",
+      python: "Python",
       subagent: "Subagent",
       write: "Write",
       memory: "Memory",

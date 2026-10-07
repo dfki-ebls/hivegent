@@ -46,7 +46,7 @@ export const settings = {
     },
     toolGroups: {
       explore: "Erkunden",
-      compute: "Berechnen",
+      python: "Python",
       subagent: "Subagent",
       write: "Schreiben",
       memory: "Gedächtnis",

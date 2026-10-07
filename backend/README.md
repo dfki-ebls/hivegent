@@ -184,7 +184,7 @@ The sweep runs in a background task the lifespan starts after the migrations, fi
 An orphan is kept for one sweep interval, since a new conversation's row is only written when its first turn ends, and the orphan rule is what catches a user deletion's cascade and a crash.
 A compacted conversation starts with a copy of its source's folder (`copy_tmp`), since its summary may name what the source kept there.
 
-`TMP_INSTRUCTIONS` is shared between the `compute` and `write` features, and `PYTHON_INSTRUCTIONS` names `/tmp` as the home of a rerunnable `.py`, since a `.py` in a workspace is an original and gets chunked.
+`TMP_INSTRUCTIONS` is shared between the `python` and `write` features, and `PYTHON_INSTRUCTIONS` names `/tmp` as the home of a rerunnable `.py`, since a `.py` in a workspace is an original and gets chunked.
 The mutation receipt says the rest at the one moment the path is in hand: it points a `/tmp` `.py` at `run_python`'s `script_path`.
 That pointer is a `MutationHint` the write and edit tools take like `filter_func`, injected by `agents/tools/write.py` alone, since the MCP surface writes through the same tools and has no `run_python`.
 `output_sink` composes the writer without it, since a result the model redirected to an `output_path` is not a program it just stored.
@@ -608,7 +608,7 @@ That union is computed there rather than carried on deps, so a `UserDeps` built 
 A tool hidden from the model's tool list must not come back as a function it can call from a program.
 
 The set is not a list anyone maintains.
-A tool declares `injectable` on its class (`Tool.injectable`, default `False`), and `compute.py` filters the very tuples that register the tools (`EXPLORE_FACTORIES`, `WEB_FACTORIES`) by it.
+A tool declares `injectable` on its class (`Tool.injectable`, default `False`), and `agents/tools/python.py` filters the very tuples that register the tools (`EXPLORE_FACTORIES`, `WEB_FACTORIES`) by it.
 So a renamed factory moves the tool list and the sandbox together, the web pair drops out because `WEB_FACTORIES` is already empty when the operator's switch is, and nothing has to check that an injectable name is registered.
 Adding a fifth is one line on its class; the question it answers is whether the mount could have done the job, which is why `grep` and `read_document` are not on it.
 

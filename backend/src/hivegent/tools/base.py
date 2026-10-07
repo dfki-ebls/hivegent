@@ -999,7 +999,7 @@ class Tool[T](ABC):
 
     Declared here rather than listed elsewhere because it is a property of the
     tool: whichever surface registers it, the same answer holds.  Only
-    :mod:`hivegent.agents.tools.compute` reads it, which is what keeps the
+    :mod:`hivegent.agents.tools.python` reads it, which is what keeps the
     injectable set derived from the registered one instead of kept beside it.
     """
 

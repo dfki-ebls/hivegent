@@ -19,7 +19,7 @@ from pydantic_monty import AsyncMonty
 
 from hivegent.agents.capabilities import check_tool_settings, unlisted_tool_names
 from hivegent.agents.common import UserDeps
-from hivegent.agents.tools.compute import (
+from hivegent.agents.tools.python import (
     INJECTABLE_TOOL_NAMES,
     sandbox_instructions,
     sandbox_surface,

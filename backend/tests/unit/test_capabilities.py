@@ -17,7 +17,7 @@ from hivegent.agents.capabilities import (
     collect_tool_schemas,
 )
 from hivegent.agents.common import UserDeps, scope_instructions
-from hivegent.agents.tools.compute import sandbox_surface
+from hivegent.agents.tools.python import sandbox_surface
 from hivegent.auth import User
 from hivegent.prompts import GROUNDING_INSTRUCTIONS
 from hivegent.server.routes.meta import list_tools

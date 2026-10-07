@@ -1,8 +1,8 @@
 """Built-in agent toolset registrations."""
 
-from .compute import (
+from .python import (
     INJECTABLE_TOOL_NAMES,
-    compute_toolset,
+    python_toolset,
     sandbox_instructions,
 )
 from .conversation import conversation_toolset
@@ -16,7 +16,7 @@ __all__ = [
     "INJECTABLE_TOOL_NAMES",
     "SUBAGENT_CAPABILITIES",
     "SubagentName",
-    "compute_toolset",
+    "python_toolset",
     "conversation_toolset",
     "discard_unapproved_changes",
     "explore_toolset",

@@ -1,4 +1,4 @@
-"""Compute-oriented agent tool registrations.
+"""Python agent tool registrations, the ``run_python`` feature.
 
 The tool class is settings-free, so this module is where the application
 settings are applied to its instance fields, and where the sandbox budget is
@@ -39,7 +39,7 @@ from .write import changeset_committer, program_paths
 
 __all__ = [
     "INJECTABLE_TOOL_NAMES",
-    "compute_toolset",
+    "python_toolset",
     "sandbox_instructions",
     "validate_run_python",
 ]
@@ -174,7 +174,7 @@ def _environ(deps: UserDeps) -> dict[str, str]:
     return environ
 
 
-compute_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+python_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
 def validate_run_python(
@@ -192,7 +192,7 @@ def validate_run_python(
 
 
 register_agent_tool(
-    compute_toolset,
+    python_toolset,
     UserDeps,
     _run_python,
     args_validator=validate_run_python,

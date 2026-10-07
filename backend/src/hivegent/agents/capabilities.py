@@ -66,7 +66,7 @@ from .common import UserDeps, scope_instructions
 from .guards import IterationLimitWarner, ToolOutputLimit
 from .tools import (
     INJECTABLE_TOOL_NAMES,
-    compute_toolset,
+    python_toolset,
     conversation_toolset,
     explore_toolset,
     memory_toolset,
@@ -176,8 +176,8 @@ FEATURES: tuple[Feature, ...] = (
         ],
     ),
     Feature.build(
-        "compute",
-        compute_toolset,
+        "python",
+        python_toolset,
         instructions=[PYTHON_INSTRUCTIONS, sandbox_instructions],
     ),
     Feature.build("subagent", subagent_toolset),
@@ -218,14 +218,14 @@ class SharedInstructions:
 SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
     SharedInstructions(
         "workspace-paths",
-        frozenset({"compute", "explore", "write"}),
+        frozenset({"python", "explore", "write"}),
         WORKSPACE_PATH_INSTRUCTIONS,
     ),
     SharedInstructions(
         "citation", frozenset({"explore", "web"}), CITATION_INSTRUCTIONS
     ),
     SharedInstructions(
-        "tmp", frozenset({"compute", "write"}), TMP_INSTRUCTIONS
+        "tmp", frozenset({"python", "write"}), TMP_INSTRUCTIONS
     ),
     SharedInstructions(
         "workspace-writes",
@@ -264,7 +264,7 @@ def unlisted_tool_names(tools_spec: ToolsSpec) -> frozenset[str]:
     One function, because the surfaces that must agree are the ones asking this
     question — the :class:`PrepareTools` pass and the settings listing.  What
     the sandbox withholds is a different question with a different answer, and
-    it is asked where it is used (``agents.tools.compute.sandbox_surface``)
+    it is asked where it is used (``agents.tools.python.sandbox_surface``)
     rather than published here as a near-twin of this name.
     """
     return frozenset(settings.tools.disabled).union(

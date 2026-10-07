@@ -94,7 +94,7 @@ A feature is withheld by the chat mode it declares, by a request's `disabled_too
 | Feature        | Role                                                        | Tools                                                                                                              |
 | -------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `explore`      | Read-only access to documents, tables, JSON, and retrieval. | `list_documents`, `glob_documents`, `read_document`, `read_binary_document`, `query_table`, `jq`, `grep`, `search` |
-| `compute`      | Python sandbox over a copy-on-write workspace mount.        | `run_python`                                                                                                       |
+| `python`       | Python sandbox over a copy-on-write workspace mount.        | `run_python`                                                                                                       |
 | `subagent`     | Delegated exploration in a fresh context.                   | `explore`                                                                                                          |
 | `write`        | User-approved workspace mutation (mutating modes only).     | `write_document`, `edit_document`, `move_documents`, `delete_documents`, `apply_changes`                           |
 | `memory`       | Persistent cross-conversation memory (mutating modes only). | `save_memory`                                                                                                      |
