@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# onnxruntime (imported via markitdown and magika) drops a session file into the working directory
+:memory:.ses
