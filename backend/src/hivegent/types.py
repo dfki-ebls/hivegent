@@ -13,7 +13,7 @@ from .chunkers import ChunkingSpec
 from .config import ADMIN_ROLE
 from .converters import ConversionSpec
 from .db.conversations import ConversationSummary
-from .entries import entry_owns, stem_path_from_reference
+from .entries import entry_owns, is_below, stem_path_from_reference
 from .llm_config import LlmConfig, ReasoningEffort
 from .prompts import Personality
 from .security import require_safe_headers, require_safe_url_shape
@@ -139,6 +139,10 @@ class DocumentFilter:
     def __call__(self, path: str) -> bool:
         """Return whether the file or directory *path* passes the filter."""
         return not any(self._selects(entry, path) for entry in self.excluded)
+
+    def hides_within(self, path: str) -> bool:
+        """Whether the filter hides *path* or anything below it, asked of its entries alone."""
+        return any(is_below(entry, path) or self._selects(entry, path) for entry in self.excluded)
 
 
 @dataclass(slots=True, frozen=True)

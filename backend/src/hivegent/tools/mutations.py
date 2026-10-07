@@ -22,7 +22,6 @@ from ..changes import (
     Delete,
     Edit,
     Move,
-    Operation,
     TextEdit,
     Write,
     WriteMode,
@@ -31,14 +30,12 @@ from ..converters import BINARY_WRITE_REASON, DELIMITERS, writes_as_text
 from ..humanize import pluralize
 from .base import (
     AsyncPathTool,
-    Direct,
     SearchPath,
     ToolOutput,
     ToolRetry,
     batch_field,
     entry_stat,
     near_miss_hint,
-    policy_of,
     resolve_accessible_file,
     resolve_file_or_retry,
     workspace_root_hint,
@@ -65,7 +62,6 @@ __all__ = [
     "edit_changeset",
     "move_changeset",
     "mutation_errors",
-    "partition",
     "resolve_text_target",
     "write_changeset",
 ]
@@ -187,8 +183,8 @@ Commit = Callable[[Changeset[str]], Awaitable[str]]
 """Apply a changeset spelled in canonical paths, returning what it did.
 
 Injected by the surface, which routes each path back to the root that claimed
-it, so a batch may span the personal workspace and a group's, and lands each
-root's half the way that root's :class:`~hivegent.tools.base.CommitPolicy` says.
+it, so a batch may span the personal workspace, a group's, and ``/tmp``, and
+commits all of it at once.
 """
 
 
@@ -206,33 +202,6 @@ def mutation_errors(into: Callable[[str], Exception], suffix: str = "") -> Gener
     except (HTTPException, ValueError) as exc:
         detail = str(exc.detail if isinstance(exc, HTTPException) else exc)
         raise into(f"{detail.rstrip('.')}. {suffix}" if suffix else detail) from exc
-
-
-def partition(
-    paths: tuple[SearchPath, ...], changeset: Changeset[str]
-) -> tuple[Changeset[str], Changeset[str]]:
-    """Split *changeset* into the operations its roots gate and the ones they take directly.
-
-    A move between a gated root and a direct one is refused, since no single
-    commit covers both ends: its text is written at the destination and the
-    source deleted instead.
-    """
-    gated: list[Operation[str]] = []
-    direct: list[Operation[str]] = []
-
-    for op in changeset.operations:
-        policies = {policy_of(paths, location) for location in Changeset((op,)).locations}
-
-        if isinstance(op, Move) and len(policies) > 1:
-            raise ToolRetry(
-                f"'{op.source}' cannot move to '{op.destination}', since only one of "
-                "them is written directly. Write its text to the destination and "
-                "delete the source instead."
-            )
-
-        (direct if isinstance(policies.pop(), Direct) else gated).append(op)
-
-    return Changeset(tuple(gated)), Changeset(tuple(direct))
 
 
 def _hinted(hint: MutationHint | None, report: str, target: str) -> str:

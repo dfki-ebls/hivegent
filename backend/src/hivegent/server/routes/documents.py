@@ -24,7 +24,7 @@ from starlette.responses import FileResponse, Response
 
 from ... import workspace
 from ...auth import User, get_current_user
-from ...changes import Changeset, Write
+from ...changes import Changeset, PathChanges, Write
 from ...chunkers.base import DocumentMetadata
 from ...config import settings
 from ...db.conversations import conversation_exists
@@ -670,22 +670,28 @@ async def _apply(
     user: User,
     client: str | None,
     operations: Iterable[MoveOperation | DeleteOperation | CreateDirOperation],
-) -> None:
-    """Resolve every path with write access and apply *operations* as one changeset."""
+) -> PathChanges:
+    """Resolve every path with write access and apply *operations* as one changeset.
+
+    Returns what moved and went as the gateway resolved it, which the asking
+    client follows instead of what it sent, since its own feed skips the change.
+    """
 
     def at(path: str) -> Location:
         return Location(*resolve_workspace_path(user, path, write=True))
 
     changeset = Changeset(tuple(op.operation(at) for op in operations))
-    await workspace.apply_changeset(changeset, owner=user.id, exclude_client=client)
+    applied = await workspace.apply_changeset(changeset, owner=user.id, exclude_client=client)
+
+    return applied.paths
 
 
-@router.post("/changes", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/changes")
 async def apply_changes(
     request: ChangesRequest,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> None:
+) -> PathChanges:
     """Move, delete, and create documents and directories as one changeset.
 
     Every path is resolved with write access, so a move between workspaces is
@@ -694,61 +700,62 @@ async def apply_changes(
     operation rejects the batch with the gateway's message naming its path.
     The single-item routes below are shortcuts for one operation of this kind.
     """
-    await _apply(user, client, request.operations)
+    return await _apply(user, client, request.operations)
 
 
-@router.post("/documents/move/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/documents/move/{filepath:path}")
 async def move_document(
     filepath: str,
     request: MoveDestination,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> None:
+) -> PathChanges:
     """Move or rename one document, a shortcut for one move in ``POST /changes``."""
     move = MoveOperation(kind="move", source=filepath, destination=request.destination)
-    await _apply(user, client, [move])
+    return await _apply(user, client, [move])
 
 
-@router.delete("/documents/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/documents/{filepath:path}")
 async def delete_document(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> None:
+) -> PathChanges:
     """Delete one document, a shortcut for one entry delete in ``POST /changes``."""
-    await _apply(user, client, [DeleteOperation(kind="delete", path=filepath, expect="entry")])
+    delete = DeleteOperation(kind="delete", path=filepath, expect="entry")
+    return await _apply(user, client, [delete])
 
 
-@router.post("/directories", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/directories")
 async def create_directory(
     request: WorkspacePath,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> None:
+) -> PathChanges:
     """Create one directory, a shortcut for one mkdir in ``POST /changes``."""
-    await _apply(user, client, [CreateDirOperation(kind="mkdir", path=request.path)])
+    return await _apply(user, client, [CreateDirOperation(kind="mkdir", path=request.path)])
 
 
-@router.post("/directories/move", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/directories/move")
 async def move_directory(
     request: MovePaths,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> None:
+) -> PathChanges:
     """Move or rename one directory, a shortcut for one move in ``POST /changes``."""
     move = MoveOperation(kind="move", source=request.source, destination=request.destination)
-    await _apply(user, client, [move])
+    return await _apply(user, client, [move])
 
 
-@router.delete("/directories", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/directories")
 async def delete_directory(
     request: WorkspacePath,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> None:
+) -> PathChanges:
     """Delete one directory with everything in it.
 
     A shortcut for one directory delete in ``POST /changes``.
     """
     delete = DeleteOperation(kind="delete", path=request.path, expect="dir")
-    await _apply(user, client, [delete])
+    return await _apply(user, client, [delete])

@@ -1,27 +1,25 @@
 """Write-oriented agent tool registrations.
 
 Also the one place the changes a ``run_python`` program makes are wired,
-whose workspace half ``apply_changes`` applies.  Every write plans through
-:func:`_plan_batch`, commits through :func:`_commit`, and answers to
-:func:`_gate`, so a run can never persist by a side door what it may not write
-outright.
+whose workspace half ``apply_changes`` applies.  Every write commits through
+:func:`_gateway` and answers to :func:`_gate`, so a run can never persist by a
+side door what it may not write outright.
 
-Every write resolves against :meth:`~hivegent.agents.common.UserDeps.writable_paths`,
-and each root's :class:`~hivegent.tools.base.CommitPolicy` decides how its half
-lands.  A direct root (``/tmp``) is the run's own working state, written
-straight into the conversation's folder with no changeset, approval, or store
-lock, in every mode.  A gated root (a workspace) goes through the changeset
-gateway, which ``interactive`` puts in front of the user first and ``write``
-applies at once.  A mode that may not write leaves the workspaces out of the
-writable roots, so they are refused like any path the run cannot reach.
-Before asking, the validator plans the very changeset the tool would commit,
-so the user is never asked to approve a batch the gateway would refuse, and
-the approval shows the planner's summary.
+Every write resolves against :meth:`~hivegent.agents.common.UserDeps.writable_paths`
+and commits as one changeset through the one gateway, all of it or nothing,
+whose roots are those paths, the conversation's ``/tmp`` a folder written
+directly, and whose filters are theirs.  Whether to ask is decided per item
+from the root it routes to: a folder (``/tmp``) is the run's own working state
+and asks nothing in any mode, while a workspace is put in front of the user
+first in ``interactive`` and lands at once in ``write``.  A mode that may not
+write leaves the workspaces out of the writable roots, so they are refused
+like any path the run cannot reach.  Before asking, the validator plans the
+very changeset the tool would commit, its ``/tmp`` half included, so the user
+is never asked to approve a batch the gateway would refuse, and the approval
+shows the planner's summary of the workspace half.
 """
 
-import asyncio
 from collections.abc import Callable, Container, Sequence
-from dataclasses import dataclass
 from typing import Any, NoReturn
 
 from pydantic_ai import FunctionToolset, RunContext
@@ -31,15 +29,21 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_core import to_jsonable_python
 
 from ... import staging, workspace
-from ...changes import Changeset, ChangesetSummary, TextEdit
-from ...tmp import TMP_SCOPE, DirectPlan, plan_direct
+from ...changes import Changeset, ChangesetSummary, Operation, TextEdit
+from ...tmp import TMP_SCOPE, tmp_root
 from ...tools import (
     DeleteDocumentsTool,
     EditDocumentTool,
     MoveDocumentsTool,
     WriteDocumentTool,
 )
-from ...tools.base import SearchPath, ToolRetry, factory_tool_name, translate_tool_retry
+from ...tools.base import (
+    PathFilter,
+    SearchPath,
+    ToolRetry,
+    factory_tool_name,
+    translate_tool_retry,
+)
 from ...tools.changeset import (
     AppliedChanges,
     ApplyChangesTool,
@@ -56,11 +60,11 @@ from ...tools.mutations import (
     edit_changeset,
     move_changeset,
     mutation_errors,
-    partition,
     write_changeset,
 )
 from ...tools.pydantic_ai import register_agent_tool
 from ...tools.python import is_python_script
+from ...workspace.operations import Root
 from ..common import UserDeps
 
 __all__ = [
@@ -78,66 +82,29 @@ __all__ = [
 _RERUN = "Run the program again to stage a fresh changeset."
 
 
-def _gateway(deps: UserDeps) -> workspace.Gateway:
-    """The gateway bound to the stores this run may write, announcing to its user."""
-    return workspace.Gateway(deps.writable_stores, deps.user_id)
+def _gateway(deps: UserDeps, paths: tuple[SearchPath, ...] | None = None) -> workspace.Gateway:
+    """The gateway bound to the roots *paths* name with their filters, announcing to the run's user.
 
-
-@dataclass(slots=True, frozen=True)
-class _Batch:
-    """A changeset split by policy, with both halves planned and nothing written yet."""
-
-    gated: Changeset[str]
-    direct: DirectPlan
-    summary: ChangesetSummary | None
-    """What approving the gated half shows, when one was asked for."""
-
-
-async def _plan_batch(
-    deps: UserDeps,
-    paths: tuple[SearchPath, ...],
-    changeset: Changeset[str],
-    *,
-    summarize: bool = False,
-) -> _Batch:
-    """Plan the direct half of *changeset*, then its gated half if *summarize* asks for approval.
-
-    The direct half is local and cheap, so it is always planned and a bad
-    ``/tmp`` half is refused before anyone is asked about the workspace half.
+    *paths* default to every root the run may write.  A path's root is the
+    casebase its scope names, or else the conversation's ``/tmp`` folder.
     """
-    gated, direct = partition(paths, changeset)
-    planned = await asyncio.to_thread(plan_direct, paths, direct) if direct.operations else DirectPlan()
-    summary = (
-        (await _gateway(deps).plan(gated)).summary
-        if summarize and gated.operations
-        else None
-    )
+    stores = {store.scope.prefix: store for store in deps.all_stores}
+    roots: list[Root] = []
+    filters: dict[str, PathFilter] = {}
 
-    return _Batch(gated, planned, summary)
+    for sp in deps.writable_paths() if paths is None else paths:
+        root = stores.get(sp.prefixed("")) or tmp_root(sp.path)
+        roots.append(root)
 
+        if sp.filter_func is not None:
+            filters[root.store_key] = sp.filter_func
 
-async def _commit(deps: UserDeps, batch: _Batch) -> tuple[str, ...]:
-    """Apply the gated half, then write the direct one, returning the gated reports.
-
-    The direct half lands last, so a batch the gateway refuses leaves ``/tmp``
-    as it was.
-    """
-    reports = await _gateway(deps).apply(batch.gated) if batch.gated.operations else ()
-    _ = await asyncio.to_thread(batch.direct.apply)
-
-    return reports
+    return workspace.Gateway(tuple(roots), deps.user_id, filters)
 
 
 def _committer(deps: UserDeps) -> Commit:
-    """Plan and commit a changeset's two halves, the commit every write tool shares."""
-
-    async def commit(changeset: Changeset[str]) -> str:
-        batch = await _plan_batch(deps, deps.writable_paths(), changeset)
-        reports = await _commit(deps, batch)
-
-        return "\n".join((*batch.direct.reports, *reports))
-
-    return commit
+    """Commit a changeset, every item at once, the commit every write tool shares."""
+    return _gateway(deps).commit
 
 
 def _ask(summary: ChangesetSummary) -> NoReturn:
@@ -158,16 +125,22 @@ async def _gate(
 
     *build* is the tool's own changeset builder, run on the roots the tool
     resolves against, so the question is asked of exactly what would commit.
-    The gated half is only planned where approval is asked, since the commit
-    refuses with the same words.
+    It is asked when any item routes to a workspace, and only then is the
+    changeset planned, its ``/tmp`` half included, since the commit refuses
+    with the same words.
     """
     paths = ctx.deps.writable_paths()
+    gateway = _gateway(ctx.deps, paths)
 
     with translate_tool_retry(ModelRetry), mutation_errors(ModelRetry):
-        batch = await _plan_batch(ctx.deps, paths, build(paths), summarize=_asks(ctx))
+        changeset = build(paths)
 
-    if batch.summary is not None:
-        _ask(batch.summary)
+        if not (_asks(ctx) and any(gateway.gated(changeset))):
+            return
+
+        summary = (await gateway.plan(changeset)).summary
+
+    _ask(summary)
 
 
 def _run_python_pointer(target: str) -> str:
@@ -262,31 +235,39 @@ def program_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
     return deps.writable_paths(workspace=staging_allowed)
 
 
+def _picked[T](items: Sequence[T], picks: Sequence[bool], pick: bool) -> tuple[T, ...]:
+    return tuple(item for item, picked in zip(items, picks, strict=True) if picked == pick)
+
+
 def changeset_committer(deps: UserDeps) -> CommitChanges:
     """Build what lands a ``run_python`` program's changes.
 
-    The direct half is written as soon as the gated half is settled.  That one
-    is applied straight away in a mode that needs no approval, as :func:`_gate`
-    lets every other write through, and otherwise planned and stored for
-    :func:`validate_apply_changes` to put in front of the user, so a program
-    whose changes the gateway would refuse is told so at once and leaves
-    ``/tmp`` as it was.
+    Each item is gated or not by the root it routes to.  In a mode that needs
+    no approval every item is applied at once, as :func:`_gate` lets every
+    other write through, and the workspace items' reports are returned.
+    Otherwise the whole changeset is planned, so a program whose changes the
+    gateway would refuse is told so at once and leaves ``/tmp`` as it was, and
+    then the direct items are written and the gated ones stored for
+    :func:`validate_apply_changes` to put in front of the user.
     """
-    paths = program_paths(deps)
+    gateway = _gateway(deps, program_paths(deps))
 
     async def commit(changeset: Changeset[str]) -> ChangesetOutcome | None:
+        operations: Sequence[Operation[str]] = changeset.operations
+
         with mutation_errors(ToolRetry):
-            batch = await _plan_batch(deps, paths, changeset, summarize=deps.needs_approval)
+            gated = gateway.gated(changeset)
 
-            if batch.summary is not None:
-                changeset_id = await staging.stage(deps.user_id, batch.gated)
-                _ = await asyncio.to_thread(batch.direct.apply)
+            if any(gated) and deps.needs_approval:
+                summary = (await gateway.plan(changeset)).summary
+                _ = await gateway.apply(Changeset(_picked(operations, gated, False)))
+                staged = Changeset(_picked(operations, gated, True))
 
-                return PendingChanges(changeset_id, batch.summary)
+                return PendingChanges(await staging.stage(deps.user_id, staged), summary)
 
-            reports = await _commit(deps, batch)
+            applied = await gateway.apply(changeset)
 
-        return AppliedChanges(reports) if batch.gated.operations else None
+        return AppliedChanges(_picked(applied.reports, gated, True)) if any(gated) else None
 
     return commit
 
@@ -328,7 +309,7 @@ def _apply_changes(deps: UserDeps) -> ApplyChangesTool:
 
         try:
             with mutation_errors(ToolRetry, _RERUN):
-                return await _gateway(deps).apply(staged)
+                return (await _gateway(deps).apply(staged)).reports
         finally:
             await staging.discard_staged(deps.user_id, changeset_id)
 

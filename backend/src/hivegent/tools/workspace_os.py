@@ -35,8 +35,8 @@ changes nothing at all.  How each change lands is its root's
 :class:`~hivegent.tools.base.CommitPolicy`: a gated root's changes are staged
 for approval and count against :class:`ChangesetLimits`, while a direct root's
 (``/tmp``) are written straight into its folder.  No one commit carries a file
-from one policy to the other, so a rename between them is a write of the text
-and a removal.
+from one root to another of the other policy, so a rename between them is a
+write of the text and a removal, while one within a root is a rename.
 """
 
 import errno
@@ -217,7 +217,8 @@ class ChangesetLimits:
     """What one program may stage, checked as it records each change.
 
     Attributes:
-        max_operations: Paths one program may create, change, move, or delete.
+        max_operations: Operations one program may stage, one for each path
+            it creates, changes, moves, or deletes.
         max_deletes: Of those, how many it may delete.
         max_chars: Characters it may write in total, across every file.
     """
@@ -798,35 +799,38 @@ class WorkspaceOS(AbstractOS):
         if isinstance(self.policy(key), Direct):
             return
 
-        self.touched.add(key)
-
-        if len(self.touched) > self.limits.max_operations:
+        if key not in self.touched and len(self.touched) >= self.limits.max_operations:
             raise PermissionError(
                 f"Changing '{key}' takes this program past the "
                 f"{self.limits.max_operations} paths one run may change. Change "
                 "fewer at once and run again for the rest."
             )
 
-        if deleting:
-            self.deletes += 1
+        if deleting and self.deletes >= self.limits.max_deletes:
+            raise PermissionError(
+                f"Removing '{key}' takes this program past the "
+                f"{self.limits.max_deletes} deletions one run may make."
+            )
 
-            if self.deletes > self.limits.max_deletes:
-                raise PermissionError(
-                    f"Removing '{key}' takes this program past the "
-                    f"{self.limits.max_deletes} deletions one run may make."
-                )
+        self.touched.add(key)
+        self.deletes += int(deleting)
 
     def _make_parents(self, key: str) -> None:
         """Create every missing directory above *key*, the way the gateway will."""
+        missing: list[str] = []
+
         for parent in _ancestors(key):
             view = self.lookup(parent)
 
             if _is_dir(view):
-                return
+                break
 
             if view is not None:
                 raise _os_error(NotADirectoryError, errno.ENOTDIR, parent)
 
+            missing.append(parent)
+
+        for parent in missing:
             self._new_dir(parent)
 
     def _new_dir(self, key: str) -> None:
@@ -943,6 +947,8 @@ class WorkspaceOS(AbstractOS):
         if not parents and above and self.lookup(above[0]) is None:
             raise _os_error(FileNotFoundError, errno.ENOENT, above[0])
 
+        # Only the leaf is charged, since staging spells its parents with it.
+        self._charge(key)
         self._make_parents(key)
         self._new_dir(key)
 
@@ -995,8 +1001,9 @@ class WorkspaceOS(AbstractOS):
         another one replaces it, as on any POSIX filesystem, while a directory
         neither replaces nor is replaced.  On a case-insensitive workspace both
         spellings of a case-only rename name the source, so the name the
-        program spelled is the one it gets.  A rename touching a direct root
-        is a copy, see :meth:`_copy`.
+        program spelled is the one it gets.  A rename between a direct root
+        and a gated one is a copy, see :meth:`_copy`, and a file renamed
+        within a direct root may change its extension, since it is no entry.
         """
         if not (self._mounted(path) and self._mounted(target)):
             raise PermissionError(
@@ -1005,8 +1012,9 @@ class WorkspaceOS(AbstractOS):
             )
 
         source, destination = self._target(path), self._target(target)
+        direct = {isinstance(self.policy(end), Direct) for end in (source, destination)}
 
-        if any(isinstance(self.policy(end), Direct) for end in (source, destination)):
+        if len(direct) > 1:
             self._copy(path, target, source, destination)
 
             return
@@ -1044,7 +1052,9 @@ class WorkspaceOS(AbstractOS):
                 destination,
             )
 
-        self._check_rename(source, destination, is_dir=is_dir)
+        if direct == {False}:
+            self._check_rename(source, destination, is_dir=is_dir)
+
         node = self.nodes.get(source)
         origin = self._origin(source, node, view)
 
@@ -1057,6 +1067,8 @@ class WorkspaceOS(AbstractOS):
 
         if replaced is not None:
             self._charge(destination, deleting=isinstance(replaced, Entry))
+
+        self._make_parents(destination)
 
         if is_dir:
             for key in [key for key in self.nodes if is_below(key, source)]:
@@ -1078,8 +1090,6 @@ class WorkspaceOS(AbstractOS):
             case _:
                 pass
 
-        self._make_parents(destination)
-
     def _origin(self, source: str, node: Node | None, view: Text | Dir | Entry) -> str | None:
         """The disk path whose entry a rename of *source* carries, if any."""
         match node:
@@ -1097,7 +1107,7 @@ class WorkspaceOS(AbstractOS):
     def _copy(
         self, path: PurePosixPath, target: PurePosixPath, source: str, destination: str
     ) -> None:
-        """Rename a file to or from a direct root as a write of its text and a removal.
+        """Rename a file between a direct and a gated root as a write of its text and a removal.
 
         A direct root holds files rather than entries and commits apart from
         the gated ones, so no move carries a file between them: the text lands

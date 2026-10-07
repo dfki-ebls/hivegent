@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from functools import cache, cached_property, reduce
 from operator import or_
 from os import stat_result
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import (
     Annotated,
@@ -19,6 +19,7 @@ from typing import (
     ClassVar,
     Literal,
     NoDefault,
+    Protocol,
     Self,
     TypeVar,
     Union,
@@ -47,11 +48,10 @@ from ..entries import (
     Listdir,
     description_path_for_stem,
     find_original_for_stem,
-    folds_case,
     is_description_file,
     is_inside_assets_dir,
     is_reserved_path,
-    path_key,
+    leads_with,
     respell,
     stem_path_from_reference,
 )
@@ -205,8 +205,21 @@ FullLinesArg = Annotated[
     ),
 ]
 
-SearchPathFilterFunc = Callable[[str], bool] | None
-"""Optional predicate that decides whether a filename is accessible."""
+
+class PathFilter(Protocol):
+    """Which paths below a root its tools may see, decided by a finite set of entries."""
+
+    def __call__(self, path: str) -> bool:
+        """Whether the file or directory *path* is visible."""
+        ...
+
+    def hides_within(self, path: str) -> bool:
+        """Whether *path* or anything below it is hidden, answered without listing it."""
+        ...
+
+
+SearchPathFilterFunc = PathFilter | None
+"""Optional filter that decides which paths are accessible."""
 
 WORKSPACE_SCOPE_HINT = (
     "Lead with a scope prefix to restrict the operation to that one scope; "
@@ -224,28 +237,34 @@ arguments repeating it cost more on every request than the one sentence saves.
 
 @dataclass(slots=True, frozen=True)
 class Gated:
-    """A root whose changes commit through the changeset gateway, approved where the mode asks.
+    """A workspace root, whose changes are approved where the mode asks.
 
     Each ``.assets`` payload in it is reserved, since it belongs to its document.
     """
 
+    def reserves(self, root: Path, local: str) -> bool:
+        """Whether *local* is or lies in an ``.assets`` payload, wherever *root* is."""
+        return is_reserved_path(local)
+
 
 @dataclass(slots=True, frozen=True)
 class Direct:
-    """A root whose changes are written straight into its folder, with no approval.
+    """A folder root, whose changes are written with no approval.
 
     Attributes:
-        max_bytes: What the folder may hold once a change is written.
         reserved: A folder directly below the root that only the host
             changes, while every tool may read it.
     """
 
-    max_bytes: int
     reserved: str | None = None
+
+    def reserves(self, root: Path, local: str) -> bool:
+        """Whether *local* is or lies in :attr:`reserved`, compared as *root*'s filesystem does."""
+        return leads_with(root, local, self.reserved)
 
 
 type CommitPolicy = Gated | Direct
-"""How a change to a root's files lands, which is a property of the root alone."""
+"""Whether a change to a root's files is approved, and what it reserves, the root's alone."""
 
 _GATED = Gated()
 
@@ -305,19 +324,7 @@ class SearchPath:
         >>> SearchPath(Path("/w")).is_reserved("notes/report.assets/fig1.png")
         True
         """
-        if isinstance(self.policy, Gated):
-            return is_reserved_path(local)
-
-        reserved = self.policy.reserved
-        top = PurePosixPath(local).parts[:1]
-
-        if reserved is None or not top:
-            return False
-
-        # Compared as the filesystem spells it, so a change cannot reach it by its case.
-        folded = folds_case(self.path)
-
-        return path_key(top[0], folded=folded) == path_key(reserved, folded=folded)
+        return self.policy.reserves(self.path, local)
 
 
 def policy_of(paths: tuple[SearchPath, ...], canonical: str) -> CommitPolicy:

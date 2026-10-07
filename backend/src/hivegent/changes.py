@@ -3,8 +3,8 @@
 The operations are generic over how they name a path: ``L`` is a canonical
 ``str`` (``~/a.md``, ``@team/b.md``) where a tool or a staged program spells
 one, and a :class:`~hivegent.workspace.operations.Location` once
-:func:`~hivegent.workspace.operations.route` sent it to its casebase.  Every
-type here is a frozen dataclass that ``pydantic.TypeAdapter(Changeset[L])``
+:func:`~hivegent.workspace.operations.route` sent it to its root.  Every
+type here is a frozen dataclass that ``pydantic.TypeAdapter(Changeset[str])``
 serializes and validates, which is what lets a changeset be stored and applied
 later.
 
@@ -34,6 +34,7 @@ __all__ = [
     "FileDiff",
     "Move",
     "Operation",
+    "PathChanges",
     "PathMove",
     "TextEdit",
     "Write",
@@ -228,30 +229,56 @@ class PathMove:
 
 
 @dataclass(slots=True, frozen=True)
+class PathChanges:
+    """The workspace paths one commit moved and deleted, for a client to follow.
+
+    Canonical paths of workspace files and directories only, since a folder
+    such as ``/tmp`` holds nothing a client tracks: an entry's description
+    and original each, and a directory as a whole.  Sources and deletes name
+    the workspace before the commit and destinations the one after it, as the
+    gateway resolved them, so a client applies them all at once.
+
+    Attributes:
+        moves: Every moved file and directory.
+        deletes: Every deleted file and directory.
+    """
+
+    moves: tuple[PathMove, ...] = ()
+    deletes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
 class ChangesetSummary:
-    """What a changeset does, as a person approving it reads it."""
+    """What a changeset does, as a person approving it reads it.
+
+    Attributes:
+        creates: The new files with their capped diffs.
+        updates: The changed files with their capped diffs.
+        paths: What it moves and deletes, as a commit reports it.
+        mkdirs: The new directories.
+    """
 
     creates: tuple[FileDiff, ...] = ()
     updates: tuple[FileDiff, ...] = ()
-    moves: tuple[PathMove, ...] = ()
-    deletes: tuple[str, ...] = ()
+    paths: PathChanges = PathChanges()
     mkdirs: tuple[str, ...] = ()
 
     def lines(self) -> list[str]:
         """One line per change, in the order a model reads them back.
 
-        >>> ChangesetSummary(moves=(PathMove("~/a.md", "~/b.md", replaces=True),)).lines()
+        >>> move = PathMove("~/a.md", "~/b.md", replaces=True)
+        >>> ChangesetSummary(paths=PathChanges(moves=(move,))).lines()
         ['- move ~/a.md -> ~/b.md (replaces it)']
         """
         return [
             *(
                 f"- move {move.source} -> {move.destination}"
                 + (" (replaces it)" if move.replaces else "")
-                for move in self.moves
+                for move in self.paths.moves
             ),
             *(f"- create {change.path}" for change in self.creates),
             *(f"- update {change.path}" for change in self.updates),
-            *(f"- delete {path}" for path in self.deletes),
+            *(f"- delete {path}" for path in self.paths.deletes),
             *(f"- mkdir {path}" for path in self.mkdirs),
         ]
 

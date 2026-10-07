@@ -161,11 +161,6 @@ class UserDeps:
         return (self.store, *self.group_stores)
 
     @property
-    def writable_stores(self) -> tuple[Casebase, ...]:
-        """The stores the user may mutate (personal + writable groups)."""
-        return (self.store, *self.write_group_stores)
-
-    @property
     def can_write(self) -> bool:
         """Whether this run may mutate workspace content."""
         return self.mode in MUTATING_MODES

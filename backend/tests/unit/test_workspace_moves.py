@@ -12,9 +12,10 @@ The SQL layer is stubbed with a recording fake; the live-DB behaviour of
 the repository itself is covered by the dev-stack smoke tests.
 """
 
+import asyncio
 import os
 from collections.abc import AsyncGenerator, Iterable
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +24,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from hivegent import workspace
+from hivegent import workspace, workspace_events
 from hivegent.auth import User
 from hivegent.changes import (
     Changeset,
@@ -33,6 +34,7 @@ from hivegent.changes import (
     FileDiff,
     Move,
     Operation,
+    PathChanges,
     PathMove,
     Write,
 )
@@ -45,6 +47,7 @@ from hivegent.entries import (
     original_path_for_stem,
     stem_path_from_reference,
 )
+from hivegent.jobs import ChangesetCommitted, FeedReady, JobManager
 from hivegent.server.models import ChangesRequest, MoveDestination, WorkspacePath
 from hivegent.server.routes import documents as documents_routes
 from hivegent.store import Casebase
@@ -60,17 +63,17 @@ def _move(
     return Move(Location(src_store, src), Location(dst_store, dst))
 
 
-async def _apply(*operations: Operation[Location]) -> tuple[str, ...]:
+async def _apply(*operations: Operation[Location]) -> workspace.AppliedChangeset:
     return await workspace.apply_changeset(Changeset(operations))
 
 
 async def _move_one(
     src_store: Casebase, dst_store: Casebase, src: str, dst: str
-) -> tuple[str, ...]:
+) -> workspace.AppliedChangeset:
     return await _apply(_move(src_store, dst_store, src, dst))
 
 
-async def _delete_one(store: Casebase, path: str) -> tuple[str, ...]:
+async def _delete_one(store: Casebase, path: str) -> workspace.AppliedChangeset:
     return await _apply(Delete(Location(store, path)))
 
 
@@ -739,12 +742,37 @@ class TestChangesets:
                     "\\ No newline at end of file\n+C\n\\ No newline at end of file\n",
                 ),
             ),
-            moves=(
-                PathMove("~/a.md", "~/b.md", replaces=True),
-                PathMove("~/dir", "~/moved", is_dir=True),
+            paths=PathChanges(
+                moves=(
+                    PathMove("~/a.md", "~/b.md", replaces=True),
+                    PathMove("~/dir", "~/moved", is_dir=True),
+                ),
+                deletes=("~/b.md", "~/b.pdf"),
             ),
-            deletes=("~/b.md", "~/b.pdf"),
             mkdirs=("~/empty",),
+        )
+
+    async def test_applied_paths_reach_every_client_of_the_agent(
+        self,
+        user_store: Casebase,
+        layout: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The agent's gateway excludes no client, so the chat's own tab follows the
+        move to where it resolved, not to the folder it named, from one event."""
+        feed = JobManager()
+        monkeypatch.setattr(workspace_events, "manager", feed)
+        agent = workspace.Gateway((user_store,), "testuser")
+
+        async with aclosing(feed.subscribe("testuser", "chat-tab")) as events:
+            assert isinstance(await anext(events), FeedReady)
+            applied = await agent.apply(Changeset((Move("~/a.md", "~/dir"), Delete("~/b.md"))))
+            event = await asyncio.wait_for(anext(events), 1.0)
+
+        assert applied.paths.moves == (PathMove("~/a.md", "~/dir/a.md"),)
+        assert applied.paths.deletes == ("~/b.md",)
+        assert event == ChangesetCommitted(
+            scopes=("~",), moves=applied.paths.moves, deletes=applied.paths.deletes
         )
 
     async def test_a_failed_row_change_restores_every_file(
@@ -812,8 +840,13 @@ class TestChangesRoute:
             }
         )
 
-        await documents_routes.apply_changes(request, _USER)
+        applied = await documents_routes.apply_changes(request, _USER)
 
+        assert applied.moves == (
+            PathMove("~/a.md", "~/x.md"),
+            PathMove("~/dir", "~/moved", is_dir=True),
+        )
+        assert applied.deletes == ("~/b.md",)
         assert (layout / "x.md").read_text() == "a"
         assert (layout / "moved/c.md").read_text() == "dir/c"
         assert not (layout / "b.md").exists()

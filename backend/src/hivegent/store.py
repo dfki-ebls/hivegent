@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Self, cast, get_args
 
-from .config import sanitize_group_id, sanitize_user_id
+from .config import sanitize_group_id, sanitize_user_id, settings
 from .l10n import Localized
-from .tools.base import SearchPath, SearchPathFilterFunc
+from .tools.base import Gated, SearchPath, SearchPathFilterFunc
 from .tools.scope import PrefixScope
 
 __all__ = [
@@ -26,7 +26,6 @@ __all__ = [
     "CasebaseKind",
     "WorkspaceScope",
     "build_search_paths",
-    "route_path",
 ]
 
 CasebaseKind = Literal["user", "group"]
@@ -34,18 +33,13 @@ CasebaseKind = Literal["user", "group"]
 USER_PREFIX = "~"
 GROUP_PREFIX = "@"
 
+_GATED = Gated()
+
 
 def _invalid_path(path: str) -> Localized[str]:
     return Localized(
         en=f"Invalid workspace path: {path!r}",
         de=f"Ungültiger Pfad im Arbeitsbereich: „{path}“",
-    )
-
-
-def _no_workspace(path: str) -> Localized[str]:
-    return Localized(
-        en=f"No accessible workspace for {path!r}",
-        de=f"Kein zugänglicher Arbeitsbereich für „{path}“",
     )
 
 
@@ -113,6 +107,8 @@ class Casebase:
     Each casebase owns a workspace directory at
     ``<data_dir>/workspace/<store_key>/`` and rows in the global SQL
     database scoped by ``owner_user_id`` / ``owner_group_id``.
+    It is a :class:`~hivegent.workspace.operations.Root` of the changeset
+    gateway, the one whose changes carry rows, an index, and announcements.
     """
 
     kind: CasebaseKind
@@ -175,6 +171,26 @@ class Casebase:
         """
         return WorkspaceScope(self.id) if self.kind == "group" else WorkspaceScope()
 
+    @property
+    def path(self) -> Path:
+        """The workspace directory, without creating it, as a changeset root holds it."""
+        return self.workspace_path(settings.data_dir)
+
+    @property
+    def policy(self) -> Gated:
+        """How a change to it is asked about: gated, its ``.assets`` payloads reserved."""
+        return _GATED
+
+    @property
+    def quota(self) -> None:
+        """No cap on what it holds beyond the size of each file."""
+        return None
+
+    @property
+    def store(self) -> Self:
+        """Itself, the casebase whose rows, index, and announcements a change carries."""
+        return self
+
     @staticmethod
     def workspace_root(data_dir: Path) -> Path:
         """Return the root directory holding every casebase workspace."""
@@ -225,26 +241,3 @@ def build_search_paths(
         )
         for s in (store, *group_stores)
     )
-
-
-def route_path(stores: Sequence[Casebase], path: str) -> tuple[Casebase, str]:
-    """Split a canonical path into the store it names and the path local to it.
-
-    Every workspace operation takes the store and the path local to it, while a
-    tool is handed one canonical path (``~/notes.md``, ``@team/notes.md``) that
-    names both.  This routes the one back to the other — the inverse of what
-    :func:`build_search_paths` renders into tool output — so an operation
-    reaches whichever of *stores* the caller addressed instead of a single one
-    bound up front.
-
-    Raises:
-        ValueError: When *path* carries no scope prefix, or names a store
-            outside *stores*, which the caller may not reach.
-    """
-    scope, local = WorkspaceScope.parse(path)
-    store = next((s for s in stores if s.scope == scope), None)
-
-    if store is None:
-        raise ValueError(_no_workspace(path).current)
-
-    return store, local

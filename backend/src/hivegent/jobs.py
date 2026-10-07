@@ -7,12 +7,12 @@ manager runs it as an :class:`asyncio.Task`, tracks its lifecycle, and
 broadcasts every state change to subscribers (the SSE feed consumes
 these).
 
-The feed also carries :class:`ScopeChanged`, for work that already ran
-inline and so never was a job at all, so a client learns that a scope
-changed through the one channel it already watches instead of a second
-push mechanism invented per feature.  A subscription is tagged with the
-client it belongs to, which lets such a notification skip the very
-client whose request caused it — that one reads the result back itself.
+The feed also carries :class:`ScopeChanged` and :class:`ChangesetCommitted`,
+for work that already ran inline and so never was a job at all, so a client
+learns that a scope changed through the one channel it already watches
+instead of a second push mechanism invented per feature.  A subscription is
+tagged with the client it belongs to, which lets such a notification skip the
+very client whose request caused it — that one reads the result back itself.
 
 The registry is in-memory only: jobs do not survive a process restart.
 Each feature keeps its own durable state consistent when a job is
@@ -32,10 +32,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from .changes import PathChanges, PathMove
 from .config import settings
 from .l10n import Localized
 
 __all__ = [
+    "ChangesetCommitted",
     "FeedEvent",
     "FeedReady",
     "JobContext",
@@ -132,7 +134,21 @@ class ScopeChanged(BaseModel):
     scope: str
 
 
-type FeedEvent = JobView | FeedReady | ScopeChanged
+class ChangesetCommitted(BaseModel):
+    """One commit of the changeset gateway: the scopes it changed, and what it moved and deleted.
+
+    Sent once per commit, however many scopes it spans, so a client follows its
+    moves at once, and transient like :class:`ScopeChanged`.  The fields past
+    ``scopes`` are those of a :class:`~hivegent.changes.PathChanges`.
+    """
+
+    type: Literal["changeset-committed"] = "changeset-committed"
+    scopes: tuple[str, ...]
+    moves: tuple[PathMove, ...] = ()
+    deletes: tuple[str, ...] = ()
+
+
+type FeedEvent = JobView | FeedReady | ScopeChanged | ChangesetCommitted
 
 
 class _Job(JobView):
@@ -279,6 +295,22 @@ class JobManager:
         a second read of the same state.
         """
         self._broadcast(owner, ScopeChanged(scope=scope), exclude_client)
+
+    def notify_committed(
+        self,
+        owner: str,
+        scopes: tuple[str, ...],
+        changes: PathChanges,
+        *,
+        exclude_client: str | None = None,
+    ) -> None:
+        """Tell *owner*'s subscribers that one commit changed *scopes*, and how.
+
+        *exclude_client* is the client whose own request made the commit, which
+        learns of it from that request's response.
+        """
+        event = ChangesetCommitted(scopes=scopes, moves=changes.moves, deletes=changes.deletes)
+        self._broadcast(owner, event, exclude_client)
 
     async def _run(
         self, job: _Job, work: JobWork, on_settled: Callable[[], None] | None

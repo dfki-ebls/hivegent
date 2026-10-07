@@ -1,35 +1,27 @@
 """Tests for a conversation's `/tmp`, one folder per conversation outside every workspace."""
 
+import asyncio
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from threading import Barrier
 
 import pytest
 from fastapi import HTTPException
 from pydantic_monty import AsyncMonty
 
-from hivegent import staging, tmp
+from hivegent import staging
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import changeset_committer, program_paths
 from hivegent.auth import User
-from hivegent.changes import Changeset, ChangesetSummary, CreateDir, Delete, Move, Write
+from hivegent.changes import Changeset, ChangesetSummary, Delete, Move, Write
 from hivegent.config import settings
 from hivegent.mcp.tools import documents as mcp_documents
 from hivegent.mcp.tools import mutations as mcp_mutations
 from hivegent.server.routes import documents
 from hivegent.store import Casebase
-from hivegent.tmp import (
-    TMP_SCOPE,
-    plan_direct,
-    save_result,
-    sweep_tmp,
-    tmp_dir,
-    tmp_search_path,
-)
-from hivegent.tools.base import Direct, SearchPath, ToolRetry
+from hivegent.tmp import save_result, sweep_tmp, tmp_dir, tmp_root, tmp_search_path
+from hivegent.tools.base import ToolRetry
 from hivegent.tools.changeset import PendingChanges
 from hivegent.tools.documents import DocumentRead, ListDocumentsTool, ReadDocumentTool
 from hivegent.tools.grep import GrepTool
@@ -38,9 +30,13 @@ from hivegent.tools.mutations import write_changeset
 from hivegent.tools.python import RunPythonTool
 from hivegent.tools.table import QueryTableTool
 from hivegent.tools.workspace_os import ChangesetLimits
-from hivegent.workspace import Location, PlannedChangeset
+from hivegent.workspace import Gateway, Location, PlannedChangeset
 from hivegent.workspace import changeset as gateway
 from tests.helpers import LIMITS
+
+
+def _gateway(folder: Path) -> Gateway:
+    return Gateway((tmp_root(folder),))
 
 
 @pytest.mark.parametrize(
@@ -118,71 +114,69 @@ async def test_mcp_has_no_tmp(data_dir: Path) -> None:
         _ = write_changeset(mcp_mutations._paths(store), "/tmp/state.json", "x")
 
 
-def test_a_write_past_the_quota_is_refused_unless_it_frees_room(tmp_path: Path) -> None:
+async def test_a_write_past_the_quota_is_refused_unless_it_frees_room(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings.tmp, "max_bytes", 10)
     (tmp_path / "a.txt").write_text("x" * 8)
-    root = (SearchPath(path=tmp_path, scope=TMP_SCOPE, policy=Direct(10)),)
 
-    with pytest.raises(ToolRetry, match="over the 10 B"):
-        _ = plan_direct(root, Changeset((Write("/tmp/b.txt", "x" * 8),)))
+    with pytest.raises(HTTPException, match="over the 10 B"):
+        _ = await _gateway(tmp_path).plan(Changeset((Write("/tmp/b.txt", "x" * 8),)))
 
     assert not (tmp_path / "b.txt").exists()
 
-    _ = plan_direct(
-        root, Changeset((Delete("/tmp/a.txt"), Write("/tmp/b.txt", "y" * 8)))
-    ).apply()
+    _ = await _gateway(tmp_path).apply(
+        Changeset((Delete("/tmp/a.txt"), Write("/tmp/b.txt", "y" * 8)))
+    )
     assert [path.name for path in tmp_path.iterdir()] == ["b.txt"]
 
 
-def test_concurrent_spills_check_and_write_under_one_lock(
+async def test_concurrent_spills_check_and_write_under_one_lock(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
-    root = tmp_search_path(data_dir, "c1")
-    barrier = Barrier(2)
-    atomic_write = tmp.atomic_write
+    folder = tmp_dir(data_dir, "c1")
+    write = gateway._write_workspace_file
 
-    def slow_write(path: Path, data: bytes) -> None:
+    def slow_write(staging: Path, name: str, data: bytes) -> Path:
         time.sleep(0.02)
-        atomic_write(path, data)
 
-    def spill(index: int) -> str:
-        _ = barrier.wait(timeout=10)
+        return write(staging, name, data)
 
-        return save_result(root, f"result-{index}.txt", b"x" * 4_000)
+    monkeypatch.setattr(gateway, "_write_workspace_file", slow_write)
+    _ = await asyncio.gather(
+        *(save_result(folder, f"result-{index}.txt", "x" * 4_000) for index in range(2))
+    )
 
-    monkeypatch.setattr(tmp, "atomic_write", slow_write)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        _ = list(pool.map(spill, range(2)))
-
-    files = [path for path in root.path.rglob("*") if path.is_file()]
+    files = [path for path in folder.rglob("*") if path.is_file()]
     assert len(files) == 1
     assert sum(path.stat().st_size for path in files) == 4_000
 
 
-def test_spills_preserve_working_files_and_recheck_planned_write_quotas(
+async def test_spills_preserve_working_files_and_recheck_planned_write_quotas(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
-    root = tmp_search_path(data_dir, "c1")
-    (root.path / "results").mkdir(parents=True)
-    working = root.path / "results" / "computed.csv"
+    folder = tmp_dir(data_dir, "c1")
+    (folder / "results").mkdir(parents=True)
+    working = folder / "results" / "computed.csv"
     _ = working.write_bytes(b"x" * 1_000)
-    plan = plan_direct((root,), Changeset((Write("/tmp/state.txt", "y" * 2_000),)))
+    state = Changeset((Write("/tmp/state.txt", "y" * 2_000),))
+    _ = await _gateway(folder).plan(state)
 
-    first = save_result(root, "first.txt", b"a" * 4_000)
-    second = save_result(root, "second.txt", b"b" * 4_000)
+    first = await save_result(folder, "first.txt", "a" * 4_000)
+    second = await save_result(folder, "second.txt", "b" * 4_000)
 
     assert working.read_bytes() == b"x" * 1_000
     assert first == "/tmp/.tool-results/first.txt"
     assert second == "/tmp/.tool-results/second.txt"
-    assert not (root.path / ".tool-results" / "first.txt").exists()
-    assert (root.path / ".tool-results" / "second.txt").read_bytes() == b"b" * 4_000
+    assert not (folder / ".tool-results" / "first.txt").exists()
+    assert (folder / ".tool-results" / "second.txt").read_bytes() == b"b" * 4_000
 
-    with pytest.raises(ToolRetry, match="over the"):
-        _ = plan.apply()
+    with pytest.raises(HTTPException, match="over the"):
+        _ = await _gateway(folder).apply(state)
 
-    assert not (root.path / "state.txt").exists()
+    assert not (folder / "state.txt").exists()
 
 
 @pytest.mark.parametrize("operation", [
@@ -190,22 +184,22 @@ def test_spills_preserve_working_files_and_recheck_planned_write_quotas(
     Move("/tmp/.tool-results", "/tmp/moved"),
     Move("/tmp/state.txt", "/tmp/.tool-results/new.txt"),
 ])
-def test_ordinary_changes_cannot_modify_the_spill_cache(
+async def test_ordinary_changes_cannot_modify_the_spill_cache(
     data_dir: Path, operation: Write[str] | Move[str]
 ) -> None:
-    root = tmp_search_path(data_dir, "c1")
-    _ = save_result(root, "saved.txt", b"saved")
-    _ = (root.path / "state.txt").write_text("state")
+    folder = tmp_dir(data_dir, "c1")
+    _ = await save_result(folder, "saved.txt", "saved")
+    _ = (folder / "state.txt").write_text("state")
 
-    with pytest.raises(ToolRetry, match="can be read but not changed"):
-        _ = plan_direct((root,), Changeset((operation,)))
+    with pytest.raises(HTTPException, match="can be read but not changed"):
+        _ = await _gateway(folder).plan(Changeset((operation,)))
 
-    assert (root.path / ".tool-results" / "saved.txt").read_text() == "saved"
+    assert (folder / ".tool-results" / "saved.txt").read_text() == "saved"
 
 
 async def test_a_program_can_read_but_cannot_write_the_spill_cache(data_dir: Path) -> None:
     root = tmp_search_path(data_dir, "c1")
-    _ = save_result(root, "saved.txt", b"saved")
+    _ = await save_result(root.path, "saved.txt", "saved")
 
     async with AsyncMonty(min_processes=1) as pool:
         result = await RunPythonTool(
@@ -224,25 +218,31 @@ cached.read_text()
     assert (root.path / ".tool-results" / "saved.txt").read_text() == "saved"
 
 
-def test_direct_parent_validation_follows_deletions_and_moved_trees(tmp_path: Path) -> None:
-    (tmp_path / "blocker").write_text("file")
-    (tmp_path / "tree").mkdir()
-    (tmp_path / "tree" / "leaf").write_text("file")
-    root = (SearchPath(path=tmp_path, scope=TMP_SCOPE, policy=Direct(100)),)
-    change = Changeset((
-        Delete("/tmp/blocker"),
-        Move("/tmp/tree", "/tmp/blocker/tree"),
-        CreateDir("/tmp/blocker/tree/leaf/child"),
-    ))
+async def test_a_program_renames_within_tmp_without_rewriting(data_dir: Path) -> None:
+    """A directory and a binary move as they are, and a plain file may change its extension."""
+    deps = UserDeps("u", Casebase.for_user("u"), "read", "c1")
+    folder = tmp_dir(data_dir, "c1")
+    (folder / "plots").mkdir(parents=True)
+    (folder / "plots" / "a.png").write_bytes(b"\x89PNG\x00")
+    (folder / "old.bin").write_bytes(b"\x00\xff")
 
-    with pytest.raises(ToolRetry, match="is a file"):
-        plan_direct(root, change)
+    async with AsyncMonty(min_processes=1) as pool:
+        tool = RunPythonTool(
+            pool=pool,
+            paths=deps.search_paths(),
+            writable=program_paths(deps),
+            commit=changeset_committer(deps),
+            changeset_limits=LIMITS,
+        )
+        await tool(
+            "from pathlib import Path\n"
+            "Path('/tmp/plots').rename('/tmp/figures')\n"
+            "Path('/tmp/old.bin').rename('/tmp/figures/new.dat')\n"
+        )
 
-    assert (tmp_path / "blocker").is_file()
-    assert (tmp_path / "tree" / "leaf").is_file()
-
-    plan_direct(root, Changeset(change.operations[:-1])).apply()
-    assert (tmp_path / "blocker" / "tree" / "leaf").read_text() == "file"
+    assert (folder / "figures" / "a.png").read_bytes() == b"\x89PNG\x00"
+    assert (folder / "figures" / "new.dat").read_bytes() == b"\x00\xff"
+    assert sorted(path.name for path in folder.iterdir()) == ["figures"]
 
 
 async def test_a_program_writes_tmp_once_it_succeeds_and_stages_the_workspace(
@@ -250,7 +250,7 @@ async def test_a_program_writes_tmp_once_it_succeeds_and_stages_the_workspace(
 ) -> None:
     planned: list[Changeset[Location]] = []
 
-    async def plan(changeset: Changeset[Location]) -> PlannedChangeset:
+    async def plan(changeset: Changeset[Location], **_options: object) -> PlannedChangeset:
         planned.append(changeset)
 
         return PlannedChangeset(changeset, ChangesetSummary())
@@ -294,7 +294,8 @@ async def test_a_program_writes_tmp_once_it_succeeds_and_stages_the_workspace(
     assert await staging.load_staged("u", changeset.changeset_id) == Changeset(
         (Write("~/report.md", "run 2", "create"),)
     )
-    assert len(planned) == 1
+    # The run past the cap was planned too, and refused once its `/tmp` half applied.
+    assert len(planned) == 2
     assert not (deps.store.workspace_path(data_dir) / "report.md").exists()
 
 

@@ -19,16 +19,19 @@ A gated root's nodes are entries and directories:
 * A removed directory is one delete covering everything below it, and an
   empty directory the program created is created.
 
-A direct root's (``/tmp``) are plain files, since a rename there was recorded
-as a write and a removal: each is a delete, a new directory, or a whole write.
+A direct root's (``/tmp``) are plain files: a rename within it is a move,
+which carries a directory or a binary without rewriting it, a file renamed onto
+another one deletes that one, and every other node is a delete, a new
+directory, or a whole write.  A rename to or from a gated root was recorded as
+a write and a removal.
 
 Every gated operation carries the stat the file had when the program first
 touched it, so a version landing in between is refused at commit rather than
 overwritten.
 
-This module names no store and no folder: the agent layer splits the
-changeset by policy, writes the direct half, and plans, stages, or applies the
-gated half through callbacks, the way every other mutation tool reaches the
+This module names no store and no folder: the agent layer routes every item
+to its root, writes the direct ones, and plans, stages, or applies the gated
+ones through callbacks, the way every other mutation tool reaches the
 workspace.
 """
 
@@ -298,18 +301,41 @@ class _Stager:
                 self.operations.append(CreateDir(key))
 
 
-def _direct(key: str, node: Node) -> Operation[str] | None:
-    """A direct root's node as the plain file operation it stands for."""
-    match node:
-        case Deleted():
-            return Delete(key)
-        case Dir():
-            return CreateDir(key)
-        case Text():
-            return Write(key, node.content)
-        case Ref():
-            # A rename touching a direct root is recorded as a copy, never a Ref.
-            return None
+def _direct(fs: WorkspaceOS, nodes: dict[str, Node]) -> list[Operation[str]]:
+    """A direct root's nodes as the plain file operations they stand for.
+
+    A node a rename carried here is a move from the disk path it came from, and
+    every disk file the program removed or renamed another onto goes, unless a
+    rename carries it elsewhere.  Sources and deletes name the disk as it is,
+    so a file below a renamed directory is deleted where it lies now.
+    """
+    origins = {
+        key: node.origin
+        for key, node in nodes.items()
+        if isinstance(node, Ref | Text) and node.origin is not None
+    }
+    carried = set(origins.values())
+    operations: list[Operation[str]] = [Move(origin, key) for key, origin in origins.items()]
+
+    for key, node in nodes.items():
+        under = fs.lookup(key, below=True)
+
+        if (
+            (isinstance(node, Deleted) or key in origins)
+            and isinstance(under, Entry)
+            and under.canonical not in carried
+        ):
+            operations.append(Delete(under.canonical))
+
+        match node:
+            case Text():
+                operations.append(Write(key, node.content))
+            case Dir():
+                operations.append(CreateDir(key))
+            case Ref() | Deleted():
+                pass
+
+    return operations
 
 
 def stage_changes(fs: WorkspaceOS) -> Changeset[str] | None:
@@ -323,13 +349,10 @@ def stage_changes(fs: WorkspaceOS) -> Changeset[str] | None:
             naming every reason at once so one corrected run fixes them all.
     """
     gated: dict[str, Node] = {}
-    direct: list[Operation[str]] = []
+    direct: dict[str, Node] = {}
 
     for key, node in fs.nodes.items():
-        if not isinstance(fs.policy(key), Direct):
-            gated[key] = node
-        elif (op := _direct(key, node)) is not None:
-            direct.append(op)
+        (direct if isinstance(fs.policy(key), Direct) else gated)[key] = node
 
     stager = _Stager(fs, gated)
     stager.stage()
@@ -337,7 +360,7 @@ def stage_changes(fs: WorkspaceOS) -> Changeset[str] | None:
     if stager.refusals:
         raise ToolRetry("\n".join(stager.refusals))
 
-    operations = (*stager.operations, *direct)
+    operations = (*stager.operations, *_direct(fs, direct))
 
     return Changeset(operations) if operations else None
 

@@ -34,7 +34,7 @@ def mount(tmp_path: Path) -> WorkspaceOS:
     (tmp / "keep").mkdir(parents=True)
     (tmp / "draft.md").write_text("draft\n")
     root = SearchPath(path=workspace, scope=WorkspaceScope())
-    roots = (root, SearchPath(path=tmp, scope=TMP_SCOPE, policy=Direct(1_000)))
+    roots = (root, SearchPath(path=tmp, scope=TMP_SCOPE, policy=Direct()))
 
     return WorkspaceOS(
         paths=roots, inner=OSAccess([], environ={}), limits=LIMITS, writable=roots

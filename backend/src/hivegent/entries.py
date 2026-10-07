@@ -28,6 +28,7 @@ __all__ = [
     "is_inside_assets_dir",
     "is_projectable_original",
     "is_reserved_path",
+    "leads_with",
     "list_names",
     "original_path_for_stem",
     "path_key",
@@ -132,6 +133,22 @@ def path_key(path: str, *, folded: bool) -> str:
     path = normalize_unicode(path)
 
     return path.casefold() if folded else path
+
+
+def leads_with(root: Path, local: str, name: str | None) -> bool:
+    """Whether *local* is or lies in the folder *name* directly below *root*.
+
+    Compared the way the filesystem holding *root* compares names,
+    so a change cannot reach the folder by another case.
+    """
+    top = PurePosixPath(local).parts[:1]
+
+    if name is None or not top:
+        return False
+
+    folded = folds_case(root)
+
+    return path_key(top[0], folded=folded) == path_key(name, folded=folded)
 
 
 type Listdir = Callable[[Path], Sequence[str]]

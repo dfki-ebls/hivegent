@@ -23,7 +23,7 @@ from hivegent.changes import (
 )
 from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.multimodal import BinaryContentMode
-from hivegent.store import WorkspaceScope
+from hivegent.store import Casebase, WorkspaceScope
 from hivegent.tools import binary, workspace_os
 from hivegent.tools.base import (
     Batch,
@@ -58,6 +58,7 @@ from hivegent.tools.mutations import (
 )
 from hivegent.tools.python import PythonResult, RunPythonTool
 from hivegent.types import DocumentFilter
+from hivegent.workspace import Gateway
 from tests.helpers import LIMITS, single
 
 
@@ -1229,6 +1230,23 @@ class TestMoveDocumentsTool:
 
         with pytest.raises(ToolRetry, match="Destination already exists"):
             await tool([DocumentMove("old.md", "new.md")])
+
+
+@pytest.mark.parametrize("excluded", ["docs/deep/secret.md", "docs/deep/"])
+async def test_a_directory_move_cannot_carry_excluded_entries(
+    data_dir: Path, excluded: str
+) -> None:
+    store = Casebase.for_user("u")
+    secret = store.workspace_path(data_dir) / "docs" / "deep" / "secret.md"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("secret")
+    hidden = DocumentFilter(excluded=frozenset({excluded}))
+    gateway = Gateway((store,), filters={store.store_key: hidden})
+
+    with pytest.raises(HTTPException, match="contains inaccessible entries") as error:
+        _ = await gateway.plan(Changeset((Move("~/docs", "~/archive"),)))
+
+    assert "secret" not in str(error.value.detail)
 
 
 class TestDeleteDocumentsTool:

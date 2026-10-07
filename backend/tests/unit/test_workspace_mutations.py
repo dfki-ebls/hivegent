@@ -37,7 +37,7 @@ from hivegent.workspace import assets as workspace_assets
 
 
 async def _single(operation: Operation[Location]) -> str:
-    (report,) = await workspace.apply_changeset(Changeset((operation,)))
+    (report,) = (await workspace.apply_changeset(Changeset((operation,)))).reports
 
     return report
 

@@ -357,19 +357,23 @@ async def _save(
 
     The structured data is saved where there is any, since it is whole where
     the text may be a rendering of part of it, and the text otherwise.  It is
-    serialized on the worker thread that writes it.  ``None`` for a result the
-    folder cannot hold, which then keeps only what the preview shows.
+    serialized and sized on a worker thread.  ``None`` for a result the folder
+    cannot hold, which then keeps only what the preview shows.
     """
     structured = data is not None
     name = _file_name(call, "json" if structured else "txt")
 
-    def write() -> tuple[str, int]:
-        content = to_json(data) if structured else text.encode()
+    def serialize() -> tuple[str, int]:
+        if not structured:
+            return text, len(text.encode())
 
-        return save_result(root, name, content), len(content)
+        encoded = to_json(data)
+
+        return encoded.decode(), len(encoded)
 
     try:
-        path, size = await asyncio.to_thread(write)
+        content, size = await asyncio.to_thread(serialize)
+        path = await save_result(root.path, name, content)
     except ToolRetry:
         return None
 

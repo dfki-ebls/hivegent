@@ -776,9 +776,10 @@ class SandboxSettings(BaseModel):
     and turning it off leaves the stub in the prompt as guidance.
 
     The ``max_changeset_*`` limits bound what one program may stage as
-    workspace changes: paths it creates, changes, moves, or deletes, how many
-    of those are deletions, and the characters it writes in total.  A program
-    that passes one is told so where it stands, as an exception it can handle.
+    workspace changes: the operations, one for each path it creates, changes,
+    moves, or deletes, how many of those are deletions, and the characters it
+    writes in total.  A program that passes one is told so where it stands,
+    as an exception it can handle.
     ``staged_changeset_ttl_hours`` is how long a staged changeset waits for
     ``apply_changes`` before the background sweep, which runs with the
     ``/tmp`` one, discards it.

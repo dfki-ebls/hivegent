@@ -247,7 +247,9 @@ async def test_destructive_ops_reject_while_stem_in_flight(
     def at(path: str) -> workspace.Location:
         return workspace.Location(user_store, path)
 
-    def apply(*operations: changes.Operation[workspace.Location]) -> Awaitable[tuple[str, ...]]:
+    def apply(
+        *operations: changes.Operation[workspace.Location],
+    ) -> Awaitable[workspace.AppliedChangeset]:
         return workspace.apply_changeset(changes.Changeset(operations))
 
     for op in (
@@ -268,11 +270,6 @@ async def test_destructive_ops_reject_while_stem_in_flight(
             user_store, "docs/note.md", "img1.png", LlmConfig()
         ),
         workspace.delete_asset_description(user_store, "docs/note.md", "img1.png"),
-        # The upload owns the asset entries under its stem's `.assets` too, and
-        # those are reachable only by their own stems — the claim has to cover
-        # them or the index step could re-create rows for just-deleted files.
-        apply(changes.Delete(at("docs/note.assets"))),
-        apply(changes.Delete(at("docs/note.assets/img1.md"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await op

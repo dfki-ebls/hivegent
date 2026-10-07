@@ -2,14 +2,17 @@
 
 Every surface that mutates without submitting a job has to notify, or clients
 other than the one that asked stay stale.  The two helpers cover the two shapes
-a caller comes in as: holding the store it wrote to, or holding the canonical
-paths it changed, which is how the changeset gateway announces every commit.
+a caller comes in as: holding the store it wrote to, or holding the stores one
+commit of the changeset gateway changed and what it moved and deleted.
 """
 
-from .jobs import manager
-from .store import Casebase, WorkspaceScope
+from collections.abc import Iterable
 
-__all__ = ["announce_paths", "notify_workspace_change"]
+from .changes import PathChanges
+from .jobs import manager
+from .store import Casebase
+
+__all__ = ["announce_commit", "notify_workspace_change"]
 
 
 def notify_workspace_change(
@@ -25,16 +28,22 @@ def notify_workspace_change(
     )
 
 
-def announce_paths(
-    owner: str, *paths: str, exclude_client: str | None = None
+def announce_commit(
+    owner: str,
+    stores: Iterable[Casebase],
+    changes: PathChanges,
+    *,
+    exclude_client: str | None = None,
 ) -> None:
-    """Tell *owner*'s clients that the workspaces *paths* name have changed.
+    """Tell *owner*'s clients once that a commit changed *stores*, and what it moved and deleted.
 
-    Deduplicated by workspace, so a change whose paths share one announces
-    once and one crossing between two announces both.
+    One event however many workspaces the commit spans, since a client follows
+    its moves at once, and none for a commit that changed no workspace.
 
-    *exclude_client* is the client that asked for the change and so re-reads
-    the workspace on its own.
+    *exclude_client* is the client that asked for the change and so learns
+    what changed from its own response.
     """
-    for prefix in {WorkspaceScope.parse(path)[0].prefix for path in paths}:
-        manager.notify_scope_changed(owner, prefix, exclude_client=exclude_client)
+    scopes = tuple(sorted({store.scope.prefix for store in stores}))
+
+    if scopes:
+        manager.notify_committed(owner, scopes, changes, exclude_client=exclude_client)

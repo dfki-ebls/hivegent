@@ -23,6 +23,7 @@ from ..humanize import format_bytes
 from ..l10n import Localized
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON
+from .operations import Root
 
 __all__ = [
     "DIRECTORY_PATH_REQUIRED",
@@ -86,8 +87,11 @@ def file_too_large(limit: int) -> Localized[str]:
 
 logger = logging.getLogger(__name__)
 
+_STAGE_PREFIX = ".stage-"
+"""How a change's staging directory beside the roots it changes is named."""
 
-def _shown(store: Casebase, local: str) -> str:
+
+def _shown(root: Root, local: str) -> str:
     """The canonical path a message names, not the one local to the store.
 
     Every string this package hands back is read by a model or a client that
@@ -97,7 +101,7 @@ def _shown(store: Casebase, local: str) -> str:
     Here rather than beside any one mutation because the rule is the package's,
     not one module's: every message that names a path renders it through this.
     """
-    return store.scope.render(local)
+    return root.scope.render(local)
 
 
 def _write_workspace_file(workspace_dir: Path, filepath: str, content: bytes) -> Path:
@@ -226,7 +230,7 @@ def _journaled() -> Generator[tuple[Path, _Journal]]:
     root = Casebase.workspace_root(settings.data_dir)
     root.mkdir(parents=True, exist_ok=True)
 
-    with TemporaryDirectory(prefix=".stage-", dir=root) as tmp:
+    with TemporaryDirectory(prefix=_STAGE_PREFIX, dir=root) as tmp:
         journal = _Journal(Path(tmp) / "backup")
 
         try:

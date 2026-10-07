@@ -6,10 +6,13 @@ import pytest
 
 from hivegent import entries
 from hivegent.agents.common import UserDeps
+from hivegent.changes import Changeset, Delete
 from hivegent.server.common import parse_document_scope
-from hivegent.store import Casebase, WorkspaceScope, route_path
+from hivegent.store import Casebase, WorkspaceScope
 from hivegent.tmp import tmp_dir
 from hivegent.tools.base import SearchPath, resolve_accessible_file
+from hivegent.types import DocumentFilter
+from hivegent.workspace.operations import Location, route
 
 
 def _deps(conversation_id: str | None) -> UserDeps:
@@ -41,18 +44,22 @@ class TestWorkspaceScope:
             WorkspaceScope.parse("reports/q1.md")
 
 
-class TestRoutePath:
-    """Routing a canonical path to the store it names."""
+class TestRoute:
+    """Routing a canonical path to the root it names."""
 
-    _stores = (Casebase.for_user("u"), Casebase.for_group("team"))
+    _roots = (Casebase.for_user("u"), Casebase.for_group("team"))
 
-    def test_routes_to_each_addressed_store(self) -> None:
-        assert route_path(self._stores, "~/notes.md") == (self._stores[0], "notes.md")
-        assert route_path(self._stores, "@team/a.md") == (self._stores[1], "a.md")
+    def test_routes_to_each_addressed_root(self) -> None:
+        routed = route(Changeset((Delete("~/notes.md"), Delete("@team/a.md"))), self._roots)
 
-    def test_rejects_a_store_outside_the_given_set(self) -> None:
+        assert routed.locations == (
+            Location(self._roots[0], "notes.md"),
+            Location(self._roots[1], "a.md"),
+        )
+
+    def test_rejects_a_root_outside_the_given_set(self) -> None:
         with pytest.raises(ValueError, match="No accessible workspace"):
-            route_path(self._stores, "@other/notes.md")
+            route(Changeset((Delete("@other/notes.md"),)), self._roots)
 
 
 class TestConversationTmp:
@@ -89,7 +96,8 @@ class TestCaseFolding:
         """A hidden `secret.md` is not reachable as `SECRET.md` where case folds."""
         monkeypatch.setattr(entries, "folds_case", lambda _directory: True)
         (tmp_path / "secret.md").write_text("x")
-        paths = (SearchPath(tmp_path, WorkspaceScope(), lambda local: local != "secret.md"),)
+        hidden = DocumentFilter(excluded=frozenset({"secret.md"}))
+        paths = (SearchPath(tmp_path, WorkspaceScope(), hidden),)
 
         assert resolve_accessible_file(paths, "~/secret.md") is None
         assert resolve_accessible_file(paths, "~/SECRET.md") is None

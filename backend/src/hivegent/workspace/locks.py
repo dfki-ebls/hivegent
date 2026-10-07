@@ -11,17 +11,20 @@ import threading
 from collections.abc import AsyncGenerator, Generator
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
+from weakref import WeakValueDictionary
 
 from fastapi import HTTPException
 
 from ..entries import entry_owns, stem_path_from_reference
 from ..l10n import Localized
 from ..store import Casebase
+from .operations import Root
 
 __all__ = [
     "inflight_stems",
     "store_lock",
 ]
+
 
 def _entry_inflight(path: str) -> Localized[str]:
     return Localized(
@@ -39,16 +42,11 @@ def _scope_inflight(path: str) -> Localized[str]:
 
 @dataclass(slots=True)
 class _StoreState:
-    """All cross-task coordination state for one store, created on first use.
+    """The in-flight state of one store, created on first use.
 
-    Co-locating the lock with the two in-flight trackers keeps them addressed by
-    a single registry entry, so they can never drift apart, and gives the
-    per-store coordination state one obvious home.
+    Co-locating the two trackers keeps them addressed by a single registry
+    entry, so they can never drift apart.
     """
-
-    # Mutations on the store serialise on this lock; it binds to the running
-    # event loop on first acquisition.
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # Stems with an upload currently in flight.  Inventory reads walk the
     # workspace without the lock, so they consult this set to hide half-written
@@ -65,11 +63,10 @@ class _StoreState:
     store_claims: int = 0
 
 
-# Per-store coordination state, created lazily and never removed (each entry is
+# Per-store in-flight state, created lazily and never removed (each entry is
 # tiny and reusing it across a store's lifetime is a feature).  ``threading.Lock``
-# guards the registry because ``asyncio.Lock`` binds to the event loop only on
-# first acquisition, while the dict itself may be reached from more than one
-# loop or thread over the process lifetime.
+# guards the registry, since it may be reached from more than one loop or
+# thread over the process lifetime.
 _states: dict[str, _StoreState] = {}
 _states_guard = threading.Lock()
 
@@ -85,9 +82,25 @@ def _state_for(store: Casebase) -> _StoreState:
     return state
 
 
+# Every root's lock, by its `store_key`, held only while a change holds or
+# awaits it, so a conversation's folder leaves no lock behind.  Only the event
+# loop reaches it, and an unheld lock has no state worth keeping.
+_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+
+
+def _lock_of(root: Root) -> asyncio.Lock:
+    """The lock guarding changes to *root*, whichever kind it is."""
+    lock = _locks.get(root.store_key)
+
+    if lock is None:
+        lock = _locks[root.store_key] = asyncio.Lock()
+
+    return lock
+
+
 def store_lock(store: Casebase) -> asyncio.Lock:
     """Return the asyncio lock guarding mutations on *store*."""
-    return _state_for(store).lock
+    return _lock_of(store)
 
 
 def inflight_stems(store: Casebase) -> frozenset[str]:
@@ -165,18 +178,18 @@ def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
 
 
 @asynccontextmanager
-async def _locked(*stores: Casebase) -> AsyncGenerator[None]:
-    """Hold the locks of every store in *stores* for the block.
+async def _locked(*roots: Root) -> AsyncGenerator[None]:
+    """Hold the locks of every root in *roots* for the block.
 
     Taken in a stable ``store_key`` order, so two changes spanning the same
-    casebases in opposite directions (a move from the personal workspace into
+    roots in opposite directions (a move from the personal workspace into
     a group and one back) can never deadlock.
     """
-    unique = {store.store_key: store for store in stores}
+    unique = {root.store_key: root for root in roots}
 
     async with AsyncExitStack() as stack:
         for key in sorted(unique):
-            await stack.enter_async_context(store_lock(unique[key]))
+            await stack.enter_async_context(_lock_of(unique[key]))
 
         yield
 

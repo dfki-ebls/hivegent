@@ -6,8 +6,10 @@ it: a workspace's through the changeset gateway and its approval, ``/tmp``'s
 straight into the conversation's folder.
 """
 
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -41,6 +43,7 @@ from hivegent.changes import (
     ChangesetSummary,
     FileDiff,
     Move,
+    PathChanges,
     PathMove,
     TextEdit,
     Write,
@@ -49,7 +52,7 @@ from hivegent.config import settings
 from hivegent.db import documents as db_documents
 from hivegent.store import Casebase
 from hivegent.tmp import tmp_dir
-from hivegent.tools.base import Direct, ToolRetry
+from hivegent.tools.base import Direct, PathFilter, ToolRetry
 from hivegent.tools.changeset import AppliedChanges, PendingChanges
 from hivegent.tools.mutations import DocumentMove
 from hivegent.types import DocumentFilter
@@ -74,13 +77,28 @@ def deps(data_dir: Path) -> UserDeps:
 
 @pytest.fixture()
 def routed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    """Record the ``(store_key, local_path)`` each applied changeset is routed to."""
+    """Record the ``(store_key, local_path)`` each workspace changeset is routed to.
+
+    A changeset reaching ``/tmp`` is applied for real.
+    """
     calls: list[tuple[str, str]] = []
+    apply = gateway.apply_changeset
 
-    async def _apply(changeset: Changeset[Location], **_kw: object) -> tuple[str, ...]:
-        calls.extend((loc.store.store_key, loc.path) for loc in changeset.locations)
+    async def _apply(
+        changeset: Changeset[Location],
+        *,
+        owner: str | None = None,
+        filters: Mapping[str, PathFilter] = MappingProxyType({}),
+        host: bool = False,
+    ) -> gateway.AppliedChangeset:
+        if any(loc.root.store is None for loc in changeset.locations):
+            return await apply(changeset, owner=owner, filters=filters, host=host)
 
-        return ("written",)
+        calls.extend((loc.root.store_key, loc.path) for loc in changeset.locations)
+
+        return gateway.AppliedChangeset(
+            tuple("written" for _ in changeset.operations), PathChanges()
+        )
 
     monkeypatch.setattr(gateway, "apply_changeset", _apply)
 
@@ -196,7 +214,7 @@ def test_run_python_paths_are_lazy_and_end_with_the_conversation_s_tmp(
         assert not path.filter_func("other.md")
 
     assert tmp.prefixed("") == "/tmp"
-    assert tmp.policy == Direct(settings.tmp.max_bytes, reserved=".tool-results")
+    assert tmp.policy == Direct(reserved=".tool-results")
     assert tool.environ["TMPDIR"] == "/tmp"
     assert len(tool.writable) == 3
 
@@ -394,12 +412,14 @@ async def test_a_batch_of_moves_is_one_approval_of_the_planner_s_summary(
     assert _asked(exc) == {
         "creates": [],
         "updates": [],
-        "moves": [
-            move("~/a.md", "~/notes/a.md"),
-            move("~/b.md", "@team/b.md"),
-            move("~/old", "~/archive", is_dir=True),
-        ],
-        "deletes": [],
+        "paths": {
+            "moves": [
+                move("~/a.md", "~/notes/a.md"),
+                move("~/b.md", "@team/b.md"),
+                move("~/old", "~/archive", is_dir=True),
+            ],
+            "deletes": [],
+        },
         "mkdirs": [],
     }
 
@@ -421,13 +441,13 @@ async def test_a_batch_of_deletions_is_one_approval(
             _context(deps, "interactive"), paths=["~/a.md", "~/b.md"]
         )
 
-    assert _asked(exc)["deletes"] == ["~/a.md", "~/b.md"]
+    assert _asked(exc)["paths"]["deletes"] == ["~/a.md", "~/b.md"]
 
 
 _STAGED = Changeset((Move("~/a.md", "~/notes/a.md"), Write("~/notes/a.md", "A")))
 _SUMMARY = ChangesetSummary(
     updates=(FileDiff("~/notes/a.md", "-a\n+A\n"),),
-    moves=(PathMove("~/a.md", "~/notes/a.md"),),
+    paths=PathChanges(moves=(PathMove("~/a.md", "~/notes/a.md"),)),
 )
 
 
@@ -436,7 +456,7 @@ def planned(monkeypatch: pytest.MonkeyPatch) -> list[Changeset[Location]]:
     """Plan every changeset as valid with :data:`_SUMMARY`, recording each."""
     calls: list[Changeset[Location]] = []
 
-    async def _plan(changeset: Changeset[Location]) -> PlannedChangeset:
+    async def _plan(changeset: Changeset[Location], **_options: object) -> PlannedChangeset:
         calls.append(changeset)
 
         return PlannedChangeset(changeset, _SUMMARY)
@@ -462,7 +482,7 @@ async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
     assert await staging.load_staged("u", staged.changeset_id) == _STAGED
     assert await staging.load_staged("someone-else", staged.changeset_id) is None
     assert (folder / "state.json").read_text() == "{}"
-    assert applied == AppliedChanges(("written",))
+    assert applied == AppliedChanges(("written", "written"))
     assert len(planned) == 1
     assert routed == [
         ("user:u", "a.md"),
@@ -491,15 +511,17 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
     assert _asked(exc) == {
         "creates": [],
         "updates": [{"path": "~/notes/a.md", "diff": "-a\n+A\n"}],
-        "moves": [
-            {
-                "source": "~/a.md",
-                "destination": "~/notes/a.md",
-                "is_dir": False,
-                "replaces": False,
-            }
-        ],
-        "deletes": [],
+        "paths": {
+            "moves": [
+                {
+                    "source": "~/a.md",
+                    "destination": "~/notes/a.md",
+                    "is_dir": False,
+                    "replaces": False,
+                }
+            ],
+            "deletes": [],
+        },
         "mkdirs": [],
     }
 
@@ -507,7 +529,7 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
     await validate_apply_changes(approved, changeset_id=changeset_id)
     result = await _apply_changes(deps)(changeset_id)
 
-    assert result.data == "written"
+    assert result.data == "written\nwritten"
     assert len(planned) == 1
     assert routed == [("user:u", "a.md"), ("user:u", "notes/a.md"), ("user:u", "notes/a.md")]
 
@@ -518,7 +540,7 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
 async def test_a_stale_changeset_asks_for_a_new_run(
     deps: UserDeps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _stale(_changeset: Changeset[Location]) -> PlannedChangeset:
+    async def _stale(_changeset: Changeset[Location], **_options: object) -> PlannedChangeset:
         raise HTTPException(status_code=409, detail="'~/a.md' changed")
 
     monkeypatch.setattr(gateway, "plan_changeset", _stale)

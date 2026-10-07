@@ -55,7 +55,13 @@ from .assets import (
     generate_asset_description,
     update_asset_description,
 )
-from .changeset import Gateway, PlannedChangeset, apply_changeset, plan_changeset
+from .changeset import (
+    AppliedChangeset,
+    Gateway,
+    PlannedChangeset,
+    apply_changeset,
+    plan_changeset,
+)
 from .collections import process_collection, validate_collection_archive
 from .directories import (
     delete_all,
@@ -70,6 +76,7 @@ from .operations import Location, route
 from .uploads import reconvert, replace_original, upload
 
 __all__ = [
+    "AppliedChangeset",
     "Gateway",
     "Location",
     "NormalizeReport",

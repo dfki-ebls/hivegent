@@ -13,9 +13,11 @@ import pytest
 from pydantic_monty import OSAccess
 
 from hivegent import entries
+from hivegent.changes import Changeset, Write
 from hivegent.store import WorkspaceScope
 from hivegent.tmp import TMP_SCOPE
 from hivegent.tools.base import Direct, SearchPath
+from hivegent.tools.changeset import stage_changes
 from hivegent.tools.workspace_os import (
     WORKSPACE_MOUNT,
     ChangesetLimits,
@@ -23,6 +25,7 @@ from hivegent.tools.workspace_os import (
     Ref,
     WorkspaceOS,
 )
+from hivegent.types import DocumentFilter
 
 
 @pytest.fixture()
@@ -43,9 +46,9 @@ def _mount(workspace: Path, *, writable: bool = False) -> WorkspaceOS:
     scoped = SearchPath(
         path=workspace,
         scope=WorkspaceScope(),
-        filter_func=lambda local: local != "hidden.md",
+        filter_func=DocumentFilter(excluded=frozenset({"hidden.md"})),
     )
-    tmp = SearchPath(path=workspace.with_name("tmp"), scope=TMP_SCOPE, policy=Direct(100))
+    tmp = SearchPath(path=workspace.with_name("tmp"), scope=TMP_SCOPE, policy=Direct())
 
     return WorkspaceOS(
         paths=(scoped, tmp),
@@ -277,6 +280,32 @@ def test_limits_hold_across_the_run(workspace: Path) -> None:
 
     with pytest.raises(PermissionError, match="paths"):
         mount.path_unlink(_virtual("reports/q1.md"))
+
+
+def test_a_new_directory_charges_one_operation(workspace: Path) -> None:
+    mount = _mount(workspace, writable=True)
+    mount.limits = ChangesetLimits(max_operations=1, max_deletes=1, max_chars=100)
+    mount.path_mkdir(_virtual("drafts"), parents=False, exist_ok=False)
+    mount.path_mkdir(_virtual("drafts"), parents=False, exist_ok=True)
+
+    with pytest.raises(PermissionError, match="paths"):
+        mount.path_mkdir(_virtual("other"), parents=False, exist_ok=False)
+
+
+def test_a_write_into_new_directories_charges_only_the_write(workspace: Path) -> None:
+    mount = _mount(workspace, writable=True)
+    mount.limits = ChangesetLimits(max_operations=1, max_deletes=1, max_chars=100)
+    _ = mount.path_write_text(_virtual("drafts/deep/new.txt"), "new")
+
+    assert stage_changes(mount) == Changeset((Write("~/drafts/deep/new.txt", "new", "create"),))
+
+
+def test_tmp_directories_are_not_charged(workspace: Path) -> None:
+    mount = _mount(workspace, writable=True)
+    mount.limits = ChangesetLimits(max_operations=0, max_deletes=0, max_chars=100)
+    mount.path_mkdir(PurePosixPath("/tmp/a/b"), parents=True, exist_ok=False)
+
+    assert mount.path_is_dir(PurePosixPath("/tmp/a/b"))
 
 
 def test_a_path_leading_with_no_workspace_names_the_roots(workspace: Path) -> None:
