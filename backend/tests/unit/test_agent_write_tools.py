@@ -43,9 +43,9 @@ from hivegent.changes import (
     ChangesetSummary,
     FileDiff,
     Move,
-    PathChanges,
     PathMove,
     TextEdit,
+    WorkspaceChanged,
     Write,
 )
 from hivegent.config import settings
@@ -97,7 +97,7 @@ def routed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
         calls.extend((loc.root.store_key, loc.path) for loc in changeset.locations)
 
         return gateway.AppliedChangeset(
-            tuple("written" for _ in changeset.operations), PathChanges()
+            tuple("written" for _ in changeset.operations), WorkspaceChanged(("~",))
         )
 
     monkeypatch.setattr(gateway, "apply_changeset", _apply)
@@ -412,14 +412,12 @@ async def test_a_batch_of_moves_is_one_approval_of_the_planner_s_summary(
     assert _asked(exc) == {
         "creates": [],
         "updates": [],
-        "paths": {
-            "moves": [
-                move("~/a.md", "~/notes/a.md"),
-                move("~/b.md", "@team/b.md"),
-                move("~/old", "~/archive", is_dir=True),
-            ],
-            "deletes": [],
-        },
+        "moves": [
+            move("~/a.md", "~/notes/a.md"),
+            move("~/b.md", "@team/b.md"),
+            move("~/old", "~/archive", is_dir=True),
+        ],
+        "deletes": [],
         "mkdirs": [],
     }
 
@@ -441,13 +439,13 @@ async def test_a_batch_of_deletions_is_one_approval(
             _context(deps, "interactive"), paths=["~/a.md", "~/b.md"]
         )
 
-    assert _asked(exc)["paths"]["deletes"] == ["~/a.md", "~/b.md"]
+    assert _asked(exc)["deletes"] == ["~/a.md", "~/b.md"]
 
 
 _STAGED = Changeset((Move("~/a.md", "~/notes/a.md"), Write("~/notes/a.md", "A")))
 _SUMMARY = ChangesetSummary(
     updates=(FileDiff("~/notes/a.md", "-a\n+A\n"),),
-    paths=PathChanges(moves=(PathMove("~/a.md", "~/notes/a.md"),)),
+    moves=(PathMove("~/a.md", "~/notes/a.md"),),
 )
 
 
@@ -511,17 +509,15 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
     assert _asked(exc) == {
         "creates": [],
         "updates": [{"path": "~/notes/a.md", "diff": "-a\n+A\n"}],
-        "paths": {
-            "moves": [
-                {
-                    "source": "~/a.md",
-                    "destination": "~/notes/a.md",
-                    "is_dir": False,
-                    "replaces": False,
-                }
-            ],
-            "deletes": [],
-        },
+        "moves": [
+            {
+                "source": "~/a.md",
+                "destination": "~/notes/a.md",
+                "is_dir": False,
+                "replaces": False,
+            }
+        ],
+        "deletes": [],
         "mkdirs": [],
     }
 

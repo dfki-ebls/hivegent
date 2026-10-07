@@ -10,7 +10,6 @@ import {
   getDirectories,
   rechunkDocument,
   reconvertDocument,
-  splitScopePath,
 } from "@/lib/api";
 import type {
   DirectoryTreeResponse,
@@ -24,8 +23,8 @@ import {
   awaitJobSettled,
   onFeedReady,
   onJobSettled,
-  onScopeChanged,
-  publishCommitted,
+  onWorkspaceChanged,
+  publishWorkspaceChanged,
   useJobsStore,
 } from "@/stores/jobs-store";
 
@@ -123,14 +122,13 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
    *
    * The mutating spinners and any error live on the source scope (where `paths`
    * are shown). A batch is one request that lands whole or not at all, so its
-   * single error stands for every path. `alsoRefresh` names further scopes to
-   * reload on completion, such as the destination of a cross-workspace move,
-   * which gains the entries the source loses. */
+   * single error stands for every path. The spinners stay until the scope's
+   * latest read lands, the one the change itself started through
+   * {@link refreshIfLoaded}, or a fresh one. */
   const withMutating = async (
     scope: string,
     paths: readonly string[],
     operation: () => Promise<unknown>,
-    alsoRefresh: readonly string[] = [],
   ): Promise<void> => {
     patch(scope, (s) => ({ mutatingPaths: new Set([...s.mutatingPaths, ...paths]), error: null }));
     try {
@@ -139,38 +137,28 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       patch(scope, { error: errorMessage(err) });
     } finally {
       // Refresh even after a failure so a stale view (e.g. an entry the
-      // backend no longer knows about) converges with the server state. The
-      // scopes are separate workspaces, so their walks run concurrently.
-      const scopes = new Set([scope, ...alsoRefresh]);
-      await Promise.all([...scopes].map((s) => silentRefresh(s).catch(() => {})));
+      // backend no longer knows about) converges with the server state.
+      await (followUp[scope] ?? active[scope] ?? silentRefresh(scope)).catch(() => {});
       patch(scope, (s) => ({
         mutatingPaths: new Set([...s.mutatingPaths].filter((p) => !paths.includes(p))),
       }));
     }
   };
 
-  // Apply workspace changes as one request, refreshing every scope they name.
-  // Once the request succeeded, and before that refresh, what the backend says
-  // moved and went is published for every path this tab keeps to follow, since
-  // its own feed skips the change and what was sent is not what applied, and
-  // `onApplied` runs.
+  // Apply workspace changes as one request. Once it succeeded, the backend's
+  // `WorkspaceChanged` is published for this tab, since its own feed skips the
+  // change and what was sent is not what applied, so the scopes it names
+  // refresh and the paths this tab keeps follow, and `onApplied` runs.
   const change = (
     scope: string,
     paths: readonly string[],
     operations: ChangeOperation[],
     onApplied?: () => void,
   ): Promise<void> =>
-    withMutating(
-      scope,
-      paths,
-      async () => {
-        publishCommitted(await applyChanges(operations));
-        onApplied?.();
-      },
-      operations
-        .flatMap((op) => (op.kind === "move" ? [op.source, op.destination] : [op.path]))
-        .map((path) => splitScopePath(path).scope),
-    );
+    withMutating(scope, paths, async () => {
+      publishWorkspaceChanged(await applyChanges(operations));
+      onApplied?.();
+    });
 
   // Submit a background job: the tray shows its progress and the job-settle
   // handler refreshes the job's scope, so the store only has to record the new
@@ -302,8 +290,8 @@ onJobSettled((job) => {
 });
 
 // The same need for a mutation that ran inline and so never was a job.
-onScopeChanged(refreshIfLoaded);
+onWorkspaceChanged(({ scopes }) => scopes.forEach(refreshIfLoaded));
 
-// Scope-change events are transient, so reconcile loaded scopes after every
+// Workspace-change events are transient, so reconcile loaded scopes after every
 // feed handshake to cover mutations that occurred while it was disconnected.
 onFeedReady(() => Object.keys(useDocumentsStore.getState().byScope).forEach(refreshIfLoaded));

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { subscribeJobs as subscribeJobsFn } from "@/lib/api";
-import type { ChangesetCommitted } from "@/lib/types";
+import type { WorkspaceChanged } from "@/lib/types";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
@@ -20,13 +20,13 @@ const move = (source: string, destination: string, is_dir = false) => ({
 });
 
 describe("the document filter and the feed", () => {
-  it("follows a commit spanning two scopes at once", async () => {
+  it("follows a workspace change spanning two scopes at once", async () => {
     useDocumentFilterStore.setState({
       included: ["~/docs/"],
       excluded: ["~/a.md", "@team/a.md", "~/docs/x.md", "~/docs-old/x.md", "~/gone/y.md"],
     });
-    const commit: ChangesetCommitted = {
-      type: "changeset-committed",
+    const changed: WorkspaceChanged = {
+      type: "workspace-changed",
       scopes: ["@team", "~"],
       moves: [
         move("~/a.md", "@team/a.md"),
@@ -35,8 +35,8 @@ describe("the document filter and the feed", () => {
       ],
       deletes: ["~/gone"],
     };
-    vi.mocked(subscribeJobs).mockImplementation(async (_onJob, _onReady, _onScope, onCommitted) => {
-      onCommitted(commit);
+    vi.mocked(subscribeJobs).mockImplementation(async (_onJob, _onReady, onWorkspaceChanged) => {
+      onWorkspaceChanged(changed);
       await new Promise<never>(() => {});
     });
 

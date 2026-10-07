@@ -1,8 +1,8 @@
 import { create } from "zustand";
 
-import type { PathChanges } from "@/lib/types";
+import type { WorkspaceChanged } from "@/lib/types";
 import { followEach, followPath } from "@/lib/utils";
-import { onCommitted } from "@/stores/jobs-store";
+import { onWorkspaceChanged } from "@/stores/jobs-store";
 
 /**
  * Per-conversation document selection for the chat agent. Entries are
@@ -24,11 +24,11 @@ interface DocumentFilterState {
   /** Drop the entry from both lists (badge dismissal). */
   remove: (path: string) => void;
   /**
-   * Follow what one commit moved and deleted: drop entries at or below a
-   * deleted path, then carry those at or below a moved source over to its
-   * destination, keeping the state when nothing changed.
+   * Follow what one workspace change moved and deleted: drop entries at or
+   * below a deleted path, then carry those at or below a moved source over to
+   * its destination, keeping the state when nothing changed.
    */
-  follow: (changes: PathChanges) => void;
+  follow: (changed: WorkspaceChanged) => void;
   /** Reset both lists when leaving the current conversation. */
   clear: () => void;
 }
@@ -54,10 +54,10 @@ export const useDocumentFilterStore = create<DocumentFilterState>((set) => ({
     ),
   remove: (path) =>
     set((s) => ({ included: without(s.included, path), excluded: without(s.excluded, path) })),
-  follow: (changes) => {
-    if (changes.moves.length === 0 && changes.deletes.length === 0) return;
+  follow: (changed) => {
+    if (changed.moves.length === 0 && changed.deletes.length === 0) return;
 
-    const follow = (path: string) => followPath(path, changes);
+    const follow = (path: string) => followPath(path, changed);
 
     set((s) => {
       const included = followEach(s.included, follow);
@@ -69,7 +69,7 @@ export const useDocumentFilterStore = create<DocumentFilterState>((set) => ({
   clear: () => set({ included: [], excluded: [] }),
 }));
 
-// Every commit of the changeset gateway says what it moved and deleted,
-// whoever made it (this tab, another one, the agent, an MCP client), and an
-// entry left at a stale path would silently stop hiding its document from the agent.
-onCommitted((changes) => useDocumentFilterStore.getState().follow(changes));
+// Every workspace change says what it moved and deleted, whoever made it (this
+// tab, another one, the agent, an MCP client), and an entry left at a stale
+// path would silently stop hiding its document from the agent.
+onWorkspaceChanged((changed) => useDocumentFilterStore.getState().follow(changed));

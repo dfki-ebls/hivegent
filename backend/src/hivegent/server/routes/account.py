@@ -6,12 +6,13 @@ from fastapi import APIRouter, Depends, status
 
 from ... import workspace
 from ...auth import User, get_current_user
+from ...changes import WorkspaceChanged
 from ...db.conversations import conversation_ids
 from ...db.memory import clear_memory
 from ...db.users import delete_user
 from ...tmp import clear_tmp, remove_tmp
 from ...types import TmpClearedResponse
-from ...workspace_events import notify_workspace_change
+from ...workspace_events import announce_workspace_changed
 from ..common import ClientId, user_store
 
 __all__ = ["router"]
@@ -59,4 +60,6 @@ async def delete_all_user_data(
     await workspace.delete_all(store)
     await remove_tmp(await conversation_ids(user.id))
     await delete_user(user.id)
-    notify_workspace_change(user.id, store, client)
+    announce_workspace_changed(
+        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
+    )

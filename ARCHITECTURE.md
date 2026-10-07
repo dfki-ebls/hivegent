@@ -54,7 +54,7 @@ flowchart LR
 - Each user or group casebase lives under `data/workspace/<store_key>/`, keyed by the same `user:<id>` / `group:<id>` token that scopes SQL rows.
 - Each chat conversation owns a working folder under `data/tmp/<conversation_id>/`, outside every workspace, which its agent run addresses as `/tmp` and writes without approval, and where a tool result too large to show whole is saved under `/tmp/.tool-results/`.
 - Every write, edit, move, delete, and new directory, from a route, a tool, or a program, is one changeset that one planner and executor (`workspace.changeset`) commits all or nothing over its roots, each answering for its own rules: a casebase workspace carries rows, indexing, announcements, and the approval a mode asks for item by item, while a conversation's `/tmp` is a folder written directly within its size cap.
-- The planner refuses a directory move carrying what the caller's document filter hides, and each commit is announced once on the feed as `changeset-committed`, with its scopes and what it moved and deleted, which the SPA follows through one commit channel together with its own responses.
+- The planner refuses a directory move carrying what the caller's document filter hides, and each commit is announced once on the feed as `workspace-changed`, with its scopes and what it moved and deleted, the same record the change routes return and every other inline mutation announces, which the SPA refreshes and follows through one channel together with its own responses.
 - A FastMCP server is mounted at `/mcp`, and external MCP servers can be connected.
 
 ## Integration

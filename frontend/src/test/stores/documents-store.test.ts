@@ -21,7 +21,7 @@ vi.mock("@/stores/jobs-store", async (importOriginal) => ({
 }));
 
 import { applyChanges, getDirectories } from "@/lib/api";
-import type { DirectoryTreeResponse, PathChanges } from "@/lib/types";
+import type { DirectoryTreeResponse, WorkspaceChanged } from "@/lib/types";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useDocumentsStore } from "@/stores/documents-store";
 
@@ -44,7 +44,12 @@ const treeWith = (filename: string): DirectoryTreeResponse => ({
   total_directories: 1,
 });
 
-const nothingChanged: PathChanges = { moves: [], deletes: [] };
+const nothingMoved: WorkspaceChanged = {
+  type: "workspace-changed",
+  scopes: ["~"],
+  moves: [],
+  deletes: [],
+};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -105,7 +110,7 @@ describe("useDocumentsStore changes", () => {
     useDocumentsStore.setState({ byScope: {} });
     vi.clearAllMocks();
     vi.mocked(getDirectories).mockResolvedValue(treeWith("a.md"));
-    vi.mocked(applyChanges).mockResolvedValue(nothingChanged);
+    vi.mocked(applyChanges).mockResolvedValue(nothingMoved);
   });
 
   it("shows the new directory before the tree refresh lands", async () => {
@@ -127,7 +132,11 @@ describe("useDocumentsStore changes", () => {
     expect(applyChanges).toHaveBeenCalledExactlyOnceWith([{ kind: "mkdir", path: "~/reports" }]);
   });
 
-  it("sends a cross-workspace move as one request and refreshes both scopes", async () => {
+  it("sends a cross-workspace move as one request and refreshes each scope it names once", async () => {
+    await Promise.all(["~", "@team"].map((scope) => useDocumentsStore.getState().refresh(scope)));
+    vi.mocked(getDirectories).mockClear();
+    vi.mocked(applyChanges).mockResolvedValueOnce({ ...nothingMoved, scopes: ["@team", "~"] });
+
     await useDocumentsStore.getState().move("~", "@team", [
       { source: "a.md", destination: "b.md" },
       { source: "docs", destination: "docs" },
@@ -138,7 +147,7 @@ describe("useDocumentsStore changes", () => {
       { kind: "move", source: "~/docs", destination: "@team/docs" },
     ]);
     const scopes = vi.mocked(getDirectories).mock.calls.map((call) => call[0]);
-    expect(scopes).toEqual(expect.arrayContaining(["~", "@team"]));
+    expect(scopes.toSorted()).toEqual(["@team", "~"]);
     expect(useDocumentsStore.getState().byScope["~"].error).toBeNull();
   });
 
@@ -160,6 +169,7 @@ describe("useDocumentsStore changes", () => {
   it("publishes the moves the server applied, not the ones it was sent", async () => {
     useDocumentFilterStore.setState({ excluded: ["~/a.md", "~/b.md"] });
     vi.mocked(applyChanges).mockResolvedValueOnce({
+      ...nothingMoved,
       moves: [
         { source: "~/a.md", destination: "~/archive/a.md", is_dir: false, replaces: false },
         { source: "~/a.pdf", destination: "~/archive/a.pdf", is_dir: false, replaces: false },

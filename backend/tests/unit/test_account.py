@@ -6,12 +6,12 @@ from unittest.mock import Mock
 import pytest
 
 from hivegent.auth import User
+from hivegent.changes import WorkspaceChanged
 from hivegent.server.routes import account, conversations
-from hivegent.store import Casebase
 from hivegent.tmp import tmp_dir
 
 
-async def test_delete_all_user_data_notifies_other_clients(
+async def test_delete_all_user_data_announces_to_other_clients(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A successful personal workspace reset announces its changed scope."""
@@ -22,15 +22,17 @@ async def test_delete_all_user_data_notifies_other_clients(
     async def no_conversations(*_args: object) -> set[str]:
         return set()
 
-    notify = Mock()
+    announce = Mock()
     monkeypatch.setattr(account.workspace, "delete_all", noop)
     monkeypatch.setattr(account, "conversation_ids", no_conversations)
     monkeypatch.setattr(account, "delete_user", noop)
-    monkeypatch.setattr(account, "notify_workspace_change", notify)
+    monkeypatch.setattr(account, "announce_workspace_changed", announce)
 
     await account.delete_all_user_data(User(id="owner"), "acting-tab")
 
-    notify.assert_called_once_with("owner", Casebase.for_user("owner"), "acting-tab")
+    announce.assert_called_once_with(
+        "owner", WorkspaceChanged(("~",)), exclude_client="acting-tab"
+    )
 
 
 async def test_tmp_folders_go_by_the_conversation_ids_the_database_names(

@@ -42,7 +42,7 @@ interface ScopeDialogState {
   editable: boolean;
 }
 
-/** The open document where a commit moved it, closed once deleted or moved out of the scope. */
+/** The open document where a workspace change moved it, closed once deleted or moved out of the scope. */
 function followDialog(
   dialog: ScopeDialogState | null,
   follow: FollowLocal,

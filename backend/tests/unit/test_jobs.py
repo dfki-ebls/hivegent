@@ -5,7 +5,8 @@ from contextlib import aclosing
 
 import pytest
 
-from hivegent.jobs import FeedReady, JobContext, JobManager, JobView, ScopeChanged
+from hivegent.changes import WorkspaceChanged
+from hivegent.jobs import FeedReady, JobContext, JobManager, JobView
 from hivegent.l10n import Localized
 from hivegent.server.operations.processing import (
     run_bulk_document_job,
@@ -162,20 +163,21 @@ def test_summarize_failed_files_groups_by_reason() -> None:
     )
 
 
-async def test_scope_change_reaches_the_feed_without_becoming_a_job() -> None:
+async def test_workspace_change_reaches_the_feed_without_becoming_a_job() -> None:
     manager = JobManager(max_concurrency=1)
+    changed = WorkspaceChanged(("@team",))
 
     async with aclosing(manager.subscribe("u1")) as feed:
         assert isinstance(await anext(feed), FeedReady)
-        manager.notify_scope_changed("u1", "@team")
+        manager.notify_workspace_changed("u1", changed)
         event = await asyncio.wait_for(anext(feed), 1.0)
 
-    assert event == ScopeChanged(scope="@team")
+    assert event == changed
     # Nothing to track or replay: a later subscriber sees only its own seed.
     assert manager.list_jobs("u1") == []
 
 
-async def test_scope_change_skips_the_client_that_caused_it() -> None:
+async def test_workspace_change_skips_the_client_that_caused_it() -> None:
     """The acting tab re-reads on its own; the user's other tabs need telling."""
     manager = JobManager()
 
@@ -185,10 +187,11 @@ async def test_scope_change_skips_the_client_that_caused_it() -> None:
     ):
         assert isinstance(await anext(acting), FeedReady)
         assert isinstance(await anext(other), FeedReady)
-        manager.notify_scope_changed("u1", "~", exclude_client="tab-a")
+        personal, team = WorkspaceChanged(("~",)), WorkspaceChanged(("@team",))
+        manager.notify_workspace_changed("u1", personal, exclude_client="tab-a")
 
-        assert await asyncio.wait_for(anext(other), 1.0) == ScopeChanged(scope="~")
+        assert await asyncio.wait_for(anext(other), 1.0) == personal
         # Only the excluded tab was skipped, so its next event is the following
         # notification rather than the one it caused.
-        manager.notify_scope_changed("u1", "@team")
-        assert await asyncio.wait_for(anext(acting), 1.0) == ScopeChanged(scope="@team")
+        manager.notify_workspace_changed("u1", team)
+        assert await asyncio.wait_for(anext(acting), 1.0) == team

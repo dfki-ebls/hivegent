@@ -23,6 +23,7 @@ from sqlalchemy import delete
 
 from ... import workspace
 from ...auth import require_admin
+from ...changes import WorkspaceChanged
 from ...config import settings
 from ...db.application_settings import write_maintenance_enabled
 from ...db.documents import delete_all_documents
@@ -44,7 +45,7 @@ from ...types import (
     AdminResetResponse,
     AdminUserInfo,
 )
-from ...workspace_events import notify_workspace_change
+from ...workspace_events import announce_workspace_changed
 from ..maintenance import is_enabled, set_enabled
 
 __all__ = ["router"]
@@ -255,7 +256,7 @@ async def admin_delete_user_data(user_id: str) -> None:
     await delete_user(store.id)
     # The wiped user is never the caller here, so every one of their tabs needs
     # telling — none of them made this request.
-    notify_workspace_change(store.id, store)
+    announce_workspace_changed(store.id, WorkspaceChanged((store.scope.prefix,)))
 
 
 @router.delete("/groups/{group_id}/data", status_code=status.HTTP_204_NO_CONTENT)

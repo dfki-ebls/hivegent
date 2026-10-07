@@ -7,10 +7,10 @@ manager runs it as an :class:`asyncio.Task`, tracks its lifecycle, and
 broadcasts every state change to subscribers (the SSE feed consumes
 these).
 
-The feed also carries :class:`ScopeChanged` and :class:`ChangesetCommitted`,
-for work that already ran inline and so never was a job at all, so a client
-learns that a scope changed through the one channel it already watches
-instead of a second push mechanism invented per feature.  A subscription is
+The feed also carries :class:`~hivegent.changes.WorkspaceChanged`, for work
+that already ran inline and so never was a job at all, so a client learns
+that a scope changed through the one channel it already watches instead of a
+second push mechanism invented per feature.  A subscription is
 tagged with the client it belongs to, which lets such a notification skip the
 very client whose request caused it — that one reads the result back itself.
 
@@ -32,12 +32,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from .changes import PathChanges, PathMove
+from .changes import WorkspaceChanged
 from .config import settings
 from .l10n import Localized
 
 __all__ = [
-    "ChangesetCommitted",
     "FeedEvent",
     "FeedReady",
     "JobContext",
@@ -46,7 +45,6 @@ __all__ = [
     "JobStatus",
     "JobView",
     "JobWork",
-    "ScopeChanged",
     "manager",
 ]
 
@@ -122,33 +120,7 @@ class FeedReady(BaseModel):
     type: Literal["ready"] = "ready"
 
 
-class ScopeChanged(BaseModel):
-    """A scope changed through work that ran inline, outside any job.
-
-    Nothing to track, cancel, or render, so it goes straight to the live
-    subscribers and is never retained: a reconnecting client re-reads the
-    scopes it holds, so nothing missed while disconnected is lost.
-    """
-
-    type: Literal["scope-changed"] = "scope-changed"
-    scope: str
-
-
-class ChangesetCommitted(BaseModel):
-    """One commit of the changeset gateway: the scopes it changed, and what it moved and deleted.
-
-    Sent once per commit, however many scopes it spans, so a client follows its
-    moves at once, and transient like :class:`ScopeChanged`.  The fields past
-    ``scopes`` are those of a :class:`~hivegent.changes.PathChanges`.
-    """
-
-    type: Literal["changeset-committed"] = "changeset-committed"
-    scopes: tuple[str, ...]
-    moves: tuple[PathMove, ...] = ()
-    deletes: tuple[str, ...] = ()
-
-
-type FeedEvent = JobView | FeedReady | ScopeChanged | ChangesetCommitted
+type FeedEvent = JobView | FeedReady | WorkspaceChanged
 
 
 class _Job(JobView):
@@ -285,32 +257,17 @@ class JobManager:
         self._publish(job)
         return job.view()
 
-    def notify_scope_changed(
-        self, owner: str, scope: str, *, exclude_client: str | None = None
+    def notify_workspace_changed(
+        self, owner: str, changed: WorkspaceChanged, *, exclude_client: str | None = None
     ) -> None:
-        """Tell *owner*'s subscribers that *scope* changed.
+        """Tell *owner*'s subscribers how the workspaces changed.
 
-        *exclude_client* is the client whose own request made the change: it
-        re-reads the scope as part of that request, so echoing to it would buy
-        a second read of the same state.
+        Transient: a reconnecting client re-reads the scopes it holds, so
+        nothing missed while disconnected is lost.  *exclude_client* is the
+        client whose own request made the change, which learns of it from that
+        request's response.
         """
-        self._broadcast(owner, ScopeChanged(scope=scope), exclude_client)
-
-    def notify_committed(
-        self,
-        owner: str,
-        scopes: tuple[str, ...],
-        changes: PathChanges,
-        *,
-        exclude_client: str | None = None,
-    ) -> None:
-        """Tell *owner*'s subscribers that one commit changed *scopes*, and how.
-
-        *exclude_client* is the client whose own request made the commit, which
-        learns of it from that request's response.
-        """
-        event = ChangesetCommitted(scopes=scopes, moves=changes.moves, deletes=changes.deletes)
-        self._broadcast(owner, event, exclude_client)
+        self._broadcast(owner, changed, exclude_client)
 
     async def _run(
         self, job: _Job, work: JobWork, on_settled: Callable[[], None] | None

@@ -26,7 +26,6 @@ import {
   AssetListResponseSchema,
   type BackendSettings,
   BackendSettingsSchema,
-  type ChangesetCommitted,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
   type ChunkingPipeline,
@@ -49,8 +48,6 @@ import {
   type JobView,
   JobViewSchema,
   type LlmConfig,
-  type PathChanges,
-  PathChangesSchema,
   type PipelineConfigInfo,
   PipelineConfigInfoSchema,
   type TmpClearedResponse,
@@ -64,6 +61,8 @@ import {
   TranscriptionResponseSchema,
   type TransparencyDetectionResponse,
   TransparencyDetectionResponseSchema,
+  type WorkspaceChanged,
+  WorkspaceChangedSchema,
   type PipelineSpec,
 } from "@/lib/types";
 
@@ -949,8 +948,9 @@ export async function cancelJob(id: string): Promise<void> {
 }
 
 /**
- * Subscribe to the caller's job feed, invoking `onJob` for every snapshot and
- * `onReady` once the initial replay of current jobs is complete, until the
+ * Subscribe to the caller's job feed, invoking `onJob` for every snapshot,
+ * `onReady` once the initial replay of current jobs is complete, and
+ * `onWorkspaceChanged` for every change that never was a job, until the
  * connection ends or `signal` aborts. The feed seeds the current jobs on
  * connect (ended by the ready marker), so a reconnect re-converges on live
  * state while letting the caller tell the seed apart from later transitions.
@@ -958,8 +958,7 @@ export async function cancelJob(id: string): Promise<void> {
 export async function subscribeJobs(
   onJob: (job: JobView) => void,
   onReady: () => void,
-  onScopeChanged: (scope: string) => void,
-  onCommitted: (event: ChangesetCommitted) => void,
+  onWorkspaceChanged: (changed: WorkspaceChanged) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await checkedResponse(`${API_BASE_URL}/api/jobs/events`, "jobFeed", {
@@ -972,8 +971,7 @@ export async function subscribeJobs(
   await readSseEvents(res, FeedEventSchema, (event) => {
     if (!("type" in event)) onJob(event);
     else if (event.type === "ready") onReady();
-    else if (event.type === "scope-changed") onScopeChanged(event.scope);
-    else onCommitted(event);
+    else onWorkspaceChanged(event);
     return undefined;
   });
 }
@@ -1020,14 +1018,15 @@ export type ChangeOperation =
 /**
  * Move, delete, and create documents and directories as one changeset. All of
  * them land or none does, and a refusal rejects with the message naming its path.
- * Resolves with what moved and went as the backend resolved it, which can
- * differ from what was sent (a move into an existing folder, an entry's original).
+ * Resolves with the scopes it changed and what moved and went as the backend
+ * resolved it, which can differ from what was sent (a move into an existing
+ * folder, an entry's original).
  */
-export async function applyChanges(operations: ChangeOperation[]): Promise<PathChanges> {
+export async function applyChanges(operations: ChangeOperation[]): Promise<WorkspaceChanged> {
   return requestJson(
     `${API_BASE_URL}/api/changes`,
     "applyChanges",
-    PathChangesSchema,
+    WorkspaceChangedSchema,
     jsonRequest("POST", { operations }),
   );
 }

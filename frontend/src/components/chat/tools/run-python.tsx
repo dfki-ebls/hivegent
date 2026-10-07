@@ -163,7 +163,7 @@ function Program({ code, scriptPath }: { code?: string; scriptPath?: string }) {
   return <p className="text-muted-foreground">{t(($) => $.noProgram)}</p>;
 }
 
-function Changes({ changeset }: { changeset: ChangesetOutcome }) {
+function ChangesetOutcomeView({ changeset }: { changeset: ChangesetOutcome }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   if (changeset.status === "applied") {
@@ -223,7 +223,7 @@ function Output({ result }: { result: PythonResult }) {
       {!result.stdout && result.result === null && (
         <p className="text-muted-foreground">{t(($) => $.noOutput)}</p>
       )}
-      {result.changeset && <Changes changeset={result.changeset} />}
+      {result.changeset && <ChangesetOutcomeView changeset={result.changeset} />}
       {result.calls.length > 0 && <HostCalls calls={result.calls} />}
     </ToolResult>
   );

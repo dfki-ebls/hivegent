@@ -1,5 +1,5 @@
 import { i18n } from "@/i18n";
-import type { DirectoryEntry, DocumentInfo, PathChanges } from "@/lib/types";
+import type { DirectoryEntry, DocumentInfo, WorkspaceChanged } from "@/lib/types";
 
 export { cn, type ClassValue } from "cn";
 
@@ -37,11 +37,14 @@ export function below(path: string, root: string): string | null {
 }
 
 /**
- * Where the canonical *path* is once *changes* applied: carried to the
+ * Where the canonical *path* is once *changed* applied: carried to the
  * destination of the move whose source holds it, or null when a delete took it.
- * Every source and delete names the state before the commit, so all apply at once.
+ * Every source and delete names the state before the change, so all apply at once.
  */
-export function followPath(path: string, { moves, deletes }: PathChanges): string | null {
+export function followPath(
+  path: string,
+  { moves, deletes }: Pick<WorkspaceChanged, "moves" | "deletes">,
+): string | null {
   if (deletes.some((root) => below(path, root) !== null)) return null;
 
   for (const { source, destination } of moves) {

@@ -24,7 +24,7 @@ from starlette.responses import FileResponse, Response
 
 from ... import workspace
 from ...auth import User, get_current_user
-from ...changes import Changeset, PathChanges, Write
+from ...changes import Changeset, WorkspaceChanged, Write
 from ...chunkers.base import DocumentMetadata
 from ...config import settings
 from ...db.conversations import conversation_exists
@@ -50,7 +50,7 @@ from ...types import (
 )
 from ...workspace.operations import Location
 from ...workspace.paths import document_not_found, file_too_large
-from ...workspace_events import notify_workspace_change
+from ...workspace_events import announce_workspace_changed
 from ..common import (
     ClientId,
     parse_pipeline_spec,
@@ -409,7 +409,9 @@ async def delete_all_documents(
     """Delete all documents, chunks, and originals in a workspace."""
     store, _ = resolve_workspace_path(user, scope, write=True)
     await workspace.delete_all(store)
-    notify_workspace_change(user.id, store, client)
+    announce_workspace_changed(
+        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
+    )
 
 
 @router.post("/documents/rechunk/bulk")
@@ -560,7 +562,9 @@ async def patch_asset_description(
     entry = await workspace.update_asset_description(
         store, safe, request.asset_name, request.content
     )
-    notify_workspace_change(user.id, store, client)
+    announce_workspace_changed(
+        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
+    )
     return entry
 
 
@@ -577,7 +581,9 @@ async def generate_asset_description(
     entry = await workspace.generate_asset_description(
         store, safe, request.asset_name, llm
     )
-    notify_workspace_change(user.id, store, client)
+    announce_workspace_changed(
+        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
+    )
     return entry
 
 
@@ -591,7 +597,9 @@ async def delete_asset_description(
     """Delete an asset's companion .md description, keeping the asset itself."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
     entry = await workspace.delete_asset_description(store, safe, asset_name)
-    notify_workspace_change(user.id, store, client)
+    announce_workspace_changed(
+        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
+    )
     return entry
 
 
@@ -670,11 +678,12 @@ async def _apply(
     user: User,
     client: str | None,
     operations: Iterable[MoveOperation | DeleteOperation | CreateDirOperation],
-) -> PathChanges:
+) -> WorkspaceChanged:
     """Resolve every path with write access and apply *operations* as one changeset.
 
-    Returns what moved and went as the gateway resolved it, which the asking
-    client follows instead of what it sent, since its own feed skips the change.
+    Returns how the workspaces changed as the gateway resolved it, which the
+    asking client refreshes and follows instead of what it sent, since its own
+    feed skips the change.
     """
 
     def at(path: str) -> Location:
@@ -683,7 +692,7 @@ async def _apply(
     changeset = Changeset(tuple(op.operation(at) for op in operations))
     applied = await workspace.apply_changeset(changeset, owner=user.id, exclude_client=client)
 
-    return applied.paths
+    return applied.changed
 
 
 @router.post("/changes")
@@ -691,7 +700,7 @@ async def apply_changes(
     request: ChangesRequest,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> PathChanges:
+) -> WorkspaceChanged:
     """Move, delete, and create documents and directories as one changeset.
 
     Every path is resolved with write access, so a move between workspaces is
@@ -709,7 +718,7 @@ async def move_document(
     request: MoveDestination,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> PathChanges:
+) -> WorkspaceChanged:
     """Move or rename one document, a shortcut for one move in ``POST /changes``."""
     move = MoveOperation(kind="move", source=filepath, destination=request.destination)
     return await _apply(user, client, [move])
@@ -720,7 +729,7 @@ async def delete_document(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> PathChanges:
+) -> WorkspaceChanged:
     """Delete one document, a shortcut for one entry delete in ``POST /changes``."""
     delete = DeleteOperation(kind="delete", path=filepath, expect="entry")
     return await _apply(user, client, [delete])
@@ -731,7 +740,7 @@ async def create_directory(
     request: WorkspacePath,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> PathChanges:
+) -> WorkspaceChanged:
     """Create one directory, a shortcut for one mkdir in ``POST /changes``."""
     return await _apply(user, client, [CreateDirOperation(kind="mkdir", path=request.path)])
 
@@ -741,7 +750,7 @@ async def move_directory(
     request: MovePaths,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> PathChanges:
+) -> WorkspaceChanged:
     """Move or rename one directory, a shortcut for one move in ``POST /changes``."""
     move = MoveOperation(kind="move", source=request.source, destination=request.destination)
     return await _apply(user, client, [move])
@@ -752,7 +761,7 @@ async def delete_directory(
     request: WorkspacePath,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
-) -> PathChanges:
+) -> WorkspaceChanged:
     """Delete one directory with everything in it.
 
     A shortcut for one directory delete in ``POST /changes``.

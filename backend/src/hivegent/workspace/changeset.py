@@ -84,9 +84,10 @@ workspace change is put to a person.
    to the *owner* the caller names, with the workspaces it changed and the
    paths it moved and deleted.
 
-It returns one report per item next to those paths, a
-:class:`~hivegent.changes.PathChanges` read off the resolved items under the
-locks, so the caller and the announcement hold the same record.  A failure in
+It returns one report per item next to a
+:class:`~hivegent.changes.WorkspaceChanged` with those workspaces and paths,
+read off the resolved items under the locks, so the caller and the
+announcement hold the same record.  A failure in
 the last step leaves the new files in place without their chunks, which a null
 ``content_digest`` marks for the startup reconcile, and raises.
 """
@@ -121,8 +122,8 @@ from ..changes import (
     FileDiff,
     Move,
     Operation,
-    PathChanges,
     PathMove,
+    WorkspaceChanged,
     Write,
     capped_diff,
 )
@@ -155,7 +156,7 @@ from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..tools.base import PathFilter
 from ..types import PipelineSpec
-from ..workspace_events import announce_commit
+from ..workspace_events import announce_workspace_changed
 from .commit import (
     _DOCUMENT_EXISTS,
     _entry_paths,
@@ -874,11 +875,13 @@ def _settle(
     operations: list[Operation[Location]],
     sources: _Sources,
     rows: Mapping[tuple[Casebase, str], EntryMetadata],
-) -> tuple[list[_Resolved], PathChanges]:
+    scopes: tuple[str, ...],
+) -> tuple[list[_Resolved], WorkspaceChanged]:
     """Resolve every item from its located source and rows, sources first.
 
-    Returns the items with the workspace paths they move and delete, read off
-    the disk in the same pass, before anything moves.
+    Returns the items with how they change the workspaces of *scopes*, the
+    paths they move and delete read off the disk in the same pass, before
+    anything moves.
     """
     units: dict[int, _Unit] = {}
 
@@ -926,7 +929,9 @@ def _settle(
     _admit(plan, resolved)
     indexed = any(item.indexed for item in resolved)
 
-    return resolved, _path_changes(resolved, plan) if indexed else PathChanges()
+    changed = _workspace_changed(resolved, plan, scopes) if indexed else WorkspaceChanged(scopes)
+
+    return resolved, changed
 
 
 def _admit(plan: _Plan, resolved: Sequence[_Resolved]) -> None:
@@ -973,9 +978,18 @@ def _admit(plan: _Plan, resolved: Sequence[_Resolved]) -> None:
 
 async def _resolve_all(
     changeset: Changeset[Location], filters: Mapping[str, PathFilter], *, host: bool
-) -> tuple[list[_Resolved], _Plan, PathChanges]:
+) -> tuple[list[_Resolved], _Plan, WorkspaceChanged]:
     """Resolve every item: the disk in worker threads, the rows in between in one query."""
     plan = _Plan(filters=filters, host=host)
+    scopes = tuple(
+        sorted(
+            {
+                store.scope.prefix
+                for location in changeset.locations
+                if (store := location.root.store) is not None
+            }
+        )
+    )
     operations = list(changeset.operations)
     sources = await asyncio.to_thread(_locate_sources, plan, operations)
     plan.check_inflight()
@@ -984,10 +998,12 @@ async def _resolve_all(
         for location, is_dir in sources.values()
         if (store := location.root.store) is not None and not is_dir
     )
-    resolved, paths = await asyncio.to_thread(_settle, plan, operations, sources, rows)
+    resolved, changed = await asyncio.to_thread(
+        _settle, plan, operations, sources, rows, scopes
+    )
     plan.check_inflight()
 
-    return resolved, plan, paths
+    return resolved, plan, changed
 
 
 def _shown_files(unit: _Unit) -> tuple[str, ...]:
@@ -1007,8 +1023,10 @@ def _shown_files(unit: _Unit) -> tuple[str, ...]:
     ) or (entry.description_path,)
 
 
-def _path_changes(resolved: Sequence[_Resolved], plan: _Plan) -> PathChanges:
-    """The workspace paths *resolved* moves and deletes, before any of them changed.
+def _workspace_changed(
+    resolved: Sequence[_Resolved], plan: _Plan, scopes: tuple[str, ...]
+) -> WorkspaceChanged:
+    """How *resolved* changes *scopes*, what it moves and deletes named before anything changed.
 
     Blocking.  What an approval shows and what a client follows, so the files
     of a root without a store are left out of both.
@@ -1047,11 +1065,11 @@ def _path_changes(resolved: Sequence[_Resolved], plan: _Plan) -> PathChanges:
             case _:
                 pass
 
-    return PathChanges(tuple(moves), tuple(deletes))
+    return WorkspaceChanged(scopes, tuple(moves), tuple(deletes))
 
 
-def _summarize(resolved: Sequence[_Resolved], paths: PathChanges) -> ChangesetSummary:
-    """What *resolved*, which moves and deletes *paths*, does as a person approving it reads it.
+def _summarize(resolved: Sequence[_Resolved], changed: WorkspaceChanged) -> ChangesetSummary:
+    """What *resolved* does as a person approving it reads it, moving and deleting as *changed* says.
 
     Only a workspace change is put to a person, so only one is shown.
     """
@@ -1074,7 +1092,9 @@ def _summarize(resolved: Sequence[_Resolved], paths: PathChanges) -> ChangesetSu
             case _Vacate():
                 pass
 
-    return ChangesetSummary(tuple(creates), tuple(updates), paths, tuple(mkdirs))
+    return ChangesetSummary(
+        tuple(creates), tuple(updates), changed.moves, changed.deletes, tuple(mkdirs)
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -1101,12 +1121,13 @@ class AppliedChangeset:
     Attributes:
         reports: One human-readable report per operation, in order, for the
             tool or person that asked.
-        paths: The workspace paths it moved and deleted, as resolved, for
-            every client to follow.  The same record the commit announces.
+        changed: The workspaces it changed and the paths it moved and
+            deleted, as resolved, for every client to refresh and follow.
+            The same record the commit announces.
     """
 
     reports: tuple[str, ...]
-    paths: PathChanges
+    changed: WorkspaceChanged
 
 
 async def plan_changeset(
@@ -1131,11 +1152,11 @@ async def plan_changeset(
             directory carrying hidden entries) or claims a path another item
             claims.
     """
-    resolved, _plan, paths = await _resolve_all(changeset, filters, host=host)
+    resolved, _plan, changed = await _resolve_all(changeset, filters, host=host)
 
     return PlannedChangeset(
         Changeset(tuple(item.operation for item in resolved)),
-        await asyncio.to_thread(_summarize, resolved, paths),
+        await asyncio.to_thread(_summarize, resolved, changed),
     )
 
 
@@ -1495,7 +1516,7 @@ async def _commit(
     with ExitStack() as claims:
         try:
             async with _locked(*roots):
-                resolved, plan, paths = await _resolve_all(changeset, filters, host=host)
+                resolved, plan, changed = await _resolve_all(changeset, filters, host=host)
 
                 for index, original in prepared.items():
                     if resolved[index].effect != original.effect:
@@ -1531,10 +1552,9 @@ async def _commit(
             await _index_all(pending)
         finally:
             if owner is not None:
-                stores = (store for root in roots if (store := root.store) is not None)
-                announce_commit(owner, stores, paths, exclude_client=exclude_client)
+                announce_workspace_changed(owner, changed, exclude_client=exclude_client)
 
-    return AppliedChangeset(tuple(item.report for item in resolved), paths)
+    return AppliedChangeset(tuple(item.report for item in resolved), changed)
 
 
 async def apply_changeset(
@@ -1559,7 +1579,7 @@ async def apply_changeset(
             and evict what its quota lets go to fit.
 
     Returns:
-        The reports and the moved and deleted workspace paths.
+        The reports and how the workspaces changed.
 
     Raises:
         HTTPException: When the changeset is invalid (see
@@ -1567,7 +1587,7 @@ async def apply_changeset(
             it was being prepared.
     """
     if not changeset.operations:
-        return AppliedChangeset((), PathChanges())
+        return AppliedChangeset((), WorkspaceChanged(()))
 
     prepared: dict[int, _PreparedOriginal] = {}
 
@@ -1576,7 +1596,7 @@ async def apply_changeset(
         isinstance(op, Write | Edit) and op.target.root.store is not None
         for op in changeset.operations
     ):
-        planned, _plan, _paths = await _resolve_all(changeset, _NO_FILTERS, host=host)
+        planned, _plan, _changed = await _resolve_all(changeset, _NO_FILTERS, host=host)
         originals = {
             index: (store, effect)
             for index, item in enumerate(planned)

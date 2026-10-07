@@ -55,16 +55,16 @@ Dates, numbers, and sizes go through `@/i18n/format` rather than `toLocale*Strin
 ## Moves and deletes are one request
 
 Every move, delete, and new directory, of one item or a whole selection, is one `applyChanges` request that the backend applies all or nothing.
-The store sends it through one helper: the affected rows spin, every scope its paths name refreshes once it returns, and a refusal is one error naming the offending path.
+The store sends it through one helper: the affected rows spin until their scope reloads, every scope the returned `WorkspaceChanged` names refreshes, and a refusal is one error naming the offending path.
 A delete names whether it expects a document or a folder, so a stale view can never delete a folder in place of a document.
 Only bulk rechunk and reconvert are background jobs with progress in the job tray, since they convert and index.
 
-## Kept paths follow every commit
+## Kept paths follow every workspace change
 
 The chat's document filter, a scope's selection, and its open document dialog keep canonical or local paths, so one left at a stale path would silently stop hiding a document from the agent or point at nothing.
 They follow what the backend applied, never what a client sent, since the backend resolves a move into an existing folder and moves an entry with its original.
-Every commit says what it moved and deleted as one `PathChanges`, and `onCommitted` in the jobs store is the one channel it reaches them through, fed by the `applyChanges` response that the documents store publishes for the tab that asked, whose own feed skips the change, and by the feed's `changeset-committed` event for everything else, the agent, an MCP client, or another tab.
-The SPA always sends its client id, so each commit arrives once, and the event's scopes refresh the trees like any `scope-changed`.
+Every change that never was a job says which scopes it touched and what it moved and deleted as one `WorkspaceChanged`, and `onWorkspaceChanged` in the jobs store is the one channel it reaches them through, fed by the `applyChanges` response that the documents store passes to `publishWorkspaceChanged` for the tab that asked, whose own feed skips the change, and by the feed's `workspace-changed` event for everything else, the agent, an MCP client, or another tab.
+The SPA always sends its client id, so each change arrives once, and its scopes refresh the trees the documents store has loaded.
 `followPath` in `lib/utils` drops a path at or below a deleted one, then carries one at or below a moved source over to its destination, all moves at once so swaps and chains land right, and the filter's `follow` and `useFollowedState`, behind the scope's selection and dialog, keep their state when nothing changed.
 Group members other than the one who acted get no feed event yet, so their kept paths do not follow.
 

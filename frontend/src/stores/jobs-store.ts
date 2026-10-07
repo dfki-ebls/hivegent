@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { cancelJob, subscribeJobs } from "@/lib/api";
-import { TERMINAL_JOB_STATUSES, type JobView, type PathChanges } from "@/lib/types";
+import { TERMINAL_JOB_STATUSES, type JobView, type WorkspaceChanged } from "@/lib/types";
 
 // Reconnect backoff for the SSE feed: start fast, ramp toward the cap only while
 // reconnects keep failing (a sustained outage); a connection that stays open at
@@ -21,8 +21,7 @@ type JobListener = (job: JobView) => void;
 
 const settledListeners = new Set<JobListener>();
 const startedListeners = new Set<JobListener>();
-const scopeChangedListeners = new Set<(scope: string) => void>();
-const committedListeners = new Set<(changes: PathChanges) => void>();
+const workspaceChangedListeners = new Set<(changed: WorkspaceChanged) => void>();
 const feedReadyListeners = new Set<() => void>();
 
 /** Build a set's `on…` registrar: subscribe, and return the unsubscribe. */
@@ -39,27 +38,20 @@ const register =
 export const onFeedReady = register(feedReadyListeners);
 
 /**
- * Register a callback fired when a scope changes through work that never was a
- * job — an inline mutation by a request, an agent, or an MCP client. The
- * counterpart to {@link onJobSettled} for the same "reload this scope" need.
- * Returns an unsubscribe function.
+ * Register a callback fired once per workspace change that never was a job,
+ * whoever made it: this tab's own request through
+ * {@link publishWorkspaceChanged}, or an inline mutation by another tab, the
+ * agent, or an MCP client through the feed. Scopes a client holds refresh and
+ * paths it keeps follow here. Returns an unsubscribe function.
  */
-export const onScopeChanged = register(scopeChangedListeners);
+export const onWorkspaceChanged = register(workspaceChangedListeners);
 
 /**
- * Register a callback fired once per workspace commit with what it moved and
- * deleted, whoever made it: this tab's own request through
- * {@link publishCommitted}, or any other change through the feed. Paths a
- * client keeps follow it here. Returns an unsubscribe function.
- */
-export const onCommitted = register(committedListeners);
-
-/**
- * Tell every {@link onCommitted} listener what one commit moved and deleted.
+ * Tell every {@link onWorkspaceChanged} listener how the workspaces changed.
  * The tab that asked publishes its response, since its own feed skips the change.
  */
-export function publishCommitted(changes: PathChanges): void {
-  committedListeners.forEach((listener) => listener(changes));
+export function publishWorkspaceChanged(changed: WorkspaceChanged): void {
+  workspaceChangedListeners.forEach((listener) => listener(changed));
 }
 
 /**
@@ -172,13 +164,7 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
             seeding = false;
             feedReadyListeners.forEach((listener) => listener());
           },
-          (scope) => scopeChangedListeners.forEach((listener) => listener(scope)),
-          (commit) => {
-            commit.scopes.forEach((scope) =>
-              scopeChangedListeners.forEach((listener) => listener(scope)),
-            );
-            publishCommitted(commit);
-          },
+          publishWorkspaceChanged,
         );
       } catch {
         // A failed connect counts as a drop; the backoff below handles it.

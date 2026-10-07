@@ -34,9 +34,9 @@ __all__ = [
     "FileDiff",
     "Move",
     "Operation",
-    "PathChanges",
     "PathMove",
     "TextEdit",
+    "WorkspaceChanged",
     "Write",
     "WriteMode",
     "capped_diff",
@@ -229,22 +229,28 @@ class PathMove:
 
 
 @dataclass(slots=True, frozen=True)
-class PathChanges:
-    """The workspace paths one commit moved and deleted, for a client to follow.
+class WorkspaceChanged:
+    """The workspaces a change touched, and the paths it moved and deleted.
 
-    Canonical paths of workspace files and directories only, since a folder
-    such as ``/tmp`` holds nothing a client tracks: an entry's description
-    and original each, and a directory as a whole.  Sources and deletes name
-    the workspace before the commit and destinations the one after it, as the
-    gateway resolved them, so a client applies them all at once.
+    What a commit of the gateway returns and announces, and what a mutation
+    outside it announces with no moves or deletes, so a client refreshes the
+    scopes and follows the paths at once.  Paths are canonical and name
+    workspace files and directories only, since a folder such as ``/tmp``
+    holds nothing a client tracks: an entry's description and original each,
+    and a directory as a whole.  Sources and deletes name the workspace before
+    the change and destinations the one after it.
 
     Attributes:
+        scopes: The prefix of every workspace it touched, such as ``~``.
         moves: Every moved file and directory.
         deletes: Every deleted file and directory.
+        type: The feed's discriminator.
     """
 
+    scopes: tuple[str, ...]
     moves: tuple[PathMove, ...] = ()
     deletes: tuple[str, ...] = ()
+    type: Literal["workspace-changed"] = "workspace-changed"
 
 
 @dataclass(slots=True, frozen=True)
@@ -254,31 +260,33 @@ class ChangesetSummary:
     Attributes:
         creates: The new files with their capped diffs.
         updates: The changed files with their capped diffs.
-        paths: What it moves and deletes, as a commit reports it.
+        moves: The moved files and directories, as a commit reports them.
+        deletes: The deleted files and directories, as a commit reports them.
         mkdirs: The new directories.
     """
 
     creates: tuple[FileDiff, ...] = ()
     updates: tuple[FileDiff, ...] = ()
-    paths: PathChanges = PathChanges()
+    moves: tuple[PathMove, ...] = ()
+    deletes: tuple[str, ...] = ()
     mkdirs: tuple[str, ...] = ()
 
     def lines(self) -> list[str]:
         """One line per change, in the order a model reads them back.
 
         >>> move = PathMove("~/a.md", "~/b.md", replaces=True)
-        >>> ChangesetSummary(paths=PathChanges(moves=(move,))).lines()
+        >>> ChangesetSummary(moves=(move,)).lines()
         ['- move ~/a.md -> ~/b.md (replaces it)']
         """
         return [
             *(
                 f"- move {move.source} -> {move.destination}"
                 + (" (replaces it)" if move.replaces else "")
-                for move in self.paths.moves
+                for move in self.moves
             ),
             *(f"- create {change.path}" for change in self.creates),
             *(f"- update {change.path}" for change in self.updates),
-            *(f"- delete {path}" for path in self.paths.deletes),
+            *(f"- delete {path}" for path in self.deletes),
             *(f"- mkdir {path}" for path in self.mkdirs),
         ]
 

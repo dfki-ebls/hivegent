@@ -479,36 +479,21 @@ export const PathMoveSchema = z.object({
 export type PathMove = z.infer<typeof PathMoveSchema>;
 
 /**
- * The workspace paths one commit moved and deleted, as the backend resolved
- * them (see backend `PathChanges`). Sources and deletes name the workspace
- * before the commit and destinations the one after it, so they apply at once.
+ * The workspaces a change touched and the paths it moved and deleted (see
+ * backend `WorkspaceChanged`), both as the feed announces it and as a change
+ * route answers. Sources and deletes name the workspace before the change and
+ * destinations the one after it, so they apply at once.
  */
-export const PathChangesSchema = z.object({
+export const WorkspaceChangedSchema = z.object({
+  type: z.literal("workspace-changed"),
+  scopes: z.array(z.string()),
   moves: z.array(PathMoveSchema),
   deletes: z.array(z.string()),
 });
-export type PathChanges = z.infer<typeof PathChangesSchema>;
-
-/** A scope changed through work that ran inline, so never was a job. */
-export const ScopeChangedSchema = z.object({
-  type: z.literal("scope-changed"),
-  scope: z.string(),
-});
-
-/** One commit of the changeset gateway: the scopes it changed, and what it moved and deleted. */
-export const ChangesetCommittedSchema = PathChangesSchema.extend({
-  type: z.literal("changeset-committed"),
-  scopes: z.array(z.string()),
-});
-export type ChangesetCommitted = z.infer<typeof ChangesetCommittedSchema>;
+export type WorkspaceChanged = z.infer<typeof WorkspaceChangedSchema>;
 
 /** A job feed event: a job snapshot, the seed-complete marker, or a change. */
-export const FeedEventSchema = z.union([
-  JobViewSchema,
-  FeedReadySchema,
-  ScopeChangedSchema,
-  ChangesetCommittedSchema,
-]);
+export const FeedEventSchema = z.union([JobViewSchema, FeedReadySchema, WorkspaceChangedSchema]);
 /** Terminal job statuses — no further updates will arrive. */
 export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
   "succeeded",

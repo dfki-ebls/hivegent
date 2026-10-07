@@ -197,18 +197,19 @@ That pointer is a `MutationHint` the write and edit tools take like `filter_func
 
 Every workspace change reaches the client on the per-owner SSE feed, which the frontend turns into a refresh of the named scope.
 Long-running work is a real job and its settled `document.*` event carries it.
-A mutation that ran inline must publish through `workspace_events`, or every client but the one that asked stays stale: `notify_workspace_change` sends a bare `ScopeChanged` for the store it holds, and `announce_commit`, which `apply_changeset` calls for the `owner` it is given, sends one `ChangesetCommitted` per commit.
+A mutation that ran inline must announce through `workspace_events.announce_workspace_changed`, or every client but the one that asked stays stale.
+It sends one `changes.WorkspaceChanged`, the only kind of change event: `apply_changeset` announces one per commit for the `owner` it is given, with the scopes taken from its roots and what it moved and deleted, and every other inline mutation, such as wiping a scope or editing an asset description, announces its scope with no moves or deletes.
 
-That event names the scopes the commit changed, taken from its roots, and what it moved and deleted, the `changes.PathChanges` that `apply_changeset` also returns in its `workspace.AppliedChangeset`.
-It is the one channel a client follows moves and deletes through, whoever made them, the agent included, so a path the client keeps, such as the chat's document filter, never goes stale.
+The commit's record is also what `apply_changeset` returns in its `workspace.AppliedChangeset`.
+It is the one channel a client refreshes scopes and follows moves and deletes through, whoever made them, the agent included, so a path the client keeps, such as the chat's document filter, never goes stale.
 One event per commit lets a client apply a swap across two workspaces at once.
-Example: `{"type": "changeset-committed", "scopes": ["~"], "moves": [{"source": "~/a.md", "destination": "~/archive/a.md", "is_dir": false, "replaces": false}], "deletes": ["~/b.md", "~/b.pdf"]}`.
+Example: `{"scopes": ["~"], "moves": [{"source": "~/a.md", "destination": "~/archive/a.md", "is_dir": false, "replaces": false}], "deletes": ["~/b.md", "~/b.pdf"], "type": "workspace-changed"}`.
 
 The notification skips the `X-Client-Id` that caused it, so the asking tab keeps its own read-after-write and the others learn from the feed.
-The asking tab learns what changed from its response instead, which is why the change routes return the same `PathChanges`, and since the SPA always sends its id, it hears of each commit once.
+The asking tab learns what changed from its response instead, which is why the change routes return the same `WorkspaceChanged`, and since the SPA always sends its id, it hears of each commit once.
 `workspace.Gateway`, which the agent, the MCP surface, and the host commit through, skips no client, so the tab whose chat runs the agent hears of its changes on the feed like every other and no tool result has to carry them a second way.
 Delivery is per-owner, so a group workspace refreshes for the writer and not yet for the other members, who neither refresh nor follow the moves.
-Both events are transient and never retained, so the client re-reads every scope it holds on each handshake (`onFeedReady`).
+The event is transient and never retained, so the client re-reads every scope it holds on each handshake (`onFeedReady`).
 
 ### Preparing for a read-write shell tool
 
@@ -405,14 +406,14 @@ A root without a store skips the row fetch, the in-flight guards, originals and 
 What a changeset adds to a root with a quota is put to it, and the files it evicts leave with the deletes, which only the host saving a tool result may ask for (`Gateway.host`), as only the host may write what the root reserves.
 Every root's lock comes from one registry by `store_key` (`locks._lock_of`, held weakly so it lives only while a change uses it), taken in that order, so a folder goes through the same async `_commit` as a workspace.
 A commit stages beside every root it changes (`_staging_root`), the data directory for a batch spanning a workspace and `/tmp`, so every step stays a rename, and the staging area is created by the worker thread installing the files and removed in one once the locks are released.
-The summary leaves a folder's items out, since only a workspace change is put to a person, and so does the `PathChanges` a commit returns and announces, since no client tracks a folder's paths.
-Both come from one reading of the resolved items (`_path_changes`), taken in the worker thread that resolves them under the locks, before anything moves: an entry's description and original each, a directory as a whole, every destination as it resolved.
+The summary leaves a folder's items out, since only a workspace change is put to a person, and so does the `WorkspaceChanged` a commit returns and announces, since no client tracks a folder's paths.
+The summary's `moves` and `deletes` and the record's come from one reading of the resolved items (`_workspace_changed`), taken in the worker thread that resolves them under the locks, before anything moves: an entry's description and original each, a directory as a whole, every destination as it resolved.
 
 The HTTP API applies every move, delete, and new directory through `POST /api/changes`, whose body is a list of operations (`server.models.ChangesRequest`) applied as one changeset within the request rather than as a job: a move or delete only renames files and updates rows, so nothing is left to index.
 For clients that change one item at a time, `POST /documents/move/{path}`, `DELETE /documents/{path}`, `POST /directories`, `POST /directories/move`, and `DELETE /directories` are shortcuts that build exactly one such operation and share its code path (`_apply` in `server/routes/documents.py`), so they behave and refuse exactly as the batch route does.
 Its items carry canonical paths, each resolved with write access, and mirror the gateway's operations without a basis, while a delete must name the kind it `expect`s so a client never removes a folder by accident.
 So a single item and a selection go the same way, the batch lands whole or not at all, swaps and chains in it work, and one refusal rejects it with the gateway's message, which names the canonical path it refuses.
-Each answers with the `PathChanges` it applied (`{"moves", "deletes"}`), since the asking tab's feed skips the change and what it sent is not what applied: a move into an existing folder lands below it, and an entry moves and goes with its original.
+Each answers with the `WorkspaceChanged` it applied (`{"scopes", "moves", "deletes", "type"}`), since the asking tab's feed skips the change and what it sent is not what applied: a move into an existing folder lands below it, and an entry moves and goes with its original.
 Whatever carries content or starts a job keeps its own route: uploads, writes, asset descriptions, rechunk and reconvert, and wiping a scope.
 
 Paths compare the way the workspace's filesystem compares them.

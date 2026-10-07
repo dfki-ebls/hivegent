@@ -133,7 +133,8 @@ describe("tool approval", () => {
     const summary = {
       creates: [{ path: "~/out.md", diff: "" }],
       updates: [],
-      paths: { moves: [], deletes: [] },
+      moves: [],
+      deletes: [],
       mkdirs: [],
     };
     const { card } = renderMessage(["call-1"], { approvalMetadata: { "call-1": summary } });
@@ -149,7 +150,8 @@ describe("tool approval", () => {
     const summary = {
       creates: [],
       updates: [],
-      paths: { moves: [], deletes: ["~/old.md"] },
+      moves: [],
+      deletes: ["~/old.md"],
       mkdirs: [],
     };
     const { card } = renderMessage(["call-1"], {

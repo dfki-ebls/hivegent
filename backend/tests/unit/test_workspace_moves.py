@@ -34,8 +34,8 @@ from hivegent.changes import (
     FileDiff,
     Move,
     Operation,
-    PathChanges,
     PathMove,
+    WorkspaceChanged,
     Write,
 )
 from hivegent.chunkers.base import DocumentMetadata
@@ -47,7 +47,7 @@ from hivegent.entries import (
     original_path_for_stem,
     stem_path_from_reference,
 )
-from hivegent.jobs import ChangesetCommitted, FeedReady, JobManager
+from hivegent.jobs import FeedReady, JobManager
 from hivegent.server.models import ChangesRequest, MoveDestination, WorkspacePath
 from hivegent.server.routes import documents as documents_routes
 from hivegent.store import Casebase
@@ -742,13 +742,11 @@ class TestChangesets:
                     "\\ No newline at end of file\n+C\n\\ No newline at end of file\n",
                 ),
             ),
-            paths=PathChanges(
-                moves=(
-                    PathMove("~/a.md", "~/b.md", replaces=True),
-                    PathMove("~/dir", "~/moved", is_dir=True),
-                ),
-                deletes=("~/b.md", "~/b.pdf"),
+            moves=(
+                PathMove("~/a.md", "~/b.md", replaces=True),
+                PathMove("~/dir", "~/moved", is_dir=True),
             ),
+            deletes=("~/b.md", "~/b.pdf"),
             mkdirs=("~/empty",),
         )
 
@@ -769,11 +767,10 @@ class TestChangesets:
             applied = await agent.apply(Changeset((Move("~/a.md", "~/dir"), Delete("~/b.md"))))
             event = await asyncio.wait_for(anext(events), 1.0)
 
-        assert applied.paths.moves == (PathMove("~/a.md", "~/dir/a.md"),)
-        assert applied.paths.deletes == ("~/b.md",)
-        assert event == ChangesetCommitted(
-            scopes=("~",), moves=applied.paths.moves, deletes=applied.paths.deletes
+        assert applied.changed == WorkspaceChanged(
+            scopes=("~",), moves=(PathMove("~/a.md", "~/dir/a.md"),), deletes=("~/b.md",)
         )
+        assert event == applied.changed
 
     async def test_a_failed_row_change_restores_every_file(
         self, user_store: Casebase, layout: Path, repo: FakeRepository
