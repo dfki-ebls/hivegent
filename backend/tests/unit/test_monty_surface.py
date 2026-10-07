@@ -39,6 +39,7 @@ from hivegent.tools.monty import monty_declarations, monty_surface
 from hivegent.tools.python import RunPythonTool
 from hivegent.tools.sink import OutputPathArg, RedirectedOutput, RedirectingTool
 from hivegent.types import ToolsSpec
+from tests.helpers import LIMITS
 
 QueryArg = Annotated[str, Field(description="What to look for.")]
 LimitArg = Annotated[int, Field(ge=1)]
@@ -195,7 +196,7 @@ class TestInsideTheSandbox:
     @pytest.fixture()
     async def tool(self) -> AsyncIterator[RunPythonTool]:
         async with AsyncMonty(min_processes=1) as pool:
-            yield RunPythonTool(pool=pool, surface=monty_surface([_search], None))
+            yield RunPythonTool(pool=pool, changeset_limits=LIMITS, surface=monty_surface([_search], None))
 
     async def test_a_program_awaits_the_call_and_works_on_the_whole_result(
         self, tool: RunPythonTool
@@ -292,7 +293,7 @@ def test_the_mount_declares_its_own_open_and_the_model_never_sees_it() -> None:
     assert "def open(" not in surface.declarations
     assert "async def search(*, query: str" in surface.declarations
 
-    stubs = RunPythonTool(pool=None, surface=surface)._stubs()  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    stubs = RunPythonTool(pool=None, changeset_limits=LIMITS, surface=surface)._stubs()  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
 
     assert "def open(" in stubs
     assert surface.stubs in stubs
@@ -300,7 +301,7 @@ def test_the_mount_declares_its_own_open_and_the_model_never_sees_it() -> None:
 
 def test_an_empty_surface_still_lets_a_program_open_a_document() -> None:
     """The mount's half of the stubs does not depend on a tool being injected."""
-    assert "def open(" in RunPythonTool(pool=None)._stubs()  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    assert "def open(" in RunPythonTool(pool=None, changeset_limits=LIMITS)._stubs()  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
 
 
 def test_an_empty_surface_is_falsy() -> None:

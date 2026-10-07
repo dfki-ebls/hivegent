@@ -9,14 +9,15 @@ derives from the document FK — one identifier keys filesystem and SQL
 end-to-end.
 """
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Concatenate, Literal, Self, cast, get_args
+from typing import Literal, Self, cast, get_args
 
 from .config import sanitize_group_id, sanitize_user_id
 from .l10n import Localized
 from .tools.base import SearchPath, SearchPathFilterFunc
+from .tools.scope import PrefixScope
 
 __all__ = [
     "GROUP_PREFIX",
@@ -25,8 +26,7 @@ __all__ = [
     "CasebaseKind",
     "WorkspaceScope",
     "build_search_paths",
-    "scoped_operation",
-    "scoped_pair_operation",
+    "route_path",
 ]
 
 CasebaseKind = Literal["user", "group"]
@@ -71,7 +71,7 @@ class WorkspaceScope:
 
     def render(self, local: str) -> str:
         """Render *local* as a canonical path under this scope (empty = root)."""
-        return f"{self.prefix}/{local}" if local else self.prefix
+        return PrefixScope(self.prefix).render(local)
 
     def render_filter_entry(self, local: str) -> str:
         """Render a :class:`DocumentFilter` local entry as a canonical path.
@@ -84,10 +84,7 @@ class WorkspaceScope:
 
     def strip_prefix(self, raw: str) -> str | None:
         """Return *raw*'s local part if it addresses this scope, else ``None``."""
-        if raw == self.prefix:
-            return ""
-        tag = f"{self.prefix}/"
-        return raw[len(tag) :] if raw.startswith(tag) else None
+        return PrefixScope(self.prefix).strip_prefix(raw)
 
     @classmethod
     def parse(cls, raw: str) -> tuple[Self, str]:
@@ -230,56 +227,24 @@ def build_search_paths(
     )
 
 
-def _route(stores: Sequence[Casebase], path: str) -> tuple[Casebase, str]:
-    """Split a canonical path into the store it names and the path local to it."""
-    scope, local = WorkspaceScope.parse(path)
-    store = next((s for s in stores if s.scope == scope), None)
-    if store is None:
-        raise ValueError(_no_workspace(path).current)
-
-    return store, local
-
-
-def scoped_operation[**P, R](
-    operation: Callable[Concatenate[Casebase, str, P], Awaitable[R]],
-    stores: Sequence[Casebase],
-) -> Callable[Concatenate[str, P], Awaitable[R]]:
-    """Front a ``(store, local_path, ...)`` operation with a canonical path.
+def route_path(stores: Sequence[Casebase], path: str) -> tuple[Casebase, str]:
+    """Split a canonical path into the store it names and the path local to it.
 
     Every workspace operation takes the store and the path local to it, while a
     tool is handed one canonical path (``~/notes.md``, ``@team/notes.md``) that
     names both.  This routes the one back to the other — the inverse of what
     :func:`build_search_paths` renders into tool output — so an operation
     reaches whichever of *stores* the caller addressed instead of a single one
-    bound up front.  A path naming a store outside *stores* raises, since the
-    caller may not reach it.
+    bound up front.
+
+    Raises:
+        ValueError: When *path* carries no scope prefix, or names a store
+            outside *stores*, which the caller may not reach.
     """
+    scope, local = WorkspaceScope.parse(path)
+    store = next((s for s in stores if s.scope == scope), None)
 
-    async def run(path: str, *args: P.args, **kwargs: P.kwargs) -> R:
-        store, local = _route(stores, path)
+    if store is None:
+        raise ValueError(_no_workspace(path).current)
 
-        return await operation(store, local, *args, **kwargs)
-
-    return run
-
-
-def scoped_pair_operation[**P, R](
-    operation: Callable[Concatenate[Casebase, Casebase, str, str, P], Awaitable[R]],
-    stores: Sequence[Casebase],
-) -> Callable[Concatenate[str, str, P], Awaitable[R]]:
-    """Route a ``(src_store, dst_store, src, dst, ...)`` operation by two paths.
-
-    :func:`scoped_operation` for the one mutation whose two ends may name
-    different workspaces: each canonical path is resolved on its own, so the
-    same call renames within one workspace and migrates between two.
-    """
-
-    async def run(src: str, dst: str, *args: P.args, **kwargs: P.kwargs) -> R:
-        src_store, src_local = _route(stores, src)
-        dst_store, dst_local = _route(stores, dst)
-
-        return await operation(
-            src_store, dst_store, src_local, dst_local, *args, **kwargs
-        )
-
-    return run
+    return store, local

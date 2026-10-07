@@ -14,8 +14,8 @@ not the first ``max_results`` of them — while ``.txt`` writes the very text th
 model would otherwise have been shown.
 
 The argument is declared by each tool that offers it, next to a ``sink``
-field, the way :class:`~hivegent.tools.python.RunPythonTool` declares a
-writer for the one document its programs persist.  Nothing injects it: where
+field, the way :class:`~hivegent.tools.python.RunPythonTool` declares the
+``commit`` its programs' changes go through.  Nothing injects it: where
 a result may land is a property of the tool as it was built for a run, so a
 surface that hands out no sink leaves it out of what it builds
 (:meth:`~hivegent.tools.base.ToolSpec.without`) rather than advertising an
@@ -24,8 +24,8 @@ argument it could only refuse.
 
 from abc import ABC
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
-from typing import Annotated, Any, Literal, cast
+from pathlib import PurePosixPath
+from typing import Annotated, Any, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import Field
 from pydantic_core import to_json
@@ -35,7 +35,6 @@ from .base import AsyncPathTool, AsyncTool, ToolOutput, ToolRetry, Unreachable
 from .mutations import WriteDocumentTool, resolve_text_target
 
 __all__ = [
-    "NO_WRITER_REFUSAL",
     "OutputFormat",
     "OutputPathArg",
     "OutputSink",
@@ -44,7 +43,6 @@ __all__ = [
     "RedirectingTool",
     "output_format",
     "redirect_output",
-    "resolve_output_target",
 ]
 
 type OutputFormat = Literal["json", "txt"]
@@ -95,9 +93,9 @@ OutputPathArg = Annotated[
         description=(
             "Leave unset to get the result back. Set it only to write the "
             "result to this file instead and get back just a receipt, never "
-            "to choose what the call reads. A full workspace path ending in "
-            "`.json` (structured result) or `.txt` (the text you would see), "
-            "such as `~/.scratch/result.json`."
+            "to choose what the call reads. A full path ending in `.json` "
+            "(structured result) or `.txt` (the text you would see), such as "
+            "`/tmp/result.json`."
         ),
     ),
     Unreachable(RedirectedOutput),
@@ -111,40 +109,6 @@ on each of the suffix and the scope prefix.  When to reach for it is worth a
 paragraph, which a per-tool restatement would cost on every request, so that
 stays in ``REDIRECT_INSTRUCTIONS``, composed once for the whole run.
 """
-
-
-NO_WRITER_REFUSAL = (
-    "Writing to the workspace is not available in this chat mode, so "
-    "`output_path` cannot be used."
-)
-"""The one refusal a path cannot explain: this run may not write at all.
-
-Shared because ``run_python`` reaches the same wall for its own declared
-output, and a mode that cannot write should not answer two different ways
-depending on which argument asked.
-"""
-
-
-def resolve_output_target(
-    writer: WriteDocumentTool | None, output_path: str
-) -> tuple[WriteDocumentTool, str, Path]:
-    """Resolve one writable output, which need not exist yet.
-
-    Routed through the resolver the commit itself runs through, so a path the
-    write would turn away — a directory or a binary format included — is turned
-    away here, in the same words, and before the tool has done its work.  A
-    missing *writer* is the tool saying it was not built to write at all, and
-    the writer comes back with the resolved path so a caller has it in hand
-    rather than re-proving it.
-    """
-    if writer is None:
-        raise ToolRetry(NO_WRITER_REFUSAL)
-
-    canonical, _local, absolute = resolve_text_target(
-        writer.resolved_paths, output_path
-    )
-
-    return writer, canonical, absolute
 
 
 def output_format(output_path: str) -> OutputFormat:
@@ -171,8 +135,8 @@ def _render(result: ToolOutput[Any], fmt: OutputFormat) -> str:
 
     The JSON is unindented: its declared reader is ``json.loads`` inside a
     ``run_python`` sandbox, and indentation would inflate a nested result
-    several times over in the bytes written, stored, and — outside a
-    `.scratch/` directory — chunked and embedded.  Rendering for a human to
+    several times over in the bytes written, stored, and, outside
+    ``/tmp``, chunked and embedded.  Rendering for a human to
     read is what the `.txt` channel is for.
 
     This renders the payload as it stands, while the sandbox renders it through
@@ -184,6 +148,13 @@ def _render(result: ToolOutput[Any], fmt: OutputFormat) -> str:
         return result.text
 
     return to_json(result.data).decode()
+
+
+@runtime_checkable
+class _Clipped(Protocol):
+    """A payload that knows whether it was cut short, which every one spells alike."""
+
+    truncated: bool
 
 
 def _receipt[T](
@@ -203,10 +174,10 @@ def _receipt[T](
     data = result.data
     entries = len(data) if isinstance(data, list | tuple) else None
     counted = f", {entries} {pluralize(entries, 'entry', 'entries')}" if entries else ""
-    # Duck-typed rather than narrowed to one result: every payload that knows
-    # it was cut spells it the same way, and a receipt that drops the fact is
-    # the one place the model cannot recover it from.
-    truncated = bool(getattr(data, "truncated", False))
+    # A batch is cut when any of its items was, and a receipt that drops the
+    # fact is the one place the model cannot recover it from.
+    parts = data if isinstance(data, list | tuple) else (data,)
+    truncated = any(isinstance(part, _Clipped) and part.truncated for part in parts)
     partial = (
         " It is what the call returned, which was already cut short of what "
         "you asked for — raise the limit or narrow the request if you need "
@@ -247,8 +218,8 @@ async def redirect_output[T](
     """Commit *result* to *output_path*, or pass it through when none was named.
 
     The write lands on the canonical mutation path, so a redirect is indexed,
-    locked, and announced exactly like any other document write — and skips all
-    three under a `.scratch/` directory, which is where a redirect belongs.
+    locked, and announced exactly like any other document write, or written
+    straight into ``/tmp``, which is where a redirect belongs.
     """
     # `ToolOutput` is invariant in its payload, so widening either branch to
     # the declared union is a cast rather than a subtype step.
@@ -257,11 +228,15 @@ async def redirect_output[T](
 
     fmt = output_format(output_path)
     if sink is None:
-        raise ToolRetry(NO_WRITER_REFUSAL)
+        raise ToolRetry(
+            "Writing is not available in this chat, so `output_path` cannot be used."
+        )
 
-    writer, canonical, _absolute = resolve_output_target(sink.writer, output_path)
+    # Resolved through the resolver the write itself runs through, so a path it
+    # would turn away is turned away before the result is rendered.
+    canonical = resolve_text_target(sink.writer.resolved_paths, output_path)
     content = _render(result, fmt)
-    report = (await writer(canonical, content)).text
+    report = (await sink.writer(canonical, content)).text
 
     return cast(
         ToolOutput[T | RedirectedOutput],

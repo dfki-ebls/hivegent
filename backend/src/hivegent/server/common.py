@@ -21,6 +21,7 @@ from ..mcp import build_mcp_server, validate_mcp_servers
 from ..prompts import compose_instructions
 from ..security import require_safe_external_url
 from ..store import Casebase, WorkspaceScope
+from ..tmp import tmp_dir
 from ..types import AgentRunConfig, DocumentFilter
 from .models import PipelineSpec
 
@@ -34,7 +35,6 @@ __all__ = [
     "prepare_llm_config",
     "require_group_member",
     "require_group_write",
-    "resolve_move",
     "resolve_workspace_path",
     "safe_group_id",
     "safe_path",
@@ -167,7 +167,9 @@ def group_stores(user: User, *, writable: bool = False) -> tuple[Casebase, ...]:
     return tuple(group_store(group_id) for group_id in groups)
 
 
-def build_run_prefix(config: AgentRunConfig, user: User) -> RunPrefix:
+def build_run_prefix(
+    config: AgentRunConfig, user: User, conversation_id: str
+) -> RunPrefix:
     """Compose the prompt prefix *config* describes, for chat or compaction.
 
     One builder for both callers on purpose: a compaction request asks for its
@@ -185,6 +187,9 @@ def build_run_prefix(config: AgentRunConfig, user: User) -> RunPrefix:
 
     try:
         validate_mcp_servers(config.tools.mcp_servers)
+        # The conversation's `/tmp` exists for as long as it runs, as in a
+        # container session, which also checks the id names a safe folder.
+        tmp_dir(settings.data_dir, conversation_id).mkdir(parents=True, exist_ok=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -199,6 +204,7 @@ def build_run_prefix(config: AgentRunConfig, user: User) -> RunPrefix:
         user_id=user.id,
         store=user_store(user),
         mode=config.mode,
+        conversation_id=conversation_id,
         group_stores=group_stores(user),
         write_group_stores=group_stores(user, writable=True),
         document_filter=document_filter,
@@ -297,18 +303,3 @@ def resolve_workspace_path(
         store = user_store(user)
     return store, safe_path(local) if local else ""
 
-
-def resolve_move(
-    user: User, source: str, destination: str
-) -> tuple[Casebase, str, Casebase, str]:
-    """Resolve both endpoints of a move, requiring write access to each.
-
-    A move may stay within one workspace or migrate between two (personal ↔
-    group, group ↔ group); either way it writes both ends, so both are resolved
-    with ``write=True``. Centralizing the pair here keeps that invariant in one
-    place instead of duplicating it across the single, bulk, and directory move
-    endpoints.
-    """
-    src_store, src = resolve_workspace_path(user, source, write=True)
-    dst_store, dst = resolve_workspace_path(user, destination, write=True)
-    return src_store, src, dst_store, dst

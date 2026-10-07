@@ -25,7 +25,7 @@ __all__ = [
     "PYTHON_INSTRUCTIONS",
     "REDIRECT_INSTRUCTIONS",
     "SANDBOX_TYPE_CHECK_INSTRUCTIONS",
-    "SCRATCH_INSTRUCTIONS",
+    "TMP_INSTRUCTIONS",
     "VERSION_INSTRUCTIONS",
     "WORKSPACE_PATH_INSTRUCTIONS",
     "WRITE_INSTRUCTIONS",
@@ -257,7 +257,7 @@ Your task is to survey a collection of documents and produce a concise summary o
 Guidelines:
 - Start with list_documents (to browse) or glob_documents (to match filenames) to see what is available.
 - Use grep and search tools to find relevant content.
-- Use read_document to read specific sections when needed; pass `offset` and `limit` to page through large files.
+- Use read_document to read specific sections when needed, every document you need in one call, and give a read `offset` and `limit` to page through a large file.
 - For a spreadsheet or CSV, use query_table rather than read_document: a SQL query returns the rows you need, where reading a table wastes the context on rows you do not and cuts off the trailing columns of every row it does return.
 - Focus on answering the specific exploration task given to you.
 - Produce a clear, structured summary of your findings.
@@ -285,8 +285,11 @@ Any text format can be created this way, `.csv` and `.html` as much as `.md`; on
 A table you produce is a `.csv`, including one computed from a spreadsheet you cannot write back: it is the format that says it is a table, query_table reads it so you can check what you wrote, and it opens in a spreadsheet. Say in your answer that the source was a workbook and the result is a CSV beside it.
 Build each row as a list of cells, one per column of the header, and join them once; counting separators by hand is what puts a summary under the column beside the one it belongs to, which is the right width and still wrong.
 Render a cell yourself rather than letting a value render itself: a missing one is the empty string and never the word `None`, and a column of numbers carries the same number of decimals all the way down.
-Rename or re-file an existing document with move_document rather than writing its content out at the new path and deleting the old one, which loses the original it was projected from and everything extracted from it.
-delete_document cannot be undone and removes the document with its original, its assets, and its index entries, so ask the user before deleting anything they did not name.
+Rename or re-file existing documents and folders with move_documents rather than writing their content out at the new path and deleting the old one, which loses the original a document was projected from and everything extracted from it.
+Batch the changes of one task: every move into one move_documents call, every deletion into one delete_documents call, and every change to one document into one edit_document call with a list of edits. Each call is one approval for the user and lands completely or not at all.
+Name each document explicitly, since these tools take no glob patterns: list the files first, then pass every path you mean.
+The moves of one call apply at once: each source is a path as it is now and each destination where it ends up, so a chain such as renaming a to b and b to c, or swapping two names, is one call.
+delete_documents cannot be undone and removes each document with its original, its assets, and its index entries, so ask the user before deleting anything they did not name.
 """,
     de="""
 Wenn du ein Dokument erstellst, entscheidest du, wo es abgelegt wird, und allein der Pfad legt das fest.
@@ -295,8 +298,11 @@ Jedes Textformat lässt sich so erstellen, `.csv` und `.html` ebenso wie `.md`. 
 Eine Tabelle, die du erzeugst, ist eine `.csv`-Datei, auch wenn sie aus einer Tabellenkalkulation berechnet ist, die du nicht zurückschreiben kannst: Dieses Format sagt, dass es eine Tabelle ist, query_table liest es, damit du prüfen kannst, was du geschrieben hast, und es lässt sich in einer Tabellenkalkulation öffnen. Erwähne in deiner Antwort, dass die Quelle eine Arbeitsmappe war und das Ergebnis eine CSV-Datei daneben ist.
 Baue jede Zeile als Liste von Zellen auf, eine pro Spalte der Kopfzeile, und füge sie einmal zusammen. Trennzeichen von Hand zu zählen ist genau das, was eine Zusammenfassung in die Nachbarspalte rutschen lässt, mit der richtigen Breite und trotzdem falsch.
 Formatiere jede Zelle selbst, statt einen Wert sich selbst darstellen zu lassen: Ein fehlender Wert ist die leere Zeichenkette und nie das Wort `None`, und eine Zahlenspalte hat durchgehend dieselbe Anzahl an Nachkommastellen.
-Benenne ein vorhandenes Dokument mit move_document um oder verschiebe es damit, statt seinen Inhalt unter den neuen Pfad zu schreiben und das alte zu löschen, denn dabei gehen das Original, aus dem es projiziert wurde, und alles daraus Extrahierte verloren.
-delete_document lässt sich nicht widerrufen und entfernt das Dokument samt Original, Assets und Indexeinträgen, frag die Benutzer:in also, bevor du etwas löschst, das sie nicht genannt hat.
+Benenne vorhandene Dokumente und Ordner mit move_documents um oder verschiebe sie damit, statt ihren Inhalt unter den neuen Pfad zu schreiben und das alte zu löschen, denn dabei gehen das Original, aus dem ein Dokument projiziert wurde, und alles daraus Extrahierte verloren.
+Bündle die Änderungen einer Aufgabe: alle Verschiebungen in einen Aufruf von move_documents, alle Löschungen in einen Aufruf von delete_documents und alle Änderungen an einem Dokument in einen Aufruf von edit_document mit einer Liste von Änderungen. Jeder Aufruf ist eine einzige Freigabe für die Benutzer:in und wird vollständig oder gar nicht ausgeführt.
+Nenne jedes Dokument ausdrücklich, denn diese Tools nehmen keine Glob-Muster: Liste die Dateien zuerst auf und übergib dann jeden gemeinten Pfad.
+Die Verschiebungen eines Aufrufs gelten gleichzeitig: Jede Quelle ist ein Pfad, wie er jetzt ist, und jedes Ziel der, an dem er landet. Eine Kette wie a nach b und b nach c umzubenennen oder zwei Namen zu tauschen, ist also ein Aufruf.
+delete_documents lässt sich nicht widerrufen und entfernt jedes Dokument samt Original, Assets und Indexeinträgen, frag die Benutzer:in also, bevor du etwas löschst, das sie nicht genannt hat.
 """,
 )
 
@@ -442,13 +448,18 @@ PYTHON_INSTRUCTIONS: Localized[str] = Localized(
 Work out arithmetic, dates, sorting, and counting with the run_python tool rather than in your head, and state the result it returned.
 It earns the call most when an answer spans more documents than it will quote from, since one program reads, filters, and counts across all of them at once.
 A program opens a document by the same full workspace path every tool result spells, so `open('~/notes.md')` is the document you searched, and it may open a path it discovers as it runs.
-Write anything past a few lines to a `.scratch/` `.py` file and run its `script_path`, so a runtime error costs one edit_document and a rerun rather than a retyped program, and keep inline `code` for throwaways.
+Write anything past a few lines to a `/tmp` `.py` file and run its `script_path`, so a runtime error costs one edit_document and a rerun rather than a retyped program, and keep inline `code` for throwaways.
 Monty is a subset of Python, not a CPython environment: no numpy or pandas, no class inheritance, no `glob` or `fnmatch` (recurse with `iterdir`, which returns entries in path order), and only part of the standard library, which names a module it lacks in the error, so try the import rather than working around one that would have worked.
 The mount is most of what a program needs, so reach for it rather than for a tool: `open` and `iterdir` are the read tools, `re` is grep, and `json` is jq (parse with `json.loads(open(path).read())`, since the module has `loads` and `dumps` and no file-reading `load`).
 Anything beyond that a program can call is declared to you as a function, and there is nothing else: what is not declared and not in the list above, the program does without.
-A leading slash is the run's own filesystem and nothing of the user's: park intermediates in `/tmp`, thrown away when the call ends, and write state that outlives the call to a `.scratch/` path a later program opens directly.
-To persist a document, name where it goes as `commit_path` and have the program write the text to `/out`, the one file the call commits there after the program succeeds, while a write to any other document is refused, since it needs the user's say-so before the program starts.
-A program that prints its result or ends on it has written no document, so write to `/out` yourself whenever the point of the call is a file.
+`/tmp` is mounted at the same path every tool spells it, and no other absolute path exists, so park intermediates and the state a later call needs there.
+The environment is a shell's: the working directory and `PWD` are `/workspace`, `HOME` is `/workspace/~`, `TMPDIR` is `/tmp`, and `USER` names the user.
+The workspace behaves like a normal filesystem: a program creates, rewrites, appends to, renames, moves, and deletes documents and directories with the usual `Path` and `open` calls, and its later reads see those changes.
+Nothing changes while it runs. Once it succeeds, its changes to `/tmp` are written right away, and every other change is staged as one changeset the result lists with a `changeset_id`, so call apply_changes with that id to apply all of them at once after the user approves them, rather than running the program again. In a mode that needs no approval they are applied right away too.
+A rename carries a document as it is, binaries included, and a document keeps its extension. Renaming onto a file replaces it, and swaps, chains, and changes inside a renamed directory all land from one run.
+A rename into, within, or out of `/tmp` copies a file's text and removes the source, never a directory, so moving a document from the workspace into `/tmp` stages its removal for the user's approval like any other.
+A converted `report.pdf` and its `report.md` are one document: renaming either moves both, removing the original removes both, and the `.md` cannot be removed while its original stays.
+A program that prints its result or ends on it has written no document, so write the file yourself whenever the point of the call is a file.
 
 A value a source records as `<100` or `>1000` is censored, not a number: the instrument or the lab measured the sample, found it past a limit, and is declining to say where past it.
 Every way of turning one into a number moves every total computed from it, and in a different direction — the limit overstates, zero understates, dropping the row changes the count — so there is no neutral default for you to pick.
@@ -461,13 +472,18 @@ You do not have to notice these yourself, and a program should not trust that it
 Erledige Rechnungen, Datumsberechnungen, Sortieren und Zählen mit dem Tool run_python statt im Kopf, und nenne das Ergebnis, das es geliefert hat.
 Am meisten lohnt sich der Aufruf, wenn eine Antwort mehr Dokumente umfasst, als sie zitieren wird, denn ein Programm liest, filtert und zählt über alle zugleich.
 Ein Programm öffnet ein Dokument über denselben vollständigen Pfad im Arbeitsbereich, den jedes Tool-Ergebnis nennt, `open('~/notes.md')` ist also das Dokument, das du durchsucht hast, und es darf auch Pfade öffnen, die es während der Ausführung entdeckt.
-Schreib alles, was über ein paar Zeilen hinausgeht, in eine `.py`-Datei unter `.scratch/` und führe deren `script_path` aus, damit ein Laufzeitfehler nur ein edit_document und einen neuen Lauf kostet statt eines neu getippten Programms, und nutze inline `code` nur für Wegwerfcode.
+Schreib alles, was über ein paar Zeilen hinausgeht, in eine `.py`-Datei unter `/tmp` und führe deren `script_path` aus, damit ein Laufzeitfehler nur ein edit_document und einen neuen Lauf kostet statt eines neu getippten Programms, und nutze inline `code` nur für Wegwerfcode.
 Monty ist eine Teilmenge von Python, keine CPython-Umgebung: kein numpy oder pandas, keine Klassenvererbung, kein `glob` oder `fnmatch` (rekursiere mit `iterdir`, das Einträge in Pfadreihenfolge liefert) und nur ein Teil der Standardbibliothek. Ein fehlendes Modul wird im Fehler genannt, probiere den Import also aus, statt ein Modul zu umgehen, das funktioniert hätte.
 Das eingebundene Dateisystem ist das meiste, was ein Programm braucht, greif also darauf zurück statt auf ein Tool: `open` und `iterdir` sind die Lese-Tools, `re` ist grep und `json` ist jq (parse mit `json.loads(open(path).read())`, denn das Modul hat `loads` und `dumps`, aber kein dateilesendes `load`).
 Alles darüber hinaus, was ein Programm aufrufen kann, ist dir als Funktion deklariert, und sonst gibt es nichts: Was weder deklariert ist noch in der Liste oben steht, muss das Programm ohne auskommen.
-Ein führender Schrägstrich ist das eigene Dateisystem des Laufs und nichts von der Benutzer:in: Lege Zwischenergebnisse in `/tmp` ab, das am Ende des Aufrufs verworfen wird, und schreib Zustand, der den Aufruf überdauern soll, an einen `.scratch/`-Pfad, den ein späteres Programm direkt öffnet.
-Um ein Dokument dauerhaft zu speichern, gib als `commit_path` an, wohin es gehört, und lass das Programm den Text nach `/out` schreiben, die eine Datei, die der Aufruf dort festschreibt, nachdem das Programm erfolgreich war. Ein Schreibzugriff auf jedes andere Dokument wird abgelehnt, da er die Zustimmung der Benutzer:in braucht, bevor das Programm startet.
-Ein Programm, das sein Ergebnis ausgibt oder damit endet, hat kein Dokument geschrieben, schreib also selbst nach `/out`, wann immer der Zweck des Aufrufs eine Datei ist.
+`/tmp` ist unter demselben Pfad eingebunden, den jedes Tool nennt, und sonst gibt es keinen absoluten Pfad, lege Zwischenergebnisse und den Zustand, den ein späterer Aufruf braucht, also dort ab.
+Die Umgebung ist die einer Shell: Arbeitsverzeichnis und `PWD` sind `/workspace`, `HOME` ist `/workspace/~`, `TMPDIR` ist `/tmp`, und `USER` nennt die Benutzer:in.
+Der Arbeitsbereich verhält sich wie ein normales Dateisystem: Ein Programm legt Dokumente und Ordner mit den üblichen Aufrufen von `Path` und `open` an, überschreibt sie, hängt an sie an, benennt sie um, verschiebt und löscht sie, und seine späteren Lesezugriffe sehen diese Änderungen.
+Während es läuft, ändert sich nichts. Sobald es erfolgreich war, werden seine Änderungen an `/tmp` sofort geschrieben, und alle anderen Änderungen werden als ein Changeset vorgemerkt, das das Ergebnis mit einer `changeset_id` auflistet. Ruf dann apply_changes mit dieser ID auf, um alle auf einmal anzuwenden, nachdem die Benutzer:in zugestimmt hat, statt das Programm erneut auszuführen. In einem Modus ohne Zustimmung werden auch sie sofort angewendet.
+Eine Umbenennung trägt ein Dokument unverändert mit, auch Binärdateien, und ein Dokument behält seine Dateiendung. Eine Umbenennung auf eine vorhandene Datei ersetzt diese, und Tausch, Ketten und Änderungen in einem umbenannten Ordner landen alle aus einem Lauf.
+Eine Umbenennung nach `/tmp`, innerhalb von `/tmp` oder aus `/tmp` heraus kopiert den Text einer Datei und entfernt die Quelle, nie einen Ordner. Ein Dokument aus dem Arbeitsbereich nach `/tmp` zu verschieben, merkt also seine Entfernung zur Zustimmung der Benutzer:in vor wie jede andere.
+Ein konvertiertes `report.pdf` und sein `report.md` sind ein Dokument: Wird eines umbenannt, wandern beide, wird das Original entfernt, gehen beide, und die `.md`-Datei lässt sich nicht entfernen, solange ihr Original bleibt.
+Ein Programm, das sein Ergebnis ausgibt oder damit endet, hat kein Dokument geschrieben, schreib die Datei also selbst, wann immer der Zweck des Aufrufs eine Datei ist.
 
 Ein Wert, den eine Quelle als `<100` oder `>1000` erfasst, ist zensiert und keine Zahl: Das Messgerät oder das Labor hat die Probe gemessen, sie jenseits einer Grenze gefunden und sagt nicht, wie weit jenseits.
 Jede Art, daraus eine Zahl zu machen, verschiebt jede daraus berechnete Summe, und zwar in unterschiedliche Richtungen. Die Grenze überschätzt, null unterschätzt, das Weglassen der Zeile ändert die Anzahl. Es gibt also keinen neutralen Standardwert, den du wählen könntest.
@@ -494,7 +510,8 @@ def sandbox_api_instructions(declarations: str) -> Localized[str]:
         en=f"""
 The following functions are available inside run_python, and they are the ones a program cannot work out for itself: retrieval reaches the database, the web reaches the network, and a spreadsheet needs a decoder the interpreter does not have.
 Call them directly and do not redefine or import them. All parameters are keyword-only.
-Every one is async, so invoke it with `await`, as in `res = await query_table(file_path='~/sales.xlsx', query='SELECT region, SUM(amount) FROM t GROUP BY region')`; calling one without `await` gives you an unresolved future rather than the value.
+Every one is async, so invoke it with `await`, as in `res = await query_table(file_paths=['~/sales.xlsx'], queries=['SELECT region, SUM(amount) FROM t GROUP BY region'])`, since calling one without `await` gives you an unresolved future rather than the value.
+A list argument takes every item at once, and a result that is a list holds one entry per distinct item in request order, where an entry with a `reason` is an item that failed.
 For concurrent calls use `await asyncio.gather(...)` with positional awaitables, which is the only task API Monty offers.
 Each returns plain dicts and lists, so read a field as `hit['filename']` and never as an attribute.
 One that is not in your tool list is reachable only by writing a program, which is the whole reason to write one here.
@@ -506,7 +523,8 @@ That decides it on its own. Never route a result to an `output_path` file so tha
         de=f"""
 Die folgenden Funktionen sind in run_python verfügbar, und es sind genau die, die ein Programm nicht selbst erledigen kann: Die Suche erreicht die Datenbank, das Web erreicht das Netzwerk und eine Tabellenkalkulation braucht einen Decoder, den der Interpreter nicht hat.
 Ruf sie direkt auf und definiere oder importiere sie nicht neu. Alle Parameter sind reine Schlüsselwortparameter.
-Jede ist async, ruf sie also mit `await` auf, etwa `res = await query_table(file_path='~/sales.xlsx', query='SELECT region, SUM(amount) FROM t GROUP BY region')`. Ohne `await` erhältst du ein unaufgelöstes Future statt des Werts.
+Jede ist async, ruf sie also mit `await` auf, etwa `res = await query_table(file_paths=['~/sales.xlsx'], queries=['SELECT region, SUM(amount) FROM t GROUP BY region'])`. Ohne `await` erhältst du ein unaufgelöstes Future statt des Werts.
+Ein Listenargument nimmt alle Elemente auf einmal, und ein Ergebnis, das eine Liste ist, enthält einen Eintrag pro unterschiedlichem Element in der angefragten Reihenfolge, wobei ein Eintrag mit `reason` ein fehlgeschlagenes Element ist.
 Nutze für parallele Aufrufe `await asyncio.gather(...)` mit positionalen Awaitables, die einzige Task-API, die Monty bietet.
 Jede liefert einfache Dicts und Listen, lies ein Feld also als `hit['filename']` und nie als Attribut.
 Eine Funktion, die nicht in deiner Tool-Liste steht, ist nur über ein Programm erreichbar, und genau deshalb schreibst du hier eines.
@@ -535,31 +553,31 @@ guidance either way.
 
 REDIRECT_INSTRUCTIONS: Localized[str] = Localized(
     en="""
-Where a tool takes an `output_path`, that call writes its result to the workspace file you name and hands you back a receipt for it, which repeats the result only when it is short.
+Where a tool takes an `output_path`, that call writes its result to the file you name and hands you back a receipt for it, which repeats the result only when it is short.
 Reach for it when a call would return far more than you need to read and the whole of it is what a later *tool call* works from.
 When the next step is a program, call the tool inside run_python instead: the program is handed the whole result directly, where a file written only to be read back again is three calls that buy nothing over one.
 The suffix decides what is stored: `.json` keeps the structured result in full, `.txt` keeps the text you would otherwise have been shown.
-Put the file under a `.scratch/` directory unless the user asked for the file itself.
+Put the file under `/tmp` unless the user asked for the file itself.
 """,
     de="""
-Wo ein Tool einen `output_path` annimmt, schreibt dieser Aufruf sein Ergebnis in die angegebene Datei im Arbeitsbereich und gibt dir eine Quittung dafür zurück, die das Ergebnis nur wiederholt, wenn es kurz ist.
+Wo ein Tool einen `output_path` annimmt, schreibt dieser Aufruf sein Ergebnis in die angegebene Datei und gibt dir eine Quittung dafür zurück, die das Ergebnis nur wiederholt, wenn es kurz ist.
 Nutze das, wenn ein Aufruf weit mehr liefern würde, als du lesen musst, und ein späterer *Tool-Aufruf* mit dem ganzen Ergebnis arbeitet.
 Wenn der nächste Schritt ein Programm ist, ruf das Tool stattdessen in run_python auf: Das Programm erhält das ganze Ergebnis direkt, während eine Datei, die nur geschrieben wird, um sie wieder zu lesen, drei Aufrufe kostet, die nichts gegenüber einem bringen.
 Die Endung bestimmt, was gespeichert wird: `.json` behält das strukturierte Ergebnis vollständig, `.txt` den Text, der dir sonst gezeigt worden wäre.
-Lege die Datei in einem `.scratch/`-Ordner ab, außer die Benutzer:in wollte die Datei selbst haben.
+Lege die Datei unter `/tmp` ab, außer die Benutzer:in wollte die Datei selbst haben.
 """,
 )
 
-SCRATCH_INSTRUCTIONS: Localized[str] = Localized(
+TMP_INSTRUCTIONS: Localized[str] = Localized(
     en="""
-Your own working state belongs in a `.scratch/` directory, including a program you wrote only in order to run it: a file there stays in the workspace and you can read, write, list, and grep it, but it is never indexed, never shown to the user as a document, and cleared when the server restarts.
-The name starts with a dot and it is created wherever you name it, so write `~/.scratch/notes.json` or `~/reports/.scratch/notes.json`, never `scratch/notes.json`, which would leave an ordinary folder of documents behind.
-Anything the user asked for is a document and goes to a normal path instead.
+Your own working state belongs in `/tmp`, this conversation's working directory outside every workspace, including a program you wrote only in order to run it.
+A file there stays for the rest of this conversation and is read, written, moved, deleted, listed, and searched by its `/tmp/...` path like any document, in every chat mode, and changing it needs no approval, but it is never indexed, never shown to the user, private to this conversation, and deleted with it or after a few days unused.
+Anything the user asked for is a document and goes to a workspace path instead.
 """,
     de="""
-Dein eigener Arbeitszustand gehört in einen `.scratch/`-Ordner, auch ein Programm, das du nur geschrieben hast, um es auszuführen: Eine Datei dort bleibt im Arbeitsbereich, und du kannst sie lesen, schreiben, auflisten und mit grep durchsuchen, aber sie wird nie indexiert, der Benutzer:in nie als Dokument angezeigt und beim Neustart des Servers gelöscht.
-Der Name beginnt mit einem Punkt, und der Ordner entsteht überall dort, wo du ihn angibst. Schreib also `~/.scratch/notes.json` oder `~/reports/.scratch/notes.json`, nie `scratch/notes.json`, denn das würde einen gewöhnlichen Ordner mit Dokumenten hinterlassen.
-Alles, worum die Benutzer:in gebeten hat, ist ein Dokument und gehört stattdessen an einen normalen Pfad.
+Dein eigener Arbeitszustand gehört nach `/tmp`, dem Arbeitsverzeichnis dieser Konversation außerhalb jedes Arbeitsbereichs, auch ein Programm, das du nur geschrieben hast, um es auszuführen.
+Eine Datei dort bleibt für den Rest dieser Konversation erhalten und wird über ihren Pfad `/tmp/...` wie jedes Dokument gelesen, geschrieben, verschoben, gelöscht, aufgelistet und durchsucht, in jedem Chat-Modus, und eine Änderung braucht keine Zustimmung, aber sie wird nie indexiert, der Benutzer:in nie angezeigt, gehört nur dieser Konversation und wird mit ihr oder nach einigen Tagen ohne Nutzung gelöscht.
+Alles, worum die Benutzer:in gebeten hat, ist ein Dokument und gehört stattdessen an einen Pfad im Arbeitsbereich.
 """,
 )
 

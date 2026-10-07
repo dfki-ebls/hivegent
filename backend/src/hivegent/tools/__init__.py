@@ -2,7 +2,9 @@
 
 from .base import (
     DEFAULT_EXCLUDE_DIRS,
+    Batch,
     BinaryAttachment,
+    ItemFailure,
     SearchPath,
     SearchPathFilterFunc,
     Tool,
@@ -10,11 +12,13 @@ from .base import (
     tool_name,
 )
 from .binary import (
+    BinaryRead,
     BinaryReadResult,
     ReadBinaryDocumentTool,
 )
 from .documents import (
     DocumentRange,
+    DocumentRead,
     DocumentSummary,
     DocumentTreeNode,
     GlobDocumentsTool,
@@ -24,9 +28,10 @@ from .documents import (
 from .grep import GrepLine, GrepMatch, GrepTool
 from .jq import JqResult, JqTool
 from .mutations import (
-    DeleteDocumentTool,
+    DeleteDocumentsTool,
+    DocumentMove,
     EditDocumentTool,
-    MoveDocumentTool,
+    MoveDocumentsTool,
     WriteDocumentTool,
 )
 from .python import PythonResult, RunPythonTool
@@ -34,14 +39,26 @@ from .retrieval import SearchResult, SearchType, VectorSearchTool
 from .scope import Scope
 from .sink import RedirectedOutput
 from .table import QueryTableTool, TableResult
-from .web import WebFetch, WebPage, WebSearch, build_user_agent
+from .web import (
+    WebFetch,
+    WebPage,
+    WebSearch,
+    WebSearchHit,
+    WebSearchResults,
+    WikipediaSearch,
+    build_user_agent,
+)
 
 __all__ = [
     "DEFAULT_EXCLUDE_DIRS",
+    "Batch",
     "BinaryAttachment",
+    "BinaryRead",
     "BinaryReadResult",
-    "DeleteDocumentTool",
+    "DeleteDocumentsTool",
+    "DocumentMove",
     "DocumentRange",
+    "DocumentRead",
     "DocumentSummary",
     "DocumentTreeNode",
     "EditDocumentTool",
@@ -49,10 +66,11 @@ __all__ = [
     "GrepLine",
     "GrepMatch",
     "GrepTool",
+    "ItemFailure",
     "JqResult",
     "JqTool",
     "ListDocumentsTool",
-    "MoveDocumentTool",
+    "MoveDocumentsTool",
     "PythonResult",
     "QueryTableTool",
     "ReadBinaryDocumentTool",
@@ -70,6 +88,9 @@ __all__ = [
     "WebFetch",
     "WebPage",
     "WebSearch",
+    "WebSearchHit",
+    "WebSearchResults",
+    "WikipediaSearch",
     "WriteDocumentTool",
     "build_user_agent",
     "file_allowed",

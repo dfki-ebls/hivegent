@@ -20,6 +20,7 @@ from .reads import (
     attachment_disposition,
     find_original,
     get_document_response,
+    get_file_response,
     list_assets,
 )
 
@@ -30,6 +31,7 @@ __all__ = [
     "enforce_upload_size",
     "find_original",
     "get_document_response",
+    "get_file_response",
     "list_assets",
     "run_bulk_document_job",
     "spool_dir",

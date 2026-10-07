@@ -6,6 +6,8 @@ markdown sidecar is actually stored — and if anything fails, the partial
 entry is rolled back wholesale rather than left as an orphan.
 """
 
+from collections.abc import AsyncGenerator, Awaitable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import ClassVar
 
@@ -13,10 +15,11 @@ import pytest
 from fastapi import HTTPException
 from PIL.PngImagePlugin import PngInfo
 
-from hivegent import workspace
+from hivegent import changes, workspace
 from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import settings
 from hivegent.db import documents as db_documents
+from hivegent.db import engine as db_engine
 from hivegent.llm_config import LlmConfig
 from hivegent.store import Casebase
 from hivegent.workspace import commit, prepare
@@ -91,12 +94,17 @@ async def test_failed_commit_leaves_no_orphan(
     async def noop_delete(*_args: object, **_kwargs: object) -> bool:
         return False
 
+    @asynccontextmanager
+    async def no_transaction() -> AsyncGenerator[object]:
+        yield object()
+
     monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
     monkeypatch.setattr(commit, "chunk_and_index_document", boom)
     # The rollback resolves the entry from disk and drops its index rows; stub
     # the SQL touches so the test stays off any live database.
     monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
-    monkeypatch.setattr(commit, "delete_chunked_document", noop_delete)
+    monkeypatch.setattr(db_engine, "session", no_transaction)
+    monkeypatch.setattr(db_documents, "delete_document", noop_delete)
 
     with pytest.raises(RuntimeError):
         await workspace.upload(user_store, "photo.png", png_bytes())
@@ -226,18 +234,33 @@ async def test_destructive_ops_reject_while_stem_in_flight(
     """
     monkeypatch.setattr(workspace.locks, "_states", {})
     workspace.locks._add_inflight(user_store, "docs/note.md")
+    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    (workspace_dir / "docs/note.assets").mkdir(parents=True)
+    (workspace_dir / "docs/note.md").write_text("a")
+    (workspace_dir / "docs/note.assets/img1.md").write_text("a")
+
+    async def no_metadata(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
+
+    def at(path: str) -> workspace.Location:
+        return workspace.Location(user_store, path)
+
+    def apply(*operations: changes.Operation[workspace.Location]) -> Awaitable[tuple[str, ...]]:
+        return workspace.apply_changeset(changes.Changeset(operations))
 
     for op in (
-        workspace.delete_document(user_store, "docs/note.md"),
-        workspace.delete_directory(user_store, "docs"),
+        apply(changes.Delete(at("docs/note.md"))),
+        apply(changes.Delete(at("docs"))),
         workspace.delete_all(user_store),
-        workspace.move_document(user_store, user_store, "docs/note.md", "other"),
-        workspace.move_directory(user_store, user_store, "docs", "other"),
+        apply(changes.Move(at("docs/note.md"), at("other"))),
+        apply(changes.Move(at("docs"), at("other"))),
         workspace.rechunk(user_store, "docs/note.md"),
-        workspace.write_document_text(user_store, "docs/note.md", "x"),
-        workspace.edit_document_text(user_store, "docs/note.md", "a", "b"),
-        workspace.create_directory(user_store, "docs/note.md"),
-        workspace.sync_entry_from_disk(user_store, "docs/note.md"),
+        apply(changes.Write(at("docs/note.md"), "x")),
+        apply(changes.Edit(at("docs/note.md"), (changes.TextEdit("a", "b"),))),
+        apply(changes.CreateDir(at("docs/note.md"))),
+        workspace.sync_entries_from_disk(user_store, ["docs/note.md"]),
         workspace.update_asset_description(
             user_store, "docs/note.md", "img1.png", "caption"
         ),
@@ -248,11 +271,8 @@ async def test_destructive_ops_reject_while_stem_in_flight(
         # The upload owns the asset entries under its stem's `.assets` too, and
         # those are reachable only by their own stems — the claim has to cover
         # them or the index step could re-create rows for just-deleted files.
-        workspace.delete_directory(user_store, "docs/note.assets"),
-        workspace.delete_document(user_store, "docs/note.assets/img1.md"),
-        workspace.move_directory(
-            user_store, user_store, "docs/note.assets", "elsewhere"
-        ),
+        apply(changes.Delete(at("docs/note.assets"))),
+        apply(changes.Delete(at("docs/note.assets/img1.md"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await op

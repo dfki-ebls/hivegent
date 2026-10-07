@@ -9,7 +9,7 @@ from pydantic_ai import BinaryContent, FunctionToolset, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ArgsValidatorFunc
+from pydantic_ai.tools import ArgsValidatorFunc, ToolPrepareFunc
 from pydantic_ai.tools import Tool as PydanticTool
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from pydantic_ai.usage import RunUsage
@@ -198,6 +198,7 @@ def register_agent_tool[D](
     factory: ToolFactory[D],
     *,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
+    prepare: ToolPrepareFunc[D] | None = None,
 ) -> None:
     """Register one Tool factory on a FunctionToolset.
 
@@ -214,6 +215,7 @@ def register_agent_tool[D](
         deps_type: The RunContext deps type.
         factory: Factory callable for the tool.
         args_validator: Optional validator for this tool's arguments.
+        prepare: Optional per-run hook that may withhold the tool.
     """
     fn = for_pydantic_ai(factory, deps_type)
     toolset.add_function(
@@ -221,6 +223,7 @@ def register_agent_tool[D](
         name=factory_tool_name(fn),
         description=fn.__doc__,
         args_validator=args_validator,
+        prepare=prepare,
     )
 
 

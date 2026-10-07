@@ -60,28 +60,14 @@ def test_non_member_group_is_forbidden() -> None:
     assert exc.value.status_code == 403
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        ".scratch/state.json",
-        "notes/.scratch/state.json",
-        "notes/report.assets/fig1.png",
-    ],
-)
-def test_reserved_directories_are_closed_to_the_generic_api(path: str) -> None:
-    """Upload, move, and create-directory refuse the layers the workspace owns.
-
-    Both reserved names would otherwise accept content the user can never see
-    again: an `.assets` payload is disowned by its entry, and a `.scratch` file
-    is deleted at the next boot.  Scratch is reachable only through the write
-    tools, which is the one path it is meant to be written by.
-    """
+def test_assets_are_closed_to_the_generic_api() -> None:
+    """An `.assets` payload would be disowned by its entry, so the API refuses it."""
     with pytest.raises(HTTPException) as exc_info:
-        _check_not_reserved_path(path)
+        _check_not_reserved_path("notes/report.assets/fig1.png")
 
     assert exc_info.value.status_code == 400
 
 
 def test_ordinary_paths_pass_the_reserved_check() -> None:
     _check_not_reserved_path("notes/report.md")
-    _check_not_reserved_path("notes/scratch/report.md")
+    _check_not_reserved_path("notes/tmp/report.md")

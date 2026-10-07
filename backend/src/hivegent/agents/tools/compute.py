@@ -27,15 +27,15 @@ from ...tools.monty import MontySurface, monty_declarations, monty_surface
 from ...tools.pydantic_ai import register_agent_tool
 from ...tools.python import (
     CodeArg,
-    CommitPathArg,
     PythonScriptPathArg,
     RunPythonTool,
     validate_program_source,
 )
+from ...tools.workspace_os import WORKSPACE_MOUNT, ChangesetLimits
 from ..common import UserDeps
 from .explore import EXPLORE_FACTORIES
 from .web import WEB_FACTORIES
-from .write import output_writer, validate_commit_path
+from .write import changeset_committer, program_paths
 
 __all__ = [
     "INJECTABLE_TOOL_NAMES",
@@ -49,6 +49,12 @@ _limits: ResourceLimits = {
     "max_total_sleep_secs": settings.sandbox.max_duration_seconds,
     "max_memory": settings.sandbox.max_memory_bytes,
 }
+
+_changeset_limits = ChangesetLimits(
+    max_operations=settings.sandbox.max_changeset_operations,
+    max_deletes=settings.sandbox.max_changeset_deletes,
+    max_chars=settings.sandbox.max_changeset_chars,
+)
 
 # Filtered from the very lists that register these tools, rather than listed a
 # second time: `Tool.injectable` says which of them a program may be handed,
@@ -77,12 +83,10 @@ them.
 
 def _sandbox_factories(deps: UserDeps) -> tuple[AsyncToolFactory[UserDeps], ...]:
     """Return the injected factories that are live for this run."""
-    withheld = deps.disabled_tools.union(settings.tools.disabled)
-
     return tuple(
         factory
         for factory in _INJECTABLE_FACTORIES
-        if factory_tool_name(factory) not in withheld
+        if factory_tool_name(factory) not in deps.withheld_tools
     )
 
 
@@ -91,12 +95,10 @@ def sandbox_surface(deps: UserDeps) -> MontySurface:
 
     Gated on exactly what gates the tool of the same name: ``web_enabled`` has
     already dropped the web pair from :data:`_INJECTABLE_FACTORIES`, and
-    ``settings.tools.disabled`` is unioned with the request's own withheld
-    names here rather than read off ``deps``.  A tool withheld from the model's
+    :attr:`~hivegent.agents.common.UserDeps.withheld_tools` joins the
+    operator's ``settings.tools.disabled`` to the request's own.  A tool withheld from the model's
     tool list must not reappear as a function, since the two are one namespace
-    and injecting it would be the side door the exclusion exists to close, and
-    reading the operator's list here rather than trusting a deps field means a
-    construction site that never set one still cannot open that door.
+    and injecting it would be the side door the exclusion exists to close.
 
     The mode gates nothing here, because nothing here writes: a run that may
     not touch the workspace is still free to search it.
@@ -136,17 +138,40 @@ def sandbox_instructions(ctx: RunContext[UserDeps]) -> str:
 # A factory runs per tool call, so it only wires up fields.  The worker pool
 # comes from the lifespan.  `paths` mounts the same roots the read tools span,
 # filters applied, so a program reaches what the read tools reach and no more,
-# while the writer both commits the declared output and names the narrower span
-# whose `.scratch/` state a program may write in place.
+# while `writable` is the narrower span its changes may touch, only `/tmp` in a
+# mode that may not write, and `commit` lands them once it succeeded.
 def _run_python(deps: UserDeps) -> RunPythonTool:
     return RunPythonTool(
         pool=get_monty_pool(),
         limits=_limits,
         paths=deps.search_paths(),
-        writer=output_writer(deps),
+        writable=program_paths(deps),
+        commit=changeset_committer(deps),
+        changeset_limits=_changeset_limits,
         surface=sandbox_surface(deps),
         type_check=settings.sandbox.type_check,
+        environ=_environ(deps),
     )
+
+
+def _environ(deps: UserDeps) -> dict[str, str]:
+    """Who runs the program, and that their workspace is its home, as a shell says it.
+
+    Monty has no ``Path.home`` or ``expanduser``, so ``HOME`` is the one place
+    the personal workspace has an absolute spelling, and it is the one a
+    relative ``~/...`` already resolves to.  ``TMPDIR`` names ``/tmp`` where
+    the conversation has one.
+    """
+    environ = {
+        "HOME": str(WORKSPACE_MOUNT / deps.store.scope.prefix),
+        "USER": deps.user_id,
+        "LOGNAME": deps.user_id,
+    }
+
+    if deps.tmp is not None:
+        environ["TMPDIR"] = deps.tmp.prefixed("")
+
+    return environ
 
 
 compute_toolset: FunctionToolset[UserDeps] = FunctionToolset()
@@ -156,18 +181,16 @@ def validate_run_python(
     ctx: RunContext[UserDeps],
     code: CodeArg = None,
     script_path: PythonScriptPathArg = None,
-    commit_path: CommitPathArg = None,
 ) -> None:
-    """Reject invalid program sources before asking approval for their output."""
+    """Reject invalid program sources before a worker is checked out for them.
+
+    No approval is asked here: what a program changes is only known once it
+    ran, so the user approves the staged changes through ``apply_changes``.
+    """
     with translate_tool_retry(ModelRetry):
         _ = validate_program_source(code, script_path)
 
-    validate_commit_path(ctx, commit_path=commit_path)
 
-
-# The sandbox names its destination rather than capturing a result, so it takes
-# the gate alone and not the redirect's suffix check — but the same gate, since
-# both persist a document on the model's say-so.
 register_agent_tool(
     compute_toolset,
     UserDeps,

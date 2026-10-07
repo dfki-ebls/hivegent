@@ -9,22 +9,23 @@ only the reserve and the file writes are serialised against the rest of the
 store.
 """
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..chunkers.base import DocumentMetadata
+from ..chunkers.base import DocumentMetadata, EntryMetadata
 from ..concurrency import shield_to_completion
 from ..config import settings
 from ..db import documents as db_documents
+from ..db import engine as db_engine
 from ..entries import (
     ContentStat,
+    EntryPaths,
     assets_dir_for_stem,
     description_path_for_stem,
     entry_exists,
@@ -35,18 +36,18 @@ from ..l10n import Localized
 from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
-from .indexing import chunk_and_index_document, delete_chunked_document
+from .indexing import chunk_and_index_document
 from .locks import _add_inflight, _discard_inflight, _locked_for, store_lock
 from .metadata import _merge_entry_paths
 from .paths import (
-    DOCUMENT_NOT_FOUND,
     _check_destination_parents,
-    _remove_tree,
-    _replace_workspace_paths,
+    _Journal,
+    _journaled,
     _shown,
     _WorkspaceChange,
     _write_markdown_file,
     _write_workspace_file,
+    document_not_found,
 )
 from .prepare import _prepare_upload, _PreparedEntry, _PreparedUpload, _Reserved
 
@@ -79,76 +80,88 @@ class _WrittenEntry:
     stat: ContentStat | None
 
 
+def _stage_prepared(
+    staging: Path, prepared: _PreparedUpload, reserved: _Reserved
+) -> list[_WorkspaceChange]:
+    """Write a prepared upload's bytes under *staging*, returning the swap to make.
+
+    Nothing live is touched: the returned changes name each workspace path the
+    upload replaces or removes, so a caller installs them through a journal
+    together with whatever else its change does.
+    """
+    stem_path = stem_path_from_reference(reserved.reference)
+    assets_dir = assets_dir_for_stem(stem_path)
+
+    if reserved.original_path and reserved.original_content is not None:
+        _write_workspace_file(staging, reserved.original_path, reserved.original_content)
+
+    for asset in prepared.assets:
+        _write_workspace_file(staging, asset.path, asset.data)
+
+    for entry in (*prepared.asset_entries, prepared.main):
+        _write_markdown_file(staging, entry.description_path, entry.markdown)
+
+    has_assets = bool(prepared.assets or prepared.asset_entries)
+    changes = [
+        _WorkspaceChange(
+            prepared.main.description_path, staging / prepared.main.description_path
+        )
+    ]
+
+    if reserved.preserve or has_assets:
+        changes.append(
+            _WorkspaceChange(assets_dir, staging / assets_dir if has_assets else None)
+        )
+
+    if reserved.original_path and reserved.original_content is not None:
+        changes.append(
+            _WorkspaceChange(reserved.original_path, staging / reserved.original_path)
+        )
+
+    if (
+        reserved.supersede_original is not None
+        and reserved.supersede_original != reserved.original_path
+    ):
+        changes.append(_WorkspaceChange(reserved.supersede_original, None))
+
+    return changes
+
+
+def _written_entries(
+    workspace: Path, prepared: _PreparedUpload
+) -> tuple[_WrittenEntry, ...]:
+    """The projections a prepared upload put on disk, in index order.
+
+    Assets come first and the main entry last, so the markdown that references
+    the assets is only indexed once their own entries are.
+    """
+    return tuple(
+        _WrittenEntry(entry, ContentStat.from_path(workspace / entry.description_path))
+        for entry in (*prepared.asset_entries, prepared.main)
+    )
+
+
 async def _write_prepared_files(
     store: Casebase, prepared: _PreparedUpload, reserved: _Reserved
 ) -> tuple[_WrittenEntry, ...]:
     """Apply a prepared upload's bytes to the workspace. Caller holds the lock.
 
-    This is the only phase that mutates the workspace.  It writes everything to
-    workspace-local staging first, then replaces the live paths while retaining
-    backups until the swap and related SQL cleanup succeed.  Any apply failure
-    restores the complete prior entry.
-
-    Returns the written projections in index order (assets first, main last), so
-    the markdown that references the assets is only indexed once their own
-    entries are.
+    This is the only phase that mutates the workspace.  It stages everything
+    first, then swaps the live paths through a journal and drops a reprocessed
+    entry's stale asset rows, restoring the complete prior entry if either
+    fails.
     """
     workspace = store.workspace_dir(settings.data_dir)
-    stem_path = stem_path_from_reference(reserved.reference)
-    assets_dir = assets_dir_for_stem(stem_path)
+    assets_dir = assets_dir_for_stem(stem_path_from_reference(reserved.reference))
 
-    with TemporaryDirectory(
-        prefix=f".{workspace.name}-stage-", dir=workspace.parent
-    ) as tmp:
-        staging = Path(tmp)
-        new_root = staging / "new"
-        backup_root = staging / "backup"
+    with _journaled() as (staging, journal):
+        for change in _stage_prepared(staging, prepared, reserved):
+            journal.apply(workspace, change)
 
-        if reserved.original_path and reserved.original_content is not None:
-            _write_workspace_file(
-                new_root, reserved.original_path, reserved.original_content
-            )
-        for asset in prepared.assets:
-            _write_workspace_file(new_root, asset.path, asset.data)
-        for entry in (*prepared.asset_entries, prepared.main):
-            _write_markdown_file(new_root, entry.description_path, entry.markdown)
+        if reserved.preserve:
+            await db_documents.delete_subtree(store, assets_dir)
 
-        has_assets = bool(prepared.assets or prepared.asset_entries)
-        changes = [
-            _WorkspaceChange(
-                prepared.main.description_path,
-                new_root / prepared.main.description_path,
-            )
-        ]
-        if reserved.preserve or has_assets:
-            changes.append(
-                _WorkspaceChange(
-                    assets_dir, new_root / assets_dir if has_assets else None
-                )
-            )
-        if reserved.original_path and reserved.original_content is not None:
-            changes.append(
-                _WorkspaceChange(
-                    reserved.original_path, new_root / reserved.original_path
-                )
-            )
-        if (
-            reserved.supersede_original is not None
-            and reserved.supersede_original != reserved.original_path
-        ):
-            changes.append(_WorkspaceChange(reserved.supersede_original, None))
-
-        with _replace_workspace_paths(workspace, backup_root, changes):
-            if reserved.preserve:
-                await db_documents.delete_subtree(store, assets_dir)
-
-            return tuple(
-                _WrittenEntry(
-                    entry,
-                    ContentStat.from_path(workspace / entry.description_path),
-                )
-                for entry in (*prepared.asset_entries, prepared.main)
-            )
+    return _written_entries(workspace, prepared)
 
 
 async def _index_entry(
@@ -211,29 +224,53 @@ async def _apply_prepared(
     return await _index_prepared(store, prepared, written, spec)
 
 
-async def _delete_single_locked(store: Casebase, safe: str) -> None:
-    """Remove a logical entry's files, metadata, and index rows.
+def _entry_paths(store: Casebase, safe: str, metadata: EntryMetadata | None) -> EntryPaths:
+    """Resolve the files of an entry a removal or a move takes with it, given its row.
 
     Works for entries without a SQL row or description file too (e.g. a
     stray original that was never ingested), so any on-disk entry can
-    always be removed through the API.
+    always be removed through the API.  Blocking: it lists the entry's
+    directory.
     """
-    workspace = store.workspace_dir(settings.data_dir)
-    metadata = await db_documents.get_entry_metadata(store, safe)
+    workspace = store.workspace_path(settings.data_dir)
+
     if not metadata and not entry_exists(workspace, safe):
-        raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND.current)
+        raise HTTPException(
+            status_code=404, detail=document_not_found(_shown(store, safe)).current
+        )
 
-    resolved = _merge_entry_paths(resolve_entry_paths(workspace, safe), metadata)
-    (workspace / resolved.description_path).unlink(missing_ok=True)
+    return _merge_entry_paths(resolve_entry_paths(workspace, safe), metadata)
 
-    if resolved.original_path:
-        (workspace / resolved.original_path).unlink(missing_ok=True)
 
-    if resolved.assets_dir:
-        await asyncio.to_thread(_remove_tree, workspace / resolved.assets_dir)
-        await db_documents.delete_subtree(store, resolved.assets_dir)
+async def _existing_entry(store: Casebase, safe: str) -> EntryPaths:
+    """Resolve the files and rows of an entry a removal takes with it."""
+    return _entry_paths(store, safe, await db_documents.get_entry_metadata(store, safe))
 
-    await delete_chunked_document(store, safe)
+
+def _remove_entry_files(journal: _Journal, workspace: Path, entry: EntryPaths) -> None:
+    """Park an entry's description, original, and assets in *journal*."""
+    for path in entry.files:
+        journal.remove(workspace / path)
+
+
+async def _remove_entry_rows(s: AsyncSession, store: Casebase, entry: EntryPaths) -> None:
+    """Drop an entry's row and its asset rows inside the caller's transaction."""
+    await db_documents.delete_document(store, entry.description_path, s=s)
+
+    if entry.assets_dir:
+        await db_documents.delete_subtree(store, entry.assets_dir, s=s)
+
+
+async def _delete_single_locked(store: Casebase, safe: str) -> None:
+    """Remove a logical entry's files and rows together. Caller holds the lock."""
+    entry = await _existing_entry(store, safe)
+    workspace = store.workspace_path(settings.data_dir)
+
+    with _journaled() as (_staging, journal):
+        _remove_entry_files(journal, workspace, entry)
+
+        async with db_engine.session() as s:
+            await _remove_entry_rows(s, store, entry)
 
 
 async def _safe_delete_locked(store: Casebase, safe: str) -> None:

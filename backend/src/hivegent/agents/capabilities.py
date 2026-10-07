@@ -47,7 +47,7 @@ from ..prompts import (
     MEMORY_INSTRUCTIONS_EMPTY,
     PYTHON_INSTRUCTIONS,
     REDIRECT_INSTRUCTIONS,
-    SCRATCH_INSTRUCTIONS,
+    TMP_INSTRUCTIONS,
     VERSION_INSTRUCTIONS,
     WORKSPACE_PATH_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
@@ -151,14 +151,15 @@ class Feature:
         )
 
 
-# The single source of truth for the agent's features.  ``explore``, ``write``,
-# and ``memory`` carry their own instructions: ``explore`` states the
-# grounding and version discipline for the retrieval tools it owns and describes
-# the live document scope (so the model knows which documents the user
-# selected), ``write`` says who decides where a new document goes, and
+# The single source of truth for the agent's features.  ``explore`` and
+# ``memory`` carry their own instructions: ``explore`` states the grounding and
+# version discipline for the retrieval tools it owns and describes the live
+# document scope (so the model knows which documents the user selected), and
 # ``memory`` resolves the user's stored memory lazily so its guidance only loads
-# when active.  The rest are bare toolset bundles.  Adding a feature here
-# exposes it to the agent and the debug surface.
+# when active.  ``write`` is offered in every mode, since ``/tmp`` is writable in
+# all of them, so its workspace guidance is a shared block narrowed to the modes
+# that may write the workspaces.  The rest are bare toolset bundles.  Adding a
+# feature here exposes it to the agent and the debug surface.
 #
 # Grounding rides here rather than on the agent so it appears exactly when the
 # tools it mandates do: a user who disables every explore tool must not be left
@@ -180,9 +181,7 @@ FEATURES: tuple[Feature, ...] = (
         instructions=[PYTHON_INSTRUCTIONS, sandbox_instructions],
     ),
     Feature.build("subagent", subagent_toolset),
-    Feature.build(
-        "write", write_toolset, instructions=[WRITE_INSTRUCTIONS], modes=MUTATING_MODES
-    ),
+    Feature.build("write", write_toolset),
     Feature.build(
         "memory",
         memory_toolset,
@@ -226,15 +225,17 @@ SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
         "citation", frozenset({"explore", "web"}), CITATION_INSTRUCTIONS
     ),
     SharedInstructions(
-        "scratch", frozenset({"compute", "write"}), SCRATCH_INSTRUCTIONS
+        "tmp", frozenset({"compute", "write"}), TMP_INSTRUCTIONS
     ),
-    # The redirect argument is a workspace write, so a read-only run refuses
-    # every use of it: the guidance goes where the argument itself does.
     SharedInstructions(
-        "redirect",
-        frozenset({"explore", "web"}),
-        REDIRECT_INSTRUCTIONS,
+        "workspace-writes",
+        frozenset({"write"}),
+        WRITE_INSTRUCTIONS,
         modes=MUTATING_MODES,
+    ),
+    # A read-only run may still redirect into `/tmp`, which every mode writes.
+    SharedInstructions(
+        "redirect", frozenset({"explore", "web"}), REDIRECT_INSTRUCTIONS
     ),
 )
 """Guidance spanning several features, composed while any of them is live."""
@@ -296,7 +297,7 @@ def build_capabilities(
     tools a user-configured MCP server brings.
 
     The mode selects which features are offered at all (``read`` is handed
-    none of the mutating ones); whether a write the remaining ones
+    none of the mutating ones).  Whether a write the remaining ones
     perform pauses for the user is decided per call by the gate in
     ``agents/tools/write.py``, which alone can see the path.
 

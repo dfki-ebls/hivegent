@@ -50,8 +50,8 @@ import {
   type LlmConfig,
   type PipelineConfigInfo,
   PipelineConfigInfoSchema,
-  type ScratchClearedResponse,
-  ScratchClearedResponseSchema,
+  type TmpClearedResponse,
+  TmpClearedResponseSchema,
   type ToolInfo,
   ToolInfoSchema,
   type ToolRunResult,
@@ -227,7 +227,11 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
  * Encodes each segment individually so that `/` separators are preserved.
  */
 function encodeFilePath(filepath: string): string {
-  return filepath.split("/").map(encodeURIComponent).join("/");
+  const encoded = filepath.split("/").map(encodeURIComponent).join("/");
+
+  // An absolute path such as `/tmp/...` keeps its leading slash encoded, so no
+  // proxy merges it into the route's own slash.
+  return encoded.startsWith("/") ? `%2F${encoded.slice(1)}` : encoded;
 }
 
 /**
@@ -639,27 +643,28 @@ async function readSseEvents<TEvent, TResult>(
   return result;
 }
 
-export async function deleteDocument(filename: string): Promise<void> {
-  return requestVoid(`${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`, "delete", {
-    method: "DELETE",
-  });
+/** The content route of a canonical path, whose `/tmp` is the one of *conversationId*. */
+function documentUrl(filepath: string, conversationId?: string | null): string {
+  const url = `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`;
+
+  return conversationId ? `${url}?conversation_id=${conversationId}` : url;
 }
 
-export async function getDocumentContent(filename: string): Promise<string> {
-  return requestText(
-    `${API_BASE_URL}/api/documents/${encodeFilePath(filename)}`,
-    "fetchDocumentContent",
-  );
+export async function getDocumentContent(
+  filename: string,
+  conversationId?: string | null,
+): Promise<string> {
+  return requestText(documentUrl(filename, conversationId), "fetchDocumentContent");
 }
 
-/** Fetch a workspace asset (e.g. image) as a blob URL for display. */
-export async function fetchDocumentAsset(filepath: string, signal?: AbortSignal): Promise<string> {
+/** Fetch a workspace or `/tmp` asset (e.g. image) as a blob URL for display. */
+export async function fetchDocumentAsset(
+  filepath: string,
+  signal?: AbortSignal,
+  conversationId?: string | null,
+): Promise<string> {
   const blob = await (
-    await checkedResponse(
-      `${API_BASE_URL}/api/documents/${encodeFilePath(filepath)}`,
-      "fetchDocumentAsset",
-      { signal },
-    )
+    await checkedResponse(documentUrl(filepath, conversationId), "fetchDocumentAsset", { signal })
   ).blob();
   return URL.createObjectURL(blob);
 }
@@ -970,9 +975,9 @@ export async function subscribeJobs(
 
 // --- Bulk operation API functions ---
 //
-// Each bulk operation runs as one background job: the POST resolves with the
-// job's initial snapshot and per-file progress then arrives through the `/jobs`
-// feed, just like single uploads and reconverts.
+// Bulk rechunk and reconvert run as one background job each: the POST resolves
+// with the job's initial snapshot and per-file progress then arrives through the
+// `/jobs` feed. Moves, deletes, and new directories go through `applyChanges`.
 
 /** Bulk rechunk multiple documents as a background job. */
 export function bulkRechunk(files: string[], spec?: PipelineSpec): Promise<JobView> {
@@ -996,22 +1001,30 @@ export function bulkReconvert(
   );
 }
 
-export interface BulkMoveEntry {
-  source: string;
-  destination: string;
+// --- Workspace changes ---
+
+/** What a delete expects its path to be, refused when it is the other kind. */
+export type DeleteKind = "entry" | "dir";
+
+/** One operation of {@link applyChanges}, every path canonical (`~/a.md`, `@team/b`). */
+export type ChangeOperation =
+  | { kind: "move"; source: string; destination: string }
+  | { kind: "delete"; path: string; expect: DeleteKind }
+  | { kind: "mkdir"; path: string };
+
+/**
+ * Move, delete, and create documents and directories as one changeset. All of
+ * them land or none does, and a refusal rejects with the message naming its path.
+ */
+export async function applyChanges(operations: ChangeOperation[]): Promise<void> {
+  return requestVoid(
+    `${API_BASE_URL}/api/changes`,
+    "applyChanges",
+    jsonRequest("POST", { operations }),
+  );
 }
 
-/** Bulk move multiple documents as a background job. */
-export function bulkMove(moves: BulkMoveEntry[]): Promise<JobView> {
-  return postJob(`${API_BASE_URL}/api/documents/move/bulk`, { moves }, "bulkMove");
-}
-
-/** Bulk delete multiple documents as a background job. */
-export function bulkDelete(files: string[]): Promise<JobView> {
-  return postJob(`${API_BASE_URL}/api/documents/delete/bulk`, { files }, "bulkDelete");
-}
-
-// User directory management
+// Directory tree
 
 /** Fetch a workspace directory tree; `scope` is `~` (personal) or `@<group>`. */
 export async function getDirectories(scope: string): Promise<DirectoryTreeResponse> {
@@ -1019,38 +1032,6 @@ export async function getDirectories(scope: string): Promise<DirectoryTreeRespon
     `${API_BASE_URL}/api/directories/${encodeFilePath(scope)}`,
     "fetchDirectories",
     DirectoryTreeResponseSchema,
-  );
-}
-
-export async function createDirectory(path: string): Promise<void> {
-  return requestVoid(
-    `${API_BASE_URL}/api/directories`,
-    "createDirectory",
-    jsonRequest("POST", { path }),
-  );
-}
-
-export async function deleteDirectory(dirpath: string): Promise<void> {
-  return requestVoid(
-    `${API_BASE_URL}/api/directories`,
-    "deleteDirectory",
-    jsonRequest("DELETE", { path: dirpath }),
-  );
-}
-
-export async function moveDirectory(source: string, destination: string): Promise<void> {
-  return requestVoid(
-    `${API_BASE_URL}/api/directories/move`,
-    "moveDirectory",
-    jsonRequest("POST", { source, destination }),
-  );
-}
-
-export async function moveDocument(filepath: string, destination: string): Promise<void> {
-  return requestVoid(
-    `${API_BASE_URL}/api/documents/move/${encodeFilePath(filepath)}`,
-    "move",
-    jsonRequest("POST", { destination }),
   );
 }
 
@@ -1082,9 +1063,9 @@ export async function clearMemory(): Promise<void> {
   });
 }
 
-/** Drop the scratch state agent runs parked in the user's workspaces. */
-export async function clearScratch(): Promise<ScratchClearedResponse> {
-  return requestJson(`${API_BASE_URL}/api/scratch`, "clearScratch", ScratchClearedResponseSchema, {
+/** Drop the `/tmp` folder of every one of the user's conversations. */
+export async function clearTmp(): Promise<TmpClearedResponse> {
+  return requestJson(`${API_BASE_URL}/api/tmp`, "clearTmp", TmpClearedResponseSchema, {
     method: "DELETE",
   });
 }

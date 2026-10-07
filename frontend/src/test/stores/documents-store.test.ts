@@ -1,29 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { getDirectories as getDirectoriesFn } from "@/lib/api";
+import type { applyChanges as applyChangesFn, getDirectories as getDirectoriesFn } from "@/lib/api";
 
 const jobEvents = vi.hoisted(() => ({ feedReady: undefined as (() => void) | undefined }));
 
-// Only the refresh read is exercised; the remaining store imports just
-// need to exist for the module to load (the factory is hoisted, so no helpers).
-vi.mock("@/lib/api", () => ({
-  bulkDelete: vi.fn<() => void>(),
-  bulkMove: vi.fn<() => void>(),
-  bulkRechunk: vi.fn<() => void>(),
-  bulkReconvert: vi.fn<() => void>(),
-  cancelJob: vi.fn<() => void>(),
-  canonicalPath: (scope: string, local: string) => `${scope}/${local}`,
-  createDirectory: vi.fn<() => void>(),
-  deleteDirectory: vi.fn<() => void>(),
-  deleteDocument: vi.fn<() => void>(),
+// Only the requests are stubbed, the pure path helpers stay real.
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  applyChanges: vi.fn<typeof applyChangesFn>(),
   getDirectories: vi.fn<typeof getDirectoriesFn>(),
-  moveDirectory: vi.fn<() => void>(),
-  moveDocument: vi.fn<() => void>(),
-  rechunkDocument: vi.fn<() => void>(),
-  reconvertDocument: vi.fn<() => void>(),
-  subscribeJobs: vi.fn<() => void>(),
-  uploadCollection: vi.fn<() => void>(),
-  uploadDocument: vi.fn<() => void>(),
 }));
 
 // Only the feed-ready hook is intercepted, to fire the handshake by hand; the
@@ -35,7 +20,7 @@ vi.mock("@/stores/jobs-store", async (importOriginal) => ({
   },
 }));
 
-import { getDirectories } from "@/lib/api";
+import { applyChanges, getDirectories } from "@/lib/api";
 import type { DirectoryTreeResponse } from "@/lib/types";
 import { useDocumentsStore } from "@/stores/documents-store";
 
@@ -112,14 +97,15 @@ describe("useDocumentsStore refresh", () => {
   });
 });
 
-describe("useDocumentsStore createDir", () => {
+describe("useDocumentsStore changes", () => {
   beforeEach(() => {
     useDocumentsStore.setState({ byScope: {} });
     vi.clearAllMocks();
+    vi.mocked(getDirectories).mockResolvedValue(treeWith("a.md"));
+    vi.mocked(applyChanges).mockResolvedValue();
   });
 
   it("shows the new directory before the tree refresh lands", async () => {
-    vi.mocked(getDirectories).mockResolvedValueOnce(treeWith("notes.md"));
     await useDocumentsStore.getState().refresh("~");
 
     const pending = deferred<DirectoryTreeResponse>();
@@ -132,24 +118,39 @@ describe("useDocumentsStore createDir", () => {
       expect(children?.map((c) => c.path)).toContain("reports");
     });
 
-    pending.resolve(treeWith("notes.md"));
+    pending.resolve(treeWith("a.md"));
     await done;
-  });
-});
 
-describe("useDocumentsStore move", () => {
-  beforeEach(() => {
-    useDocumentsStore.setState({ byScope: {} });
-    vi.clearAllMocks();
+    expect(applyChanges).toHaveBeenCalledExactlyOnceWith([{ kind: "mkdir", path: "~/reports" }]);
   });
 
-  it("refreshes both the source and destination scope on a cross-workspace move", async () => {
-    vi.mocked(getDirectories).mockResolvedValue(treeWith("notes.md"));
+  it("sends a cross-workspace move as one request and refreshes both scopes", async () => {
+    await useDocumentsStore.getState().move("~", "@team", [
+      { source: "a.md", destination: "b.md" },
+      { source: "docs", destination: "docs" },
+    ]);
 
-    await useDocumentsStore.getState().move("~", "notes.md", "@team", "notes.md");
-
+    expect(applyChanges).toHaveBeenCalledExactlyOnceWith([
+      { kind: "move", source: "~/a.md", destination: "@team/b.md" },
+      { kind: "move", source: "~/docs", destination: "@team/docs" },
+    ]);
     const scopes = vi.mocked(getDirectories).mock.calls.map((call) => call[0]);
-    expect(scopes).toContain("~");
-    expect(scopes).toContain("@team");
+    expect(scopes).toEqual(expect.arrayContaining(["~", "@team"]));
+    expect(useDocumentsStore.getState().byScope["~"].error).toBeNull();
+  });
+
+  it("shows the request's single error and clears every spinner", async () => {
+    vi.mocked(applyChanges).mockRejectedValueOnce(new Error("Document not found: ~/b.md"));
+
+    await useDocumentsStore.getState().remove("~", ["a.md", "b.md"], "entry");
+
+    expect(applyChanges).toHaveBeenCalledExactlyOnceWith([
+      { kind: "delete", path: "~/a.md", expect: "entry" },
+      { kind: "delete", path: "~/b.md", expect: "entry" },
+    ]);
+    const state = useDocumentsStore.getState().byScope["~"];
+    expect(state.error).toBe("Document not found: ~/b.md");
+    expect(state.mutatingPaths.size).toBe(0);
+    expect(getDirectories).toHaveBeenCalledWith("~");
   });
 });

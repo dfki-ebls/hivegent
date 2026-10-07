@@ -17,10 +17,10 @@ from hivegent.db.documents import _entry_from_row, _EntryColumns, _original_suff
 from hivegent.db.models import Document
 from hivegent.entries import (
     description_path_for_stem,
-    is_description_file,
+    is_below,
     is_projectable_original,
-    is_scratch_path,
     original_path_for_stem,
+    rebase,
     stem_path_from_reference,
 )
 
@@ -50,23 +50,6 @@ def test_projectable_originals_are_the_verbatim_formats(
     because deriving it is not free; junk and managed assets are never entries.
     """
     assert is_projectable_original(rel_path) is projectable
-
-
-def test_scratch_paths_are_workspace_content_but_never_entries() -> None:
-    """Scratch is decided by location, independently of the format seam.
-
-    A scratch file keeps whatever format it has — the point is that neither the
-    markdown half nor the projectable half of the seam can pull it into SQL.
-    """
-    assert is_scratch_path(".scratch/state.json")
-    assert is_scratch_path("notes/.scratch/run.md")
-    assert is_scratch_path(".scratch")
-    assert not is_scratch_path("notes/report.md")
-    assert not is_scratch_path("notes/scratch/report.md")
-
-    # Both formats that would otherwise be indexed, parked in scratch.
-    assert is_description_file("notes/.scratch/run.md")
-    assert is_projectable_original("notes/.scratch/state.ini")
 
 
 def _project(entry: EntryMetadata) -> EntryMetadata:
@@ -163,3 +146,25 @@ def test_subtree_filter_excludes_equal_stem_and_escapes_wildcards() -> None:
     )
     assert "LIKE '100\\%\\_a/%'" in sql
     assert "=" not in sql
+
+
+@pytest.mark.parametrize(
+    ("path", "directory", "below"),
+    [
+        ("~/docs/a.md", "~/docs", True),
+        ("~/docs-old/a.md", "~/docs", False),
+        ("~/docs", "~/docs", False),
+        ("@team/docs/a/b.md", "@team/docs", True),
+    ],
+)
+def test_below_compares_segments_rather_than_prefixes(
+    path: str, directory: str, below: bool
+) -> None:
+    """A sibling sharing a name prefix is never mistaken for a child."""
+    assert is_below(path, directory) is below
+
+
+def test_rebase_carries_a_path_between_trees() -> None:
+    assert rebase("~/a/b/c.md", "~/a", "@team/x") == "@team/x/b/c.md"
+    assert rebase("~/a", "~/a", "~/b") == "~/b"
+    assert rebase("a/c.md", "a", "") == "c.md"

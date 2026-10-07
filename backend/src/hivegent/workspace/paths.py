@@ -1,37 +1,43 @@
 """Path semantics, on-disk guards, and the raw filesystem work of a mutation.
 
 No async and no SQL: this module is the path arithmetic, the HTTP-level
-validation every mutation shares — ``mv`` destination resolution,
-case-insensitive inode aliasing, parent-chain checks, the upload size limit —
-and the blocking filesystem primitives the mutations build from.
+validation every mutation shares (case-insensitive inode aliasing,
+parent-chain checks, the upload size limit), and the blocking filesystem
+primitives the mutations build from, including the rename journal
+(:class:`_Journal`) every change is installed and rolled back through.
 """
 
-import shutil
-from collections.abc import Iterator, Sequence
+import logging
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 
 from fastapi import HTTPException
 
 from ..config import settings
-from ..entries import SCRATCH_DIR_NAME, ContentStat, is_assets_dir, is_scratch_path
+from ..entries import ContentStat, is_reserved_path
+from ..files import remove_path
 from ..humanize import format_bytes
 from ..l10n import Localized
 from ..store import Casebase
 from ..text import NOT_TEXT_REASON
 
 __all__ = [
-    "DESTINATION_EXISTS",
-    "DIRECTORY_NOT_FOUND",
     "DIRECTORY_PATH_REQUIRED",
-    "DOCUMENT_NOT_FOUND",
+    "directory_not_found",
+    "document_not_found",
     "file_too_large",
     "no_original",
     "not_text",
 ]
 
-DOCUMENT_NOT_FOUND = Localized(en="Document not found", de="Dokument nicht gefunden")
+
+def document_not_found(path: str) -> Localized[str]:
+    return Localized(
+        en=f"Document not found: {path}", de=f"Dokument nicht gefunden: {path}"
+    )
 
 
 def no_original(path: str) -> Localized[str]:
@@ -44,10 +50,12 @@ def no_original(path: str) -> Localized[str]:
 DIRECTORY_PATH_REQUIRED = Localized(
     en="Directory path required", de="Ordnerpfad erforderlich"
 )
-DIRECTORY_NOT_FOUND = Localized(en="Directory not found", de="Ordner nicht gefunden")
-DESTINATION_EXISTS = Localized(
-    en="Destination already exists", de="Das Ziel existiert bereits"
-)
+
+
+def directory_not_found(path: str) -> Localized[str]:
+    return Localized(
+        en=f"Directory not found: {path}", de=f"Ordner nicht gefunden: {path}"
+    )
 
 
 def not_text(path: str) -> Localized[str]:
@@ -67,18 +75,6 @@ _ASSETS_RESERVED = Localized(
     en="'.assets' directories are managed through their owning document",
     de="„.assets“-Ordner werden über ihr zugehöriges Dokument verwaltet",
 )
-_SCRATCH_RESERVED = Localized(
-    en=(
-        f"'{SCRATCH_DIR_NAME}' holds agent scratch state, is never "
-        "indexed, and is cleared on restart; write it with the document "
-        "tools or choose another path"
-    ),
-    de=(
-        f"„{SCRATCH_DIR_NAME}“ enthält den Scratch-Zustand des Agenten, wird nie "
-        "indexiert und beim Neustart geleert. Schreibe dorthin mit den "
-        "Dokument-Tools oder wähle einen anderen Pfad"
-    ),
-)
 
 
 def file_too_large(limit: int) -> Localized[str]:
@@ -88,30 +84,20 @@ def file_too_large(limit: int) -> Localized[str]:
     )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _shown(store: Casebase, local: str) -> str:
     """The canonical path a message names, not the one local to the store.
 
     Every string this package hands back is read by a model or a client that
     addresses a document by its full ``~`` / ``@<group>`` path, so a message
-    spelling the store-local one names a path no tool and no route accepts: a
-    program written to `~/.scratch/run.py` came back as `.scratch/run.py` and
-    was pasted into the next call as inline code rather than run by its
-    `script_path`.
+    spelling the store-local one names a path no tool and no route accepts.
 
     Here rather than beside any one mutation because the rule is the package's,
     not one module's: every message that names a path renders it through this.
     """
     return store.scope.render(local)
-
-
-def _remove_tree(directory: Path) -> None:
-    """Remove *directory* and everything under it, tolerating its absence.
-
-    Absence is the only tolerated failure, so a subtree that could not be
-    removed still raises rather than leaving stale files behind unreported.
-    """
-    with suppress(FileNotFoundError):
-        shutil.rmtree(directory)
 
 
 def _write_workspace_file(workspace_dir: Path, filepath: str, content: bytes) -> Path:
@@ -146,49 +132,108 @@ class _WorkspaceChange:
     staged_path: Path | None
 
 
-def _remove_workspace_path(path: Path) -> None:
-    """Remove one workspace path, whether it is a file or directory."""
-    if path.is_dir():
-        _remove_tree(path)
-    else:
-        path.unlink(missing_ok=True)
+def _rmdir_if_empty(directory: Path) -> None:
+    with suppress(OSError):
+        directory.rmdir()
+
+
+def _restore(backup: Path, live: Path) -> None:
+    live.parent.mkdir(parents=True, exist_ok=True)
+    backup.replace(live)
+
+
+@dataclass(slots=True)
+class _Journal:
+    """Undo log of the renames one change makes, replayed in reverse to undo it.
+
+    Every step is a rename, so it is cheap whatever it moves, and undoing it
+    restores the exact prior inode: a removed path is parked under
+    *backup_root* rather than deleted, which must share a filesystem with the
+    workspaces it serves (the workspace root does).  Parent directories a step
+    had to create are removed again on rollback while they are still empty.
+    """
+
+    backup_root: Path
+    _undo: list[Callable[[], None]] = field(default_factory=list)
+    _parked: int = 0
+
+    def mkdir(self, directory: Path) -> None:
+        """Create *directory* and its missing parents, each undone while still empty."""
+        missing = [path for path in (directory, *directory.parents) if not path.exists()]
+        directory.mkdir(parents=True, exist_ok=True)
+
+        for path in reversed(missing):
+            self._undo.append(lambda d=path: _rmdir_if_empty(d))
+
+    def remove(self, live: Path) -> None:
+        """Park *live* in the backup root, tolerating its absence."""
+        if not live.exists() and not live.is_symlink():
+            return
+
+        self._parked += 1
+        backup = self.backup_root / str(self._parked)
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        live.replace(backup)
+        self._undo.append(lambda: _restore(backup, live))
+
+    def install(self, staged: Path, live: Path) -> None:
+        """Replace *live* with *staged*, parking whatever was there before."""
+        self.remove(live)
+        self.mkdir(live.parent)
+        staged.replace(live)
+        self._undo.append(lambda: remove_path(live))
+
+    def rename(self, source: Path, target: Path) -> None:
+        """Rename *source* to *target*, which must be free.
+
+        Checked although a plan already did, since a rename onto a file
+        silently replaces it.
+        """
+        if target.exists():
+            raise FileExistsError(target)
+
+        self.mkdir(target.parent)
+        source.rename(target)
+        self._undo.append(lambda: _restore(target, source))
+
+    def apply(self, workspace: Path, change: _WorkspaceChange) -> None:
+        """Install one staged change into *workspace*, or remove its path."""
+        live = workspace / change.relative_path
+
+        if change.staged_path is None:
+            self.remove(live)
+        else:
+            self.install(change.staged_path, live)
+
+    def rollback(self) -> None:
+        """Undo every recorded step, newest first, past any step that fails."""
+        while self._undo:
+            try:
+                self._undo.pop()()
+            except OSError:
+                logger.exception("Rolling back a workspace change failed")
 
 
 @contextmanager
-def _replace_workspace_paths(
-    workspace: Path,
-    backup_root: Path,
-    changes: Sequence[_WorkspaceChange],
-) -> Iterator[None]:
-    """Install staged paths and restore every prior path if installation fails."""
-    backups: list[tuple[Path, Path]] = []
-    installed: list[Path] = []
-    try:
-        for change in changes:
-            live = workspace / change.relative_path
-            if not live.exists() and not live.is_symlink():
-                continue
-            backup = backup_root / change.relative_path
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            live.replace(backup)
-            backups.append((live, backup))
+def _journaled() -> Generator[tuple[Path, _Journal]]:
+    """Yield a staging directory and a journal for one change.
 
-        for change in changes:
-            if change.staged_path is None:
-                continue
-            live = workspace / change.relative_path
-            live.parent.mkdir(parents=True, exist_ok=True)
-            change.staged_path.replace(live)
-            installed.append(live)
+    Every recorded step is rolled back if the block raises.  Both live in a
+    temporary directory in the workspace root, so every rename into or out of
+    any casebase stays on one filesystem, and the parked backups go with it
+    once the change has settled.
+    """
+    root = Casebase.workspace_root(settings.data_dir)
+    root.mkdir(parents=True, exist_ok=True)
 
-        yield
-    except BaseException:
-        for live in reversed(installed):
-            _remove_workspace_path(live)
-        for live, backup in reversed(backups):
-            live.parent.mkdir(parents=True, exist_ok=True)
-            backup.replace(live)
-        raise
+    with TemporaryDirectory(prefix=".stage-", dir=root) as tmp:
+        journal = _Journal(Path(tmp) / "backup")
+
+        try:
+            yield Path(tmp) / "new", journal
+        except BaseException:
+            journal.rollback()
+            raise
 
 
 def _is_same_file(a: Path, b: Path) -> bool:
@@ -214,21 +259,6 @@ def _is_blocked_by_other(target: Path, source: Path) -> bool:
     return target.exists() and not _is_same_file(target, source)
 
 
-def _resolve_move_destination(
-    workspace_dir: Path, src_name: str, dst: str, src_path: Path
-) -> str:
-    """Apply ``mv`` semantics: an existing-directory destination means move into it.
-
-    The source itself is exempt: on a case-insensitive filesystem the
-    destination of a case-only rename aliases the source and must stay a plain
-    rename instead of nesting the source inside itself.
-    """
-    dst_path = workspace_dir / dst
-    if not dst or (dst_path.is_dir() and not _is_same_file(dst_path, src_path)):
-        return str(PurePosixPath(dst) / src_name)
-    return dst
-
-
 def _check_destination_parents(store: Casebase, target: str) -> None:
     """Reject a destination path whose parent chain is blocked by an existing file.
 
@@ -236,7 +266,7 @@ def _check_destination_parents(store: Casebase, target: str) -> None:
     named back in the caller's own grammar, and the directory alone cannot say
     which workspace it is.
     """
-    workspace_dir = store.workspace_dir(settings.data_dir)
+    workspace_dir = store.workspace_path(settings.data_dir)
     blocker = next(
         (
             parent
@@ -253,21 +283,9 @@ def _check_destination_parents(store: Casebase, target: str) -> None:
 
 
 def _check_not_reserved_path(path: str) -> None:
-    """Reject paths reaching into a layer the workspace manages for itself.
-
-    Two reserved directory names, one rule, so a caller cannot land content in
-    either by the generic create/move/upload API and have it silently disowned:
-    an ``.assets`` payload belongs to its document entry, and a ``.scratch``
-    directory is agent state that is never indexed and is wiped at the next
-    boot.  Both are hidden from the tree, so content placed there through this
-    API would either be unshowable or destroyed.  The write tools reach scratch
-    on their own path, which is the one way it is meant to be written.
-    """
-    if any(is_assets_dir(part) for part in PurePosixPath(path).parts):
+    """Reject paths reaching into a layer the workspace manages for itself."""
+    if is_reserved_path(path):
         raise HTTPException(status_code=400, detail=_ASSETS_RESERVED.current)
-
-    if is_scratch_path(path):
-        raise HTTPException(status_code=400, detail=_SCRATCH_RESERVED.current)
 
 
 def _enforce_file_size(content: bytes) -> None:

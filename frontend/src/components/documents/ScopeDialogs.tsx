@@ -42,7 +42,7 @@ interface ScopeDialogsProps {
  * The delete confirmation and rename dialogs for one scope. Owns their state and
  * runs the matching store mutations, so ScopeSection only has to call the
  * imperative openers from its tree and bulk actions. A rename is a same-directory
- * move, so it reuses the store's move actions. Creating directories happens
+ * move, so it reuses the store's move action. Creating directories happens
  * through the document manager's toolbar; cross-directory moves happen through
  * native drag-and-drop.
  */
@@ -51,11 +51,8 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
   ref,
 ) {
   const { t } = useTranslation();
-  const deleteDir = useDocumentsStore((s) => s.deleteDir);
-  const removeDoc = useDocumentsStore((s) => s.remove);
-  const storeBulkDelete = useDocumentsStore((s) => s.bulkDelete);
+  const remove = useDocumentsStore((s) => s.remove);
   const move = useDocumentsStore((s) => s.move);
-  const moveDir = useDocumentsStore((s) => s.moveDir);
 
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
   const [pendingRename, setPendingRename] = useState<RenameTarget | null>(null);
@@ -75,36 +72,25 @@ export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(fu
   const confirmDelete = useCallback(async () => {
     if (!pendingDelete) return;
     setPendingDelete(null);
-    switch (pendingDelete.kind) {
-      case "file":
-        await removeDoc(scope, pendingDelete.path);
-        break;
-      case "directory":
-        await deleteDir(scope, pendingDelete.path);
-        break;
-      case "bulk":
-        onBulkDone();
-        await storeBulkDelete(scope, pendingDelete.files);
-        break;
+
+    if (pendingDelete.kind === "bulk") {
+      onBulkDone();
+      await remove(scope, pendingDelete.files, "entry");
+    } else {
+      await remove(scope, [pendingDelete.path], pendingDelete.kind === "directory" ? "dir" : "entry");
     }
-  }, [pendingDelete, removeDoc, deleteDir, storeBulkDelete, onBulkDone, scope]);
+  }, [pendingDelete, remove, onBulkDone, scope]);
 
   // A rename keeps the entry's parent directory and swaps its basename, which is
   // exactly a same-scope move to the rebuilt path.
   const confirmRename = useCallback(
     (name: string) => {
       if (!pendingRename) return;
-      const { kind, path } = pendingRename;
+      const { path } = pendingRename;
       setPendingRename(null);
-      const destination = parentDir(path) + name;
-
-      if (kind === "file") {
-        void move(scope, path, scope, destination);
-      } else {
-        void moveDir(scope, path, scope, destination);
-      }
+      void move(scope, scope, [{ source: path, destination: parentDir(path) + name }]);
     },
-    [pendingRename, move, moveDir, scope],
+    [pendingRename, move, scope],
   );
 
   return (

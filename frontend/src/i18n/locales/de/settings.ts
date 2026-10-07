@@ -82,13 +82,13 @@ export const settings = {
       description:
         "Dadurch wird das gesamte gespeicherte Gedächtnis endgültig gelöscht. Der Assistent erinnert sich dann nicht mehr an Informationen aus früheren Konversationen.",
     },
-    clearScratch: {
-      label: "Scratch leeren",
-      title: "Scratch-Dateien löschen?",
+    clearTmp: {
+      label: "Temporäre Dateien leeren",
+      title: "Temporäre Dateien löschen?",
       description:
-        "Dadurch werden die Arbeitsdateien gelöscht, die der Assistent zwischen Tool-Aufrufen ablegt, in deinem eigenen Arbeitsbereich und in jeder Gruppe, in die du schreiben darfst. Deine Dokumente bleiben unverändert.",
-      done_one: "{{count}} Scratch-Datei gelöscht",
-      done_other: "{{count}} Scratch-Dateien gelöscht",
+        "Dadurch werden die Arbeitsdateien gelöscht, die der Assistent für jede deiner Konversationen ablegt. Laufende Konversationen verlieren ihren abgelegten Zustand, und deine Dokumente bleiben unverändert.",
+      done_one: "{{count}} temporäre Datei gelöscht",
+      done_other: "{{count}} temporäre Dateien gelöscht",
     },
     resetDefaults: "Auf Serverstandards zurücksetzen",
   },

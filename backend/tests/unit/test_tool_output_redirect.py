@@ -12,11 +12,12 @@ from pathlib import Path
 import pytest
 
 from hivegent import workspace_events
+from hivegent.changes import Changeset, Write
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.documents import GlobDocumentsTool
 from hivegent.tools.mutations import WriteDocumentTool
 from hivegent.tools.sink import OutputSink, RedirectedOutput
-from hivegent.workspace_events import announcing_mutator
+from hivegent.workspace_events import announce_paths
 
 
 @pytest.fixture()
@@ -29,14 +30,14 @@ def written() -> dict[str, str]:
 def writer(tmp_path: Path, written: dict[str, str]) -> WriteDocumentTool:
     """A writer over *tmp_path* that records instead of touching the store."""
 
-    async def mutator(
-        path: str, content: str, mode: str, expected_hash: str | None
-    ) -> str:
-        _ = mode, expected_hash
-        written[path] = content
-        return f"wrote {path}"
+    async def commit(changeset: Changeset[str]) -> str:
+        (write,) = changeset.operations
+        assert isinstance(write, Write)
+        written[write.target] = write.content
 
-    return WriteDocumentTool(paths=tmp_path, mutator=mutator)
+        return f"wrote {write.target}"
+
+    return WriteDocumentTool(paths=tmp_path, commit=commit)
 
 
 @pytest.fixture()
@@ -49,13 +50,13 @@ def tool(tmp_path: Path, writer: WriteDocumentTool) -> GlobDocumentsTool:
 async def test_json_stores_the_structured_result(
     tool: GlobDocumentsTool, written: dict[str, str]
 ) -> None:
-    out = await tool("*.md", output_path=".scratch/hits.json")
+    out = await tool(["*.md"], output_path="hits.json")
 
-    assert written[".scratch/hits.json"] == '["a.md","b.md"]'
+    assert written["hits.json"] == '["a.md","b.md"]'
     assert out.data == RedirectedOutput(
-        output_path=".scratch/hits.json",
+        output_path="hits.json",
         format="json",
-        characters=len(written[".scratch/hits.json"]),
+        characters=len(written["hits.json"]),
         entries=2,
     )
     # Too short to be worth withholding, so the receipt repeats it.
@@ -66,7 +67,7 @@ async def test_a_long_result_is_withheld(
     tool: GlobDocumentsTool, writer: WriteDocumentTool
 ) -> None:
     terse = replace(tool, sink=OutputSink(writer, 3))
-    out = await terse("*.md", output_path=".scratch/hits.json")
+    out = await terse(["*.md"], output_path="hits.json")
 
     assert "a.md" not in out.text
 
@@ -74,25 +75,25 @@ async def test_a_long_result_is_withheld(
 async def test_txt_stores_the_text_the_model_would_have_seen(
     tool: GlobDocumentsTool, written: dict[str, str]
 ) -> None:
-    plain = await tool("*.md")
-    redirected = await tool("*.md", output_path=".scratch/hits.txt")
+    plain = await tool(["*.md"])
+    redirected = await tool(["*.md"], output_path="hits.txt")
 
-    assert written[".scratch/hits.txt"] == plain.formatted
+    assert written["hits.txt"] == plain.formatted
     assert isinstance(redirected.data, RedirectedOutput)
     assert redirected.data.format == "txt"
 
 
 async def test_another_suffix_is_refused(tool: GlobDocumentsTool) -> None:
     with pytest.raises(ToolRetry, match="must end in"):
-        await tool("*.md", output_path=".scratch/hits.md")
+        await tool(["*.md"], output_path="hits.md")
 
 
 async def test_a_tool_without_a_writer_refuses(tmp_path: Path) -> None:
     with pytest.raises(ToolRetry, match="not available"):
-        await GlobDocumentsTool(paths=tmp_path)("*", output_path="~/o.json")
+        await GlobDocumentsTool(paths=tmp_path)(["*"], output_path="~/o.json")
 
 
-async def test_only_a_scratch_write_stays_off_the_feed(
+async def test_a_change_announces_each_workspace_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     notified: list[str] = []
@@ -106,14 +107,7 @@ async def test_only_a_scratch_write_stays_off_the_feed(
 
     monkeypatch.setattr(workspace_events, "manager", _Manager())
 
-    async def mutator(path: str) -> str:
-        return path
-
-    mutate = announcing_mutator(mutator, "u")
-    await mutate("~/.scratch/state.json")
-    assert notified == []
-
-    await mutate("~/report.md")
+    announce_paths("u", "~/report.md", "~/notes/a.md")
     assert notified == ["u:~"]
 
 

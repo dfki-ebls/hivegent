@@ -1,25 +1,22 @@
-"""The workspace as a read-only filesystem a sandboxed program can open.
+"""The workspace as a copy-on-write filesystem a sandboxed program can open.
 
-A ``run_python`` program used to see private copies of the files the model had
-named in advance, which meant a program could not open a path it discovered
-while running: the model had to know every answer's location before writing the
-question.  Mounting the workspace instead makes ``open``, ``iterdir``, ``re``, and
-``json`` the equivalents of the read tools, which is what bounds the host
-functions injected beside it (:mod:`hivegent.tools.monty`): a mounted
-equivalent is never one of them, so what is injected is only what no program
-can work out for itself, reaching the database or the network.
+Mounting the workspace makes ``open``, ``iterdir``, ``re``, and ``json`` the
+equivalents of the read tools, which is what bounds the host functions injected
+beside it (:mod:`hivegent.tools.monty`): a mounted equivalent is never one of
+them, so what is injected is only what no program can work out for itself,
+reaching the database or the network.
 
 A program addresses a document the way everything else does, by its full
 workspace path (``~/reports/q1.md``, ``@team/notes.md``), so the path a tool
 result spells, a citation carries, and a program opens are one string with no
-prefix to add or drop.  A leading slash is the run's own filesystem instead:
-``/tmp`` for intermediates and ``/out`` for the one document the call may
-persist, which is the whole rule a program needs.  The run's working directory
-is :data:`WORKSPACE_MOUNT`, so Monty resolves a workspace path to one under it
+prefix to add or drop.  The conversation's own folder is ``/tmp``, the spelling
+every tool uses for it too, and any other absolute path is refused, since
+nothing would keep what a program wrote there.  The run's working directory is
+:data:`WORKSPACE_MOUNT`, so Monty resolves a workspace path to one under it
 before this filesystem sees it, and a model that has met other sandboxes may
 spell that absolute form itself.
 
-Every operation routes through :func:`~hivegent.tools.base.resolve_accessible_file`
+Every read routes through :func:`~hivegent.tools.base.resolve_accessible_file`
 and :func:`~hivegent.tools.base.entry_visible`, the same seams the read tools
 use, which is what keeps the ``DocumentFilter`` a single predicate rather than
 gaining a third enforcement surface that could disagree with the other two.
@@ -27,21 +24,28 @@ gaining a third enforcement surface that could disagree with the other two.
 a host directory in whole, so it can enforce no filter, decode no legacy
 encoding, and hide no ``.assets`` payload.
 
-The mount is read-only but for one exception, ``.scratch/``, which is content
-rather than a document: no ``documents`` row, no chunking, no projection, and
-no notification, so a write there is a file written and nothing else, and it
-needs neither the async mutation gateway a filesystem callback cannot await nor
-the approval a running program cannot stop to ask for.  A document is written
-the one way a human can answer for in advance, by being named as the call's
-``commit_path``.  Nothing else about the workspace changes while a program
-runs, so what the program sees and what the call commits cannot disagree.
+Writes never reach the disk while the program runs.  A filesystem callback can
+neither await the mutation gateway nor stop to ask for approval, so every write,
+append, rename, unlink, ``mkdir``, and ``rmdir`` is recorded in an overlay
+(:attr:`WorkspaceOS.nodes`) that every later read consults first, so a program
+sees its own changes exactly as a filesystem would show them.  Once the program
+succeeds the overlay is turned into one changeset
+(:func:`hivegent.tools.changeset.stage_changes`), and a program that fails
+changes nothing at all.  How each change lands is its root's
+:class:`~hivegent.tools.base.CommitPolicy`: a gated root's changes are staged
+for approval and count against :class:`ChangesetLimits`, while a direct root's
+(``/tmp``) are written straight into its folder.  No one commit carries a file
+from one policy to the other, so a rename between them is a write of the text
+and a removal.
 """
 
+import errno
 import os
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from stat import S_ISDIR, S_ISREG
-from typing import Any, NamedTuple, NoReturn, override
+from typing import Any, NamedTuple, NoReturn, TypeGuard, override
 
 from pydantic_monty import (
     AbstractOS,
@@ -53,16 +57,28 @@ from pydantic_monty import (
 from pydantic_monty.os_access import path_from_arg
 
 from ..config import normalize_unicode
-from ..entries import is_scratch_path
+from ..converters import BINARY_WRITE_REASON, writes_as_text
+from ..entries import (
+    ContentStat,
+    is_assets_dir,
+    is_below,
+    is_reserved_path,
+    list_names,
+    path_key,
+    rebase,
+)
 from ..text import NOT_TEXT_REASON, read_text_file
 from .base import (
     DEFAULT_EXCLUDE_DIRS,
+    CommitPolicy,
+    Direct,
     SearchPath,
     addressable_roots,
     check_read_budget,
     entry_stat,
     entry_visible,
     match_scope,
+    policy_of,
     resolve_accessible_file,
     sidecar_hint,
     translate_tool_retry,
@@ -70,9 +86,14 @@ from .base import (
 
 __all__ = [
     "MOUNT_STUB",
-    "SANDBOX_OUTPUT_FILE",
-    "SANDBOX_TMP_DIR",
     "WORKSPACE_MOUNT",
+    "ChangesetLimits",
+    "Deleted",
+    "Dir",
+    "Entry",
+    "Node",
+    "Ref",
+    "Text",
     "WorkspaceOS",
 ]
 
@@ -93,31 +114,6 @@ stub that rejects a working program is worse than one that checks nothing.
 Never shown to the model, which knows what ``open`` is.
 """
 
-SANDBOX_TMP_DIR = PurePosixPath("/tmp")
-"""Scratch directory every run starts with, also named by ``TMPDIR``.
-
-Monty has no ``tempfile`` module and its working directory is the read-only
-mount, so a program with an intermediate to park has nowhere to put it unless
-the directory already exists: a bare write to ``/tmp`` fails with
-``FileNotFoundError``.  Creating it here and
-naming it in the environment makes ``os.getenv("TMPDIR")`` the one answer, the
-way the workspace prefix is the one answer for a document.  It is discarded
-when the call ends, whether the program succeeded or not.
-"""
-
-SANDBOX_OUTPUT_FILE = PurePosixPath("/out")
-"""Where a program writes the one document the call may persist.
-
-The mounted workspace is read-only outside `.scratch/`, because committing a
-document runs the async mutation gateway and needs a human's answer, neither of
-which a synchronous filesystem callback can reach.  So the program writes here
-instead and the tool commits it afterwards, which is also what makes the commit
-conditional on the program having succeeded.  Named by ``OUTPUT`` in the
-environment, the way ``/tmp`` is named by ``TMPDIR``: the paths are short and
-the environment names describing them are not, which is the pairing a program
-reads either way round.
-"""
-
 WORKSPACE_MOUNT = PurePosixPath("/workspace")
 """The run's working directory, and so the absolute root of every workspace path.
 
@@ -127,9 +123,6 @@ the ``os`` handler, so ``~/reports/q1.md`` arrives as
 the way every tool result does, so the model never meets this form unless it
 reaches for it, as a model carrying another sandbox's habits does.
 """
-
-_MOUNT_ROOT = str(WORKSPACE_MOUNT)
-_MOUNT_PREFIX = f"{_MOUNT_ROOT}/"
 
 type VirtualPath = PurePosixPath | MontyFileHandle
 """How a path reaches this filesystem.
@@ -142,31 +135,111 @@ has to care which of the two it was handed.
 
 
 class Entry(NamedTuple):
-    """A resolved mounted document, with the one stat every caller asks about."""
+    """A resolved document or directory on disk, with its one stat."""
 
     search_path: SearchPath
     local: str
     absolute: Path
     stat: os.stat_result
 
+    @property
+    def canonical(self) -> str:
+        """The path as tools spell it, prefix included."""
+        return self.search_path.prefixed(self.local)
+
+    @property
+    def is_dir(self) -> bool:
+        """Whether the entry is a directory."""
+        return S_ISDIR(self.stat.st_mode)
+
+    @property
+    def basis(self) -> ContentStat:
+        """The stat a change of this file is checked against when it commits."""
+        return ContentStat.of(self.stat)
+
+
+@dataclass(slots=True)
+class Text:
+    """A file whose content the program wrote.
+
+    Kept as chunks so a program building a file one ``append`` at a time pays
+    for each line once rather than for the whole file on every call.
+
+    Attributes:
+        chunks: The content, in order.
+        origin: The disk file a rename carried here before it was written,
+            whose entry the write continues.
+    """
+
+    chunks: list[str]
+    origin: str | None = None
+    length: int = 0
+
+    @property
+    def content(self) -> str:
+        """The whole text, joined once and kept joined."""
+        if len(self.chunks) > 1:
+            self.chunks[:] = ["".join(self.chunks)]
+
+        return self.chunks[0] if self.chunks else ""
+
+
+@dataclass(slots=True, frozen=True)
+class Ref:
+    """A file or directory a rename carried here, unchanged from *origin* on disk."""
+
+    origin: str
+
+
+@dataclass(slots=True, frozen=True)
+class Deleted:
+    """A path that exists on disk and no longer does in the program's view."""
+
+
+@dataclass(slots=True, frozen=True)
+class Dir:
+    """A directory the program created, which holds only what it puts there."""
+
+
+type Node = Text | Ref | Deleted | Dir
+"""What the overlay records for one canonical path."""
+
+type _View = Text | Dir | Entry | None
+"""What a path is in the program's view: staged text, a new directory, the disk, or nothing."""
+
+
+def _is_dir(view: _View) -> TypeGuard[Dir | Entry]:
+    return isinstance(view, Dir) or (isinstance(view, Entry) and view.is_dir)
+
+
+@dataclass(slots=True, frozen=True)
+class ChangesetLimits:
+    """What one program may stage, checked as it records each change.
+
+    Attributes:
+        max_operations: Paths one program may create, change, move, or delete.
+        max_deletes: Of those, how many it may delete.
+        max_chars: Characters it may write in total, across every file.
+    """
+
+    max_operations: int
+    max_deletes: int
+    max_chars: int
+
 
 def _root_hint(paths: tuple[SearchPath, ...]) -> str:
     """Name the roots in *paths*, which is what a path here has to lead with.
 
     :func:`~hivegent.tools.base.workspace_root_hint` in the sandbox's own
-    words, over the roots that function names: only the closing clause differs,
-    since a leading slash means something here that it means nowhere else.
-    Given the span the refusal came from, so a write is sent to the roots it may
-    land in rather than every one it can read.
+    words, over the roots that function names.
     """
     roots = addressable_roots(paths)
     if not roots:
         return ""
 
     return (
-        f" A document is addressed by its full workspace path "
-        f"({', '.join(roots)}), the same path every tool result spells; a "
-        "leading slash names this run's own files."
+        f" A path leads with {', '.join(roots)}, the same path every tool "
+        "result spells."
     )
 
 
@@ -181,70 +254,85 @@ def _text(path: VirtualPath) -> str:
     return normalize_unicode(str(path_from_arg(path)))
 
 
+def _ancestors(key: str) -> list[str]:
+    """Every directory above a canonical path, nearest first.
+
+    >>> _ancestors("~/a/b.md"), _ancestors("/tmp/a")
+    (['~/a', '~'], ['/tmp'])
+    """
+    return [str(parent) for parent in PurePosixPath(key).parents if parent.name]
+
+
+def _is_path(arg: object) -> TypeGuard[VirtualPath]:
+    """Whether one dispatched argument is a path rather than a mode or a flag."""
+    return isinstance(arg, PurePosixPath | MontyFileHandle)
+
+
+def _os_error[E: OSError](kind: type[E], code: int, name: str) -> E:
+    """The error the OS raises for *code* on *name*, worded as it words it.
+
+    >>> str(_os_error(IsADirectoryError, errno.EISDIR, "~/a"))
+    "[Errno 21] Is a directory: '~/a'"
+    """
+    return kind(code, os.strerror(code), name)
+
+
 @dataclass(slots=True)
 class WorkspaceOS(AbstractOS):
-    """Routes the workspace mount to real documents and the rest to ``inner``.
+    """Routes the mounted roots to the overlay and the disk, and the rest to ``inner``.
 
-    ``inner`` owns only what the run invents: ``/tmp``, the commit target,
-    and whatever a program parks in either.  The mount serves the workspace off
-    disk as it lies, so there is no staged copy to keep consistent with it and
-    a program's view cannot drift from what the call will commit.
+    ``inner`` answers what names no path, the environment and the clocks.
     """
 
     paths: tuple[SearchPath, ...]
-    """Every workspace root the read tools span, with their filters applied."""
+    """Every root the read tools span, with their filters applied."""
 
     inner: OSAccess
-    """The run's own filesystem, which answers for every unmounted path."""
+    """The run's own environment and clocks."""
+
+    limits: ChangesetLimits
+    """What the gated roots may be changed by one program."""
 
     writable: tuple[SearchPath, ...] = ()
-    """Roots whose ``.scratch/`` state this run may change.
+    """Roots this run may change, narrower than the roots above.
 
-    The writable span, narrower than the roots above: a program reads every
-    workspace the user can see and parks state only in one they may mutate.
-    Empty in a mode that may not write at all, which is what makes read
-    mode refuse a scratch write like every other.
+    A program reads every workspace the user can see and changes only one they
+    may mutate, plus ``/tmp``, and only ``/tmp`` in a mode that may not write the
+    workspace, which is what refuses every such change as it is made.
     """
 
     max_document_chars: int = 5_000_000
-    """Cap on one document, which is the only unbounded allocation a read makes.
+    """Cap on one document, read or written.
 
     Per document rather than per run, because a decoded document is what the
     host actually holds: it is read whole and decoded in one go, then handed to
     the interpreter and dropped, so at most one is alive at a time however many
     a program opens.  Measured over a 2000-document, 100 MB workspace, reading
     every one of them moved the server's peak RSS by a megabyte.
-
-    A running total would therefore bound nothing the host spends, while
-    capping the very thing the mount exists for: a program that reads across
-    the whole workspace so an answer need not quote from all of it.  What a
-    program retains is the interpreter's own memory budget, and how long it
-    spends retaining it is the request and tool timeouts, since the
-    interpreter's duration budget does not count time spent in a host callback.
     """
 
-    commit_target: str | None = None
-    """The canonical document this call may persist, as ``commit_path`` named it.
+    nodes: dict[str, Node] = field(default_factory=dict)
+    """The program's changes, by canonical path, consulted before the disk."""
 
-    Inside the program that path is :data:`SANDBOX_OUTPUT_FILE` under another
-    name, since the model that has just been told where its result goes writes
-    it there rather than to a second path it has to remember.  One file and not
-    two copies, so writing both names is not a conflict to resolve: the later
-    write wins, an append appends, and a read comes back with what the
-    document held before the run, exactly as a filesystem would answer.
+    bases: dict[str, ContentStat] = field(default_factory=dict)
+    """The stat each disk file had when the program first touched it.
 
-    ``None`` when the call declared no output, where a write to any document is
-    refused as it always was.
+    The basis its change commits against, so a version landing between the
+    program's read and the commit is refused rather than overwritten.  A stat
+    rather than a content hash, since every read would otherwise hash what it
+    decodes, and a program walking the workspace reads far more than it
+    changes.
     """
 
-    max_scratch_chars: int = 20_000_000
     written: int = 0
-    """Cap on what one program may write to ``.scratch/``, and its running total.
+    touched: set[str] = field(default_factory=set)
+    deletes: int = 0
+    listings: dict[Path, Sequence[str]] = field(default_factory=dict)
+    """The disk's directory listings, read once per run."""
+    entries: dict[str, Entry | None] = field(default_factory=dict)
+    """What :meth:`base` found at each canonical path, read once per run.
 
-    Cumulative where the read cap is not, because the resource is different:
-    written characters land on disk and stay there, so a loop that writes the
-    same megabyte a thousand times spends a gigabyte of it, which no other
-    budget here bounds.
+    The disk is a snapshot for the program, which changes it only once it ran.
     """
 
     # -- addressing -----------------------------------------------------
@@ -254,44 +342,20 @@ class WorkspaceOS(AbstractOS):
 
         Every path arrives absolute, a relative one resolved against
         :data:`WORKSPACE_MOUNT` by Monty, so the canonical path is what follows
-        that prefix and ``/tmp`` never pays the scope scan.  ``"."`` is the
-        mount itself, a directory listing the workspaces rather than a path any
-        of them claims.
-
-        String tests rather than ``PurePosixPath.is_relative_to``, which
-        rebuilds the path twice and scans its parents: this runs once per
-        filesystem operation and a walk performs one per entry.
+        that prefix, and one under a root whose prefix is absolute (``/tmp``)
+        is already canonical.  ``"."`` is the mount itself, a directory listing
+        the workspaces rather than a path any of them claims.
         """
-        text = _text(path)
-        if text == _MOUNT_ROOT:
-            return "."
+        pure = PurePosixPath(_text(path))
 
-        return text[len(_MOUNT_PREFIX) :] if text.startswith(_MOUNT_PREFIX) else None
+        if pure.is_relative_to(WORKSPACE_MOUNT):
+            return str(pure.relative_to(WORKSPACE_MOUNT))
 
-    def _as_buffer(self, arg: object) -> object:
-        """Rename the declared output to the run's own file, leaving the rest alone.
+        return str(pure) if match_scope(self.paths, str(pure)) is not None else None
 
-        Both spellings of that one path are compared against directly rather
-        than resolved, which keeps the workspace's scope scan off every
-        operation the run makes, and leaves a ``..`` segment naming a document
-        like any other: it is refused like any other rather than redirected on
-        a spelling the call never approved.
-
-        A handle is rebuilt rather than reused, so every later operation on it
-        names the buffer too and none of them has to ask again.
-        """
-        if self.commit_target is None or not isinstance(
-            arg, PurePosixPath | MontyFileHandle
-        ):
-            return arg
-
-        if _text(arg).removeprefix(_MOUNT_PREFIX) != self.commit_target:
-            return arg
-
-        if isinstance(arg, MontyFileHandle):
-            return MontyFileHandle(str(SANDBOX_OUTPUT_FILE), arg.mode)
-
-        return SANDBOX_OUTPUT_FILE
+    def policy(self, key: str) -> CommitPolicy:
+        """How a change to the canonical *key* commits, which is its root's to say."""
+        return policy_of(self.paths, key)
 
     def _mounted(self, arg: object) -> bool:
         """Whether one dispatched argument addresses the workspace.
@@ -300,10 +364,7 @@ class WorkspaceOS(AbstractOS):
         can never be read as a path, and so an argument that is no path at all,
         a flag or a timezone, answers no rather than raising.
         """
-        return (
-            isinstance(arg, PurePosixPath | MontyFileHandle)
-            and self._canonical(arg) is not None
-        )
+        return _is_path(arg) and self._canonical(arg) is not None
 
     def _at_root(self, path: VirtualPath) -> bool:
         """Whether *path* is the mount itself, the directory listing the workspaces."""
@@ -325,9 +386,9 @@ class WorkspaceOS(AbstractOS):
         canonical = self._canonical(path)
         known = canonical is not None and match_scope(self.paths, canonical) is not None
         hint = "" if known else _root_hint(self.paths)
-        message = f"[Errno 2] No such file or directory: {self._named(path)!r}"
+        error = _os_error(FileNotFoundError, errno.ENOENT, self._named(path))
 
-        raise FileNotFoundError(f"{message}.{hint}" if hint else message)
+        raise FileNotFoundError(f"{error}.{hint}") if hint else error
 
     # -- routing --------------------------------------------------------
 
@@ -340,140 +401,164 @@ class WorkspaceOS(AbstractOS):
         *,
         is_async: bool = False,
     ) -> Any:
-        """Send one operation to the mount, or to the run's own filesystem.
+        """Send one operation to the mount, refuse it, or hand it to ``inner``.
 
-        The one place the two filesystems are told apart, which is the seam
-        ``AbstractOS`` offers for exactly this.  Asking per method instead cost
-        a two-line prologue in each of eighteen of them and made forgetting one
-        a silent bug in the *other* filesystem: an unimplemented ``path_open``
-        refused ``/tmp`` as well as the workspace, since neither branch was
-        ever reached.  Here a method this class does not implement is simply
-        one the mount does not offer, and the run's own files keep answering.
-
-        An operation naming no path at all, the environment or entropy,
-        belongs to the run, so it routes by the same rule with nothing to
-        match.  A rename with one end mounted is the mount's, since the half
-        that touches the workspace is what decides.
-
-        The declared output is renamed before either of them sees it, since it
-        is :data:`SANDBOX_OUTPUT_FILE` under another name and the run owns that
-        file: one rename here answers every operation, where asking what each
-        one does to it would be a list of Monty's write functions that nothing
-        keeps complete.
+        The one place that is decided, which is the seam ``AbstractOS`` offers
+        for exactly this.  An operation naming no path at all, the environment
+        or entropy, belongs to ``inner``.  A path outside every root is refused
+        rather than kept in memory: whatever a program wrote there would be
+        gone after the call, which is the state a later call then looks for.
+        A rename with one end mounted is the mount's, which refuses the other.
         """
-        renamed = tuple(self._as_buffer(arg) for arg in args)
-        if any(self._mounted(arg) for arg in renamed):
-            return super().dispatch(function_name, renamed, kwargs, is_async=is_async)
+        if any(self._mounted(arg) for arg in args):
+            return super().dispatch(function_name, args, kwargs, is_async=is_async)
 
-        return self.inner.dispatch(function_name, renamed, kwargs, is_async=is_async)
+        if path := next(filter(_is_path, args), None):
+            raise PermissionError(
+                f"'{_text(path)}' is outside this run's filesystem.{_root_hint(self.paths)}"
+            )
+
+        return self.inner.dispatch(function_name, args, kwargs, is_async=is_async)
 
     def _root(self, canonical: str) -> SearchPath | None:
-        """The search path *canonical* names bare, if it names one at all.
-
-        ``resolve_search_path`` drops a bare scope root deliberately, since no
-        document tool takes one as an argument.  A mount does: ``/workspace/~``
-        is the directory a program lists to find out what is there, so the case
-        is answered here rather than by loosening the resolver every path tool
-        shares.
-        """
+        """The search path *canonical* names bare, if it names one at all."""
         match = match_scope(self.paths, canonical)
 
         return match[0] if match is not None and not match[1] else None
 
-    def _entry(self, path: VirtualPath) -> Entry | None:
-        """Resolve a mounted path and stat it, or ``None`` when it names nothing.
+    def base(self, canonical: str) -> Entry | None:
+        """What the disk holds at a canonical path, as the read tools would see it.
 
         A bare scope root resolves to the search path itself with an empty
-        local name, which is how a listing of the mount's top level finds a
-        workspace that has no entry of its own.  The mount root answers
-        ``None``, since it is a directory of workspaces rather than an entry in
-        any of them, and every caller has its own answer for that case.
+        local name.  ``.assets`` payloads are hidden in whole, the directory
+        included: their files are the entry's to manage, and no program can
+        read one anyway.
         """
-        canonical = self._canonical(path)
-        if canonical is None or canonical == ".":
-            return None
+        if canonical not in self.entries:
+            self.entries[canonical] = self._base(canonical)
 
+        return self.entries[canonical]
+
+    def _base(self, canonical: str) -> Entry | None:
         root = self._root(canonical)
         resolved = (
             (root, "", root.path)
             if root is not None
-            else resolve_accessible_file(self.paths, canonical)
+            else resolve_accessible_file(self.paths, canonical, self.listdir)
         )
         if resolved is None:
             return None
 
         sp, local, absolute = resolved
-        if local and not entry_visible(sp, local, DEFAULT_EXCLUDE_DIRS):
+
+        if local and (
+            not entry_visible(sp, local, DEFAULT_EXCLUDE_DIRS) or is_reserved_path(local)
+        ):
             return None
 
         st = entry_stat(absolute)
 
         return None if st is None else Entry(sp, local, absolute, st)
 
-    def _scratch_target(self, path: VirtualPath) -> Path:
-        """The file a mounted write may touch, or a refusal naming what may.
+    def listdir(self, directory: Path) -> Sequence[str]:
+        """The names *directory* holds on disk, listed once per run."""
+        if directory not in self.listings:
+            self.listings[directory] = list_names(directory)
 
-        The three ways a write is turned away are three different situations
-        and say so in turn: a run that may not write at all has nothing to
-        offer but ``/tmp``, a path in a workspace the user may only read has
-        nowhere to land, and a document is the user's to answer for, which a
-        running program cannot stop to ask about.
+        return self.listings[directory]
 
-        Resolved against the writable span rather than the mounted one, which
-        is wider, and the scratch test is applied to the canonical local path
-        rather than the spelling it was addressed by, so neither a ``..``
-        segment nor a symlink can carry a ``.scratch`` part onto a document.
+    def _names(self, directory: Path) -> list[str]:
+        """The names *directory* holds in the program's view, the overlay's spelling first.
+
+        What a spelling is matched against, so on a case-insensitive workspace
+        ``a.md`` opens the ``A.md`` the program created, and one file keeps one
+        key in the overlay.
         """
-        canonical = self._named(path)
-        if not self.writable:
-            raise PermissionError(
-                f"'{canonical}' cannot be written in this chat mode. Park "
-                "intermediates under /tmp, which is discarded when the call ends."
-            )
+        parent = None
 
-        resolved = (
-            None
-            if canonical == "."
-            else resolve_accessible_file(self.writable, canonical)
-        )
-        if resolved is None:
-            raise PermissionError(
-                f"'{canonical}' names no workspace this run may write to."
-                f"{_root_hint(self.writable)}"
-            )
+        for sp in self.paths:
+            if directory.is_relative_to(sp.path):
+                local = directory.relative_to(sp.path).as_posix()
+                parent = sp.prefixed("" if local == "." else local)
+                break
 
-        if not is_scratch_path(resolved[1]):
-            raise PermissionError(
-                f"'{canonical}' is one of the user's documents, and the mounted "
-                "workspace is read-only. Name it as this call's `commit_path` "
-                f"and write the text to {SANDBOX_OUTPUT_FILE}, which is "
-                "committed there once the program succeeds, or use the document "
-                "write tools. A path under `.scratch/` can be written from here "
-                "directly."
-            )
+        live = [
+            PurePosixPath(key).name
+            for key, node in self.nodes.items()
+            if not isinstance(node, Deleted) and str(PurePosixPath(key).parent) == parent
+        ]
 
-        return resolved[2]
+        return [*live, *self.listdir(directory)]
+
+    def _key(self, path: VirtualPath) -> str | None:
+        """The normalized canonical path a read names, or ``None`` for nothing."""
+        canonical = self._canonical(path)
+
+        if canonical is None or canonical == ".":
+            return None
+
+        if self._root(canonical) is not None:
+            return canonical
+
+        resolved = resolve_accessible_file(self.paths, canonical, self._names)
+
+        return None if resolved is None else resolved[0].prefixed(resolved[1])
+
+    def lookup(self, key: str, *, below: bool = False) -> _View:
+        """What a canonical path is in the program's view.
+
+        The nearest recorded node wins: one at the path itself, else one at an
+        ancestor, where a renamed directory maps the path back onto the disk
+        under its origin, and anything else hides it.  *below* skips a node at
+        the path itself, which is what the disk shows there through its
+        ancestors.
+        """
+        candidates = _ancestors(key) if below else [key, *_ancestors(key)]
+
+        for candidate in candidates:
+            node = self.nodes.get(candidate)
+
+            if node is None:
+                continue
+
+            if candidate == key:
+                match node:
+                    case Ref(origin=origin):
+                        return self.base(origin)
+                    case Deleted():
+                        return None
+                    case Text() | Dir():
+                        return node
+
+            if isinstance(node, Ref):
+                return self.base(rebase(key, candidate, node.origin))
+
+            return None
+
+        return self.base(key)
+
+    def _view(self, path: VirtualPath) -> _View:
+        key = self._key(path)
+
+        return None if key is None else self.lookup(key)
 
     # -- reads ----------------------------------------------------------
 
     @override
     def path_exists(self, path: PurePosixPath) -> bool:
-        return self._at_root(path) or self._entry(path) is not None
+        return self._at_root(path) or self._view(path) is not None
 
     @override
     def path_is_file(self, path: PurePosixPath) -> bool:
-        entry = self._entry(path)
+        view = self._view(path)
 
-        return entry is not None and S_ISREG(entry.stat.st_mode)
+        return isinstance(view, Text) or (
+            isinstance(view, Entry) and S_ISREG(view.stat.st_mode)
+        )
 
     @override
     def path_is_dir(self, path: PurePosixPath) -> bool:
-        if self._at_root(path):
-            return True
-
-        entry = self._entry(path)
-
-        return entry is not None and S_ISDIR(entry.stat.st_mode)
+        return self._at_root(path) or _is_dir(self._view(path))
 
     @override
     def path_is_symlink(self, path: PurePosixPath) -> bool:
@@ -484,49 +569,91 @@ class WorkspaceOS(AbstractOS):
     @override
     def path_iterdir(self, path: PurePosixPath) -> list[PurePosixPath]:
         if self._at_root(path):
-            return [PurePosixPath(sp.prefixed("")) for sp in self.paths]
+            roots = (PurePosixPath(sp.prefixed("")) for sp in self.paths)
 
-        entry = self._entry(path)
-        if entry is None:
+            return [root for root in roots if not root.is_absolute()]
+
+        key = self._key(path)
+        view = None if key is None else self.lookup(key)
+
+        if key is None or view is None:
             self._missing(path)
 
-        if not S_ISDIR(entry.stat.st_mode):
-            raise NotADirectoryError(
-                f"[Errno 20] Not a directory: {self._named(path)!r}"
-            )
-
-        sp, local, absolute = entry.search_path, entry.local, entry.absolute
-
-        # Sorted, because Monty cannot compare two `Path` values, so a program
-        # that wants an order has no way to impose one on what it is handed.
-        prefix = f"{local}/" if local else ""
-        with os.scandir(absolute) as children:
-            visible = [
-                rel
-                for child in children
-                if entry_visible(
-                    sp, (rel := f"{prefix}{child.name}"), DEFAULT_EXCLUDE_DIRS
-                )
-            ]
+        if not _is_dir(view):
+            raise _os_error(NotADirectoryError, errno.ENOTDIR, self._named(path))
 
         # Relative, as every tool result spells it, and resolved back under the
-        # mount by the working directory when the program opens one.
-        return [PurePosixPath(sp.prefixed(rel)) for rel in sorted(visible)]
+        # mount by the working directory when the program opens one.  Sorted,
+        # because Monty cannot compare two `Path` values, so a program that
+        # wants an order has no way to impose one on what it is handed.
+        return [PurePosixPath(key, name) for name in sorted(self._children(key, view))]
+
+    def _children(self, key: str, view: Dir | Entry) -> set[str]:
+        """The names a directory holds in the program's view: the disk's, then the overlay's."""
+        names: set[str] = set()
+
+        if isinstance(view, Entry):
+            sp, local = view.search_path, view.local
+
+            with os.scandir(view.absolute) as children:
+                names.update(
+                    child.name
+                    for child in children
+                    if not (is_assets_dir(child.name) and child.is_dir())
+                    and entry_visible(
+                        sp, str(PurePosixPath(local, child.name)), DEFAULT_EXCLUDE_DIRS
+                    )
+                )
+
+        for candidate, node in self.nodes.items():
+            pure = PurePosixPath(candidate)
+
+            if str(pure.parent) != key:
+                continue
+
+            if isinstance(node, Deleted):
+                names.discard(pure.name)
+            else:
+                names.add(pure.name)
+
+        return names
+
+    def _holds_unseen(self, key: str, view: Dir | Entry) -> bool:
+        """Whether the disk directory still holds a file the program cannot see.
+
+        A filtered document, an excluded directory, or anything a filter hides
+        is absent from :meth:`_children`, so the directory looks empty, while
+        deleting it would take them along.  An ``.assets`` payload is the one
+        hidden child that goes with its entry, which the program removed
+        already if the directory looks empty.
+        """
+        if not isinstance(view, Entry):
+            return False
+
+        with os.scandir(view.absolute) as children:
+            return any(
+                not (is_assets_dir(child.name) and child.is_dir())
+                and not isinstance(self.nodes.get(f"{key}/{child.name}"), Deleted)
+                for child in children
+            )
 
     @override
     def path_stat(self, path: PurePosixPath) -> StatResult:
         if self._at_root(path):
             return StatResult.dir_stat()
 
-        entry = self._entry(path)
-        if entry is None:
-            self._missing(path)
+        match self._view(path):
+            case None:
+                self._missing(path)
+            case Text() as text:
+                return StatResult.file_stat(size=len(text.content.encode("utf-8")))
+            case Dir():
+                return StatResult.dir_stat()
+            case Entry(stat=st):
+                if S_ISDIR(st.st_mode):
+                    return StatResult.dir_stat(mtime=st.st_mtime)
 
-        st = entry.stat
-        if S_ISDIR(st.st_mode):
-            return StatResult.dir_stat(mtime=st.st_mtime)
-
-        return StatResult.file_stat(size=st.st_size, mtime=st.st_mtime)
+                return StatResult.file_stat(size=st.st_size, mtime=st.st_mtime)
 
     @override
     def path_open(self, path: PurePosixPath, mode: str) -> MontyFileHandle:
@@ -534,53 +661,52 @@ class WorkspaceOS(AbstractOS):
 
         A handle is a data holder naming the path, so all this owes is the
         open-time effect the mode asks for: a read proves the file is there
-        before the program starts reading it, and a write goes through the
-        same gate ``write_text`` does, which is what keeps ``open`` from being
-        a second answer to which paths a program may change.
+        before the program starts reading it, a write truncates through the same
+        gate ``write_text`` uses, and an append creates the file when missing.
         """
         handle = MontyFileHandle(str(path), mode)
         if handle.binary:
             self._refuse_bytes(self._named(path))
 
-        if not handle.writable:
+        action = handle.mode[0]
+
+        if action == "r":
             if self.path_is_dir(path):
-                raise IsADirectoryError(
-                    f"[Errno 21] Is a directory: {self._named(path)!r}"
-                )
+                raise _os_error(IsADirectoryError, errno.EISDIR, self._named(path))
 
             if not self.path_is_file(path):
                 self._missing(path)
 
             return handle
 
-        absolute = self._scratch_target(path)
-        absolute.parent.mkdir(parents=True, exist_ok=True)
-        action = handle.mode[0]
-        if action == "r" and not absolute.is_file():
-            self._missing(path)
-
-        if action == "w" or not absolute.exists():
-            _ = absolute.write_text("", encoding="utf-8")
+        _ = self._write(path, "", append=action == "a")
 
         return handle
 
     @override
     def path_read_text(self, path: PurePosixPath | MontyFileHandle) -> str:
-        entry = self._entry(path)
-        if entry is None:
-            if self._at_root(path):
-                raise IsADirectoryError(
-                    f"[Errno 21] Is a directory: {self._named(path)}"
-                )
+        view = self._view(path)
 
+        if isinstance(view, Text):
+            return view.content
+
+        if view is None and not self._at_root(path):
             self._missing(path)
 
-        if not S_ISREG(entry.stat.st_mode):
-            raise IsADirectoryError(f"[Errno 21] Is a directory: {self._named(path)}")
+        if not isinstance(view, Entry) or view.is_dir:
+            raise _os_error(IsADirectoryError, errno.EISDIR, self._named(path))
 
-        return self._decoded(
-            entry.search_path.prefixed(entry.local), entry.absolute, entry.stat.st_size
-        )
+        text = self.decode(self._remember(view))
+
+        if text is None:
+            # The exception types are the mount's own, since a `ToolRetry`
+            # reaches the program as a bare `Exception`, but the sentence
+            # is every reader's, sidecar included.
+            raise ValueError(
+                f"'{view.canonical}' {NOT_TEXT_REASON}.{sidecar_hint(view.canonical)}"
+            )
+
+        return text
 
     @override
     def path_read_bytes(self, path: PurePosixPath | MontyFileHandle) -> bytes:
@@ -596,13 +722,13 @@ class WorkspaceOS(AbstractOS):
         outside a program.
         """
         raise ValueError(
-            f"'{canonical}' can only be read as text, since the sandbox "
-            "serves no bytes from the workspace. Read it in text mode, or use "
-            "the read_binary_document tool for a document with no text form."
+            f"'{canonical}' can only be read and written as text, since the "
+            "sandbox serves no bytes from the workspace. Use text mode, or the "
+            "read_binary_document tool for a document with no text form."
         )
 
-    def _decoded(self, canonical: str, absolute: Path, size: int) -> str:
-        """Decode one document, bounded before and after.
+    def decode(self, entry: Entry) -> str | None:
+        """Decode one disk file, bounded before and after, or ``None`` for a binary.
 
         :func:`check_read_budget` bounds it by size, which is what keeps an
         oversized file out of memory in the first place, but a size is only an
@@ -610,98 +736,389 @@ class WorkspaceOS(AbstractOS):
         the text is in hand.
         """
         with translate_tool_retry(MemoryError):
-            check_read_budget(canonical, size, self.max_document_chars)
+            check_read_budget(entry.canonical, entry.stat.st_size, self.max_document_chars)
 
-        decoded = read_text_file(absolute)
+        decoded = read_text_file(entry.absolute)
+
         if decoded is None:
-            # The exception types are the mount's own, since a `ToolRetry`
-            # reaches the program as a bare `Exception`, but the sentence is
-            # every reader's, sidecar included, so a program refused a binary
-            # is sent to its extracted text rather than left guessing.
-            raise ValueError(
-                f"'{canonical}' {NOT_TEXT_REASON}.{sidecar_hint(canonical)}"
-            )
+            return None
 
         if len(decoded.text) > self.max_document_chars:
             raise MemoryError(
-                f"'{canonical}' is too large to read here ({len(decoded.text)} "
+                f"'{entry.canonical}' is too large to read here ({len(decoded.text)} "
                 f"characters, and one document may hold at most "
                 f"{self.max_document_chars})."
             )
 
         return decoded.text
 
-    def _charge_write(self, canonical: str, data: str) -> None:
-        """Hold one program's scratch writes to what a run may put on disk."""
-        self.written += len(data)
-        if self.written > self.max_scratch_chars:
-            raise MemoryError(
-                f"Writing '{canonical}' takes this program past the "
-                f"{self.max_scratch_chars} characters one run may write to "
-                "`.scratch/`."
+    # -- writes, which the overlay records -------------------------------
+
+    def _remember(self, entry: Entry) -> Entry:
+        """Keep the stat *entry* has when the program first touches it, its change's basis."""
+        _ = self.bases.setdefault(entry.canonical, entry.basis)
+
+        return entry
+
+    def _target(self, path: VirtualPath) -> str:
+        """The canonical path a change may touch, or a refusal naming why not.
+
+        Resolved against the writable span rather than the mounted one, which
+        is wider, and on the canonical local path rather than the spelling it
+        was addressed by, so neither a ``..`` segment nor a symlink can carry a
+        path into a workspace the user may only read or into an ``.assets``
+        payload.
+        """
+        canonical = self._named(path)
+        resolved = (
+            None
+            if canonical == "."
+            else resolve_accessible_file(self.writable, canonical, self._names)
+        )
+
+        if resolved is None:
+            roots = ", ".join(addressable_roots(self.writable)) or "nothing"
+            raise PermissionError(
+                f"'{canonical}' cannot be changed by this run, which may change {roots}."
             )
 
-    # -- writes, which reach `.scratch/` and nothing else ----------------
+        sp, local, _absolute = resolved
+
+        if is_reserved_path(local):
+            raise PermissionError(
+                f"'{canonical}' lies in an `.assets` directory, which belongs to "
+                "its document and follows it when the document moves or goes."
+            )
+
+        return sp.prefixed(local)
+
+    def _charge(self, key: str, *, deleting: bool = False) -> None:
+        """Count one more changed path against the run's limits, which only a gated root has."""
+        if isinstance(self.policy(key), Direct):
+            return
+
+        self.touched.add(key)
+
+        if len(self.touched) > self.limits.max_operations:
+            raise PermissionError(
+                f"Changing '{key}' takes this program past the "
+                f"{self.limits.max_operations} paths one run may change. Change "
+                "fewer at once and run again for the rest."
+            )
+
+        if deleting:
+            self.deletes += 1
+
+            if self.deletes > self.limits.max_deletes:
+                raise PermissionError(
+                    f"Removing '{key}' takes this program past the "
+                    f"{self.limits.max_deletes} deletions one run may make."
+                )
+
+    def _make_parents(self, key: str) -> None:
+        """Create every missing directory above *key*, the way the gateway will."""
+        for parent in _ancestors(key):
+            view = self.lookup(parent)
+
+            if _is_dir(view):
+                return
+
+            if view is not None:
+                raise _os_error(NotADirectoryError, errno.ENOTDIR, parent)
+
+            self._new_dir(parent)
+
+    def _new_dir(self, key: str) -> None:
+        if isinstance(self.nodes.get(key), Deleted):
+            underlying = self.lookup(key, below=True)
+
+            if isinstance(underlying, Entry) and not underlying.is_dir:
+                raise FileExistsError(
+                    f"'{key}' was a document this program removed, and a directory "
+                    "cannot replace it in the same run."
+                )
+
+        self.nodes[key] = Dir()
+
+    def _vacate(self, key: str) -> None:
+        """Remove *key* from the view, recording a deletion only where the disk has it."""
+        _ = self.nodes.pop(key, None)
+
+        if self.lookup(key, below=True) is not None:
+            self.nodes[key] = Deleted()
+
+    def _write(self, path: VirtualPath, data: str, *, append: bool) -> int:
+        key = self._target(path)
+        node = self.nodes.get(key)
+        view = self.lookup(key)
+
+        match view:
+            case Text():
+                pass
+            case Entry() if not view.is_dir:
+                current = self.decode(self._remember(view))
+
+                if current is None:
+                    raise ValueError(
+                        f"'{key}' {NOT_TEXT_REASON}, so the sandbox cannot change "
+                        "it. The user can upload a replacement."
+                    )
+
+                view = Text([current], length=len(current))
+            case None:
+                if not writes_as_text(key):
+                    raise ValueError(f"'{key}' {BINARY_WRITE_REASON}.")
+
+                view = Text([])
+            case _:
+                raise _os_error(IsADirectoryError, errno.EISDIR, key)
+
+        length = view.length + len(data) if append else len(data)
+
+        if length > self.max_document_chars:
+            raise MemoryError(
+                f"'{key}' would hold {length} characters, and one document may "
+                f"hold at most {self.max_document_chars}."
+            )
+
+        self.written += len(data)
+
+        if self.written > self.limits.max_chars:
+            raise MemoryError(
+                f"Writing '{key}' takes this program past the "
+                f"{self.limits.max_chars} characters one run may write."
+            )
+
+        if not isinstance(node, Text):
+            self._charge(key)
+            self._make_parents(key)
+
+        if append:
+            view.chunks.append(data)
+        else:
+            view.chunks[:] = [data]
+
+        view.length = length
+
+        if view is not node:
+            origin = node.origin if isinstance(node, Ref) else None
+            self.nodes[key] = Text(view.chunks, origin, view.length)
+
+        return len(data)
 
     @override
     def path_write_text(self, path: PurePosixPath | MontyFileHandle, data: str) -> int:
-        absolute = self._scratch_target(path)
-        self._charge_write(self._named(path), data)
-        absolute.parent.mkdir(parents=True, exist_ok=True)
-        _ = absolute.write_text(data, encoding="utf-8")
-
-        return len(data)
+        return self._write(path, data, append=False)
 
     @override
     def path_write_bytes(
         self, path: PurePosixPath | MontyFileHandle, data: bytes
     ) -> int:
-        _ = self._scratch_target(path)
-        raise ValueError(
-            f"'{self._named(path)}' can only be written as text, since the "
-            "workspace stores UTF-8."
-        )
+        self._refuse_bytes(self._named(path))
 
     @override
     def path_append_text(self, path: PurePosixPath | MontyFileHandle, data: str) -> int:
-        absolute = self._scratch_target(path)
-        self._charge_write(self._named(path), data)
-        absolute.parent.mkdir(parents=True, exist_ok=True)
-        with absolute.open("a", encoding="utf-8") as handle:
-            return handle.write(data)
+        return self._write(path, data, append=True)
 
     @override
     def path_append_bytes(
         self, path: PurePosixPath | MontyFileHandle, data: bytes
     ) -> int:
-        return self.path_write_bytes(path, data)
+        self._refuse_bytes(self._named(path))
 
     @override
     def path_mkdir(self, path: PurePosixPath, parents: bool, exist_ok: bool) -> None:
-        # A scratch write creates whatever directories its path needs, so this
-        # only has to agree about which ones a program may name.
-        self._scratch_target(path).mkdir(parents=parents, exist_ok=exist_ok)
+        key = self._target(path)
+        view = self.lookup(key)
+
+        if view is not None:
+            if exist_ok and _is_dir(view):
+                return
+
+            raise _os_error(FileExistsError, errno.EEXIST, key)
+
+        above = _ancestors(key)
+
+        if not parents and above and self.lookup(above[0]) is None:
+            raise _os_error(FileNotFoundError, errno.ENOENT, above[0])
+
+        self._make_parents(key)
+        self._new_dir(key)
 
     @override
     def path_unlink(self, path: PurePosixPath) -> None:
-        self._scratch_target(path).unlink()
+        key = self._target(path)
+        view = self.lookup(key)
+
+        if view is None:
+            self._missing(path)
+
+        if _is_dir(view):
+            raise _os_error(IsADirectoryError, errno.EISDIR, key)
+
+        if isinstance(view, Entry):
+            _ = self._remember(view)
+
+        node = self.nodes.get(key)
+        self._charge(
+            key,
+            deleting=isinstance(view, Entry)
+            or (isinstance(node, Text) and node.origin is not None),
+        )
+        self._vacate(key)
 
     @override
     def path_rmdir(self, path: PurePosixPath) -> None:
-        _ = self._scratch_target(path)
-        raise PermissionError(
-            f"'{self._named(path)}' is a directory, which the sandbox does not "
-            "remove. Remove the files it holds instead."
-        )
+        key = self._target(path)
+        view = self.lookup(key)
+
+        if view is None:
+            self._missing(path)
+
+        if not _is_dir(view):
+            raise _os_error(NotADirectoryError, errno.ENOTDIR, key)
+
+        if self._children(key, view) or self._holds_unseen(key, view):
+            raise _os_error(OSError, errno.ENOTEMPTY, key)
+
+        if isinstance(view, Entry):
+            self._charge(key, deleting=True)
+
+        self._vacate(key)
 
     @override
     def path_rename(self, path: PurePosixPath, target: PurePosixPath) -> None:
-        # Reached only when one end is mounted, and a rename with an end in the
-        # workspace is a write of that end however it is spelled.
-        raise PermissionError(
-            f"'{self._named(target)}' cannot be renamed into or out of the mounted "
-            "workspace. Read the source and write the target instead."
-        )
+        """Record a rename, which carries the disk file rather than copying its bytes.
+
+        So a binary document moves as freely as a text one.  A file renamed onto
+        another one replaces it, as on any POSIX filesystem, while a directory
+        neither replaces nor is replaced.  On a case-insensitive workspace both
+        spellings of a case-only rename name the source, so the name the
+        program spelled is the one it gets.  A rename touching a direct root
+        is a copy, see :meth:`_copy`.
+        """
+        if not (self._mounted(path) and self._mounted(target)):
+            raise PermissionError(
+                f"'{self._named(path)}' cannot be renamed outside this run's "
+                f"filesystem.{_root_hint(self.paths)}"
+            )
+
+        source, destination = self._target(path), self._target(target)
+
+        if any(isinstance(self.policy(end), Direct) for end in (source, destination)):
+            self._copy(path, target, source, destination)
+
+            return
+
+        view = self.lookup(source)
+
+        if view is None:
+            self._missing(path)
+
+        replaced = None
+
+        if destination == source:
+            name = PurePosixPath(_text(target)).name
+            current = PurePosixPath(source).name
+
+            if name == current or path_key(name, folded=True) != path_key(
+                current, folded=True
+            ):
+                return
+
+            destination = str(PurePosixPath(source).with_name(name))
+        else:
+            replaced = self.lookup(destination)
+
+        is_dir = _is_dir(view)
+
+        if is_dir and is_below(destination, source):
+            raise OSError(errno.EINVAL, "Cannot move a directory into itself", source)
+
+        if replaced is not None and (is_dir or _is_dir(replaced)):
+            raise FileExistsError(
+                errno.EEXIST,
+                "File exists, and a directory neither replaces nor is replaced by "
+                "a rename. Pick a free name",
+                destination,
+            )
+
+        self._check_rename(source, destination, is_dir=is_dir)
+        node = self.nodes.get(source)
+        origin = self._origin(source, node, view)
+
+        for entry in (view, replaced):
+            if isinstance(entry, Entry) and not entry.is_dir:
+                _ = self._remember(entry)
+
+        if not isinstance(node, Text | Ref):
+            self._charge(source)
+
+        if replaced is not None:
+            self._charge(destination, deleting=isinstance(replaced, Entry))
+
+        if is_dir:
+            for key in [key for key in self.nodes if is_below(key, source)]:
+                self.nodes[rebase(key, source, destination)] = self.nodes.pop(key)
+
+        self._vacate(source)
+        _ = self.nodes.pop(destination, None)
+        # Back where it came from, a file is the disk's again, or a write in place.
+        home = origin == destination
+
+        match node:
+            case Text():
+                node.origin = None if home else origin
+                self.nodes[destination] = node
+            case Dir():
+                self.nodes[destination] = node
+            case _ if origin is not None and not home:
+                self.nodes[destination] = Ref(origin)
+            case _:
+                pass
+
+        self._make_parents(destination)
+
+    def _origin(self, source: str, node: Node | None, view: Text | Dir | Entry) -> str | None:
+        """The disk path whose entry a rename of *source* carries, if any."""
+        match node:
+            case Text(origin=None):
+                underlying = self.lookup(source, below=True)
+
+                return underlying.canonical if isinstance(underlying, Entry) else None
+            case Text(origin=origin) | Ref(origin=origin):
+                return origin
+            case Dir():
+                return None
+            case _:
+                return view.canonical if isinstance(view, Entry) else None
+
+    def _copy(
+        self, path: PurePosixPath, target: PurePosixPath, source: str, destination: str
+    ) -> None:
+        """Rename a file to or from a direct root as a write of its text and a removal.
+
+        A direct root holds files rather than entries and commits apart from
+        the gated ones, so no move carries a file between them: the text lands
+        at *destination* and *source* goes, each the way its own root commits,
+        which leaves a removal from a workspace to the approval it always asks.
+        """
+        if _is_dir(self.lookup(source)):
+            raise _os_error(IsADirectoryError, errno.EISDIR, source)
+
+        if source != destination:
+            _ = self._write(target, self.path_read_text(path), append=False)
+            self.path_unlink(path)
+
+    @staticmethod
+    def _check_rename(source: str, destination: str, *, is_dir: bool) -> None:
+        """Refuse a rename that would change a document's extension."""
+        if not is_dir and PurePosixPath(source).suffix != PurePosixPath(destination).suffix:
+            raise PermissionError(
+                f"'{source}' cannot be renamed to '{destination}': a document "
+                "keeps its extension when it moves. To change its format, write "
+                "the converted text to a new path and remove the old one."
+            )
 
     # -- the two answers that are about the path and not the file --------
 

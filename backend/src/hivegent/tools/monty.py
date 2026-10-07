@@ -5,7 +5,7 @@ and ``json`` jq, which leaves exactly the tools whose answer no program can
 compute for itself: retrieval needs the database, the web tools need the
 network, and a spreadsheet needs a decoder Monty does not have.  Those are
 injected here, so one program searches, queries, and counts in a single call
-rather than spending a turn and a `.scratch/` file per step.  Nothing that
+rather than spending a turn and a ``/tmp`` file per step.  Nothing that
 mutates is injected and nothing needs to be: a program cannot stop to ask for
 approval, and every function here is a read.
 

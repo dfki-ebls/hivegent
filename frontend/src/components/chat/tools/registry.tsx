@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { SyncOutput, ToolPart } from "@/lib/chat/tool-part";
+import { isCatalogKey } from "@/i18n";
+import type { SyncOutput, ToolName, ToolPart } from "@/lib/chat/tool-part";
 import { syncGrepOutput } from "@/components/chat/tools/grep";
 import {
   ReadBinaryDocumentTool,
@@ -10,6 +11,7 @@ import { RunPythonTool } from "@/components/chat/tools/run-python";
 import { syncSearchOutput } from "@/components/chat/tools/search";
 import { syncWebFetchOutput } from "@/components/chat/tools/web-fetch";
 import { syncWebSearchOutput } from "@/components/chat/tools/web-search";
+import { WriteDocumentTool } from "@/components/chat/tools/write-document";
 
 export interface ToolRenderProps {
   part: ToolPart;
@@ -21,7 +23,8 @@ export interface ToolHandler {
   syncOutput?: SyncOutput;
 }
 
-const TOOL_HANDLERS: Record<string, ToolHandler> = {
+// Keyed by the display-name catalog, so a handler for a misspelled or unnamed tool fails to compile.
+const TOOL_HANDLERS: Partial<Record<ToolName, ToolHandler>> = {
   search: { syncOutput: syncSearchOutput },
   read_document: { syncOutput: syncReadDocumentOutput },
   read_binary_document: {
@@ -34,8 +37,9 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   run_python: {
     render: ({ part, metadata }) => <RunPythonTool part={part} metadata={metadata} />,
   },
+  write_document: { render: ({ part }) => <WriteDocumentTool part={part} /> },
 };
 
 export function getToolHandler(name: string): ToolHandler | undefined {
-  return TOOL_HANDLERS[name];
+  return isCatalogKey(TOOL_HANDLERS, name) ? TOOL_HANDLERS[name] : undefined;
 }

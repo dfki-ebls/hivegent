@@ -24,10 +24,23 @@ The SDK issues the post-approval continuation itself, with only the options the 
 ## Tool approvals
 
 A decision lives only in the browser's memory until the resumed turn is persisted, and the SDK dispatches the continuation only if the chat happens to be idle when the decision is recorded — it never looks again.
-The buttons therefore stay disabled until the turn settles (`approvalBlockedReason` in `ChatSidebar.tsx`); without that, a decision taken while the last chunks drained would be recorded, never sent, and leave the call dangling for the backend to close.
+The buttons therefore stay disabled until the turn settles (the gate's `blockedReason` in `ChatSidebar.tsx`).
+Without that, a decision taken while the last chunks drained would be recorded, never sent, and leave the call dangling for the backend to close.
 
 The prompt itself is re-derived from stored history rather than stored as a decision, since a tool call with no result is an open approval.
 An approval the user overtakes by sending another message is declined on both sides: `chat-utils.declineAbandonedApprovals` derives the denial over the live transcript while the backend closes the dangling call on the next request.
+
+The protocol's approval request carries ids only, so the changeset summary the planner resolved for the prompt arrives as message metadata keyed by tool call id, live and after a reload alike.
+`MessageBubble` provides it per message and `ToolCard` reads its own call's entry with `useApprovalMetadata(part, schema)`, which validates it with zod.
+Every approval that changes the workspace (a mutation tool, an `output_path` redirect, `apply_changes`) asks with that summary, so one `ChangesetView` (`components/chat/tools/changeset.tsx`) shows the real diffs for every tool, and `run-python.tsx` reuses it to show what a program staged.
+A tool card reads a `/tmp` file through the same document route as a workspace one, passing the persisted conversation id that `ChatSidebar` provides through `useConversationId`, so a draft's `/tmp` script waits for its first turn to persist.
+Every gated card asks with the same approve and deny buttons and an optional note for the assistant, and a lone request is sent on click.
+Several requests of one response are the special case: the card buttons then only stage a choice (`aria-pressed`), and an `ApprovalBar` under the message adds a shared note, "Approve all" and "Deny all", and a submit that sends the staged choices once every call has one.
+The fine-grained choices need no extra collapsible, since the cards themselves are collapsible and open while a decision is pending.
+`MessageBubble` holds the staged state (`useApprovalRoundState`) keyed by request id, so a later round starts blank, and provides it to its cards.
+The gate's `decide` takes the whole batch and records each decision in turn, and since the SDK continues only once the last one is in, that still sends a single continuation.
+
+A note travels as the decision's `reason`, which is the user's own text on both decisions: the backend words the refusal the model reads around it for a denial and appends it to the result of an approved call (see `../backend/README.md`), and records it so the resolved card shows it live and after a reload alike.
 
 ## Interface language
 
@@ -38,6 +51,13 @@ The catalogs are bundled statically: two small languages cost less than a lazy-l
 The browser alone decides the language: `LANGUAGE` is the first supported entry of `navigator.languages`, fixed at page load and never stored, so there is no picker and changing the browser language takes effect on the next load.
 `getAuthHeaders()` sends it as `Accept-Language` on every request, so the backend answers in the language the interface shows rather than renegotiating from the browser's own header.
 Dates, numbers, and sizes go through `@/i18n/format` rather than `toLocale*String()`, and `npm run i18n:lint` lists hardcoded JSX text.
+
+## Moves and deletes are one request
+
+Every move, delete, and new directory, of one item or a whole selection, is one `applyChanges` request that the backend applies all or nothing.
+The store sends it through one helper: the affected rows spin, every scope its paths name refreshes once it returns, and a refusal is one error naming the offending path.
+A delete names whether it expects a document or a folder, so a stale view can never delete a folder in place of a document.
+Only bulk rechunk and reconvert are background jobs with progress in the job tray, since they convert and index.
 
 ## TODO: branch-navigation UI
 

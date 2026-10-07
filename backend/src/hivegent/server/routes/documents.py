@@ -1,10 +1,10 @@
-"""Routes for document and collection management.
+"""Routes for documents, directories, and collections in a workspace.
 
-Every workspace reference lives in the URL path as a canonical
-workspace path: ``~/<local>`` for the caller's personal store, or
-``@<group>/<local>`` for a group the caller can access. Scope-level
-endpoints (collection upload, delete-all) take the bare scope
-segment (``~`` or ``@<group>``); item endpoints take the full path.
+Every workspace reference is a canonical workspace path: ``~/<local>`` for
+the caller's personal store, or ``@<group>/<local>`` for a group the caller
+can access. Scope-level endpoints (collection upload, delete-all, the tree)
+take the bare scope segment (``~`` or ``@<group>``), item endpoints the full
+path, and ``POST /changes`` carries its paths in the body.
 :func:`resolve_workspace_path` maps either to its store and enforces
 group membership (reads) or write access.
 """
@@ -14,7 +14,7 @@ import logging
 import mimetypes
 import shutil
 import tempfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Annotated
@@ -24,49 +24,59 @@ from starlette.responses import FileResponse, Response
 
 from ... import workspace
 from ...auth import User, get_current_user
+from ...changes import Changeset, Write
 from ...chunkers.base import DocumentMetadata
-from ...concurrency import shield_to_completion
 from ...config import settings
+from ...db.conversations import conversation_exists
 from ...db.documents import get_document, get_line_counts
 from ...humanize import format_bytes, pluralize
 from ...jobs import JobContext, JobView, JobWork, manager
 from ...l10n import Localized
 from ...llm_config import LlmConfig
 from ...store import Casebase
+from ...tmp import TMP_SCOPE, tmp_search_path
+from ...tools.base import resolve_accessible_file
 from ...types import (
     AssetEntry,
     AssetListResponse,
     CollectionCompleteEvent,
     CollectionProgressEvent,
+    DirectoryTreeResponse,
     DocumentLineCountsResponse,
     GenerateAssetDescriptionRequest,
-    MoveDocumentRequest,
     PipelineSpec,
     UpdateAssetDescriptionRequest,
     WriteDocumentRequest,
 )
-from ...workspace.paths import file_too_large
+from ...workspace.operations import Location
+from ...workspace.paths import document_not_found, file_too_large
 from ...workspace_events import notify_workspace_change
 from ..common import (
     ClientId,
     parse_pipeline_spec,
     prepare_llm_config,
-    resolve_move,
     resolve_workspace_path,
 )
 from ..models import (
-    BulkDeleteRequest,
-    BulkMoveRequest,
     BulkRechunkRequest,
     BulkReconvertRequest,
+    ChangesRequest,
+    CreateDirOperation,
+    DeleteOperation,
     DocumentLineCountsRequest,
+    MoveDestination,
+    MoveOperation,
+    MovePaths,
     ReconvertRequest,
+    WorkspacePath,
 )
 from ..operations import (
     attachment_disposition,
+    build_tree_response,
     enforce_upload_size,
     find_original,
     get_document_response,
+    get_file_response,
     list_assets,
     run_bulk_document_job,
     spool_dir,
@@ -109,22 +119,8 @@ def _reconvert_title(count: int) -> Localized[str]:
     )
 
 
-def _move_title(count: int) -> Localized[str]:
-    return Localized(
-        en=f"Move {_documents(count).en}", de=f"{_documents(count).de} bewegen"
-    )
-
-
-def _delete_title(count: int) -> Localized[str]:
-    return Localized(
-        en=f"Delete {_documents(count).en}", de=f"{_documents(count).de} löschen"
-    )
-
-
 _RECHUNKED = Localized(en="Rechunked", de="Neu gechunkt")
 _RECONVERTED = Localized(en="Reconverted", de="Neu konvertiert")
-_MOVED = Localized(en="Moved", de="Bewegt")
-_DELETED = Localized(en="Deleted", de="Gelöscht")
 
 
 def _not_imported(count: int, summary: str) -> Localized[str]:
@@ -190,8 +186,6 @@ class DocumentJobKind(StrEnum):
     RECHUNK = "document.rechunk"
     RECHUNK_BULK = "document.rechunk_bulk"
     RECONVERT_BULK = "document.reconvert_bulk"
-    MOVE_BULK = "document.move_bulk"
-    DELETE_BULK = "document.delete_bulk"
 
 
 def _submit_document_job(
@@ -463,66 +457,6 @@ async def bulk_reconvert(
     )
 
 
-@router.post("/documents/move/bulk")
-async def bulk_move(
-    request: BulkMoveRequest,
-    user: Annotated[User, Depends(get_current_user)],
-) -> JobView:
-    """Move multiple documents as a single background job."""
-    destinations = {m.source: m.destination for m in request.moves}
-    sources = list(destinations)
-    moved: dict[str, tuple[Casebase, list[str]]] = {}
-
-    async def _move_one(filepath: str) -> None:
-        src_store, src, dst_store, dst = resolve_move(
-            user, filepath, destinations[filepath]
-        )
-        await workspace.move_document(src_store, dst_store, src, dst)
-        moved.setdefault(src_store.store_key, (src_store, []))[1].append(src)
-
-    scope = _bulk_scope(user, sources)
-
-    async def work(ctx: JobContext) -> None:
-        try:
-            await run_bulk_document_job(sources, _move_one, verb=_MOVED, ctx=ctx)
-        finally:
-            # Per-entry moves leave their emptied source directories behind.
-            # Prune them even when the batch failed or was cancelled — so the
-            # client's refresh sees final state — and shield the prune so a
-            # cancel cannot interrupt it midway.
-            for store, srcs in moved.values():
-                await shield_to_completion(workspace.prune_empty_dirs(store, srcs))
-
-    return manager.submit(
-        kind=DocumentJobKind.MOVE_BULK,
-        title=_move_title(len(sources)).current,
-        owner=user.id,
-        scope=scope,
-        work=work,
-    )
-
-
-@router.post("/documents/delete/bulk")
-async def bulk_delete(
-    request: BulkDeleteRequest,
-    user: Annotated[User, Depends(get_current_user)],
-) -> JobView:
-    """Delete multiple documents as a single background job."""
-
-    async def _delete_one(filepath: str) -> None:
-        store, safe = resolve_workspace_path(user, filepath, write=True)
-        await workspace.delete_document(store, safe)
-
-    return _submit_bulk_job(
-        user=user,
-        kind=DocumentJobKind.DELETE_BULK,
-        title=_delete_title(len(request.files)).current,
-        files=request.files,
-        process_one=_delete_one,
-        verb=_DELETED,
-    )
-
-
 @router.post("/documents/line-counts")
 async def get_document_line_counts(
     request: DocumentLineCountsRequest,
@@ -604,29 +538,6 @@ async def reconvert_document(
     )
 
 
-@router.post("/documents/move/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
-async def move_document(
-    filepath: str,
-    request: MoveDocumentRequest,
-    user: Annotated[User, Depends(get_current_user)],
-    client: ClientId = None,
-) -> None:
-    """Move a document within a workspace or migrate it to another.
-
-    ``filepath`` and ``destination`` are canonical paths; resolving both with
-    ``write=True`` requires write access to each end, so a cross-workspace move
-    is allowed exactly when the caller may write both the source and the
-    destination.
-    """
-    src_store, src, dst_store, dst = resolve_move(user, filepath, request.destination)
-    await workspace.move_document(src_store, dst_store, src, dst)
-    # Both ends change on a cross-workspace move; the same store twice collapses
-    # to one notification for an in-place one.
-    notify_workspace_change(user.id, src_store, client)
-    if dst_store != src_store:
-        notify_workspace_change(user.id, dst_store, client)
-
-
 @router.get("/documents/assets/{filepath:path}")
 async def list_document_assets(
     filepath: str,
@@ -699,20 +610,103 @@ async def write_document(
     assets, and provenance, and only rewrites the markdown and its chunks.
     """
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    await workspace.write_document_text(
-        store, safe, request.content, mode=request.mode, chunking=request.chunking
+    write = Write(
+        Location(store, safe),
+        request.content,
+        mode=request.mode,
+        chunking=request.chunking,
     )
-    notify_workspace_change(user.id, store, client)
+    await workspace.apply_changeset(
+        Changeset((write,)), owner=user.id, exclude_client=client
+    )
+
+
+def _tmp_file(conversation_id: str, filepath: str) -> Path | None:
+    """The file *filepath* names in the ``/tmp`` of *conversation_id*, as the agent's tools resolve it."""
+    try:
+        root = tmp_search_path(settings.data_dir, conversation_id)
+    except ValueError:
+        return None
+
+    resolved = resolve_accessible_file((root,), filepath)
+
+    return None if resolved is None else resolved[2]
 
 
 @router.get("/documents/{filepath:path}")
 async def get_document_content(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
+    conversation_id: str | None = None,
 ) -> Response:
-    """Get the content of a document or asset."""
-    store, safe = resolve_workspace_path(user, filepath)
-    return await get_document_response(store, safe)
+    """Get the content of a document or asset.
+
+    A ``/tmp`` path is read from the folder of *conversation_id*, which the
+    user must own.
+    """
+    if conversation_id is None or TMP_SCOPE.strip_prefix(filepath) is None:
+        store, safe = resolve_workspace_path(user, filepath)
+
+        return await get_document_response(store, safe)
+
+    if not await conversation_exists(user.id, conversation_id):
+        raise HTTPException(status_code=404, detail=document_not_found(filepath).current)
+
+    return await get_file_response(lambda: _tmp_file(conversation_id, filepath), filepath)
+
+
+@router.get("/directories/{scope}")
+async def get_directories(
+    scope: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> DirectoryTreeResponse:
+    """Build a recursive directory tree for a workspace (``~`` or ``@<group>``)."""
+    store, _ = resolve_workspace_path(user, scope)
+
+    return await build_tree_response(store)
+
+
+async def _apply(
+    user: User,
+    client: str | None,
+    operations: Iterable[MoveOperation | DeleteOperation | CreateDirOperation],
+) -> None:
+    """Resolve every path with write access and apply *operations* as one changeset."""
+
+    def at(path: str) -> Location:
+        return Location(*resolve_workspace_path(user, path, write=True))
+
+    changeset = Changeset(tuple(op.operation(at) for op in operations))
+    await workspace.apply_changeset(changeset, owner=user.id, exclude_client=client)
+
+
+@router.post("/changes", status_code=status.HTTP_204_NO_CONTENT)
+async def apply_changes(
+    request: ChangesRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
+) -> None:
+    """Move, delete, and create documents and directories as one changeset.
+
+    Every path is resolved with write access, so a move between workspaces is
+    allowed exactly when the caller may write both ends.  The operations land
+    at once, all of them or none, so swaps and chains work, and one refused
+    operation rejects the batch with the gateway's message naming its path.
+    The single-item routes below are shortcuts for one operation of this kind.
+    """
+    await _apply(user, client, request.operations)
+
+
+@router.post("/documents/move/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
+async def move_document(
+    filepath: str,
+    request: MoveDestination,
+    user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
+) -> None:
+    """Move or rename one document, a shortcut for one move in ``POST /changes``."""
+    move = MoveOperation(kind="move", source=filepath, destination=request.destination)
+    await _apply(user, client, [move])
 
 
 @router.delete("/documents/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
@@ -721,7 +715,40 @@ async def delete_document(
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
 ) -> None:
-    """Delete a document and its associated chunks and original."""
-    store, safe = resolve_workspace_path(user, filepath, write=True)
-    await workspace.delete_document(store, safe)
-    notify_workspace_change(user.id, store, client)
+    """Delete one document, a shortcut for one entry delete in ``POST /changes``."""
+    await _apply(user, client, [DeleteOperation(kind="delete", path=filepath, expect="entry")])
+
+
+@router.post("/directories", status_code=status.HTTP_204_NO_CONTENT)
+async def create_directory(
+    request: WorkspacePath,
+    user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
+) -> None:
+    """Create one directory, a shortcut for one mkdir in ``POST /changes``."""
+    await _apply(user, client, [CreateDirOperation(kind="mkdir", path=request.path)])
+
+
+@router.post("/directories/move", status_code=status.HTTP_204_NO_CONTENT)
+async def move_directory(
+    request: MovePaths,
+    user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
+) -> None:
+    """Move or rename one directory, a shortcut for one move in ``POST /changes``."""
+    move = MoveOperation(kind="move", source=request.source, destination=request.destination)
+    await _apply(user, client, [move])
+
+
+@router.delete("/directories", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_directory(
+    request: WorkspacePath,
+    user: Annotated[User, Depends(get_current_user)],
+    client: ClientId = None,
+) -> None:
+    """Delete one directory with everything in it.
+
+    A shortcut for one directory delete in ``POST /changes``.
+    """
+    delete = DeleteOperation(kind="delete", path=request.path, expect="dir")
+    await _apply(user, client, [delete])

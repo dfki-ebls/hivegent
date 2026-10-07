@@ -4,9 +4,11 @@ Every operation that modifies the workspace or the SQL documents for a
 :class:`~hivegent.store.Casebase` goes through this package.  Each
 public function acquires the per-store async lock so concurrent
 mutations on the same casebase are serialised, then performs the
-workspace and SQL writes in one step — see
-:func:`hivegent.chunks.chunk_and_index_document` and
-:func:`hivegent.chunks.delete_document`.
+workspace and SQL writes in one step.  Writes, edits, moves, and deletes
+are items of one :class:`~hivegent.changes.Changeset`, which
+:func:`~hivegent.workspace.changeset.apply_changeset` commits all or
+nothing, however many items and casebases it spans, and creating a directory
+is one of those items too.
 
 Chunks (text + vector) live next to documents in Postgres and cascade
 on delete: any operation that drops a Document row also drops its
@@ -36,9 +38,15 @@ The implementation is split into focused submodules:
   the phased-upload lifecycle.
 * :mod:`~hivegent.workspace.normalize` — the one-off sweep folding pre-existing
   paths and SQL stems to their canonical NFC spelling.
-* :mod:`~hivegent.workspace.uploads`, :mod:`~hivegent.workspace.documents`,
-  :mod:`~hivegent.workspace.assets`, :mod:`~hivegent.workspace.directories`,
-  :mod:`~hivegent.workspace.collections` — the public mutation API.
+* :mod:`~hivegent.workspace.documents` — text-mutation building blocks and
+  the in-place rechunk.
+* :mod:`~hivegent.workspace.operations` and
+  :mod:`~hivegent.workspace.changeset` — the locations a change's operations
+  (:mod:`hivegent.changes`) are routed to, and the gateway that plans and
+  commits writes, edits, moves, and deletes.
+* :mod:`~hivegent.workspace.uploads`, :mod:`~hivegent.workspace.assets`,
+  :mod:`~hivegent.workspace.directories`,
+  :mod:`~hivegent.workspace.collections` — the rest of the public mutation API.
 """
 
 from . import describe, prepare
@@ -47,58 +55,43 @@ from .assets import (
     generate_asset_description,
     update_asset_description,
 )
+from .changeset import Gateway, PlannedChangeset, apply_changeset, plan_changeset
 from .collections import process_collection, validate_collection_archive
 from .directories import (
-    cleanup_scratch_dirs,
-    clear_scratch,
-    create_directory,
     delete_all,
-    delete_directory,
     delete_workspace_root,
-    move_directory,
-    prune_empty_dirs,
 )
-from .documents import (
-    delete_document,
-    edit_document_text,
-    move_document,
-    rechunk,
-    write_document_text,
-)
-from .indexing import sync_entries_from_disk, sync_entry_from_disk
+from .documents import rechunk
+from .indexing import sync_entries_from_disk
 from .locks import inflight_stems
 from .metadata import resolve_entry
 from .normalize import NormalizeReport, normalize_workspace_paths
+from .operations import Location, route
 from .uploads import reconvert, replace_original, upload
 
 __all__ = [
+    "Gateway",
+    "Location",
     "NormalizeReport",
-    "cleanup_scratch_dirs",
-    "clear_scratch",
-    "create_directory",
+    "PlannedChangeset",
+    "apply_changeset",
     "delete_all",
     "delete_asset_description",
-    "delete_directory",
-    "delete_document",
     "delete_workspace_root",
     "describe",
-    "edit_document_text",
     "generate_asset_description",
     "inflight_stems",
-    "move_directory",
-    "move_document",
     "normalize_workspace_paths",
+    "plan_changeset",
     "prepare",
     "process_collection",
-    "prune_empty_dirs",
     "rechunk",
     "reconvert",
     "replace_original",
     "resolve_entry",
+    "route",
     "sync_entries_from_disk",
-    "sync_entry_from_disk",
     "update_asset_description",
     "upload",
     "validate_collection_archive",
-    "write_document_text",
 ]

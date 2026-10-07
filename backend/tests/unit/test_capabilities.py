@@ -22,7 +22,7 @@ from hivegent.auth import User
 from hivegent.prompts import GROUNDING_INSTRUCTIONS
 from hivegent.server.routes.meta import list_tools
 from hivegent.store import Casebase
-from hivegent.types import ToolsSpec
+from hivegent.types import Mode, ToolsSpec
 
 _EXPLORE = next(feature for feature in FEATURES if feature.id == "explore")
 
@@ -101,7 +101,10 @@ def test_document_scope_rides_with_the_retrieval_tools() -> None:
 
 
 def _request_params(
-    monkeypatch: pytest.MonkeyPatch, *, relevant: frozenset[str]
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    relevant: frozenset[str],
+    mode: Mode = "interactive",
 ) -> ModelRequestParameters:
     """Run one turn against a stub model and capture what it was handed."""
 
@@ -118,14 +121,14 @@ def _request_params(
     deps = UserDeps(
         user_id="u",
         store=Casebase(kind="user", id="u"),
-        mode="interactive",
+        mode=mode,
         relevant_documents=relevant,
     )
     user_agent.run_sync(
         "hi",
         model=FunctionModel(respond),
         deps=deps,
-        capabilities=build_capabilities(ToolsSpec(), mode="interactive", language="en"),
+        capabilities=build_capabilities(ToolsSpec(), mode=mode, language="en"),
     )
     return captured[0]
 
@@ -150,10 +153,21 @@ def test_the_cacheable_prefix_survives_a_changed_document_selection(
     assert static_part(frozenset({"~/a.md"})) == static_part(frozenset({"~/b.md"}))
 
 
-def _tool_names(monkeypatch: pytest.MonkeyPatch) -> set[str]:
-    """Every tool one interactive run would hand the model."""
-    params = _request_params(monkeypatch, relevant=frozenset())
+def _tool_names(monkeypatch: pytest.MonkeyPatch, mode: Mode = "interactive") -> set[str]:
+    """Every tool one run in *mode* would hand the model."""
+    params = _request_params(monkeypatch, relevant=frozenset(), mode=mode)
+
     return {tool.name for tool in params.function_tools}
+
+
+def test_read_mode_writes_tmp_but_stages_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/tmp` is writable in every mode, so the write tools stay, but nothing stages."""
+    monkeypatch.setattr(capabilities.settings.tools, "disabled", [])
+    names = _tool_names(monkeypatch, "read")
+
+    assert {"write_document", "edit_document"} <= names
+    assert "apply_changes" not in names
+    assert "apply_changes" in _tool_names(monkeypatch)
 
 
 def test_the_shape_specific_readers_are_never_merely_hinted_at(

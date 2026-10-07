@@ -16,7 +16,7 @@ stored JSON on the way back out.
 """
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -53,8 +53,10 @@ __all__ = [
     "MessagePair",
     "append_branch",
     "conversation_exists",
+    "conversation_ids",
     "create_compacted_conversation",
     "delete_all_conversations",
+    "existing_conversation_ids",
     "extract_title",
     "import_conversation",
     "is_user_request",
@@ -398,6 +400,25 @@ async def load_conversation_summary(
     return None if conv is None else _to_summary(conv)
 
 
+async def conversation_ids(user_id: str) -> set[str]:
+    """Return the ids of *user_id*'s conversations."""
+    async with session() as s:
+        query = select(Conversation.id).where(Conversation.user_id == user_id)
+
+        return set((await s.scalars(query)).all())
+
+
+async def existing_conversation_ids(ids: Collection[str]) -> set[str]:
+    """Return those of *ids* that still name a conversation, whoever owns it."""
+    if not ids:
+        return set()
+
+    async with session() as s:
+        query = select(Conversation.id).where(Conversation.id.in_(ids))
+
+        return set((await s.scalars(query)).all())
+
+
 async def conversation_exists(user_id: str, conversation_id: str) -> bool:
     """Return whether *conversation_id* exists and is owned by *user_id*."""
     async with session() as s:
@@ -572,13 +593,16 @@ async def remove_conversation(user_id: str, conversation_id: str) -> bool:
     return affected_rows(result) > 0
 
 
-async def delete_all_conversations(user_id: str) -> int:
-    """Delete every conversation owned by *user_id*.  Returns the deleted count."""
+async def delete_all_conversations(user_id: str) -> list[str]:
+    """Delete every conversation owned by *user_id*, returning their ids."""
     async with session() as s:
-        result = await s.execute(
-            delete(Conversation).where(Conversation.user_id == user_id)
+        result = await s.scalars(
+            delete(Conversation)
+            .where(Conversation.user_id == user_id)
+            .returning(Conversation.id)
         )
-    return affected_rows(result)
+
+        return list(result.all())
 
 
 async def import_conversation(

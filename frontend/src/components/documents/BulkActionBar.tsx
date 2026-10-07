@@ -13,8 +13,9 @@ interface BulkActionBarProps {
 }
 
 /**
- * Selection summary plus bulk actions. Each action submits a background job, so
- * its progress shows in the job tray rather than inline here.
+ * Selection summary plus bulk actions. Rechunk and reconvert submit a background
+ * job whose progress shows in the job tray, while delete applies to the whole
+ * selection at once and shows its spinners and any error in the tree.
  */
 export function BulkActionBar({
   selectedCount,

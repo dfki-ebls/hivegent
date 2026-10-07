@@ -133,13 +133,21 @@ def _frame_attachments(
     )
 
 
+def _renders_images(media_type: str | None, mode: BinaryContentMode) -> bool:
+    """Whether a file of *media_type* reaches the model as images, spending the image cap."""
+    return media_type is not None and (
+        media_type != "application/pdf" or mode is BinaryContentMode.IMAGES
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class ReadBinaryDocumentTool(AsyncPathTool[Batch[BinaryReadResult]]):
     """Read images, PDFs, or videos as binary content for vision models.
 
     The gateway's image cap bounds the whole call, since every attachment of
-    it reaches the model in one request, so a call reading several files
-    divides it between them before any of them is rendered.
+    it reaches the model in one request, so the files that become images
+    divide it between them before any of them is rendered.  A PDF forwarded
+    natively spends none of it.
     """
 
     binary_content_mode: BinaryContentMode = BinaryContentMode.IMAGES
@@ -178,16 +186,25 @@ class ReadBinaryDocumentTool(AsyncPathTool[Batch[BinaryReadResult]]):
         (e.g. ``"3"``, ``"2-5"``, ``"1,3,5-7"``); omit it to read the
         whole document.  ``pages`` is rejected for non-PDF inputs.
         """
-        if self.max_images is not None and len(files) > self.max_images:
+        mode = self.binary_content_mode
+        media_types = {item.key: vision_media_type(item.file_path) for item in files}
+        images = sum(_renders_images(media_type, mode) for media_type in media_types.values())
+
+        if self.max_images is not None and images > self.max_images:
             raise ToolRetry(
-                f"At most {self.max_images} files can be attached in one call, "
-                "since each needs at least one image."
+                f"At most {self.max_images} files that become images can be attached "
+                "in one call, since each needs at least one image."
             )
 
-        return await run_batch(files, self._read, key=lambda item: item.key)
+        return await run_batch(
+            files,
+            lambda item, share: self._read(item, media_types[item.key], share),
+            key=lambda item: item.key,
+            shares=lambda item: _renders_images(media_types[item.key], mode),
+        )
 
     async def _read(
-        self, item: BinaryRead, share: BatchShare
+        self, item: BinaryRead, media_type: str | None, share: BatchShare
     ) -> ToolOutput[BinaryReadResult]:
         """Attach one file, within its share of the call's image cap."""
         file_path, pages = item.file_path, item.pages
@@ -195,7 +212,6 @@ class ReadBinaryDocumentTool(AsyncPathTool[Batch[BinaryReadResult]]):
         sp, local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
         canonical = sp.prefixed(local)
 
-        media_type = vision_media_type(local)
         if media_type is None:
             # Not every unsupported input is text: an Office document is neither
             # showable to a vision model nor readable by read_document, so point
@@ -251,7 +267,7 @@ class ReadBinaryDocumentTool(AsyncPathTool[Batch[BinaryReadResult]]):
         cap: int | None,
     ) -> ToolOutput[BinaryReadResult]:
         """Surface a PDF as page images or a native ``file``, per the mode."""
-        if self.binary_content_mode is BinaryContentMode.NATIVE:
+        if not _renders_images("application/pdf", self.binary_content_mode):
             return await self._read_pdf_native(canonical, raw, pages)
 
         return await self._read_pdf_rendered(canonical, raw, pages, cap)

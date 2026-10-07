@@ -80,8 +80,17 @@ async def engine_lifespan() -> AsyncGenerator[None]:
 
 
 @asynccontextmanager
-async def session() -> AsyncIterator[AsyncSession]:
-    """Yield an :class:`AsyncSession` that commits on success, rolls back on error."""
+async def session(joined: AsyncSession | None = None) -> AsyncGenerator[AsyncSession]:
+    """Yield an :class:`AsyncSession` that commits on success, rolls back on error.
+
+    A caller passing *joined* runs inside that session's transaction instead,
+    which its owner commits or rolls back, so several writes land together.
+    """
+    if joined is not None:
+        yield joined
+
+        return
+
     async with get_sessionmaker()() as s:
         try:
             yield s

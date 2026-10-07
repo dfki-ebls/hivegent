@@ -1,36 +1,63 @@
-"""Unit tests for the workspaces the agent's mutating tools can reach.
+"""Unit tests for the roots the agent's mutating tools reach and how each commits.
 
-The write tools search the personal workspace plus the groups the user may
-write to, and route each accepted path back to the workspace that claimed it,
-so a path copied out of a listing lands where it says it does.
+The write tools search the personal workspace, the groups the user may write
+to, and ``/tmp``.  Each accepted path is routed back to the root that claimed
+it: a workspace's through the changeset gateway and its approval, ``/tmp``'s
+straight into the conversation's folder.
 """
 
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 import hivegent.agents.tools.compute as compute_tools
-import hivegent.agents.tools.write as write_tools
-from hivegent import workspace
+from hivegent import staging
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import (
+    _apply_changes,
+    _delete_documents,
     _edit_document,
+    _move_documents,
     _write_document,
-    output_writer,
-    validate_commit_path,
+    changeset_committer,
+    discard_unapproved_changes,
+    output_sink,
+    validate_apply_changes,
+    validate_document_deletions,
+    validate_document_edit,
+    validate_document_moves,
     validate_document_write,
     validate_output_path,
     write_document,
     write_toolset,
 )
+from hivegent.changes import (
+    Changeset,
+    ChangesetSummary,
+    FileDiff,
+    Move,
+    PathMove,
+    TextEdit,
+    Write,
+)
+from hivegent.config import settings
+from hivegent.db import documents as db_documents
 from hivegent.store import Casebase
-from hivegent.tools.base import ToolRetry
+from hivegent.tmp import tmp_dir
+from hivegent.tools.base import Direct, ToolRetry
+from hivegent.tools.changeset import AppliedChanges, PendingChanges
+from hivegent.tools.mutations import DocumentMove
 from hivegent.types import DocumentFilter
+from hivegent.workspace import Location, PlannedChangeset
+from hivegent.workspace import changeset as gateway
 
 
 @pytest.fixture()
@@ -41,6 +68,7 @@ def deps(data_dir: Path) -> UserDeps:
         user_id="u",
         store=Casebase.for_user("u"),
         mode="interactive",
+        conversation_id="c1",
         group_stores=(Casebase.for_group("team"), Casebase.for_group("archive")),
         write_group_stores=(Casebase.for_group("team"),),
     )
@@ -48,14 +76,16 @@ def deps(data_dir: Path) -> UserDeps:
 
 @pytest.fixture()
 def routed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    """Record the ``(store_key, local_path)`` each write is routed to."""
+    """Record the ``(store_key, local_path)`` each applied changeset is routed to."""
     calls: list[tuple[str, str]] = []
 
-    async def _write(store: Casebase, safe: str, *_args: object, **_kw: object) -> str:
-        calls.append((store.store_key, safe))
-        return "written"
+    async def _apply(changeset: Changeset[Location], **_kw: object) -> tuple[str, ...]:
+        calls.extend((loc.store.store_key, loc.path) for loc in changeset.locations)
 
-    monkeypatch.setattr(workspace, "write_document_text", _write)
+        return ("written",)
+
+    monkeypatch.setattr(gateway, "apply_changeset", _apply)
+
     return calls
 
 
@@ -69,50 +99,54 @@ async def test_writes_to_the_addressed_workspace(
     assert routed == [("group:team", "notes/a.md"), ("user:u", "notes/a.md")]
 
 
-async def test_stored_program_is_pointed_at_run_python(
+async def test_tmp_is_written_directly_and_a_program_there_is_pointed_at_run_python(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
-    """A `.scratch/` `.py` is written to be run, so the receipt says how."""
-    tool = _write_document(deps)
+    """A `/tmp` `.py` is written to be run, so the receipt says how, edit included."""
+    folder = tmp_dir(settings.data_dir, "c1")
+    pointer = "Run it with run_python's `script_path='/tmp/report.py'`."
 
-    program = (await tool("~/.scratch/report.py", "print(1)")).data
-    document = (await tool("~/.scratch/rows.json", "[]")).data
+    written = (await _write_document(deps)("/tmp/report.py", "print(1)")).data
+    edited = (await _edit_document(deps)("/tmp/report.py", [TextEdit("1", "2")])).data
 
-    assert (
-        program
-        == "written Run it with run_python's `script_path='~/.scratch/report.py'`."
+    assert written == f"Wrote 8 characters to '/tmp/report.py'. {pointer}"
+    assert edited == f"Replaced 1 occurrence in '/tmp/report.py'. {pointer}"
+    assert (folder / "report.py").read_text() == "print(2)"
+
+    with pytest.raises(ToolRetry, match="changed since it was read"):
+        await _edit_document(deps)("/tmp/report.py", [TextEdit("2", "3")], "stale")
+
+    # A redirect's commit carries no pointer back to run_python.
+    sink = output_sink(deps) or pytest.fail("no sink")
+    assert (await sink.writer("/tmp/rows.py", "[]")).data == (
+        "Wrote 2 characters to '/tmp/rows.py'."
     )
-    assert document == "written"
-    assert len(routed) == 2
+
+    # Moves and deletes reach `/tmp` too, and land at once.
+    _ = await _move_documents(deps)([DocumentMove("/tmp/rows.py", "/tmp/old/rows.py")])
+    assert (folder / "old" / "rows.py").read_text() == "[]"
+    _ = await _delete_documents(deps)(["/tmp/old/rows.py"])
+    assert not (folder / "old" / "rows.py").exists()
+
+    with pytest.raises(ToolRetry, match="only one of them is written directly"):
+        await _move_documents(deps)([DocumentMove("/tmp/report.py", "~/report.py")])
+
+    assert routed == []
 
 
-async def test_the_pointer_survives_the_edit_that_repairs_the_program(
+async def test_tmp_refuses_what_would_outgrow_it(
     deps: UserDeps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The rerun is the point of the edit, so the same hint rides both tools."""
+    """The cap counts what a write replaces, so a full folder may still shrink."""
+    monkeypatch.setattr(settings.tmp, "max_bytes", 4)
+    tool = _write_document(deps)
+    _ = await tool("/tmp/a.txt", "1234")
 
-    async def _edit(_store: Casebase, _safe: str, *_a: object, **_kw: object) -> str:
-        return "edited"
+    with pytest.raises(ToolRetry, match="over the"):
+        await tool("/tmp/b.txt", "5")
 
-    monkeypatch.setattr(workspace, "edit_document_text", _edit)
-    tool = _edit_document(deps)
-
-    result = (await tool("~/.scratch/report.py", "1", "2")).data
-
-    assert result.endswith(
-        "Run it with run_python's `script_path='~/.scratch/report.py'`."
-    )
-
-
-async def test_a_declared_output_is_not_a_stored_program(
-    deps: UserDeps, routed: list[tuple[str, str]]
-) -> None:
-    """run_python's own commit carries no pointer back to run_python."""
-    writer = output_writer(deps)
-    assert writer is not None
-
-    assert (await writer("~/.scratch/report.py", "print(1)")).data == "written"
-    assert len(routed) == 1
+    _ = await tool("/tmp/a.txt", "12")
+    _ = await tool("/tmp/b.txt", "34")
 
 
 async def test_unprefixed_path_is_refused_with_the_roots_named(
@@ -121,7 +155,7 @@ async def test_unprefixed_path_is_refused_with_the_roots_named(
     """Nothing is implied by context, so the refusal says what to write instead."""
     tool = write_document(deps)
 
-    with pytest.raises(ToolRetry, match=r"addresses ~, @team; give the full path"):
+    with pytest.raises(ToolRetry, match=r"addresses ~, @team, /tmp; give the full path"):
         await tool("notes/a.md", "hi")
 
     assert routed == []
@@ -138,7 +172,7 @@ async def test_refuses_a_group_the_user_may_only_read(
     assert routed == []
 
 
-def test_run_python_paths_are_lazy_and_never_hide_scratch(
+def test_run_python_paths_are_lazy_and_end_with_the_conversation_s_tmp(
     deps: UserDeps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     filtered = replace(
@@ -156,19 +190,33 @@ def test_run_python_paths_are_lazy_and_never_hide_scratch(
 
     assert tool.pool is pool
     assert all(not path.path.exists() for path in tool.resolved_paths)
-    assert len(tool.resolved_paths) == 3
-    for path in tool.resolved_paths:
+    *workspaces, tmp = tool.resolved_paths
+    assert len(workspaces) == 3
+
+    for path in workspaces:
         assert path.filter_func is not None
-        assert path.filter_func(".scratch/run.json")
         assert path.filter_func("report.md")
         assert not path.filter_func("other.md")
 
-    assert tool.writer is not None
-    assert len(tool.writer.resolved_paths) == 2
-    for path in tool.writer.resolved_paths:
-        assert path.filter_func is not None
-        assert path.filter_func("notes/.scratch/state.json")
-        assert not path.filter_func("other.md")
+    assert tmp.prefixed("") == "/tmp"
+    assert tmp.policy == Direct(settings.tmp.max_bytes)
+    assert tool.environ["TMPDIR"] == "/tmp"
+    assert len(tool.writable) == 3
+
+    # Read mode, or a withheld apply_changes, changes no workspace and keeps `/tmp`.
+    for narrowed in (
+        replace(filtered, mode="read"),
+        replace(filtered, disabled_tools=frozenset({"apply_changes"})),
+    ):
+        assert compute_tools._run_python(narrowed).writable == (tmp,)
+
+
+def _asked(exc: pytest.ExceptionInfo[ApprovalRequired]) -> dict[str, Any]:
+    """The summary an approval request shows."""
+    metadata = exc.value.metadata
+    assert isinstance(metadata, dict)
+
+    return metadata
 
 
 def _context(
@@ -183,31 +231,31 @@ def _context(
     )
 
 
-def test_agent_output_write_approval_depends_on_mode(deps: UserDeps) -> None:
+async def test_output_path_approval_depends_on_mode(deps: UserDeps) -> None:
     def context(mode: str, *, approved: bool = False) -> RunContext[UserDeps]:
         return _context(deps, mode, approved=approved)
 
-    with pytest.raises(ApprovalRequired):
-        validate_output_path(context("interactive"), output_path="~/output.txt")
+    with pytest.raises(ApprovalRequired) as exc:
+        await validate_output_path(context("interactive"), output_path="~/output.txt")
 
-    validate_output_path(
+    assert _asked(exc) == {
+        "creates": [{"path": "~/output.txt", "diff": ""}],
+        "updates": [],
+        "moves": [],
+        "deletes": [],
+        "mkdirs": [],
+    }
+
+    await validate_output_path(
         context("interactive", approved=True), output_path="~/output.txt"
     )
-    validate_output_path(context("write"), output_path="~/output.txt")
+    await validate_output_path(context("write"), output_path="~/output.txt")
 
-    with pytest.raises(ModelRetry, match="unavailable"):
-        validate_output_path(context("read"), output_path="~/output.txt")
+    # Read mode writes `/tmp` and nothing else.
+    await validate_output_path(context("read"), output_path="/tmp/output.txt")
 
-
-def test_run_python_output_accepts_arbitrary_text_suffix(deps: UserDeps) -> None:
-    context = _context(deps, "write")
-
-    assert (
-        compute_tools.compute_toolset.tools["run_python"].args_validator
-        is compute_tools.validate_run_python
-    )
-    validate_commit_path(context, commit_path="~/result.csv")
-    validate_commit_path(context, commit_path="~/report.md")
+    with pytest.raises(ModelRetry, match="not accessible. This tool addresses /tmp"):
+        await validate_output_path(context("read"), output_path="~/output.txt")
 
 
 @pytest.mark.parametrize(
@@ -216,119 +264,318 @@ def test_run_python_output_accepts_arbitrary_text_suffix(deps: UserDeps) -> None
         ({}, "program is empty"),
         ({"code": None, "script_path": None}, "program is empty"),
         ({"code": "  ", "script_path": "\n"}, "program is empty"),
-        ({"code": "1", "script_path": "~/.scratch/run.py"}, "both given"),
+        ({"code": "1", "script_path": "/tmp/run.py"}, "both given"),
     ],
 )
-def test_invalid_program_is_refused_before_approval(
+def test_invalid_program_is_refused_before_it_runs(
     deps: UserDeps, arguments: dict[str, str | None], message: str
 ) -> None:
-    """A destination alone must never ask the user to approve an empty run."""
     tool = compute_tools.compute_toolset.tools["run_python"]
-    validated = tool.function_schema.validator.validate_python(
-        {**arguments, "commit_path": "~/rezepte.json"}
-    )
-    assert tool.args_validator is not None
+    validated = tool.function_schema.validator.validate_python(arguments)
+    assert tool.args_validator is compute_tools.validate_run_python
 
     with pytest.raises(ModelRetry, match=message):
-        tool.args_validator(_context(deps, "interactive"), **validated)
+        compute_tools.validate_run_python(_context(deps, "interactive"), **validated)
 
 
 @pytest.mark.parametrize(
     ("code", "script_path"),
     [
         ("1 + 1", None),
-        (None, "~/.scratch/run.py"),
-        ("", "~/.scratch/run.py"),
+        (None, "/tmp/run.py"),
+        ("", "/tmp/run.py"),
         ("1 + 1", " "),
     ],
 )
-def test_valid_program_still_requires_output_approval(
+def test_a_program_runs_without_asking(
     deps: UserDeps, code: str | None, script_path: str | None
 ) -> None:
-    """Either source reaches the write gate, including a blank unused field."""
-    with pytest.raises(ApprovalRequired):
-        compute_tools.validate_run_python(
-            _context(deps, "interactive"),
-            code=code,
-            script_path=script_path,
-            commit_path="~/report.md",
-        )
-
+    """What a program changes is approved afterwards, through apply_changes."""
     compute_tools.validate_run_python(
-        _context(deps, "interactive", approved=True),
-        code=code,
-        script_path=script_path,
-        commit_path="~/report.md",
+        _context(deps, "interactive"), code=code, script_path=script_path
     )
 
 
-def test_scratch_writes_skip_approval_without_lifting_the_mode_gate(
-    deps: UserDeps,
-) -> None:
-    """Run state is the run's own, so only a document write asks the user."""
+async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
+    """`/tmp` is the run's own, so only a workspace write asks the user."""
 
     def context(mode: str) -> RunContext[UserDeps]:
         return _context(deps, mode)
 
-    validate_document_write(context("interactive"), file_path="~/.scratch/state.json")
-    validate_document_write(
-        context("interactive"), file_path="@team/notes/.scratch/run.py"
+    async def write(mode: str, file_path: str) -> None:
+        await validate_document_write(context(mode), file_path=file_path, content="x")
+
+    folder = tmp_dir(settings.data_dir, "c1")
+    folder.mkdir(parents=True)
+    (folder / "a.json").write_text("{}")
+    (folder / "state.json").write_text("x")
+    await write("interactive", "/tmp/state.json")
+    await validate_document_edit(
+        context("interactive"), file_path="/tmp/state.json", edits=[TextEdit("x", "y")]
     )
-    validate_commit_path(context("interactive"), commit_path="~/.scratch/rows.json")
+    await validate_output_path(context("interactive"), output_path="/tmp/hits.json")
+    await validate_document_deletions(context("interactive"), paths=["/tmp/a.json"])
 
-    with pytest.raises(ApprovalRequired):
-        validate_document_write(context("interactive"), file_path="~/notes/report.md")
+    # No workspace name is reserved for it, so a `tmp` folder there is a document's.
+    with pytest.raises(ApprovalRequired) as exc:
+        await write("interactive", "@team/tmp/run.py")
 
-    # A traversal cannot carry a document out of the scratch spelling it hides behind.
-    with pytest.raises(ApprovalRequired):
-        validate_document_write(
-            context("interactive"), file_path="~/.scratch/../report.md"
+    assert [create["path"] for create in _asked(exc)["creates"]] == [
+        "@team/tmp/run.py"
+    ]
+
+    # A traversal reaches neither another conversation's folder nor a document.
+    with pytest.raises(ModelRetry, match="not accessible"):
+        await write("interactive", "/tmp/../c2/state.json")
+
+    with pytest.raises(ModelRetry, match="not accessible"):
+        await validate_document_write(
+            _context(replace(deps, conversation_id=None), "interactive"),
+            file_path="/tmp/state.json",
+            content="x",
         )
 
-    with pytest.raises(ModelRetry, match="unavailable"):
-        validate_document_write(context("read"), file_path="~/.scratch/state.json")
+    await write("read", "/tmp/state.json")
+    await write("write", "~/notes/report.md")
 
-    validate_document_write(context("write"), file_path="~/notes/report.md")
+
+async def test_an_edit_that_cannot_apply_is_refused_before_the_approval(
+    deps: UserDeps,
+) -> None:
+    workspace_dir = deps.store.workspace_dir(settings.data_dir)
+    (workspace_dir / "notes.md").write_text("alpha beta")
+    edits = [TextEdit("alpha", "gamma"), TextEdit("missing", "x")]
+
+    with pytest.raises(ModelRetry, match="Edit 2 of 2"):
+        await validate_document_edit(
+            _context(deps, "interactive"), file_path="~/notes.md", edits=edits
+        )
+
+    with pytest.raises(ApprovalRequired) as exc:
+        await validate_document_edit(
+            _context(deps, "interactive"), file_path="~/notes.md", edits=edits[:1]
+        )
+
+    assert _asked(exc)["updates"][0]["path"] == "~/notes.md"
+
+    # Approved, or in a mode that asks nothing, the commit is what refuses.
+    await validate_document_edit(
+        _context(deps, "interactive", approved=True), file_path="~/notes.md", edits=edits
+    )
 
 
 def test_write_tools_gate_every_call_rather_than_the_tool() -> None:
-    for name in ("write_document", "edit_document"):
+    validators = {
+        "write_document": validate_document_write,
+        "edit_document": validate_document_edit,
+        "move_documents": validate_document_moves,
+        "delete_documents": validate_document_deletions,
+        "apply_changes": validate_apply_changes,
+    }
+
+    assert set(write_toolset.tools) == set(validators)
+
+    for name, validator in validators.items():
         tool = write_toolset.tools[name]
-        assert tool.args_validator is validate_document_write
+        assert tool.args_validator is validator
         assert tool.requires_approval is False
 
 
-def test_a_binary_output_is_refused_before_the_approval(deps: UserDeps) -> None:
-    """The suffix decides first, so no approval and no run is spent on it."""
-    context = _context(deps, "interactive")
+@pytest.fixture()
+def documents(deps: UserDeps, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Two documents in the personal workspace, with every row lookup stubbed."""
 
-    with pytest.raises(ModelRetry, match="binary format"):
-        validate_commit_path(context, commit_path="~/sheet.xlsx")
+    async def _no_metadata(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def _no_rows(*_args: object, **_kwargs: object) -> dict[object, object]:
+        return {}
+
+    monkeypatch.setattr(db_documents, "get_entry_metadata", _no_metadata)
+    monkeypatch.setattr(db_documents, "get_entries_metadata", _no_rows)
+    workspace_dir = deps.store.workspace_dir(settings.data_dir)
+    (workspace_dir / "a.md").write_text("a")
+    (workspace_dir / "b.md").write_text("b")
+
+    return workspace_dir
 
 
-def test_a_scratch_output_answers_to_no_format(deps: UserDeps) -> None:
-    """Scratch is the run's own bytes, so neither the format nor the user gates it."""
-    context = _context(deps, "interactive")
-
-    validate_commit_path(context, commit_path="~/.scratch/state.parquet")
-
-
-def test_a_move_puts_both_ends_in_one_approval(deps: UserDeps) -> None:
-    context = _context(deps, "interactive")
+async def test_a_batch_of_moves_is_one_approval_of_the_planner_s_summary(
+    deps: UserDeps, documents: Path
+) -> None:
+    (documents / "old").mkdir()
+    (documents / "old" / "c.md").write_text("c")
+    moves = [
+        DocumentMove("~/a.md", "~/notes/a.md"),
+        DocumentMove("~/b.md", "@team/b.md"),
+        DocumentMove("~/old", "~/archive"),
+    ]
 
     with pytest.raises(ApprovalRequired) as exc:
-        write_tools.validate_document_move(
-            context, file_path="~/old.md", destination="~/notes/new.md"
-        )
+        await validate_document_moves(_context(deps, "interactive"), moves=moves)
 
-    assert exc.value.metadata == {
-        "file_path": "~/old.md",
-        "destination": "~/notes/new.md",
+    def move(source: str, destination: str, *, is_dir: bool = False) -> dict[str, object]:
+        return {
+            "source": source,
+            "destination": destination,
+            "is_dir": is_dir,
+            "replaces": False,
+        }
+
+    assert _asked(exc) == {
+        "creates": [],
+        "updates": [],
+        "moves": [
+            move("~/a.md", "~/notes/a.md"),
+            move("~/b.md", "@team/b.md"),
+            move("~/old", "~/archive", is_dir=True),
+        ],
+        "deletes": [],
+        "mkdirs": [],
     }
 
 
-def test_move_and_delete_are_registered_with_their_gates() -> None:
-    tools = write_tools.write_toolset.tools
+async def test_overlapping_moves_are_refused_before_the_approval(
+    deps: UserDeps, documents: Path
+) -> None:
+    moves = [DocumentMove("~/a.md", "~/c.md"), DocumentMove("~/b.md", "~/c.md")]
 
-    assert tools["move_document"].args_validator is write_tools.validate_document_move
-    assert tools["delete_document"].args_validator is validate_document_write
+    with pytest.raises(ModelRetry, match="more than one change"):
+        await validate_document_moves(_context(deps, "interactive"), moves=moves)
+
+
+async def test_a_batch_of_deletions_is_one_approval(
+    deps: UserDeps, documents: Path
+) -> None:
+    with pytest.raises(ApprovalRequired) as exc:
+        await validate_document_deletions(
+            _context(deps, "interactive"), paths=["~/a.md", "~/b.md"]
+        )
+
+    assert _asked(exc)["deletes"] == ["~/a.md", "~/b.md"]
+
+
+_STAGED = Changeset((Move("~/a.md", "~/notes/a.md"), Write("~/notes/a.md", "A")))
+_SUMMARY = ChangesetSummary(
+    updates=(FileDiff("~/notes/a.md", "-a\n+A\n"),),
+    moves=(PathMove("~/a.md", "~/notes/a.md"),),
+)
+
+
+@pytest.fixture()
+def planned(monkeypatch: pytest.MonkeyPatch) -> list[Changeset[Location]]:
+    """Plan every changeset as valid with :data:`_SUMMARY`, recording each."""
+    calls: list[Changeset[Location]] = []
+
+    async def _plan(changeset: Changeset[Location]) -> PlannedChangeset:
+        calls.append(changeset)
+
+        return PlannedChangeset(changeset, _SUMMARY)
+
+    monkeypatch.setattr(gateway, "plan_changeset", _plan)
+
+    return calls
+
+
+async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
+    deps: UserDeps,
+    planned: list[Changeset[Location]],
+    routed: list[tuple[str, str]],
+) -> None:
+    folder = tmp_dir(settings.data_dir, "c1")
+    with_tmp = Changeset((*_STAGED.operations, Write("/tmp/state.json", "{}")))
+
+    staged = await changeset_committer(deps)(with_tmp)
+    applied = await changeset_committer(replace(deps, mode="write"))(_STAGED)
+
+    assert isinstance(staged, PendingChanges)
+    assert staged.summary == _SUMMARY
+    assert await staging.load_staged("u", staged.changeset_id) == _STAGED
+    assert await staging.load_staged("someone-else", staged.changeset_id) is None
+    assert (folder / "state.json").read_text() == "{}"
+    assert applied == AppliedChanges(("written",))
+    assert len(planned) == 1
+    assert routed == [
+        ("user:u", "a.md"),
+        ("user:u", "notes/a.md"),
+        ("user:u", "notes/a.md"),
+    ]
+
+    # A program that changed only `/tmp` has nothing to approve.
+    only_tmp = Changeset((Write("/tmp/state.json", "[]"),))
+    assert await changeset_committer(replace(deps, mode="read"))(only_tmp) is None
+    assert (folder / "state.json").read_text() == "[]"
+
+
+async def test_apply_changes_asks_once_then_applies_and_forgets(
+    deps: UserDeps,
+    planned: list[Changeset[Location]],
+    routed: list[tuple[str, str]],
+) -> None:
+    changeset_id = await staging.stage("u", _STAGED)
+
+    with pytest.raises(ApprovalRequired) as exc:
+        await validate_apply_changes(
+            _context(deps, "interactive"), changeset_id=changeset_id
+        )
+
+    assert _asked(exc) == {
+        "creates": [],
+        "updates": [{"path": "~/notes/a.md", "diff": "-a\n+A\n"}],
+        "moves": [
+            {
+                "source": "~/a.md",
+                "destination": "~/notes/a.md",
+                "is_dir": False,
+                "replaces": False,
+            }
+        ],
+        "deletes": [],
+        "mkdirs": [],
+    }
+
+    approved = _context(deps, "interactive", approved=True)
+    await validate_apply_changes(approved, changeset_id=changeset_id)
+    result = await _apply_changes(deps)(changeset_id)
+
+    assert result.data == "written"
+    assert len(planned) == 1
+    assert routed == [("user:u", "a.md"), ("user:u", "notes/a.md"), ("user:u", "notes/a.md")]
+
+    with pytest.raises(ToolRetry, match="No staged changeset"):
+        await _apply_changes(deps)(changeset_id)
+
+
+async def test_a_stale_changeset_asks_for_a_new_run(
+    deps: UserDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _stale(_changeset: Changeset[Location]) -> PlannedChangeset:
+        raise HTTPException(status_code=409, detail="'~/a.md' changed")
+
+    monkeypatch.setattr(gateway, "plan_changeset", _stale)
+    changeset_id = await staging.stage("u", _STAGED)
+
+    with pytest.raises(ModelRetry, match="changed. Run the program again"):
+        await validate_apply_changes(
+            _context(deps, "interactive"), changeset_id=changeset_id
+        )
+
+
+async def test_unapproved_changesets_are_discarded(data_dir: Path) -> None:
+    _ = data_dir
+    approved = await staging.stage("u", _STAGED)
+    denied = await staging.stage("u", _STAGED)
+    foreign = await staging.stage("someone-else", _STAGED)
+    response = ModelResponse(
+        parts=[
+            ToolCallPart("apply_changes", {"changeset_id": approved}, "call-1"),
+            ToolCallPart("apply_changes", {"changeset_id": denied}, "call-2"),
+            ToolCallPart("apply_changes", {"changeset_id": foreign}, "call-3"),
+        ]
+    )
+
+    await discard_unapproved_changes("u", response, {"call-1"})
+
+    assert await staging.load_staged("u", approved) == _STAGED
+    assert await staging.load_staged("u", denied) is None
+    assert await staging.load_staged("someone-else", foreign) == _STAGED

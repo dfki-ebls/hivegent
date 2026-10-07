@@ -17,6 +17,7 @@ from .db.conversations import (
     load_conversation,
 )
 from .l10n import Localized
+from .tmp import copy_tmp
 
 __all__ = [
     "CompactionResult",
@@ -71,7 +72,7 @@ async def compact_conversation(
 
     *run* is the prompt prefix the conversation's own turns ran under, which is
     the other half of that prefix.  Its language also names the new
-    conversation.
+    conversation, which starts with a copy of the source's ``/tmp``.
 
     Args:
         user_id: The user who owns the conversation.
@@ -98,6 +99,7 @@ async def compact_conversation(
         summary_message=summary_message,
         title=_continued_title(conversation.title)[language],
     )
+    await copy_tmp(conversation_id, new_id)
 
     logger.info(
         "Compacted conversation %s -> %s for user %s",

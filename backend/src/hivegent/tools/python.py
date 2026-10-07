@@ -2,8 +2,9 @@
 
 import asyncio
 import reprlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Annotated, override
 
 from pydantic import Field
@@ -20,10 +21,10 @@ from pydantic_monty import (
     ResourceLimits,
 )
 
-from ..config import content_hash
 from ..humanize import pluralize
 from .base import (
     AsyncPathTool,
+    SearchPath,
     ToolOutput,
     ToolRetry,
     check_read_budget,
@@ -31,21 +32,13 @@ from .base import (
     resolve_file_or_retry,
     sidecar_hint,
 )
+from .changeset import ChangesetOutcome, CommitChanges, PendingChanges, stage_changes
 from .formatting import cap_lines, hint_suffix, truncate_line, truncate_middle
 from .monty import MontySurface
-from .mutations import WriteDocumentTool
-from .sink import resolve_output_target
-from .workspace_os import (
-    MOUNT_STUB,
-    SANDBOX_OUTPUT_FILE,
-    SANDBOX_TMP_DIR,
-    WORKSPACE_MOUNT,
-    WorkspaceOS,
-)
+from .workspace_os import MOUNT_STUB, WORKSPACE_MOUNT, ChangesetLimits, WorkspaceOS
 
 __all__ = [
     "CodeArg",
-    "CommitPathArg",
     "PythonResult",
     "PythonScriptPathArg",
     "RunPythonTool",
@@ -63,7 +56,7 @@ def is_python_script(file_path: str) -> bool:
     run that accepts it have to agree on which files those are, or a receipt
     promises a rerun the tool then refuses.
 
-    >>> is_python_script("~/.scratch/run.PY")
+    >>> is_python_script("/tmp/run.PY")
     True
     >>> is_python_script("~/notes.md")
     False
@@ -100,9 +93,9 @@ CodeArg = Annotated[
             "The program itself, written inline, for a throwaway. Provide "
             "either this or `script_path`, never both, and neither names the "
             "data: a program opens the documents it reads by their workspace "
-            "path. Anything past a few lines belongs in a `.scratch/` `.py` "
-            "file run by `script_path`, where a runtime error costs one "
-            "edit_document instead of a retyped program."
+            "path. Anything past a few lines belongs in a `/tmp` `.py` file run "
+            "by `script_path`, where a runtime error costs one edit_document "
+            "instead of a retyped program."
         ),
     ),
 ]
@@ -110,28 +103,13 @@ PythonScriptPathArg = Annotated[
     str | None,
     Field(
         description=(
-            "Full workspace path of a stored `.py` program to run instead of "
+            "Full path of a stored `.py` program to run instead of "
             "inline `code`. The file named here is the program, never a "
             "document it reads. It is loaded fresh on every call, so it can be "
             "repaired with `edit_document` and run again."
         ),
     ),
 ]
-CommitPathArg = Annotated[
-    str | None,
-    Field(
-        description=(
-            "Full workspace path to commit the program's `/out` file to "
-            "after a successful run. The mounted workspace is read-only, so "
-            "this is how a program writes a document. It names a destination "
-            "and captures nothing: the program must write the text to "
-            "`/out` itself, and printed output and the trailing value are "
-            "never it. Interactive calls require approval before this write."
-        ),
-    ),
-]
-
-
 _PROGRAM_SOURCES = (
     "`code`, the program written inline, or `script_path`, a stored `.py` "
     "program to run. Neither names a document the program reads: it opens "
@@ -210,7 +188,7 @@ def _diagnostic(exc: MontyError, printed: str, max_chars: int) -> str:
     in.
 
     A typing error is the cheapest of the three, since it arrives before the
-    program ran at all: nothing was read, nothing was committed, and the
+    program ran at all: nothing was read, nothing was staged, and the
     diagnostic names the field or argument the injected stub disagrees with.
     """
     detail = (
@@ -239,38 +217,8 @@ class PythonResult:
     script_path: str | None = None
     """Canonical workspace path when the program came from a stored script."""
 
-    written_file: str | None = None
-    """Canonical workspace path persisted after the program completed."""
-
-
-@dataclass(slots=True, frozen=True)
-class _PreparedRun:
-    """The program to run and the one document approved before it starts.
-
-    Nothing is staged: the workspace is mounted, so the program reads it where
-    it lies.  ``output`` is the path ``/out`` will be committed to, resolved
-    and fingerprinted here so a version landing while the program runs is
-    refused by the gateway rather than silently overwritten.
-    """
-
-    source: str
-    script_path: str | None
-    commit_target: str | None = None
-    """The canonical document this call may commit, as ``commit_path`` named it."""
-
-    standing: str | None = None
-    """That document's text as the run found it, seeded into ``/out``.
-
-    ``None`` when nothing stood there, which is also the case where the buffer
-    starts absent and its absence is what says the program wrote nothing.
-    """
-
-    expected_hash: str | None = None
-    """Fingerprint of that document as it stood before the run.
-
-    ``None`` when nothing stood there, which is also what makes the commit a
-    ``create`` that refuses to absorb a document appearing in between.
-    """
+    changeset: ChangesetOutcome | None = None
+    """What the program changed in a gated root, applied or awaiting ``apply_changes``."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -283,11 +231,24 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     """
 
     pool: AsyncMonty = field(kw_only=True)
-    writer: WriteDocumentTool | None = field(default=None, kw_only=True)
-    """Commits the declared output, and names the span a program may write.
+    changeset_limits: ChangesetLimits = field(kw_only=True)
 
-    ``None`` in a mode that may not write, which is what makes a `.scratch/`
-    write from inside a program refuse exactly where ``write_document`` does.
+    writable: tuple[SearchPath, ...] = field(default=(), kw_only=True)
+    """The roots a program may change, narrower than the ones it reads.
+
+    Only the direct ones (``/tmp``) in a mode that may not write the workspace,
+    which is what makes every change to it from inside a program refuse
+    exactly where ``write_document`` does.
+    """
+
+    commit: CommitChanges | None = field(default=None, kw_only=True)
+    """Writes what a program changed in a direct root, and applies or stages the rest."""
+
+    environ: Mapping[str, str] = field(default_factory=dict, kw_only=True)
+    """Variables beside the ones every run has, such as ``HOME`` and ``USER``.
+
+    Decided where the tool is built, since who runs it and which workspace is
+    theirs is a property of the run rather than of the sandbox.
     """
 
     surface: MontySurface = field(default=MontySurface(), kw_only=True)
@@ -317,7 +278,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     limits: ResourceLimits = field(default_factory=_default_limits)
     max_output_chars: int = 20_000
     max_document_chars: int = 5_000_000
-    """Cap on any one document this run reads or commits.
+    """Cap on any one document this run reads or writes.
 
     Decoding happens here, in the server process, before the text is handed to
     the sandbox, so :attr:`limits`' memory budget does not cover it: that one
@@ -340,12 +301,10 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         self,
         code: CodeArg = None,
         script_path: PythonScriptPathArg = None,
-        commit_path: CommitPathArg = None,
     ) -> ToolOutput[PythonResult]:
         """Run a short program in the Monty interpreter.
 
-        Provide exactly one of `code` or `script_path` on every call,
-        including when `commit_path` is set.
+        Provide exactly one of `code` or `script_path` on every call.
 
         Reach for it when an answer turns on arithmetic, dates, sorting, or
         counting, and when one spans more documents than it could quote from:
@@ -354,11 +313,12 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         Monty runs a subset of Python and its standard library rather than a
         CPython environment, so an import it lacks says so by name and is
         worth trying rather than working around, and the program reaches
-        nothing outside itself but the workspace and the functions declared to
-        it: no network of its own, and no host filesystem.
+        nothing outside itself but the workspace, this conversation's `/tmp`,
+        and the functions declared to it: no network of its own, and no host
+        filesystem.
 
         The declared functions are the tools themselves, awaited inside the
-        program — `rows = await query_table(file_path=..., query=...)` reads a
+        program, so `res = await query_table(file_paths=[...], queries=[...])` reads a
         spreadsheet the interpreter cannot decode and hands the program every
         row of the result. Reach for one directly rather than staging its
         output through a file: a tool called here needs no `output_path`, no
@@ -366,18 +326,20 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         End the program with the expression whose value you want back, and
         print anything else worth seeing.
+
+        The workspace behaves like a normal filesystem: a program may write,
+        append, rename, and remove files and directories with the ordinary
+        `Path` and `open` calls.  Nothing changes while it runs, its reads
+        see its own changes, and once it succeeds every change to `/tmp` is
+        written and every other change is staged as one changeset that
+        `apply_changes` applies after the user approves it.
         """
-        prepared = await asyncio.to_thread(
-            self._prepare,
-            code,
-            script_path,
-            commit_path,
-        )
-        filesystem = self._filesystem(prepared)
+        source, canonical_script = await asyncio.to_thread(self._prepare, code, script_path)
+        filesystem = self._filesystem()
         printed = CollectString()
 
         async with self.pool.checkout(
-            script_name=prepared.script_path or "script.py",
+            script_name=canonical_script or "script.py",
             limits=self.limits,
             type_check=self.type_check,
             type_check_stubs=self._stubs(),
@@ -385,7 +347,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         ) as session:
             try:
                 value = await session.feed_run(
-                    prepared.source,
+                    source,
                     print_callback=printed,
                     cwd=str(WORKSPACE_MOUNT),
                     os=filesystem,
@@ -401,189 +363,69 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
                     _diagnostic(exc, printed.output, self.max_output_chars)
                 ) from exc
 
-        written_file, write_report = await self._persist_output(prepared, filesystem)
+        # Only once the program succeeded, so one that fails changes nothing.
+        changes = await asyncio.to_thread(stage_changes, filesystem)
+
+        if changes is not None and self.commit is None:
+            raise ToolRetry("This run keeps none of the changes a program makes.")
+
+        changeset = None if changes is None or self.commit is None else await self.commit(changes)
 
         return self._output(
-            value,
-            printed.output,
-            script_path=prepared.script_path,
-            written_file=written_file,
-            write_report=write_report,
+            value, printed.output, script_path=canonical_script, changeset=changeset
         )
 
-    def _prepare(
-        self,
-        code: str | None,
-        script_path: str | None,
-        commit_path: str | None,
-    ) -> _PreparedRun:
-        """Resolve the program and the approved output, off the event loop.
+    def _prepare(self, code: str | None, script_path: str | None) -> tuple[str, str | None]:
+        """Resolve the program to run and the canonical script it came from, off the event loop.
 
-        Nothing is staged: the mount reads the workspace where it lies, so all
-        this settles is which source runs and which document the run was given
-        permission to persist.
+        Inline ``code`` answers to the same cap a stored script's read does,
+        which no read ever sizes.
         """
         code, script_path = validate_program_source(code, script_path)
 
         source, canonical_script = code or "", None
         if script_path is not None:
-            canonical_script, absolute = self._resolve_script(script_path)
+            sp, local, absolute = resolve_file_or_retry(self.resolved_paths, script_path)
+            canonical_script = sp.prefixed(local)
+
             if not is_python_script(canonical_script):
                 raise ToolRetry(
                     f"'{canonical_script}' is not a `.py` script. `script_path` "
                     "names the program to run, not a document it reads."
                 )
 
-            source = self._read(canonical_script, absolute)
+            # Sized before it is decoded, so a file that cannot fit is refused
+            # without ever being read into memory.
+            check_read_budget(
+                canonical_script, absolute.stat().st_size, self.max_document_chars
+            )
+            source = read_text_or_retry(
+                absolute, canonical_script, sidecar_hint(canonical_script)
+            ).text
 
-        self._check_budget(len(source), "The program")
-        if commit_path is None:
-            return _PreparedRun(source, canonical_script)
+        if len(source) > self.max_document_chars:
+            raise ToolRetry(
+                f"The program is too large for one Python run ({len(source)} "
+                f"characters, maximum {self.max_document_chars})."
+            )
 
-        _sink, canonical, absolute = resolve_output_target(self.writer, commit_path)
-        standing = self._standing(canonical, absolute)
+        return source, canonical_script
 
-        return _PreparedRun(
-            source,
-            canonical_script,
-            canonical,
-            standing,
-            None if standing is None else content_hash(standing),
-        )
+    def _filesystem(self) -> WorkspaceOS:
+        """Build the filesystem: the roots mounted, the environment beside them.
 
-    def _standing(self, canonical_path: str, absolute_path: Path) -> str | None:
-        """The output document as it stands before the run, or ``None`` if absent.
-
-        It is both what the program starts from, since ``/out`` is seeded
-        with it, and what the commit is guarded by once hashed: the commit
-        lands after the program ends, so a version arriving in between would
-        otherwise be overwritten without a word, and ``create`` is the guard
-        instead when there was nothing here.
-
-        One read answers both, bounded like every other.
+        The environment mirrors an ordinary shell's, so ``PWD`` agrees with
+        ``os.getcwd()``.
         """
-        if not absolute_path.is_file():
-            return None
-
-        return self._read(canonical_path, absolute_path)
-
-    def _resolve_script(self, file_path: str) -> tuple[str, Path]:
-        """Resolve the stored program, which must already exist."""
-        sp, local, absolute = resolve_file_or_retry(self.resolved_paths, file_path)
-        return sp.prefixed(local), absolute
-
-    def _read(self, canonical_path: str, absolute_path: Path) -> str:
-        """Decode one workspace document, bounded as the mount bounds its own.
-
-        Sized before it is decoded, so a file that cannot fit whatever it
-        decodes to is refused without ever being read into memory.  The two
-        documents a call reads for itself, the stored script and the output it
-        fingerprints, answer to the same cap the program's own reads do.
-        """
-        check_read_budget(
-            canonical_path, absolute_path.stat().st_size, self.max_document_chars
-        )
-
-        return read_text_or_retry(
-            absolute_path, canonical_path, sidecar_hint(canonical_path)
-        ).text
-
-    def _check_budget(self, total_chars: int, subject: str) -> None:
-        """Refuse text too large to run inside, or commit out of, one run.
-
-        The exact counterpart of :func:`check_read_budget`, which bounds a file
-        before it is decoded: this is the same cap checked on text already in
-        hand, which covers inline ``code`` and the committed output, neither of
-        which any read ever sizes.
-        """
-        if total_chars <= self.max_document_chars:
-            return
-
-        raise ToolRetry(
-            f"{subject} is too large for one Python run ({total_chars} "
-            f"characters, maximum {self.max_document_chars})."
-        )
-
-    def _filesystem(self, prepared: _PreparedRun) -> WorkspaceOS:
-        """Build the filesystem: the workspace mounted, the run's own beside it.
-
-        ``inner`` owns ``/tmp`` and ``/out``, both of which exist from the
-        start so a bare write to either lands rather than failing on a missing
-        parent, and both of which disappear with the session.
-
-        ``/out`` is seeded with the declared document as it stands, which is
-        what makes it the same file as the path that names it: a program opens
-        either one, reads what is there, appends to it or replaces it, and gets
-        what any filesystem would give it.  Seeded from the read the basis was
-        taken from, so being able to start from the document costs nothing.
-        """
-        inner = OSAccess(
-            [],
-            environ={
-                "TMPDIR": str(SANDBOX_TMP_DIR),
-                "OUTPUT": str(SANDBOX_OUTPUT_FILE),
-            },
-        )
-        inner.path_mkdir(SANDBOX_TMP_DIR, parents=True, exist_ok=True)
-        if prepared.standing is not None:
-            _ = inner.path_write_text(SANDBOX_OUTPUT_FILE, prepared.standing)
+        environ = {"PWD": str(WORKSPACE_MOUNT), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
 
         return WorkspaceOS(
             paths=self.resolved_paths,
-            inner=inner,
-            writable=() if self.writer is None else self.writer.resolved_paths,
-            commit_target=prepared.commit_target,
+            inner=OSAccess([], environ=environ | dict(self.environ)),
+            limits=self.changeset_limits,
+            writable=self.writable,
             max_document_chars=self.max_document_chars,
         )
-
-    async def _persist_output(
-        self, prepared: _PreparedRun, filesystem: WorkspaceOS
-    ) -> tuple[str | None, str | None]:
-        """Commit the program's output through the workspace mutation gateway.
-
-        Only after the program succeeded, which is what an OS callback's
-        inability to await buys back: a program that fails halfway leaves the
-        workspace exactly as it found it, `.scratch/` aside.  A declared output
-        the program never wrote is worth a sentence, since silence would leave
-        the model believing the request was honoured, and a seeded buffer it
-        never changed is the same silence: the document is already what the
-        commit would write, so saying so beats a version that only bumps the
-        mtime and re-indexes.
-
-        The sentence about the missing file also says what to write instead,
-        since a declared destination is not a captured result and a
-        model carrying that meaning over computes the document, returns it, and
-        is told only that nothing happened.
-        """
-        if prepared.commit_target is None:
-            return None, None
-
-        if not filesystem.inner.path_is_file(SANDBOX_OUTPUT_FILE):
-            return None, (
-                f"Nothing was committed to '{prepared.commit_target}': the program "
-                f"wrote no {SANDBOX_OUTPUT_FILE} file. Only what a program "
-                f"writes to {SANDBOX_OUTPUT_FILE} is committed, never what it "
-                "printed or returned."
-            )
-
-        content = filesystem.inner.path_read_text(SANDBOX_OUTPUT_FILE)
-        if content == prepared.standing:
-            return None, (
-                f"Nothing was committed to '{prepared.commit_target}': the program "
-                "left it exactly as it was."
-            )
-
-        self._check_budget(len(content), "The program's output")
-
-        assert self.writer is not None
-        result = await self.writer(
-            prepared.commit_target,
-            content,
-            "replace" if prepared.expected_hash is not None else "create",
-            prepared.expected_hash,
-        )
-
-        return prepared.commit_target, result.text
 
     def _output(
         self,
@@ -591,8 +433,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         printed: str,
         *,
         script_path: str | None,
-        written_file: str | None,
-        write_report: str | None,
+        changeset: ChangesetOutcome | None,
     ) -> ToolOutput[PythonResult]:
         """Budget what the program produced and render it for the model.
 
@@ -618,9 +459,33 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
                 stdout=stdout,
                 truncated=clipped or bool(dropped),
                 script_path=script_path,
-                written_file=written_file,
+                changeset=changeset,
             ),
             formatted="\n\n".join(
-                part for part in (body + _dropped_hint(dropped), write_report) if part
+                part
+                for part in (body + _dropped_hint(dropped), _changes_report(changeset))
+                if part
             ),
         )
+
+
+def _changes_report(changeset: ChangesetOutcome | None) -> str:
+    """Tell the model what the program changed and what is left to do about it."""
+    match changeset:
+        case None:
+            return ""
+        case PendingChanges(changeset_id=changeset_id, summary=summary):
+            changes = f"{summary.count} {pluralize(summary.count, 'change')}"
+            lines = "\n".join(summary.lines())
+
+            return (
+                f"Staged {changes}, and nothing in the workspace has changed yet:\n"
+                f"{lines}\nCall apply_changes with changeset_id='{changeset_id}' to "
+                "apply them, and the user approves them there. Do not run the program "
+                "again unless that call says the changeset is stale."
+            )
+        case _:
+            count = len(changeset.reports)
+            reports = "\n".join(changeset.reports)
+
+            return f"Applied {count} {pluralize(count, 'change')} to the workspace:\n{reports}"

@@ -5,11 +5,8 @@ import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/Sc
 
 vi.mock("@/stores/documents-store", () => {
   const store = {
-    deleteDir: vi.fn<() => void>(),
     remove: vi.fn<() => void>(),
-    bulkDelete: vi.fn<() => void>(),
     move: vi.fn<() => void>(),
-    moveDir: vi.fn<() => void>(),
   };
 
   return {

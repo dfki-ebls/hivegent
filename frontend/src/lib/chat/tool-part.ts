@@ -1,5 +1,6 @@
 import type { UIMessage } from "@ai-sdk/react";
 import type { TFunction } from "i18next";
+import type { z } from "zod";
 import type { ToolPart } from "@/components/ai-elements/tool";
 import { isCatalogKey } from "@/i18n";
 import { chat } from "@/i18n/locales/en/chat";
@@ -69,6 +70,14 @@ export function parseJson<T>(value: unknown): T | undefined {
  */
 export function toolInput<T>(part: { input?: unknown; rawInput?: unknown }): T | undefined {
   return parseJson<T>(part.input ?? part.rawInput);
+}
+
+/** A tool call's arguments when they match *schema*, which they may not while streaming. */
+export function toolInputAs<T>(
+  part: { input?: unknown; rawInput?: unknown },
+  schema: z.ZodType<T>,
+): T | undefined {
+  return schema.safeParse(toolInput<unknown>(part)).data;
 }
 
 /** Check whether a message part is a ``data-tool-output`` DataUIPart. */
@@ -151,6 +160,9 @@ export function getToolPartInfo(
     formatted: text,
   };
 }
+
+/** A built-in tool's name, which the display-name catalog lists every one of. */
+export type ToolName = keyof typeof chat.tools.names;
 
 /** A tool's name for display, title-cased for tools without a catalog entry such as MCP tools. */
 export function toolDisplayName(t: TFunction, toolName: string): string {

@@ -1,4 +1,4 @@
-"""Unit tests for the read-only workspace mount the sandbox runs against.
+"""Unit tests for the copy-on-write workspace mount the sandbox runs against.
 
 Mostly exercised without a sandbox: the mount is an ordinary object, so the
 semantics that matter, what a program may see, read, and change, are asserted
@@ -6,36 +6,52 @@ against its methods rather than through an interpreter that would only relay
 them.
 """
 
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 import pytest
 from pydantic_monty import OSAccess
 
+from hivegent import entries
 from hivegent.store import WorkspaceScope
-from hivegent.tools.base import SearchPath
-from hivegent.tools.workspace_os import WORKSPACE_MOUNT, WorkspaceOS
+from hivegent.tmp import TMP_SCOPE
+from hivegent.tools.base import Direct, SearchPath
+from hivegent.tools.workspace_os import (
+    WORKSPACE_MOUNT,
+    ChangesetLimits,
+    Deleted,
+    Ref,
+    WorkspaceOS,
+)
 
 
 @pytest.fixture()
 def workspace(tmp_path: Path) -> Path:
-    (tmp_path / "notes.md").write_text("alpha\n")
-    (tmp_path / "reports").mkdir()
-    (tmp_path / "reports" / "q1.md").write_text("beta\n")
-    (tmp_path / "hidden.md").write_text("secret\n")
-    (tmp_path / "picture.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00")
-    return tmp_path
+    workspace = tmp_path / "workspace"
+    (workspace / "reports").mkdir(parents=True)
+    (workspace / "notes.md").write_text("alpha\n")
+    (workspace / "reports" / "q1.md").write_text("beta\n")
+    (workspace / "hidden.md").write_text("secret\n")
+    (workspace / "picture.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00")
+    (tmp_path / "tmp").mkdir()
+
+    return workspace
 
 
 def _mount(workspace: Path, *, writable: bool = False) -> WorkspaceOS:
+    """The mount a run gets, `/tmp` writable in every mode as it is there."""
     scoped = SearchPath(
         path=workspace,
         scope=WorkspaceScope(),
         filter_func=lambda local: local != "hidden.md",
     )
+    tmp = SearchPath(path=workspace.with_name("tmp"), scope=TMP_SCOPE, policy=Direct(100))
+
     return WorkspaceOS(
-        paths=(scoped,),
+        paths=(scoped, tmp),
         inner=OSAccess([], environ={}),
-        writable=(scoped,) if writable else (),
+        limits=ChangesetLimits(max_operations=200, max_deletes=100, max_chars=10_000),
+        writable=(scoped, tmp) if writable else (tmp,),
     )
 
 
@@ -79,29 +95,31 @@ def test_traversal_and_binary_reads_are_refused(workspace: Path) -> None:
         _ = mount.path_read_bytes(_virtual("notes.md"))
 
 
-def test_dispatch_splits_the_mount_from_the_run_s_own_files(workspace: Path) -> None:
-    """Through ``dispatch``, the way Monty reaches the filesystem.
-
-    Routing is decided once there rather than in each method, so a method the
-    mount does not implement never strands the run's own files, which is how
-    ``open`` came to refuse ``/tmp``.
-    """
+def test_dispatch_mounts_tmp_and_refuses_every_other_absolute_path(
+    workspace: Path,
+) -> None:
+    """Through ``dispatch``, the way Monty reaches the filesystem."""
     mount = _mount(workspace)
-    mount.inner.path_mkdir(PurePosixPath("/tmp"), parents=True, exist_ok=True)
 
     handle = mount.dispatch("open", (_virtual("notes.md"), "r"))
     assert mount.dispatch("Path.read_text", (handle,)) == "alpha\n"
 
+    # `/tmp` is the overlay too, so even read mode writes it, and reads it back.
     private = mount.dispatch("open", (PurePosixPath("/tmp/work.txt"), "w"))
     _ = mount.dispatch("Path.write_text", (private, "intermediate"))
-    assert mount.dispatch("Path.read_text", (private,)) == "intermediate"
     _ = mount.dispatch("Path.append_text", (PurePosixPath("/tmp/work.txt"), "!"))
     assert mount.dispatch("Path.read_text", (PurePosixPath("/tmp/work.txt"),)) == (
         "intermediate!"
     )
+    assert mount.dispatch("Path.iterdir", (PurePosixPath("/tmp"),)) == [
+        PurePosixPath("/tmp/work.txt")
+    ]
 
     with pytest.raises(FileNotFoundError):
         _ = mount.dispatch("open", (_virtual("missing.md"), "r"))
+
+    with pytest.raises(PermissionError, match="outside this run's filesystem"):
+        _ = mount.dispatch("Path.write_text", (PurePosixPath("/var/x.txt"), "x"))
 
 
 def test_exact_budget_is_enforced_on_the_decoded_text(workspace: Path) -> None:
@@ -126,56 +144,139 @@ def test_reading_many_documents_is_not_a_running_total(workspace: Path) -> None:
         assert mount.path_read_text(_virtual("notes.md")) == "alpha\n"
 
 
-def test_scratch_writes_are_capped_across_the_run(workspace: Path) -> None:
-    # Written characters land on disk and stay there, so this is the one budget
-    # a loop can genuinely exhaust.
-    mount = _mount(workspace, writable=True)
-    mount.max_scratch_chars = 10
-
-    _ = mount.path_write_text(_virtual(".scratch/a.txt"), "x" * 8)
-    with pytest.raises(MemoryError, match="`.scratch/`"):
-        _ = mount.path_write_text(_virtual(".scratch/b.txt"), "y" * 8)
-
-
-def test_documents_are_read_only_however_they_are_addressed(workspace: Path) -> None:
+def test_writes_are_staged_and_read_back_without_touching_the_disk(
+    workspace: Path,
+) -> None:
     mount = _mount(workspace, writable=True)
 
-    for act in (
-        lambda: mount.path_write_text(_virtual("notes.md"), "new"),
-        lambda: mount.path_unlink(_virtual("notes.md")),
-        lambda: mount.path_open(_virtual("notes.md"), "w"),
-        lambda: mount.path_rename(_virtual("notes.md"), _virtual("moved.md")),
-        # A `..` segment resolves to the same document, so the refusal cannot
-        # be spelled around.
-        lambda: mount.path_write_text(_virtual("reports/../notes.md"), "new"),
-    ):
-        with pytest.raises(PermissionError):
-            act()
+    _ = mount.path_write_text(_virtual("notes.md"), "rewritten\n")
+    _ = mount.path_append_text(_virtual("notes.md"), "more\n")
+    _ = mount.path_write_text(_virtual("new/deep.md"), "fresh")
 
+    assert mount.path_read_text(_virtual("notes.md")) == "rewritten\nmore\n"
+    assert mount.path_read_text(_virtual("new/deep.md")) == "fresh"
+    assert mount.path_is_dir(_virtual("new"))
     assert (workspace / "notes.md").read_text() == "alpha\n"
+    assert not (workspace / "new").exists()
 
 
-def test_scratch_state_is_written_where_the_run_may_write(workspace: Path) -> None:
+def test_a_rename_carries_the_file_rather_than_its_bytes(workspace: Path) -> None:
+    """A binary moves as freely as text, since nothing ever reads it."""
     mount = _mount(workspace, writable=True)
-    state = _virtual(".scratch/run/state.json")
 
-    _ = mount.path_write_text(state, "{}")
+    mount.path_rename(_virtual("picture.png"), _virtual("images/photo.png"))
+    mount.path_rename(_virtual("reports"), _virtual("archive"))
 
-    assert (workspace / ".scratch" / "run" / "state.json").read_text() == "{}"
-    assert mount.path_read_text(state) == "{}"
-    assert mount.path_is_file(state)
+    assert mount.nodes["~/images/photo.png"] == Ref("~/picture.png")
+    assert mount.nodes["~/archive"] == Ref("~/reports")
+    assert not mount.path_exists(_virtual("picture.png"))
+    assert mount.path_read_text(_virtual("archive/q1.md")) == "beta\n"
+    assert mount.path_iterdir(WORKSPACE_MOUNT / "~") == [
+        PurePosixPath("~/archive"),
+        PurePosixPath("~/images"),
+        PurePosixPath("~/notes.md"),
+    ]
+    assert (workspace / "picture.png").exists()
 
-    mount.path_unlink(state)
-    assert not mount.path_exists(state)
+    with pytest.raises(PermissionError, match="keeps its extension"):
+        mount.path_rename(_virtual("notes.md"), _virtual("notes.txt"))
+
+    # Onto a file, a rename replaces it, and a directory takes part in no such swap.
+    mount.path_rename(_virtual("notes.md"), _virtual("archive/q1.md"))
+    assert mount.path_read_text(_virtual("archive/q1.md")) == "alpha\n"
+
+    with pytest.raises(FileExistsError):
+        mount.path_rename(_virtual("archive"), _virtual("images"))
 
 
-def test_scratch_write_needs_a_writable_span(workspace: Path) -> None:
+def test_a_case_insensitive_workspace_keeps_one_key_per_file(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(entries, "folds_case", lambda _directory: True)
+    mount = _mount(workspace, writable=True)
+
+    _ = mount.path_write_text(_virtual("NOTES.md"), "rewritten\n")
+    # A file the program created keeps the spelling it was created under.
+    _ = mount.path_write_text(_virtual("Drafts/New.md"), "new\n")
+    _ = mount.path_append_text(_virtual("drafts/new.md"), "more\n")
+
+    assert mount.path_read_text(_virtual("Notes.md")) == "rewritten\n"
+    assert mount.path_read_text(_virtual("DRAFTS/NEW.md")) == "new\nmore\n"
+    assert set(mount.nodes) == {"~/notes.md", "~/Drafts", "~/Drafts/New.md"}
+
+
+def test_removals_merge_into_listings(workspace: Path) -> None:
+    mount = _mount(workspace, writable=True)
+
+    with pytest.raises(OSError, match="not empty"):
+        mount.path_rmdir(_virtual("reports"))
+
+    mount.path_unlink(_virtual("reports/q1.md"))
+    mount.path_rmdir(_virtual("reports"))
+    mount.path_mkdir(_virtual("drafts"), parents=False, exist_ok=False)
+
+    assert mount.path_iterdir(WORKSPACE_MOUNT / "~") == [
+        PurePosixPath("~/drafts"),
+        PurePosixPath("~/notes.md"),
+        PurePosixPath("~/picture.png"),
+    ]
+    assert mount.nodes["~/reports"] == Deleted()
+    assert (workspace / "reports" / "q1.md").exists()
+
+
+def test_what_a_program_may_not_change(workspace: Path) -> None:
+    (workspace / "report.assets").mkdir()
+    (workspace / "report.assets" / "fig.png").write_bytes(b"x")
+    mount = _mount(workspace, writable=True)
+
+    # An entry's payload is the workspace's to manage, so no program sees it.
+    assert not mount.path_exists(_virtual("report.assets"))
+    refusals: list[tuple[Callable[[], object], type[Exception]]] = [
+        (lambda: mount.path_write_text(_virtual("report.assets/a.md"), "x"), PermissionError),
+        (lambda: mount.path_write_text(_virtual("sheet.xlsx"), "x"), ValueError),
+        (lambda: mount.path_write_text(_virtual("picture.png"), "x"), ValueError),
+        (lambda: mount.path_write_bytes(_virtual("notes.md"), b"x"), ValueError),
+        # A rename into `/tmp` copies the text, which a binary has none of.
+        (
+            lambda: mount.path_rename(_virtual("picture.png"), PurePosixPath("/tmp/p.png")),
+            ValueError,
+        ),
+    ]
+
+    for act, error in refusals:
+        with pytest.raises(error):
+            _ = act()
+
+    assert mount.nodes == {}
+
+
+def test_read_mode_changes_nothing(workspace: Path) -> None:
     mount = _mount(workspace)
 
-    with pytest.raises(PermissionError, match="chat mode"):
-        _ = mount.path_write_text(_virtual(".scratch/state.json"), "{}")
+    for act in (
+        lambda: mount.path_write_text(_virtual("state.json"), "{}"),
+        lambda: mount.path_unlink(_virtual("notes.md")),
+        lambda: mount.path_rename(_virtual("notes.md"), _virtual("moved.md")),
+    ):
+        with pytest.raises(PermissionError, match="may change /tmp"):
+            _ = act()
 
-    assert not (workspace / ".scratch").exists()
+    assert mount.path_read_text(_virtual("notes.md")) == "alpha\n"
+
+
+def test_limits_hold_across_the_run(workspace: Path) -> None:
+    mount = _mount(workspace, writable=True)
+    mount.limits = ChangesetLimits(max_operations=2, max_deletes=1, max_chars=10)
+
+    _ = mount.path_write_text(_virtual("a.txt"), "x" * 8)
+
+    with pytest.raises(MemoryError, match="characters"):
+        _ = mount.path_write_text(_virtual("a.txt"), "y" * 8)
+
+    mount.path_unlink(_virtual("notes.md"))
+
+    with pytest.raises(PermissionError, match="paths"):
+        mount.path_unlink(_virtual("reports/q1.md"))
 
 
 def test_a_path_leading_with_no_workspace_names_the_roots(workspace: Path) -> None:
@@ -183,10 +284,25 @@ def test_a_path_leading_with_no_workspace_names_the_roots(workspace: Path) -> No
     # failure cannot correct on its own, so the refusal spells the roots out.
     mount = _mount(workspace)
 
-    with pytest.raises(FileNotFoundError, match=r"full workspace path \(~\)"):
+    with pytest.raises(FileNotFoundError, match="leads with ~, /tmp"):
         _ = mount.path_read_text(WORKSPACE_MOUNT / "notes.md")
 
     # A path that does lead with a root missed for another reason, and listing
     # roots would only muddle that.
-    with pytest.raises(FileNotFoundError, match=r"^(?!.*full workspace path)"):
+    with pytest.raises(FileNotFoundError, match=r"^(?!.*leads with)"):
         _ = mount.path_read_text(_virtual("missing.md"))
+
+
+def test_a_directory_holding_what_the_program_cannot_see_is_not_removed(
+    workspace: Path,
+) -> None:
+    (workspace / "pkg" / "node_modules").mkdir(parents=True)
+    (workspace / "pkg" / "node_modules" / "lib.js").write_text("x")
+    (workspace / "pkg" / "out.md").write_text("x")
+    mount = _mount(workspace, writable=True)
+
+    mount.path_unlink(_virtual("pkg/out.md"))
+    assert mount.path_iterdir(_virtual("pkg")) == []
+
+    with pytest.raises(OSError, match="not empty"):
+        mount.path_rmdir(_virtual("pkg"))

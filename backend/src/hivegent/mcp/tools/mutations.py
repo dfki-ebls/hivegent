@@ -1,4 +1,9 @@
-"""Mutation-oriented MCP tool registrations."""
+"""Mutation-oriented MCP tool registrations.
+
+Each tool plans its changeset before it asks, so the user is only ever asked
+to confirm a change the gateway would accept, and every item of it is in the
+one question.
+"""
 
 from collections.abc import Awaitable
 
@@ -8,25 +13,42 @@ from fastmcp.exceptions import ToolError
 from mcp.types import InputRequiredResult
 
 from ... import workspace
+from ...changes import Changeset
 from ...config import settings
-from ...store import Casebase, scoped_operation
+from ...humanize import pluralize
+from ...store import Casebase, build_search_paths
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import SearchPath, ToolOutput, tool_description, translate_tool_retry
 from ...tools.mutations import (
     DocumentContentArg,
+    DocumentEditsArg,
     DocumentTargetPathArg,
-    EditNewStringArg,
-    EditOldStringArg,
-    EditReplaceAllArg,
     ExpectedHashArg,
     WriteModeArg,
+    edit_changeset,
+    mutation_errors,
+    write_changeset,
 )
-from ...workspace_events import announcing_mutator
 from ..app import mcp_app
 from ..common import get_mcp_user_store
 from ..confirmation import MUTATION_ANNOTATIONS, PendingMutation, confirm_mutation
 
 __all__ = ["edit_document", "write_document"]
+
+
+def _paths(store: Casebase) -> tuple[SearchPath, ...]:
+    """The one root an MCP mutation reaches, with no conversation and so no ``/tmp``."""
+    return build_search_paths(store, (), settings.data_dir)[:1]
+
+
+def _gateway(store: Casebase) -> workspace.Gateway:
+    return workspace.Gateway((store,), store.id)
+
+
+async def _plan(store: Casebase, changeset: Changeset[str]) -> None:
+    """Refuse what the gateway would refuse, before the user is asked."""
+    with mutation_errors(ToolError):
+        _ = await _gateway(store).plan(changeset)
 
 
 async def _apply(result: Awaitable[ToolOutput[str]]) -> str:
@@ -40,34 +62,33 @@ async def _apply(result: Awaitable[ToolOutput[str]]) -> str:
 )
 async def edit_document(
     file_path: DocumentTargetPathArg,
-    old_string: EditOldStringArg,
-    new_string: EditNewStringArg,
+    edits: DocumentEditsArg,
     ctx: Context,
-    replace_all: EditReplaceAllArg = False,
     expected_hash: ExpectedHashArg = None,
     store: Casebase = Depends(get_mcp_user_store),
 ) -> str | InputRequiredResult:
+    with translate_tool_retry(ToolError):
+        changeset = edit_changeset(_paths(store), file_path, edits, expected_hash)
+
+    await _plan(store, changeset)
+    count = len(edits)
     ask = confirm_mutation(
         ctx,
         PendingMutation(
-            summary=f"edit to '{file_path}'",
-            payload=(old_string, new_string, str(replace_all)),
+            summary=f"{count} {pluralize(count, 'edit')} to '{file_path}'",
+            payload=tuple(
+                part
+                for edit in edits
+                for part in (edit.old_string, edit.new_string, str(edit.replace_all))
+            ),
         ),
     )
     if ask is not None:
         return ask
 
-    tool = EditDocumentTool(
-        paths=SearchPath(
-            path=store.workspace_dir(settings.data_dir), scope=store.scope
-        ),
-        mutator=announcing_mutator(
-            scoped_operation(workspace.edit_document_text, (store,)), store.id
-        ),
-    )
-    return await _apply(
-        tool(file_path, old_string, new_string, replace_all, expected_hash)
-    )
+    tool = EditDocumentTool(paths=_paths(store), commit=_gateway(store).commit)
+
+    return await _apply(tool(file_path, edits, expected_hash))
 
 
 @mcp_app.tool(
@@ -81,6 +102,10 @@ async def write_document(
     expected_hash: ExpectedHashArg = None,
     store: Casebase = Depends(get_mcp_user_store),
 ) -> str | InputRequiredResult:
+    with translate_tool_retry(ToolError):
+        changeset = write_changeset(_paths(store), file_path, content, mode, expected_hash)
+
+    await _plan(store, changeset)
     ask = confirm_mutation(
         ctx,
         PendingMutation(
@@ -91,12 +116,6 @@ async def write_document(
     if ask is not None:
         return ask
 
-    tool = WriteDocumentTool(
-        paths=SearchPath(
-            path=store.workspace_dir(settings.data_dir), scope=store.scope
-        ),
-        mutator=announcing_mutator(
-            scoped_operation(workspace.write_document_text, (store,)), store.id
-        ),
-    )
+    tool = WriteDocumentTool(paths=_paths(store), commit=_gateway(store).commit)
+
     return await _apply(tool(file_path, content, mode, expected_hash))

@@ -1,79 +1,205 @@
 """Write-oriented agent tool registrations.
 
-Also the one place the two workspace writes an agent performs on its own
-account are wired: the ``output_path`` a tool redirects into and the
-``commit_path`` the sandbox declares. Both commit through the same gateway the write tools use and
-answer to the same gate, so a run can never persist by a side door what the
-mode forbids it to write outright.
+Also the one place the two writes an agent performs on its own account are
+wired: the ``output_path`` a tool redirects into, and the changes a
+``run_python`` program makes, whose workspace half ``apply_changes`` applies.
+All of them plan through :func:`_plan_batch`, commit through :func:`_commit`,
+and answer to :func:`_gate`, so a run can never persist by a side door what it
+may not write outright.
 
-That gate is applied per call rather than declared per tool, because whether a
-write needs a human is a property of the path it names: a document is the
-user's and asks, a `.scratch/` file is the run's own working state and does
-not.  The mode still decides the rest — ``read`` and ``plan`` refuse every
-write, ``write`` approves every one of them.
+Every write resolves against :meth:`~hivegent.agents.common.UserDeps.writable_paths`,
+and each root's :class:`~hivegent.tools.base.CommitPolicy` decides how its half
+lands.  A direct root (``/tmp``) is the run's own working state, written
+straight into the conversation's folder with no changeset, approval, or store
+lock, in every mode.  A gated root (a workspace) goes through the changeset
+gateway, which ``interactive`` puts in front of the user first and ``write``
+applies at once.  A mode that may not write leaves the workspaces out of the
+writable roots, so they are refused like any path the run cannot reach.
+Before asking, the validator plans the very changeset the tool would commit,
+so the user is never asked to approve a batch the gateway would refuse, and
+the approval shows the planner's summary.
 """
 
-from collections.abc import Awaitable, Callable
-from typing import Any, Concatenate
+import asyncio
+from collections.abc import Callable, Container, Sequence
+from dataclasses import dataclass, replace
+from typing import Any, NoReturn
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.tools import ToolDefinition
+from pydantic_core import to_jsonable_python
 
-from ... import workspace
+from ... import staging, workspace
+from ...changes import Changeset, ChangesetSummary, FileDiff, TextEdit
 from ...config import settings
-from ...entries import is_scratch_path
-from ...store import Casebase, scoped_operation, scoped_pair_operation
+from ...tmp import TMP_SCOPE, DirectPlan, plan_direct
 from ...tools import (
-    DeleteDocumentTool,
+    DeleteDocumentsTool,
     EditDocumentTool,
-    MoveDocumentTool,
+    MoveDocumentsTool,
     WriteDocumentTool,
 )
-from ...tools.base import resolve_accessible_file, translate_tool_retry
-from ...tools.mutations import MutationHint, resolve_text_target
-from ...tools.pydantic_ai import register_agent_tool, register_agent_tools
-from ...tools.python import CommitPathArg, is_python_script
+from ...tools.base import SearchPath, ToolRetry, factory_tool_name, translate_tool_retry
+from ...tools.changeset import (
+    AppliedChanges,
+    ApplyChangesTool,
+    ChangesetIdArg,
+    ChangesetOutcome,
+    CommitChanges,
+    PendingChanges,
+)
+from ...tools.mutations import (
+    Commit,
+    DocumentMove,
+    MutationHint,
+    WriteModeArg,
+    delete_changeset,
+    edit_changeset,
+    move_changeset,
+    mutation_errors,
+    partition,
+    write_changeset,
+)
+from ...tools.pydantic_ai import register_agent_tool
+from ...tools.python import is_python_script
 from ...tools.sink import OutputPathArg, OutputSink, output_format
-from ...workspace_events import announce_paths, announcing_mutator
 from ..common import UserDeps
 
 __all__ = [
+    "changeset_committer",
+    "discard_unapproved_changes",
     "output_sink",
-    "output_writer",
-    "validate_commit_path",
-    "validate_document_move",
+    "program_paths",
+    "validate_apply_changes",
+    "validate_document_deletions",
+    "validate_document_edit",
+    "validate_document_moves",
     "validate_document_write",
     "validate_output_path",
     "write_document",
     "write_toolset",
 ]
 
+_RERUN = "Run the program again to stage a fresh changeset."
 
-def _mutator[**P, R](
+
+def _gateway(deps: UserDeps) -> workspace.Gateway:
+    """The gateway bound to the stores this run may write, announcing to its user."""
+    return workspace.Gateway(deps.writable_stores, deps.user_id)
+
+
+@dataclass(slots=True, frozen=True)
+class _Batch:
+    """A changeset split by policy, with both halves planned and nothing written yet."""
+
+    gated: Changeset[str]
+    direct: DirectPlan
+    summary: ChangesetSummary | None
+    """What approving the gated half shows, when one was asked for."""
+
+
+async def _plan_batch(
     deps: UserDeps,
-    operation: Callable[Concatenate[Casebase, str, P], Awaitable[R]],
-) -> Callable[Concatenate[str, P], Awaitable[R]]:
-    """Front *operation* with the canonical path and the notification it owes.
+    paths: tuple[SearchPath, ...],
+    changeset: Changeset[str],
+    *,
+    summarize: bool = False,
+) -> _Batch:
+    """Plan the direct half of *changeset*, then its gated half if *summarize* asks for approval.
 
-    The one place the writable-store span is bound, so every tool built here
-    reaches exactly the workspaces the gate below was applied against.
+    The direct half is local and cheap, so it is always planned and a bad
+    ``/tmp`` half is refused before anyone is asked about the workspace half.
     """
-    return announcing_mutator(
-        scoped_operation(operation, deps.writable_stores), deps.user_id
+    gated, direct = partition(paths, changeset)
+    planned = await asyncio.to_thread(plan_direct, paths, direct) if direct.operations else DirectPlan()
+    summary = (
+        (await _gateway(deps).plan(gated)).summary
+        if summarize and gated.operations
+        else None
     )
 
+    return _Batch(gated, planned, summary)
 
-def _run_python_pointer(target: str, local: str) -> str:
+
+async def _commit(deps: UserDeps, batch: _Batch) -> tuple[str, ...]:
+    """Apply the gated half, then write the direct one, returning the gated reports.
+
+    The direct half lands last, so a batch the gateway refuses leaves ``/tmp``
+    as it was.
+    """
+    reports = await _gateway(deps).apply(batch.gated) if batch.gated.operations else ()
+    _ = await asyncio.to_thread(batch.direct.apply)
+
+    return reports
+
+
+def _committer(deps: UserDeps) -> Commit:
+    """Plan and commit a changeset's two halves, the commit every write tool shares."""
+
+    async def commit(changeset: Changeset[str]) -> str:
+        batch = await _plan_batch(deps, deps.writable_paths(), changeset)
+        reports = await _commit(deps, batch)
+
+        return "\n".join((*batch.direct.reports, *reports))
+
+    return commit
+
+
+def _ask(summary: ChangesetSummary, *, unwritten: bool = False) -> NoReturn:
+    """Ask the user to approve the summary the planner shows.
+
+    *unwritten* blanks the diffs of a write whose content does not exist yet.
+    """
+    if unwritten:
+        summary = replace(
+            summary,
+            creates=tuple(FileDiff(diff.path, "") for diff in summary.creates),
+            updates=tuple(FileDiff(diff.path, "") for diff in summary.updates),
+        )
+
+    raise ApprovalRequired(to_jsonable_python(summary))
+
+
+def _asks(ctx: RunContext[UserDeps]) -> bool:
+    """Whether a gated change of this call still needs the user's answer."""
+    return ctx.deps.needs_approval and not ctx.tool_call_approved
+
+
+async def _gate(
+    ctx: RunContext[UserDeps],
+    build: Callable[[tuple[SearchPath, ...]], Changeset[str]],
+    *,
+    unwritten: bool = False,
+) -> None:
+    """Refuse what the tool would refuse, then ask about its gated half if anyone must.
+
+    *build* is the tool's own changeset builder, run on the roots the tool
+    resolves against, so the question is asked of exactly what would commit.
+    The gated half is only planned where approval is asked, since the commit
+    refuses with the same words.
+    """
+    paths = ctx.deps.writable_paths()
+
+    with translate_tool_retry(ModelRetry), mutation_errors(ModelRetry):
+        batch = await _plan_batch(ctx.deps, paths, build(paths), summarize=_asks(ctx))
+
+    if batch.summary is not None:
+        _ask(batch.summary, unwritten=unwritten)
+
+
+def _run_python_pointer(target: str) -> str:
     """Point a stored program at the tool that runs it.
 
-    A `.scratch/` `.py` is written in order to be run, and the mutation that
+    A ``/tmp`` ``.py`` is written in order to be run, and the mutation that
     stored or repaired it is the one moment its canonical path is in hand, so
     the pointer rides the receipt rather than waiting for the instructions to
     be recalled a turn later: what it saves is the run that pastes the program
     straight back in as inline ``code``.  Injected on this surface alone,
     since the MCP one writes through the same tools and has no ``run_python``.
     """
-    if not is_scratch_path(local) or not is_python_script(local):
+    if TMP_SCOPE.strip_prefix(target) is None or not is_python_script(target):
         return ""
 
     return f"Run it with run_python's `script_path='{target}'`."
@@ -81,26 +207,19 @@ def _run_python_pointer(target: str, local: str) -> str:
 
 def _edit_document(deps: UserDeps) -> EditDocumentTool:
     return EditDocumentTool(
-        paths=deps.search_paths(writable=True),
-        hint=_run_python_pointer,
-        mutator=_mutator(deps, workspace.edit_document_text),
+        paths=deps.writable_paths(), hint=_run_python_pointer, commit=_committer(deps)
     )
 
 
-def write_document(
-    deps: UserDeps, hint: MutationHint | None = None
-) -> WriteDocumentTool:
-    """Build the canonical scoped document writer for one agent run.
+def write_document(deps: UserDeps, hint: MutationHint | None = None) -> WriteDocumentTool:
+    """Build the scoped document writer for one agent run.
 
-    Public because ``run_python`` composes it through :func:`output_writer` to
-    commit its declared output, so the output it writes is scoped exactly like
-    the files it read.  That path passes no *hint*: a commit the model asked
-    for by declaring an ``output_path`` is not a program it just stored.
+    Public because :func:`output_sink` composes it to commit a redirected
+    result.  That path passes no *hint*: a result the model asked for by
+    declaring an ``output_path`` is not a program it just stored.
     """
     return WriteDocumentTool(
-        paths=deps.search_paths(writable=True),
-        hint=hint,
-        mutator=_mutator(deps, workspace.write_document_text),
+        paths=deps.writable_paths(), hint=hint, commit=_committer(deps)
     )
 
 
@@ -109,189 +228,219 @@ def _write_document(deps: UserDeps) -> WriteDocumentTool:
     return write_document(deps, _run_python_pointer)
 
 
-def output_writer(deps: UserDeps) -> WriteDocumentTool | None:
-    """Build the writer a tool commits its declared output through.
+def _move_documents(deps: UserDeps) -> MoveDocumentsTool:
+    return MoveDocumentsTool(paths=deps.writable_paths(), commit=_committer(deps))
 
-    ``None`` in a mode that may not write, so the write is refused in words
-    the model can act on rather than silently dropped.
-    """
-    if not deps.can_write:
-        return None
 
-    return write_document(deps)
+def _delete_documents(deps: UserDeps) -> DeleteDocumentsTool:
+    return DeleteDocumentsTool(paths=deps.writable_paths(), commit=_committer(deps))
 
 
 def output_sink(deps: UserDeps) -> OutputSink | None:
-    """Build the sink a tool's ``output_path`` redirect commits through."""
-    writer = output_writer(deps)
+    """Build the sink a tool's ``output_path`` redirect commits through.
 
-    if writer is None:
+    ``None`` for a run that may write nowhere, so the redirect is refused in
+    words the model can act on rather than silently dropped.
+    """
+    if not deps.writable_paths():
         return None
 
-    return OutputSink(writer, settings.tools.redirect_inline_chars)
-
-
-def _is_scratch_target(deps: UserDeps, file_path: str) -> bool:
-    """Whether *file_path* names run state rather than one of the user's documents.
-
-    Decided on the canonical path the write would land on, not the spelling it
-    was addressed by, so neither a ``..`` segment nor a symlink can carry a
-    ``.scratch`` part onto an ordinary document and skip the approval with it.
-    An unresolvable path is not scratch: the tool refuses it downstream in its
-    own words, and until then it is treated like any other document.
-    """
-    resolved = resolve_accessible_file(deps.search_paths(writable=True), file_path)
-
-    return resolved is not None and is_scratch_path(resolved[1])
-
-
-def _check_mode(ctx: RunContext[UserDeps]) -> None:
-    """Refuse every mutation in a mode that may not write at all.
-
-    Split from :func:`_gate_write` because it is the refusal that has to come
-    first: a run that may not write should be told so rather than told its path
-    is wrong, whatever else a validator checks in between.
-    """
-    if not ctx.deps.can_write:
-        raise ModelRetry("Workspace writes are unavailable in this chat mode.")
-
-
-def _gate_write(ctx: RunContext[UserDeps], targets: dict[str, str]) -> None:
-    """Apply the mode and approval gate to one workspace mutation.
-
-    *targets* maps each parameter to the path it carries, which is what the
-    approval request shows the user: a move names both of its ends, so one
-    decision covers the whole mutation rather than two in a row.  A mutation
-    entirely within `.scratch/` is the run's own state and asks nobody.
-    """
-    _check_mode(ctx)
-
-    if (
-        ctx.deps.needs_approval
-        and not ctx.tool_call_approved
-        and not all(_is_scratch_target(ctx.deps, path) for path in targets.values())
-    ):
-        raise ApprovalRequired(targets)
+    return OutputSink(write_document(deps), settings.tools.redirect_inline_chars)
 
 
 # The validators are called with the whole argument mapping, so naming only the
-# one argument each decides on keeps them from restating signatures the adapter
+# arguments each decides on keeps them from restating signatures the adapter
 # layer otherwise derives from each tool's `__call__`.
-def validate_document_write(
+async def validate_document_write(
     ctx: RunContext[UserDeps],
     file_path: str,
+    content: str,
+    mode: WriteModeArg = "replace",
+    expected_hash: str | None = None,
     **_rest: Any,
 ) -> None:
-    """Apply the mode and approval gate to a document mutation."""
-    _gate_write(ctx, {"file_path": file_path})
+    """Refuse a write the tool would refuse, then gate it."""
+    await _gate(
+        ctx, lambda paths: write_changeset(paths, file_path, content, mode, expected_hash)
+    )
 
 
-def _gate_declared_write(
-    ctx: RunContext[UserDeps], argument: str, path: str | None
+async def validate_document_edit(
+    ctx: RunContext[UserDeps],
+    file_path: str,
+    edits: Sequence[TextEdit],
+    expected_hash: str | None = None,
+    **_rest: Any,
 ) -> None:
-    """Apply the mode and approval gate to a path an argument declared.
+    """Refuse an edit the tool would refuse, then gate it with every replacement."""
+    await _gate(ctx, lambda paths: edit_changeset(paths, file_path, edits, expected_hash))
 
-    The path is settled through :func:`resolve_text_target`, the very resolver
-    the commit runs through, so it is refused in one voice with the write tools
-    and no clause of that rule is ever stated twice.  It runs before the gate
-    rather than after the call, since a path the commit would turn away would
-    otherwise cost the user an approval and the run a whole program before
-    anything said no, and after the mode check, since a run that may not write
-    at all should hear that first.
 
-    *argument* names the parameter that carried the path, because that is what
-    the approval request shows the user: two tools declare a write this way and
-    they call it different things.
+async def validate_document_moves(
+    ctx: RunContext[UserDeps], moves: Sequence[DocumentMove], **_rest: Any
+) -> None:
+    """Gate every move as one batch and a single decision."""
+    await _gate(ctx, lambda paths: move_changeset(paths, moves))
+
+
+async def validate_document_deletions(
+    ctx: RunContext[UserDeps], paths: Sequence[str], **_rest: Any
+) -> None:
+    """Gate every deletion as one batch and a single decision."""
+    await _gate(ctx, lambda roots: delete_changeset(roots, paths))
+
+
+async def validate_output_path(
+    ctx: RunContext[UserDeps], output_path: OutputPathArg = None, **_rest: Any
+) -> None:
+    """Refuse and gate a bulk-result redirect before the tool performs its work.
+
+    Before rather than after the call, since a path the commit would turn away
+    would otherwise cost the user an approval and the tool its whole work
+    before anything said no.  The result does not exist yet, so the approval
+    names the file it lands in without a diff.
     """
-    if path is None:
+    if output_path is None:
         return
 
-    _check_mode(ctx)
     with translate_tool_retry(ModelRetry):
-        _ = resolve_text_target(ctx.deps.search_paths(writable=True), path)
+        _ = output_format(output_path)
 
-    _gate_write(ctx, {argument: path})
-
-
-def validate_document_move(
-    ctx: RunContext[UserDeps],
-    file_path: str,
-    destination: str,
-    **_rest: Any,
-) -> None:
-    """Apply the mode and approval gate to both ends of a move."""
-    _gate_write(ctx, {"file_path": file_path, "destination": destination})
+    await _gate(ctx, lambda paths: write_changeset(paths, output_path, ""), unwritten=True)
 
 
-def validate_output_path(
-    ctx: RunContext[UserDeps],
-    output_path: OutputPathArg = None,
-    **_rest: Any,
-) -> None:
-    """Validate a bulk-result redirect before the tool performs its work."""
-    if output_path is not None:
-        with translate_tool_retry(ModelRetry):
-            _ = output_format(output_path)
+def program_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
+    """The roots a ``run_python`` program may change.
 
-    _gate_declared_write(ctx, "output_path", output_path)
-
-
-def validate_commit_path(
-    ctx: RunContext[UserDeps],
-    commit_path: CommitPathArg = None,
-    **_rest: Any,
-) -> None:
-    """Validate the document a sandboxed program declared, before it runs.
-
-    No suffix check, unlike the redirect: a program writes whatever text the
-    document is, so the format question is the one every write tool asks and
-    :func:`resolve_text_target` has already asked it.
+    The workspaces only where ``apply_changes`` is not withheld, by the request
+    or the operator: that tool is the switch for a program's workspace
+    changes, so withholding it must not leave write mode's direct path open as
+    a side door.
     """
-    _gate_declared_write(ctx, "commit_path", commit_path)
+    staging_allowed = factory_tool_name(_apply_changes) not in deps.withheld_tools
+
+    return deps.writable_paths(workspace=staging_allowed)
 
 
-def _move_document(deps: UserDeps) -> MoveDocumentTool:
-    """Build the mover, which routes each end back to the store it names.
+def changeset_committer(deps: UserDeps) -> CommitChanges:
+    """Build what lands a ``run_python`` program's changes.
 
-    The one mutation whose ends may sit in different workspaces, so it takes
-    the two-path router rather than :func:`_mutator`, and announces both ends
-    itself: :func:`announcing_mutator` sees one path and a cross-workspace move
-    changes two.
+    The direct half is written as soon as the gated half is settled.  That one
+    is applied straight away in a mode that needs no approval, as :func:`_gate`
+    lets every other write through, and otherwise planned and stored for
+    :func:`validate_apply_changes` to put in front of the user, so a program
+    whose changes the gateway would refuse is told so at once and leaves
+    ``/tmp`` as it was.
     """
-    move = scoped_pair_operation(workspace.move_document, deps.writable_stores)
+    paths = program_paths(deps)
 
-    async def announcing(src: str, dst: str) -> None:
-        await move(src, dst)
-        announce_paths(deps.user_id, src, dst)
+    async def commit(changeset: Changeset[str]) -> ChangesetOutcome | None:
+        with mutation_errors(ToolRetry):
+            batch = await _plan_batch(deps, paths, changeset, summarize=deps.needs_approval)
 
-    return MoveDocumentTool(paths=deps.search_paths(writable=True), mutator=announcing)
+            if batch.summary is not None:
+                changeset_id = await staging.stage(deps.user_id, batch.gated)
+                _ = await asyncio.to_thread(batch.direct.apply)
+
+                return PendingChanges(changeset_id, batch.summary)
+
+            reports = await _commit(deps, batch)
+
+        return AppliedChanges(reports) if batch.gated.operations else None
+
+    return commit
 
 
-def _delete_document(deps: UserDeps) -> DeleteDocumentTool:
-    return DeleteDocumentTool(
-        paths=deps.search_paths(writable=True),
-        mutator=_mutator(deps, workspace.delete_document),
-    )
+async def _load_staged(deps: UserDeps, changeset_id: str) -> Changeset[str]:
+    staged = await staging.load_staged(deps.user_id, changeset_id)
+
+    if staged is None:
+        raise ToolRetry(
+            f"No staged changeset '{changeset_id}': it was applied already, "
+            f"expired, or never existed. {_RERUN}"
+        )
+
+    return staged
+
+
+async def validate_apply_changes(
+    ctx: RunContext[UserDeps], changeset_id: ChangesetIdArg, **_rest: Any
+) -> None:
+    """Plan a staged changeset again, then put its summary in front of the user.
+
+    An approved resume skips both, since applying it loads and refuses alike.
+    """
+    if not _asks(ctx):
+        return
+
+    with translate_tool_retry(ModelRetry):
+        staged = await _load_staged(ctx.deps, changeset_id)
+
+    with mutation_errors(ModelRetry, _RERUN):
+        summary = (await _gateway(ctx.deps).plan(staged)).summary
+
+    _ask(summary)
+
+
+def _apply_changes(deps: UserDeps) -> ApplyChangesTool:
+    async def apply(changeset_id: str) -> tuple[str, ...]:
+        staged = await _load_staged(deps, changeset_id)
+
+        try:
+            with mutation_errors(ToolRetry, _RERUN):
+                return await _gateway(deps).apply(staged)
+        finally:
+            await staging.discard_staged(deps.user_id, changeset_id)
+
+    return ApplyChangesTool(apply=apply)
+
+
+async def discard_unapproved_changes(
+    owner: str, response: ModelResponse, approved: Container[str]
+) -> None:
+    """Drop the changesets the ``apply_changes`` calls in *response* name, unless approved.
+
+    *response* ends a turn that awaited approval, so a call *approved* does not
+    name was denied or abandoned and can never apply its changeset.
+    """
+    for part in response.parts:
+        if (
+            isinstance(part, ToolCallPart)
+            and part.tool_name == factory_tool_name(_apply_changes)
+            and part.tool_call_id not in approved
+            and isinstance(changeset_id := part.args_as_dict().get("changeset_id"), str)
+        ):
+            await staging.discard_staged(owner, changeset_id)
+
+
+async def _offer_apply_changes(
+    ctx: RunContext[UserDeps], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    # Only a mode that may write the workspaces stages a program's changes there.
+    return tool_def if ctx.deps.can_write else None
 
 
 write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
-register_agent_tools(
-    write_toolset,
-    UserDeps,
-    [
-        _edit_document,
-        _write_document,
-        _delete_document,
-    ],
-    args_validator=validate_document_write,
+register_agent_tool(
+    write_toolset, UserDeps, _edit_document, args_validator=validate_document_edit
 )
-
-# The move is the one mutation with two ends, so it carries the validator that
-# puts both in front of the user as a single decision.
+register_agent_tool(
+    write_toolset, UserDeps, _write_document, args_validator=validate_document_write
+)
+register_agent_tool(
+    write_toolset, UserDeps, _move_documents, args_validator=validate_document_moves
+)
 register_agent_tool(
     write_toolset,
     UserDeps,
-    _move_document,
-    args_validator=validate_document_move,
+    _delete_documents,
+    args_validator=validate_document_deletions,
+)
+register_agent_tool(
+    write_toolset,
+    UserDeps,
+    _apply_changes,
+    args_validator=validate_apply_changes,
+    prepare=_offer_apply_changes,
 )

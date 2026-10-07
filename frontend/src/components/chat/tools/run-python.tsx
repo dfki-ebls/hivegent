@@ -1,6 +1,7 @@
 import { FileCodeIcon } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
-import { Trans, useTranslation } from "react-i18next";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { z } from "zod";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -8,8 +9,13 @@ import {
   CodeBlockFilename,
   CodeBlockHeader,
 } from "@/components/ai-elements/code-block";
+import {
+  ChangesetSummarySchema,
+  ChangesetView,
+  changeCount,
+} from "@/components/chat/tools/changeset";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
-import { ToolPre, ToolResult, ToolSection } from "@/components/ToolDisplay";
+import { ToolOutputResult, ToolPre, ToolResult, ToolSection } from "@/components/ToolDisplay";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { keyPrefix } from "@/i18n";
+import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { getDocumentContent } from "@/lib/api";
 import { type ToolPart, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
 import { basename, errorMessage } from "@/lib/utils";
@@ -30,21 +37,28 @@ const T_OPTIONS = keyPrefix(($) => $.chat.tools.runPython);
 interface RunPythonInput {
   code?: string | null;
   script_path?: string | null;
-  commit_path?: string | null;
 }
+
+/** Mirrors `ChangesetOutcome` in `backend/src/hivegent/tools/changeset.py`. */
+const ChangesetOutcomeSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("pending"),
+    changeset_id: z.string(),
+    summary: ChangesetSummarySchema,
+  }),
+  z.object({ status: z.literal("applied"), reports: z.array(z.string()) }),
+]);
+type ChangesetOutcome = z.infer<typeof ChangesetOutcomeSchema>;
 
 /** Mirrors `PythonResult` in `backend/src/hivegent/tools/python.py`. */
-interface PythonResult {
-  result: string | null;
-  stdout: string;
-  truncated: boolean;
-  script_path: string | null;
-  written_file: string | null;
-}
-
-function isPythonResult(value: unknown): value is PythonResult {
-  return value != null && typeof value === "object" && "stdout" in value && "result" in value;
-}
+const PythonResultSchema = z.object({
+  result: z.string().nullable(),
+  stdout: z.string(),
+  truncated: z.boolean(),
+  script_path: z.string().nullable(),
+  changeset: ChangesetOutcomeSchema.nullable(),
+});
+type PythonResult = z.infer<typeof PythonResultSchema>;
 
 /** A blank argument is one the model did not use, as the backend reads it. */
 function given(value: string | null | undefined): string | undefined {
@@ -53,13 +67,13 @@ function given(value: string | null | undefined): string | undefined {
 
 type ScriptSource = { code: string } | { error: string };
 
-function ScriptSourceView({ path }: { path: string }) {
+function ScriptSourceView({ path, conversationId }: { path: string; conversationId: string | null }) {
   const [source, setSource] = useState<ScriptSource | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    getDocumentContent(path).then(
+    getDocumentContent(path, conversationId).then(
       (code) => !cancelled && setSource({ code }),
       (cause: unknown) => !cancelled && setSource({ error: errorMessage(cause) }),
     );
@@ -67,7 +81,7 @@ function ScriptSourceView({ path }: { path: string }) {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, conversationId]);
 
   if (!source) return <Spinner className="mx-auto" />;
 
@@ -88,11 +102,12 @@ function ScriptSourceView({ path }: { path: string }) {
 
 function ScriptSourceDialog({ path }: { path: string }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
+  const conversationId = useConversationId();
 
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant="outline" size="xs">
+        <Button variant="outline" size="xs" disabled={path.startsWith("/tmp/") && !conversationId}>
           <FileCodeIcon aria-hidden />
           {t(($) => $.viewSource)}
         </Button>
@@ -102,7 +117,7 @@ function ScriptSourceDialog({ path }: { path: string }) {
           <DialogTitle className="font-mono">{path}</DialogTitle>
           <DialogDescription>{t(($) => $.sourceDescription)}</DialogDescription>
         </DialogHeader>
-        <ScriptSourceView path={path} />
+        <ScriptSourceView path={path} conversationId={conversationId} />
       </DialogContent>
     </Dialog>
   );
@@ -138,53 +153,43 @@ function Program({ code, scriptPath }: { code?: string; scriptPath?: string }) {
   return <p className="text-muted-foreground">{t(($) => $.noProgram)}</p>;
 }
 
-/** A workspace path set inline in prose. */
-function PathCode({ children }: { children?: ReactNode }) {
-  return <code className="font-mono text-xs">{children}</code>;
-}
+function Changes({ changeset }: { changeset: ChangesetOutcome }) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
 
-type PathMessage = "savedTo" | "notSaved" | "destination" | "approvalQuestion";
+  if (changeset.status === "applied") {
+    return (
+      <div className="space-y-2">
+        <p>{t(($) => $.applied, { count: changeset.reports.length })}</p>
+        <ToolPre boxed>{changeset.reports.join("\n")}</ToolPre>
+      </div>
+    );
+  }
 
-/** A sentence naming a workspace path, set in code within the translated text. */
-function PathText({ message, path }: { message: PathMessage; path: string }) {
   return (
-    <Trans
-      i18nKey={($) => $.chat.tools.runPython[message]}
-      values={{ path }}
-      components={{ path: <PathCode /> }}
-    />
+    <div className="space-y-2">
+      <p>{t(($) => $.staged, { count: changeCount(changeset.summary) })}</p>
+      <ChangesetView summary={changeset.summary} />
+    </div>
   );
 }
 
-const OUTPUT_BLOCK = "max-h-80 overflow-auto rounded-md bg-muted/40 p-2";
-
-function Output({ result, commitPath }: { result: PythonResult; commitPath?: string }) {
+function Output({ result }: { result: PythonResult }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   return (
     <ToolResult>
-      {result.stdout && <ToolPre className={OUTPUT_BLOCK}>{result.stdout}</ToolPre>}
+      {result.stdout && <ToolPre boxed>{result.stdout}</ToolPre>}
       {result.truncated && <p className="text-xs text-muted-foreground">{t(($) => $.truncated)}</p>}
       {result.result !== null && (
         <div>
           <span className="text-muted-foreground">{t(($) => $.returned)}</span>
-          <ToolPre className={`mt-1 ${OUTPUT_BLOCK}`}>{result.result}</ToolPre>
+          <ToolPre boxed className="mt-1">{result.result}</ToolPre>
         </div>
       )}
       {!result.stdout && result.result === null && (
         <p className="text-muted-foreground">{t(($) => $.noOutput)}</p>
       )}
-      {result.written_file ? (
-        <p>
-          <PathText message="savedTo" path={result.written_file} />
-        </p>
-      ) : (
-        commitPath && (
-          <p className="text-muted-foreground">
-            <PathText message="notSaved" path={commitPath} />
-          </p>
-        )
-      )}
+      {result.changeset && <Changes changeset={result.changeset} />}
     </ToolResult>
   );
 }
@@ -197,10 +202,9 @@ interface RunPythonToolProps {
 export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
   const { t } = useTranslation();
   const input = toolInput<RunPythonInput>(part);
-  const result = isPythonResult(metadata) ? metadata : null;
+  const result = useMemo(() => PythonResultSchema.safeParse(metadata).data, [metadata]);
   const code = given(input?.code);
   const scriptPath = result?.script_path ?? given(input?.script_path);
-  const commitPath = given(input?.commit_path);
   const tool = toolDisplayName(t, "run_python");
 
   return (
@@ -215,35 +219,10 @@ export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
       parameters={
         <ToolSection title={t(($) => $.chat.tools.sections.program)}>
           <Program code={code} scriptPath={scriptPath} />
-          {commitPath && (
-            <p className="text-muted-foreground">
-              <PathText message="destination" path={commitPath} />
-            </p>
-          )}
         </ToolSection>
       }
-      approvalPrompt={
-        commitPath && (
-          <div className="space-y-1 text-sm">
-            <p>
-              <PathText message="approvalQuestion" path={commitPath} />
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {t(($) => $.chat.tools.runPython.approvalHint)}
-            </p>
-          </div>
-        )
-      }
     >
-      {result ? (
-        <Output result={result} commitPath={commitPath} />
-      ) : (
-        typeof part.output === "string" && (
-          <ToolResult>
-            <ToolPre>{part.output}</ToolPre>
-          </ToolResult>
-        )
-      )}
+      {result ? <Output result={result} /> : <ToolOutputResult part={part} />}
     </ToolCard>
   );
 }

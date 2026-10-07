@@ -1,58 +1,174 @@
 """Helpers for logical stem-based workspace entries."""
 
+import os
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Self
 
+from .config import normalize_unicode
 from .converters import projects_verbatim
 from .converters.base import DOCUMENT_EXTENSION, is_markdown_suffix
 
 __all__ = [
-    "SCRATCH_DIR_NAME",
     "ContentStat",
     "EntryPaths",
+    "Listdir",
     "asset_ref_for",
     "assets_dir_for_stem",
     "description_path_for_stem",
     "entry_exists",
     "entry_owns",
     "find_original_for_stem",
+    "folds_case",
     "is_assets_dir",
+    "is_below",
     "is_description_file",
     "is_ignorable_path",
     "is_inside_assets_dir",
     "is_projectable_original",
-    "is_scratch_path",
+    "is_reserved_path",
+    "list_names",
     "original_path_for_stem",
+    "path_key",
+    "rebase",
     "repoint_asset_refs",
     "resolve_entry_paths",
+    "respell",
     "stem_path_from_reference",
 ]
 
 
 @dataclass(slots=True, frozen=True)
 class ContentStat:
-    """A markdown file's ``(mtime_ns, size)`` fingerprint for the reconcile fast-path.
+    """A file's ``(mtime_ns, size, inode)`` fingerprint.
 
     Lets the reconciler skip reading and hashing a description whose stat is
-    unchanged since it was last indexed.  The content digest stays the
-    authority: a stat mismatch only triggers a read + hash, and a re-embed
+    unchanged since it was last indexed, and lets a change that never decoded a
+    file refuse one that moved on since it was seen.  The content digest stays
+    the authority: a stat mismatch only triggers a read + hash, and a re-embed
     happens solely when the digest itself differs, so a stat that lies in the
     "changed" direction (a ``touch``, checkout, or restore) costs one read, not
     a re-embed.
+
+    The inode is what catches the one lie in the other direction: a file
+    replaced by another of the same size whose mtime was preserved (``cp -p``,
+    ``rsync -t``, an editor saving through a rename within one mtime tick) is a
+    new inode, while every in-place write and rename keeps it.
     """
 
     mtime_ns: int
     size: int
+    inode: int
+
+    @classmethod
+    def of(cls, st: os.stat_result) -> Self:
+        """Return the fingerprint of an existing stat."""
+        return cls(mtime_ns=st.st_mtime_ns, size=st.st_size, inode=st.st_ino)
 
     @classmethod
     def from_path(cls, path: Path) -> Self | None:
         """Return the stat fingerprint of *path*, or ``None`` if it is unreadable."""
         try:
-            st = path.stat()
+            return cls.of(path.stat())
         except OSError:
             return None
-        return cls(mtime_ns=st.st_mtime_ns, size=st.st_size)
+
+
+_FOLDING: dict[int, bool] = {}
+"""Whether each filesystem folds case, by device, which is as many as are mounted."""
+
+
+def _probe_folding(directory: Path) -> bool:
+    for candidate in (directory, *directory.parents):
+        swapped = candidate.with_name(candidate.name.swapcase()) if candidate.name else candidate
+
+        if swapped == candidate:
+            continue
+
+        try:
+            return swapped.samefile(candidate)
+        except OSError:
+            return False
+
+    return False
+
+
+def folds_case(directory: Path) -> bool:
+    """Whether the filesystem holding *directory* treats names differing in case as one.
+
+    Probed once per device, read-only: the nearest existing ancestor whose
+    name has a case is looked up under its swapped spelling, which a
+    case-insensitive filesystem (macOS, Windows) resolves to the same inode.
+    Every later call costs one ``stat``, however many directories ask.
+    """
+    for candidate in (directory, *directory.parents):
+        try:
+            device = candidate.stat().st_dev
+        except OSError:
+            continue
+
+        folded = _FOLDING.get(device)
+
+        if folded is None:
+            folded = _FOLDING[device] = _probe_folding(candidate)
+
+        return folded
+
+    return False
+
+
+def path_key(path: str, *, folded: bool) -> str:
+    """The identity two spellings of *path* share, for comparing them.
+
+    NFC like every inbound path, and case-folded on a filesystem that
+    :func:`folds_case`, where ``A.md`` and ``a.md`` are one file.
+
+    >>> path_key("Ä/B.md", folded=True) == path_key("ä/b.md", folded=True)
+    True
+    >>> path_key("A.md", folded=False) == path_key("a.md", folded=False)
+    False
+    """
+    path = normalize_unicode(path)
+
+    return path.casefold() if folded else path
+
+
+type Listdir = Callable[[Path], Sequence[str]]
+"""Lists a directory's names, which :func:`respell` takes so a caller can cache them."""
+
+
+def list_names(directory: Path) -> Sequence[str]:
+    """The names in *directory*, none when it cannot be listed."""
+    try:
+        return os.listdir(directory)
+    except OSError:
+        return ()
+
+
+def respell(root: Path, local: str, listdir: Listdir | None = None) -> str:
+    """*local* under *root*, each existing segment spelled the way the disk spells it.
+
+    On a case-insensitive filesystem ``A.md`` opens ``a.md``, so a path a caller
+    spelled differently would otherwise become a second name for one file: a
+    second row for one entry, a filter asked about a name the file does not
+    have.  A missing segment keeps its spelling, and so does every path on a
+    case-sensitive filesystem.  *listdir* lets a caller cache the listings.
+    """
+    if not local or not folds_case(root):
+        return local
+
+    listdir = listdir or list_names
+    spelled = PurePosixPath()
+
+    for part in PurePosixPath(local).parts:
+        key = path_key(part, folded=True)
+        spelled /= next(
+            (name for name in listdir(root / spelled) if path_key(name, folded=True) == key),
+            part,
+        )
+
+    return str(spelled)
 
 
 @dataclass(slots=True, frozen=True)
@@ -64,6 +180,30 @@ class EntryPaths:
     original_path: str | None
     assets_dir: str | None
 
+    @property
+    def files(self) -> tuple[str, ...]:
+        """The description, original, and assets directory the entry has, in that order."""
+        return tuple(
+            path
+            for path in (self.description_path, self.original_path, self.assets_dir)
+            if path is not None
+        )
+
+    def at(self, stem_path: str) -> Self:
+        """The entry relocated to *stem_path*, every companion it has renamed along.
+
+        >>> EntryPaths("a.tar", "a.tar.md", "a.tar.gz", None).at("b/c")
+        EntryPaths(stem_path='b/c', description_path='b/c.md', original_path='b/c.gz', assets_dir=None)
+        """
+        suffix = None if self.original_path is None else self.original_path[len(self.stem_path) :]
+
+        return type(self)(
+            stem_path=stem_path,
+            description_path=description_path_for_stem(stem_path),
+            original_path=original_path_for_stem(stem_path, suffix),
+            assets_dir=assets_dir_for_stem(stem_path) if self.assets_dir else None,
+        )
+
 
 def stem_path_from_reference(reference: str) -> str:
     """Return the logical stem path for a workspace-relative reference."""
@@ -73,9 +213,51 @@ def stem_path_from_reference(reference: str) -> str:
     return str(pure.as_posix())
 
 
+def is_below(path: str, directory: str) -> bool:
+    """Whether *path* lies strictly inside *directory*, compared by segments.
+
+    Both are normalized POSIX paths, local or canonical, so a sibling sharing
+    a name prefix is never mistaken for a child.
+
+    >>> is_below("~/docs/a.md", "~/docs")
+    True
+    >>> is_below("~/docs-old/a.md", "~/docs")
+    False
+    >>> is_below("~/docs", "~/docs")
+    False
+    """
+    return path != directory and PurePosixPath(path).is_relative_to(directory)
+
+
+def rebase(path: str, old: str, new: str) -> str:
+    """Carry *path*, which is *old* or lies below it, to the same place under *new*.
+
+    >>> rebase("~/a/b/c.md", "~/a", "@team/x")
+    '@team/x/b/c.md'
+    >>> rebase("~/a", "~/a", "~/b")
+    '~/b'
+    """
+    return str(PurePosixPath(new, PurePosixPath(path).relative_to(old)))
+
+
 def is_assets_dir(name: str) -> bool:
     """Return whether a directory name is a child-assets directory."""
     return name.endswith(".assets")
+
+
+def is_reserved_path(path: str) -> bool:
+    """Whether *path* is or reaches into an ``.assets`` payload.
+
+    Such a payload belongs to its document entry and is hidden from the tree,
+    so content landed there by a generic create, move, or upload would be
+    silently disowned.
+
+    >>> is_reserved_path("notes/report.assets/fig1.png")
+    True
+    >>> is_reserved_path("notes/report.md")
+    False
+    """
+    return any(is_assets_dir(part) for part in PurePosixPath(path).parts)
 
 
 _JUNK_FILENAMES = frozenset({".DS_Store", "Thumbs.db", "ehthumbs.db", "desktop.ini"})
@@ -105,39 +287,13 @@ def is_ignorable_path(rel_path: str) -> bool:
     return pure.name in _JUNK_FILENAMES or pure.name.startswith("._")
 
 
-SCRATCH_DIR_NAME = ".scratch"
-"""Directory whose contents are workspace content but never a document."""
-
-
-def is_scratch_path(rel_path: str) -> bool:
-    """Return whether a path lies in a scratch directory.
-
-    The intent-driven half of the seam :func:`is_description_file` describes.
-    A scratch file is ordinary workspace content — readable, writable, and
-    deletable by the same tools as any other — that is deliberately never
-    folded into SQL, so it costs no chunking and leaves no ``documents`` row
-    to disagree with the disk.  Format decides the rest of that seam; this is
-    the one part the caller decides, by where it puts the file.
-
-    >>> is_scratch_path(".scratch/run.json")
-    True
-    >>> is_scratch_path("notes/.scratch/state.csv")
-    True
-    >>> is_scratch_path(".scratch")
-    True
-    >>> is_scratch_path("notes/report.md")
-    False
-    """
-    return SCRATCH_DIR_NAME in PurePosixPath(rel_path).parts
-
-
 def is_description_file(rel_path: str) -> bool:
     """Return whether a workspace-relative path is an ingestable description.
 
-    The scratch-versus-document policy seam: only markdown files map to
+    The content-versus-document policy seam: only markdown files map to
     logical document entries that the reconciler folds into SQL.  Every
-    other on-disk file (originals, store-only assets, and any scratch output
-    a future shell tool produces) is inert workspace content that is kept on
+    other on-disk file (originals, store-only assets, and any output a
+    future shell tool produces) is inert workspace content that is kept on
     disk but never chunked on its own.
 
     >>> is_description_file("docs/report.md")
@@ -211,7 +367,8 @@ def entry_owns(stem_path: str, path: str) -> bool:
     False
     """
     assets_dir = assets_dir_for_stem(stem_path)
-    return path == stem_path or path == assets_dir or path.startswith(f"{assets_dir}/")
+
+    return path in (stem_path, assets_dir) or is_below(path, assets_dir)
 
 
 def asset_ref_for(assets_dir: str, relpath: str) -> str:
@@ -261,7 +418,9 @@ def original_path_for_stem(stem_path: str, original_suffix: str | None) -> str |
     return f"{stem_path}{original_suffix}" if original_suffix is not None else None
 
 
-def find_original_for_stem(workspace_dir: Path, stem_path: str) -> str | None:
+def find_original_for_stem(
+    workspace_dir: Path, stem_path: str, listdir: Listdir = list_names
+) -> str | None:
     """Return the workspace-relative original path for a logical stem.
 
     Takes a raw stem path, not a reference: a stem may itself contain dots
@@ -272,28 +431,28 @@ def find_original_for_stem(workspace_dir: Path, stem_path: str) -> str | None:
     The two name tests run before ``is_file``, which is the only predicate
     that costs a syscall: they reject every entry but the handful sharing the
     stem, so the scan is one directory listing rather than one ``stat`` per
-    file in it.  Read tools reach this now, where a folder of a few thousand
-    documents was paying milliseconds per read to answer ``None``.
+    file in it.  *listdir* lets a caller resolving many stems of one folder
+    list it once.
     """
     stem_pure = PurePosixPath(stem_path)
-    parent_dir = workspace_dir / stem_pure.parent
-    if not parent_dir.exists():
-        return None
-
+    parent = stem_pure.parent
     description = f"{stem_pure.name}{DOCUMENT_EXTENSION}"
     candidates = sorted(
-        candidate
-        for candidate in parent_dir.iterdir()
-        if candidate.name != description
-        and candidate.stem == stem_pure.name
-        and candidate.is_file()
+        name
+        for name in listdir(workspace_dir / parent)
+        if name != description
+        and PurePosixPath(name).stem == stem_pure.name
+        and (workspace_dir / parent / name).is_file()
     )
     if not candidates:
         return None
-    return str(candidates[0].relative_to(workspace_dir).as_posix())
+
+    return str(parent / candidates[0])
 
 
-def resolve_entry_paths(workspace_dir: Path, reference: str) -> EntryPaths:
+def resolve_entry_paths(
+    workspace_dir: Path, reference: str, listdir: Listdir = list_names
+) -> EntryPaths:
     """Resolve logical entry paths from any workspace-relative reference."""
     stem_path = stem_path_from_reference(reference)
     assets_dir = assets_dir_for_stem(stem_path)
@@ -301,7 +460,7 @@ def resolve_entry_paths(workspace_dir: Path, reference: str) -> EntryPaths:
     return EntryPaths(
         stem_path=stem_path,
         description_path=description_path_for_stem(stem_path),
-        original_path=find_original_for_stem(workspace_dir, stem_path),
+        original_path=find_original_for_stem(workspace_dir, stem_path, listdir),
         assets_dir=assets_dir
         if assets_full.exists() and assets_full.is_dir()
         else None,
@@ -321,3 +480,4 @@ def entry_exists(workspace_dir: Path, reference: str) -> bool:
     if resolved.original_path is not None:
         return True
     return resolved.assets_dir is not None
+

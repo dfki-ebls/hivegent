@@ -23,14 +23,18 @@ __all__ = [
     "store_lock",
 ]
 
-_ENTRY_INFLIGHT = Localized(
-    en="Document is already being processed",
-    de="Das Dokument wird bereits verarbeitet",
-)
-_SCOPE_INFLIGHT = Localized(
-    en="A document in this scope is still being processed",
-    de="Ein Dokument in diesem Bereich wird noch verarbeitet",
-)
+def _entry_inflight(path: str) -> Localized[str]:
+    return Localized(
+        en=f"Document is already being processed: {path}",
+        de=f"Das Dokument wird bereits verarbeitet: {path}",
+    )
+
+
+def _scope_inflight(path: str) -> Localized[str]:
+    return Localized(
+        en=f"A document in {path} is still being processed",
+        de=f"Ein Dokument in {path} wird noch verarbeitet",
+    )
 
 
 @dataclass(slots=True)
@@ -128,7 +132,10 @@ def _reject_if_inflight(store: Casebase, reference: str) -> None:
     """
     stem = stem_path_from_reference(reference)
     if any(entry_owns(inflight, stem) for inflight in _state_for(store).stems):
-        raise HTTPException(status_code=409, detail=_ENTRY_INFLIGHT.current)
+        raise HTTPException(
+            status_code=409,
+            detail=_entry_inflight(store.scope.render(reference)).current,
+        )
 
 
 def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
@@ -151,7 +158,27 @@ def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
         prefix is None or s.startswith(f"{prefix}/") or entry_owns(s, prefix)
         for s in state.stems
     ):
-        raise HTTPException(status_code=409, detail=_SCOPE_INFLIGHT.current)
+        raise HTTPException(
+            status_code=409,
+            detail=_scope_inflight(store.scope.render(prefix or "")).current,
+        )
+
+
+@asynccontextmanager
+async def _locked(*stores: Casebase) -> AsyncGenerator[None]:
+    """Hold the locks of every store in *stores* for the block.
+
+    Taken in a stable ``store_key`` order, so two changes spanning the same
+    casebases in opposite directions (a move from the personal workspace into
+    a group and one back) can never deadlock.
+    """
+    unique = {store.store_key: store for store in stores}
+
+    async with AsyncExitStack() as stack:
+        for key in sorted(unique):
+            await stack.enter_async_context(store_lock(unique[key]))
+
+        yield
 
 
 @asynccontextmanager
@@ -160,27 +187,18 @@ async def _locked_for(
     *entries: str,
     scope: str | None = None,
     whole_store: bool = False,
-    dst_store: Casebase | None = None,
-) -> AsyncIterator[None]:
-    """Acquire the casebase lock(s) for a mutation, rejecting in-flight conflicts.
+) -> AsyncGenerator[None]:
+    """Acquire the casebase lock for a mutation, rejecting in-flight conflicts.
 
-    Routing every mutation's lock acquisition through here makes the in-flight
-    check impossible to forget: pass the entry references a single-document op
-    touches, ``scope`` for a directory subtree it removes or moves, or
-    ``whole_store`` for a store-wide wipe.  A conflicting phased upload (or a
-    bulk import claiming the store) is rejected with 409 so the op can never
-    strip files out from under a pending commit.
-
-    A move may span two casebases: *dst_store* adds the destination's lock,
-    taken together with the source's in a stable ``store_key`` order so two
-    moves in opposite directions can never deadlock.  Conflicts are always
-    rejected on *store*, the source, since that is the side whose files move;
-    holding the destination lock serialises against its concurrent mutations.
+    Routing every single-store mutation's lock acquisition through here makes
+    the in-flight check impossible to forget: pass the entry references a
+    single-document op touches, ``scope`` for a directory subtree it removes,
+    or ``whole_store`` for a store-wide wipe.  A conflicting phased upload (or
+    a bulk import claiming the store) is rejected with 409 so the op can never
+    strip files out from under a pending commit.  A change spanning several
+    casebases takes :func:`_locked` and checks each item itself.
     """
-    targets = {s.store_key: s for s in (store, dst_store) if s is not None}
-    async with AsyncExitStack() as stack:
-        for target in sorted(targets.values(), key=lambda s: s.store_key):
-            await stack.enter_async_context(store_lock(target))
+    async with _locked(store):
         for entry in entries:
             _reject_if_inflight(store, entry)
         if whole_store or scope is not None:

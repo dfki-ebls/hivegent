@@ -16,7 +16,7 @@ import { toast } from "sonner";
 
 import { i18n, isCatalogKey, keyPrefix } from "@/i18n";
 import { settings } from "@/i18n/locales/en/settings";
-import { clearMemory, clearScratch, listTools, type McpTestResult, testMcpServer } from "@/lib/api";
+import { clearMemory, clearTmp, listTools, type McpTestResult, testMcpServer } from "@/lib/api";
 import { featureFlags } from "@/lib/feature-flags";
 import {
   type McpOAuth2Config,
@@ -117,13 +117,13 @@ function ConfirmButton({ icon, label, title, description, onConfirm }: ConfirmBu
 }
 
 /**
- * Clear the parked scratch files, reporting what the sweep removed. Scratch is
- * hidden from the document tree, so the count is the only evidence the press
- * did anything.
+ * Clear the conversations' temporary files, reporting how many went. They live
+ * outside the document tree, so the count is the only evidence the press did
+ * anything.
  */
-async function clearScratchFiles() {
-  const { files_removed } = await clearScratch();
-  toast.success(i18n.t(($) => $.settings.dialog.clearScratch.done, { count: files_removed }));
+async function clearTmpFiles() {
+  const { files_removed } = await clearTmp();
+  toast.success(i18n.t(($) => $.settings.dialog.clearTmp.done, { count: files_removed }));
 }
 
 // --- Auth mode types ---
@@ -601,10 +601,10 @@ export function SettingsDialog() {
             />
             <ConfirmButton
               icon={<EraserIcon />}
-              label={t(($) => $.clearScratch.label)}
-              title={t(($) => $.clearScratch.title)}
-              description={t(($) => $.clearScratch.description)}
-              onConfirm={clearScratchFiles}
+              label={t(($) => $.clearTmp.label)}
+              title={t(($) => $.clearTmp.title)}
+              description={t(($) => $.clearTmp.description)}
+              onConfirm={clearTmpFiles}
             />
           </div>
           {featureFlags.llmSpec && (

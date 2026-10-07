@@ -8,6 +8,7 @@ the filesystem to resolve URLs to bytes.  Mutations live in
 import asyncio
 import logging
 import mimetypes
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
@@ -22,12 +23,13 @@ from ...store import Casebase
 from ...text import read_text_file
 from ...types import AssetEntry, AssetListResponse
 from ...workspace import resolve_entry
-from ...workspace.paths import DOCUMENT_NOT_FOUND, no_original
+from ...workspace.paths import document_not_found, no_original
 
 __all__ = [
     "attachment_disposition",
     "find_original",
     "get_document_response",
+    "get_file_response",
     "list_assets",
 ]
 
@@ -62,33 +64,40 @@ def attachment_disposition(filename: str) -> str:
 
 
 async def get_document_response(store: Casebase, safe: str) -> Response:
-    """Return the raw content of a document or asset as an HTTP response.
+    """Return the raw content of a document or asset as an HTTP response."""
+    return await get_file_response(
+        lambda: store.workspace_dir(settings.data_dir) / safe, store.scope.render(safe)
+    )
 
-    Non-text responses force ``Content-Disposition: attachment`` so a user
-    who pastes the URL into a browser tab cannot execute attacker-uploaded
-    SVG/HTML in the app's same-origin context.
+
+async def get_file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
+    """Resolve and read a file in one worker thread, as text or a downloadable attachment.
+
+    *resolve* returns ``None`` for a path the caller may not read.  Non-text
+    responses force ``Content-Disposition: attachment`` so a user who pastes
+    the URL into a browser tab cannot execute attacker-uploaded SVG/HTML in
+    the app's same-origin context.
     """
-    workspace = store.workspace_dir(settings.data_dir)
-    file_path = workspace / safe
+    return await asyncio.to_thread(_file_response, resolve, shown)
+
+
+def _file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
+    file_path = resolve()
+
+    if file_path is None or not file_path.exists():
+        raise HTTPException(status_code=404, detail=document_not_found(shown).current)
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=400, detail=_NOT_A_FILE.current)
+
     media_type = mimetypes.guess_type(file_path.name)[0]
 
     if not media_type or media_type.startswith("text/"):
-        try:
-            decoded = await asyncio.to_thread(read_text_file, file_path)
-        except FileNotFoundError as exc:
-            raise HTTPException(
-                status_code=404, detail=DOCUMENT_NOT_FOUND.current
-            ) from exc
-        except IsADirectoryError as exc:
-            raise HTTPException(status_code=400, detail=_NOT_A_FILE.current) from exc
+        decoded = read_text_file(file_path)
+
         # Undecodable content falls through to the attachment response below.
         if decoded is not None:
             return PlainTextResponse(decoded.text)
-
-    if not file_path.is_file():
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail=DOCUMENT_NOT_FOUND.current)
-        raise HTTPException(status_code=400, detail=_NOT_A_FILE.current)
 
     return FileResponse(
         path=file_path,

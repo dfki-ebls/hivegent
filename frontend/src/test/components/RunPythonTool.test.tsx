@@ -1,29 +1,72 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { RunPythonTool } from "@/components/chat/tools/run-python";
-import { ToolApprovalProvider } from "@/hooks/chat/use-tool-approval";
+import { ConversationIdProvider } from "@/hooks/chat/use-conversation-id";
+import { getDocumentContent } from "@/lib/api";
 import type { ToolPart } from "@/lib/chat/tool-part";
 
+vi.mock("@/lib/api", () => ({ getDocumentContent: vi.fn<typeof getDocumentContent>() }));
+
+const finished: ToolPart = {
+  type: "tool-run_python",
+  toolCallId: "call-1",
+  state: "output-available",
+  input: { script_path: "/tmp/report.py" },
+  output: "",
+};
+
+function renderResult(changeset: unknown) {
+  const result = { result: null, stdout: "", truncated: false, script_path: null, changeset };
+  render(<RunPythonTool part={finished} metadata={result} />);
+  fireEvent.click(screen.getByText(/Run Python/));
+}
+
 describe("RunPythonTool", () => {
-  it("names the document a program asks to save and offers its stored source", () => {
-    const part = {
-      type: "tool-run_python",
-      toolCallId: "call-1",
-      state: "approval-requested",
-      input: { script_path: "~/.scratch/report.py", commit_path: "~/report.md" },
-      approval: { id: "call-1" },
-    } as ToolPart;
+  it("waits for a persisted conversation before offering temporary source access", () => {
+    renderResult(null);
 
+    expect(screen.getByRole("button", { name: "View source" })).toHaveProperty("disabled", true);
+  });
+
+  it("loads temporary source with the conversation that owns it", async () => {
+    vi.mocked(getDocumentContent).mockResolvedValue("print(1)");
     render(
-      <ToolApprovalProvider value={{ decide: vi.fn<(id: string, approved: boolean) => void>() }}>
-        <RunPythonTool part={part} metadata={null} />
-      </ToolApprovalProvider>,
+      <ConversationIdProvider value="c1">
+        <RunPythonTool part={finished} metadata={null} />
+      </ConversationIdProvider>,
     );
+    fireEvent.click(screen.getByText(/Run Python/));
+    fireEvent.click(screen.getByRole("button", { name: "View source" }));
 
-    expect(screen.getByText(/Allow this program to create or replace/)).toBeTruthy();
-    expect(screen.getAllByText("~/report.md").length).toBeGreaterThan(0);
+    expect(await screen.findByText("print(1)")).toBeTruthy();
+    expect(getDocumentContent).toHaveBeenCalledWith("/tmp/report.py", "c1");
+  });
+
+  it("lists the changes a program staged, marking folders, and offers its stored source", () => {
+    renderResult({
+      status: "pending",
+      changeset_id: "abc",
+      summary: {
+        creates: [{ path: "~/summary.md", diff: "--- /dev/null\n+++ ~/summary.md\n+done\n" }],
+        updates: [],
+        moves: [{ source: "~/inbox", destination: "~/archive", is_dir: true, replaces: false }],
+        deletes: ["~/stale.md"],
+        mkdirs: [],
+      },
+    });
+
+    expect(screen.getByText(/Staged 3 changes/)).toBeTruthy();
+    expect(screen.getByText("~/archive")).toBeTruthy();
+    expect(screen.getByText("Folder")).toBeTruthy();
+    expect(screen.getByText("~/stale.md")).toBeTruthy();
     expect(screen.getByRole("button", { name: "View source" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+  });
+
+  it("reports the changes a program applied at once", () => {
+    renderResult({ status: "applied", reports: ["Wrote /tmp/a.md", "Deleted /tmp/b.md"] });
+
+    expect(screen.getByText(/Applied 2 changes/)).toBeTruthy();
+    expect(screen.getByText(/Deleted \/tmp\/b\.md/)).toBeTruthy();
   });
 
   it.each([false, true])(
@@ -34,7 +77,7 @@ describe("RunPythonTool", () => {
         toolCallId: "call-1",
         state: "output-error",
         input: undefined,
-        rawInput: JSON.stringify({ code: " ", script_path: null, commit_path: "~/rezepte.json" }),
+        rawInput: JSON.stringify({ code: " ", script_path: null }),
         errorText: "The program is empty.",
         approval: approved ? { id: "call-1", approved: true } : undefined,
       };
@@ -43,7 +86,6 @@ describe("RunPythonTool", () => {
       fireEvent.click(screen.getByText("Run Python"));
 
       expect(screen.getByText("No Python code or script path was provided.")).toBeTruthy();
-      expect(screen.getByText("~/rezepte.json")).toBeTruthy();
       expect(screen.getByText("The program is empty.")).toBeTruthy();
 
       expect(screen.queryByRole("alert")?.textContent ?? null).toBe(approved ? "Approved" : null);

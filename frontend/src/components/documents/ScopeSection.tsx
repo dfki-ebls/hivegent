@@ -13,7 +13,7 @@ import {
 import { DROP_CLASSES, registerTreeRow, type TreeDropState, type TreeItemDrag } from "@/lib/dnd";
 import type { PipelineSpec } from "@/lib/types";
 import { downloadBlob } from "@/lib/download";
-import { basename, cn, collectFilePaths, commonParentDir } from "@/lib/utils";
+import { cn, collectFilePaths, commonParentDir } from "@/lib/utils";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "@/stores/documents-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -83,8 +83,6 @@ export function ScopeSection({
   const storeBulkRechunk = useDocumentsStore((s) => s.bulkRechunk);
   const storeBulkReconvert = useDocumentsStore((s) => s.bulkReconvert);
   const storeMove = useDocumentsStore((s) => s.move);
-  const storeMoveDir = useDocumentsStore((s) => s.moveDir);
-  const storeBulkMove = useDocumentsStore((s) => s.bulkMove);
   const clearError = useDocumentsStore((s) => s.clearError);
   const overrides = useSettingsStore((s) => s.overrides);
   const included = useDocumentFilterStore((s) => s.included);
@@ -228,27 +226,15 @@ export function ScopeSection({
     ],
   );
 
-  // Resolve a dragged selection into store moves. The drag originates in
-  // `drag.scope` and lands in this section's `scope` — the same workspace for an
-  // in-place move, a different one when migrating between the personal and a
-  // shared space (the drop only fires for a valid move). A single file or
-  // directory keeps its name under the destination, while a multi-file drag
-  // preserves its structure relative to the selection's common parent — the
-  // shape the bulk endpoint expects.
+  // Resolve a dragged row or selection into one store move. The drag originates
+  // in `drag.scope` and lands in this section's `scope`, the same workspace for
+  // an in-place move, a different one when migrating between the personal and a
+  // shared space (the drop only fires for a valid move). The dragged paths keep
+  // their structure relative to their common parent, so a single file or
+  // directory keeps its name under the destination.
   const handleMoveInto = useCallback(
     (drag: TreeItemDrag, destDir: string) => {
       const into = (suffix: string) => (destDir ? `${destDir}/${suffix}` : suffix);
-
-      if (drag.kind === "directory") {
-        void storeMoveDir(drag.scope, drag.paths[0], scope, into(basename(drag.paths[0])));
-        return;
-      }
-
-      if (drag.paths.length === 1) {
-        void storeMove(drag.scope, drag.paths[0], scope, into(basename(drag.paths[0])));
-        return;
-      }
-
       const commonParent = commonParentDir(drag.paths);
       const sameScope = drag.scope === scope;
       const moves = drag.paths
@@ -256,10 +242,11 @@ export function ScopeSection({
         // Within one workspace a same-path entry is a no-op; across workspaces
         // it still re-homes the entry, so keep it.
         .filter(({ source, destination }) => !sameScope || destination !== source);
-      clearSelection();
-      if (moves.length > 0) void storeBulkMove(drag.scope, scope, moves);
+
+      if (drag.paths.length > 1) clearSelection();
+      if (moves.length > 0) void storeMove(drag.scope, scope, moves);
     },
-    [scope, storeMove, storeMoveDir, storeBulkMove, clearSelection],
+    [scope, storeMove, clearSelection],
   );
 
   const handleArm = useCallback(

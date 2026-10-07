@@ -1,5 +1,6 @@
 """Unit tests for shared tool classes and ToolFactory."""
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
@@ -9,21 +10,38 @@ from typing import Any
 
 import pytest
 from fastapi import HTTPException
+from pydantic import TypeAdapter
 from pydantic_monty import AsyncMonty
 
-from hivegent.config import content_hash
+from hivegent.changes import (
+    Changeset,
+    ChangesetSummary,
+    Delete,
+    Edit,
+    Move,
+    TextEdit,
+    Write,
+)
 from hivegent.converters import VISION_MEDIA_TYPES
+from hivegent.multimodal import BinaryContentMode
 from hivegent.store import WorkspaceScope
 from hivegent.tools import binary, workspace_os
 from hivegent.tools.base import (
+    Batch,
+    BatchShare,
+    ItemFailure,
     SearchPath,
+    ToolOutput,
     ToolRetry,
     resolve_accessible_file,
+    run_batch,
     scope_paths,
 )
-from hivegent.tools.binary import ReadBinaryDocumentTool
+from hivegent.tools.binary import BinaryRead, ReadBinaryDocumentTool
+from hivegent.tools.changeset import ChangesetOutcome, PendingChanges
 from hivegent.tools.documents import (
     DocumentRange,
+    DocumentRead,
     DocumentSummary,
     DocumentTreeNode,
     GlobDocumentsTool,
@@ -33,16 +51,17 @@ from hivegent.tools.documents import (
 from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
 from hivegent.tools.jq import JqResult, JqTool
 from hivegent.tools.mutations import (
-    DeleteDocumentTool,
+    DeleteDocumentsTool,
+    DocumentMove,
     EditDocumentTool,
-    MoveDocumentTool,
+    MoveDocumentsTool,
     WriteDocumentTool,
 )
 from hivegent.tools.python import PythonResult, RunPythonTool
 from hivegent.tools.sink import OutputSink, RedirectedOutput
 from hivegent.tools.table import QueryTableTool
 from hivegent.types import DocumentFilter
-from tests.helpers import returned
+from tests.helpers import LIMITS, returned, single
 
 
 def _as_summaries(
@@ -134,7 +153,7 @@ class TestPathCanonicalization:
         tool = GlobDocumentsTool(paths=(self._scoped(tmp_path),))
 
         with pytest.raises(ToolRetry, match="does not exist"):
-            await tool("*.md", path="~/sub/..")
+            await tool(["*.md"], path="~/sub/..")
 
     async def test_listing_subdirectory_cannot_escape_workspace(
         self, tmp_path: Path
@@ -192,7 +211,7 @@ class TestListDocumentsTool:
         paths = (SearchPath(path=tmp_path, scope=WorkspaceScope()),)
 
         data = _as_summaries((await ListDocumentsTool(paths=paths)(path=path)).data)
-        matches = (await GlobDocumentsTool(paths=paths)("*.md", path=path)).data
+        matches = (await GlobDocumentsTool(paths=paths)(["*.md"], path=path)).data
 
         assert [entry.filename for entry in data] == ["~/a.md"]
         assert matches == ["~/a.md"]
@@ -520,19 +539,19 @@ class TestGlobDocumentsTool:
         (tmp_path / "notes.md").write_text("a")
         (tmp_path / "readme.md").write_text("b")
         tool = GlobDocumentsTool(paths=tmp_path, glob="*.md")
-        assert (await tool("note*")).data == ["notes.md"]
+        assert (await tool(["note*"])).data == ["notes.md"]
 
     async def test_custom_base_glob(self, tmp_path: Path) -> None:
         (tmp_path / "data.txt").write_text("a")
         (tmp_path / "data.md").write_text("b")
         tool = GlobDocumentsTool(paths=tmp_path, glob="*.txt")
-        assert (await tool("*")).data == ["data.txt"]
+        assert (await tool(["*"])).data == ["data.txt"]
 
     async def test_none_base_matches_all(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("a")
         (tmp_path / "b.txt").write_text("b")
         tool = GlobDocumentsTool(paths=tmp_path)
-        data = (await tool("*")).data
+        data = (await tool(["*"])).data
         assert isinstance(data, list)
         assert set(data) == {"a.md", "b.txt"}
 
@@ -549,7 +568,7 @@ class TestGlobDocumentsTool:
                 SearchPath(path=group_dir, scope=WorkspaceScope("team")),
             )
         )
-        data = (await tool("*.md")).data
+        data = (await tool(["*.md"])).data
         assert isinstance(data, list)
         assert set(data) == {"a.md", "@team/b.md"}
 
@@ -566,15 +585,27 @@ class TestGlobDocumentsTool:
                 SearchPath(path=group_dir, scope=WorkspaceScope("team")),
             )
         )
-        assert (await tool("*.md", path="~")).data == ["~/a.md"]
+        assert (await tool(["*.md"], path="~")).data == ["~/a.md"]
 
     async def test_max_results(self, tmp_path: Path) -> None:
         for i in range(10):
             (tmp_path / f"f{i}.txt").write_text(str(i))
         tool = GlobDocumentsTool(paths=tmp_path)
-        data = (await tool("*.txt", max_results=3)).data
+        data = (await tool(["*.txt"], max_results=3)).data
         assert isinstance(data, list)
         assert len(data) == 3
+
+    async def test_patterns_are_unioned_and_each_file_listed_once(
+        self, tmp_path: Path
+    ) -> None:
+        for name in ("a.md", "b.txt", "c.csv"):
+            (tmp_path / name).write_text(name)
+
+        tool = GlobDocumentsTool(paths=tmp_path)
+
+        data = (await tool(["*.md", "*.txt", "a.*"])).data
+
+        assert data == ["a.md", "b.txt"]
 
     async def test_subdir_scoping(self, tmp_path: Path) -> None:
         notes = tmp_path / "notes"
@@ -582,7 +613,7 @@ class TestGlobDocumentsTool:
         (notes / "a.md").write_text("a")
         (tmp_path / "top.md").write_text("top")
         tool = GlobDocumentsTool(paths=tmp_path)
-        data = (await tool("*.md", path="notes")).data
+        data = (await tool(["*.md"], path="notes")).data
         assert data == ["notes/a.md"]
 
 
@@ -592,7 +623,7 @@ class TestReadDocumentTool:
     async def test_reads_file(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("content here")
         tool = ReadDocumentTool(paths=tmp_path)
-        result = (await tool("doc.md")).data
+        result = single((await tool([DocumentRead("doc.md")])).data)
         assert isinstance(result, DocumentRange)
         assert result.content == "content here"
         assert result.start_line == 1
@@ -610,7 +641,7 @@ class TestReadDocumentTool:
         # spellings out would compare NFC with NFC and assert nothing.
         (tmp_path / "S\u00dcVOA.md").write_text("content here")
         tool = ReadDocumentTool(paths=tmp_path)
-        result = (await tool("SU\u0308VOA.md")).data
+        result = single((await tool([DocumentRead("SU\u0308VOA.md")])).data)
         assert isinstance(result, DocumentRange)
         assert result.content == "content here"
 
@@ -624,7 +655,7 @@ class TestReadDocumentTool:
         (tmp_path / "report.md").write_text("extracted text")
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="report.md"):
-            await tool("report.docx")
+            await tool([DocumentRead("report.docx")])
 
     async def test_projection_of_a_table_names_query_table(
         self, tmp_path: Path
@@ -636,7 +667,7 @@ class TestReadDocumentTool:
         (tmp_path / "lab.md").write_text("| a | b |\n|---|---|\n| 1 | 2 |")
         tool = ReadDocumentTool(paths=SearchPath(path=tmp_path, scope=WorkspaceScope()))
 
-        result = await tool("~/lab.md")
+        result = await tool([DocumentRead("~/lab.md")])
 
         assert result.formatted is not None
         assert "query_table" in result.formatted
@@ -646,7 +677,7 @@ class TestReadDocumentTool:
         (tmp_path / "notes.md").write_text("prose")
         tool = ReadDocumentTool(paths=tmp_path)
 
-        result = await tool("notes.md")
+        result = await tool([DocumentRead("notes.md")])
 
         assert result.formatted is not None
         assert "query_table" not in result.formatted
@@ -661,7 +692,7 @@ class TestReadDocumentTool:
         tool = ReadDocumentTool(paths=tmp_path)
 
         with pytest.raises(ToolRetry, match=r"query_table.*'lab\.md'"):
-            await tool("lab.xlsx")
+            await tool([DocumentRead("lab.xlsx")])
 
     @pytest.mark.parametrize("suffix", sorted(VISION_MEDIA_TYPES))
     async def test_supported_binary_directs_to_binary_tool(
@@ -674,7 +705,7 @@ class TestReadDocumentTool:
         (tmp_path / f"scan{suffix}").write_text("text wearing a binary extension")
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="read_binary_document"):
-            await tool(f"scan{suffix}")
+            await tool([DocumentRead(f"scan{suffix}")])
 
     async def test_binary_tool_points_unshowable_input_at_its_sidecar(
         self, tmp_path: Path
@@ -685,7 +716,7 @@ class TestReadDocumentTool:
         (tmp_path / "report.docx").write_bytes(b"PK\x03\x04\xec\xec binary")
         tool = ReadBinaryDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="report.md"):
-            await tool("report.docx")
+            await tool([BinaryRead("report.docx")])
 
     async def test_binary_tool_preserves_scope_in_sidecar_hint(
         self, tmp_path: Path
@@ -698,7 +729,7 @@ class TestReadDocumentTool:
         )
 
         with pytest.raises(ToolRetry, match=r"@team/report\.md"):
-            await tool("@team/report.docx")
+            await tool([BinaryRead("@team/report.docx")])
 
     async def test_binary_tool_bounds_pdf_pages_by_the_image_cap(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -722,9 +753,49 @@ class TestReadDocumentTool:
         tool = ReadBinaryDocumentTool(paths=tmp_path, max_images=2)
 
         with pytest.raises(ToolRetry, match="narrow with pages="):
-            await tool("report.pdf")
+            await tool([BinaryRead("report.pdf")])
 
         assert seen == [2]
+
+        # Two files share the cap, so each is bounded by its share of it.
+        (tmp_path / "other.pdf").write_bytes(b"%PDF-1.4\n")
+        seen.clear()
+        tool = ReadBinaryDocumentTool(paths=tmp_path, max_images=3)
+
+        with pytest.raises(ToolRetry, match="Every item failed"):
+            await tool([BinaryRead("report.pdf"), BinaryRead("other.pdf")])
+
+        assert sorted(seen) == [1, 2]
+
+    async def test_native_pdfs_do_not_spend_the_image_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for name in ("a.pdf", "b.pdf", "c.gif"):
+            (tmp_path / name).write_bytes(b"content")
+
+        seen: list[int | None] = []
+
+        async def sample(
+            _tool: ReadBinaryDocumentTool,
+            canonical: str,
+            raw: bytes,
+            media_type: str,
+            cap: int | None,
+        ) -> ToolOutput[binary.BinaryReadResult]:
+            seen.append(cap)
+
+            return ToolOutput(binary.BinaryReadResult(canonical, media_type, len(raw)))
+
+        monkeypatch.setattr(binary, "animation_frame_count", lambda *_: 2)
+        monkeypatch.setattr(ReadBinaryDocumentTool, "_read_animation", sample)
+        tool = ReadBinaryDocumentTool(
+            paths=tmp_path, binary_content_mode=BinaryContentMode.NATIVE, max_images=1
+        )
+
+        result = await tool([BinaryRead("a.pdf"), BinaryRead("b.pdf"), BinaryRead("c.gif")])
+
+        assert [a.media_type for a in result.attachments] == ["application/pdf"] * 2
+        assert seen == [1]
 
     async def test_binary_without_companion_retries(self, tmp_path: Path) -> None:
         # Undecodable bytes become a recoverable ToolRetry, never a run-aborting
@@ -732,7 +803,7 @@ class TestReadDocumentTool:
         (tmp_path / "blob.bin").write_bytes(b"\x89PNG\r\n\x1a\n\xec\xec\xff\xfe")
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not text"):
-            await tool("blob.bin")
+            await tool([DocumentRead("blob.bin")])
 
     async def test_legacy_encoding_is_decoded_and_reported(
         self, tmp_path: Path
@@ -743,22 +814,22 @@ class TestReadDocumentTool:
         (tmp_path / "settings.ini").write_bytes("Benutzer = Jörg\n".encode("utf-16"))
         tool = ReadDocumentTool(paths=tmp_path)
 
-        result = await tool("settings.ini")
+        result = await tool([DocumentRead("settings.ini")])
 
-        assert isinstance(result.data, DocumentRange)
-        assert result.data.content == "Benutzer = Jörg"
+        assert isinstance(single(result.data), DocumentRange)
+        assert single(result.data).content == "Benutzer = Jörg"
         assert result.formatted is not None
         assert "decoded from utf-16" in result.formatted
 
     async def test_rejects_nonexistent(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
-            await tool("missing.md")
+            await tool([DocumentRead("missing.md")])
 
     async def test_rejects_path_traversal(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
-            await tool("../../../etc/passwd")
+            await tool([DocumentRead("../../../etc/passwd")])
 
     async def test_rejects_a_directory_as_a_directory(self, tmp_path: Path) -> None:
         # A selected folder reaches the model as a path like any other, so it
@@ -768,7 +839,7 @@ class TestReadDocumentTool:
         tool = ReadDocumentTool(paths=tmp_path)
 
         with pytest.raises(ToolRetry, match="is a directory.*list_documents"):
-            await tool("reports/")
+            await tool([DocumentRead("reports/")])
 
     async def test_reads_group_document(self, tmp_path: Path) -> None:
         group_dir = tmp_path / "group"
@@ -780,19 +851,19 @@ class TestReadDocumentTool:
                 SearchPath(path=group_dir, scope=WorkspaceScope("team")),
             )
         )
-        result = (await tool("@team/doc.md")).data
+        result = single((await tool([DocumentRead("@team/doc.md")])).data)
         assert isinstance(result, DocumentRange)
         assert result.content == "group content"
 
     async def test_rejects_unknown_prefix(self, tmp_path: Path) -> None:
         tool = ReadDocumentTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
-            await tool("@unknown/doc.md")
+            await tool([DocumentRead("@unknown/doc.md")])
 
     async def test_formatted_always_includes_line_numbers(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("alpha\nbeta")
         tool = ReadDocumentTool(paths=tmp_path)
-        formatted = (await tool("doc.md")).formatted
+        formatted = (await tool([DocumentRead("doc.md")])).formatted
         assert formatted is not None
         assert "1: alpha" in formatted
         assert "2: beta" in formatted
@@ -801,7 +872,7 @@ class TestReadDocumentTool:
         content = "x" * 200
         (tmp_path / "big.md").write_text(content)
         tool = ReadDocumentTool(paths=tmp_path, max_chars=50)
-        result = (await tool("big.md")).data
+        result = single((await tool([DocumentRead("big.md")])).data)
         assert isinstance(result, DocumentRange)
         # Single 200-char line fits in the window so it's kept whole;
         # but a longer file with multiple lines would get clipped.
@@ -811,7 +882,7 @@ class TestReadDocumentTool:
         lines = ["y" * 50 for _ in range(10)]
         (tmp_path / "big.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path, max_chars=120)
-        result = (await tool("big.md")).data
+        result = single((await tool([DocumentRead("big.md")])).data)
         assert isinstance(result, DocumentRange)
         # 120-char budget fits ~2 lines (each 50 + newline = 51 chars).
         assert result.end_line < result.total_lines
@@ -823,19 +894,19 @@ class TestReadDocumentTool:
         long_line = "data:image/png;base64," + "A" * 500_000
         (tmp_path / "img.md").write_text(f"{long_line}\ntail")
         tool = ReadDocumentTool(paths=tmp_path, max_line_chars=80)
-        out = await tool("img.md")
+        out = await tool([DocumentRead("img.md")])
         assert out.formatted is not None
         assert "…" in out.formatted
         assert len(max(out.formatted.splitlines(), key=len)) < 200
-        assert isinstance(out.data, DocumentRange)
-        assert long_line in out.data.content
+        assert isinstance(single(out.data), DocumentRange)
+        assert long_line in single(out.data).content
 
     async def test_tabular_file_is_pointed_at_query_table(self, tmp_path: Path) -> None:
         # The one moment the caller finds out a line read was the wrong tool
         # for this file is when it reads one, so the read says so.
         (tmp_path / "sales.csv").write_text("region,amount\nEU,100")
         tool = ReadDocumentTool(paths=tmp_path)
-        formatted = (await tool("sales.csv")).formatted
+        formatted = (await tool([DocumentRead("sales.csv")])).formatted
 
         assert formatted is not None
         assert "query_table" in formatted
@@ -850,12 +921,12 @@ class TestReadDocumentTool:
         (tmp_path / "table.md").write_text(row)
         tool = ReadDocumentTool(paths=tmp_path, max_line_chars=80)
 
-        clipped = (await tool("table.md")).formatted
+        clipped = (await tool([DocumentRead("table.md")])).formatted
         assert clipped is not None
         assert "full_lines=true" in clipped
         assert "col199" not in clipped
 
-        whole = (await tool("table.md", full_lines=True)).formatted
+        whole = (await tool([DocumentRead("table.md")], full_lines=True)).formatted
         assert whole is not None
         assert "col199" in whole
         assert "full_lines=true" not in whole
@@ -870,11 +941,11 @@ class TestReadDocumentTool:
         # can still resume from the last line actually shown.
         (tmp_path / "doc.md").write_text("\n".join(f"line{i}" for i in range(100)))
         tool = ReadDocumentTool(paths=tmp_path, max_formatted_chars=40)
-        out = await tool("doc.md")
+        out = await tool([DocumentRead("doc.md")])
 
-        assert isinstance(out.data, DocumentRange)
-        assert out.data.end_line == 100
-        assert out.data.content.splitlines() == [f"line{i}" for i in range(100)]
+        assert isinstance(single(out.data), DocumentRange)
+        assert single(out.data).end_line == 100
+        assert single(out.data).content.splitlines() == [f"line{i}" for i in range(100)]
         assert out.formatted is not None
 
         shown = re.search(r"the text above stops at line (\d+)", out.formatted)
@@ -882,13 +953,30 @@ class TestReadDocumentTool:
         assert 0 < int(shown[1]) < 100
         assert f"offset={int(shown[1]) + 1}" in out.formatted
 
+    async def test_reads_several_documents_each_under_its_own_key(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.md").write_text("\n".join(f"a{i}" for i in range(10)))
+        tool = ReadDocumentTool(paths=tmp_path)
+
+        out = await returned(
+            tool([DocumentRead("a.md", offset=3, limit=2), DocumentRead("b.md")])
+        )
+
+        first, second = out.data
+        assert isinstance(first, DocumentRange)
+        assert (first.file_path, first.content) == ("a.md", "a2\na3")
+        assert second == ItemFailure("b.md", "'b.md' not found.")
+        assert "==> a.md (offset=3, limit=2) <==" in out.text
+        assert "offset=5" in out.text
+
     # --- offset / limit tests ---
 
     async def test_correct_range(self, tmp_path: Path) -> None:
         lines = ["line1", "line2", "line3", "line4", "line5"]
         (tmp_path / "doc.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path)
-        result = (await tool("doc.md", offset=2, limit=3)).data
+        result = single((await tool([DocumentRead("doc.md", offset=2, limit=3)])).data)
         assert isinstance(result, DocumentRange)
         assert result.start_line == 2
         assert result.end_line == 4
@@ -898,7 +986,7 @@ class TestReadDocumentTool:
     async def test_defaults_to_full_file_when_small(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("a\nb\nc")
         tool = ReadDocumentTool(paths=tmp_path)
-        result = (await tool("doc.md")).data
+        result = single((await tool([DocumentRead("doc.md")])).data)
         assert isinstance(result, DocumentRange)
         assert result.start_line == 1
         assert result.end_line == 3
@@ -907,7 +995,7 @@ class TestReadDocumentTool:
     async def test_offset_without_limit(self, tmp_path: Path) -> None:
         (tmp_path / "doc.md").write_text("a\nb\nc")
         tool = ReadDocumentTool(paths=tmp_path)
-        result = (await tool("doc.md", offset=2)).data
+        result = single((await tool([DocumentRead("doc.md", offset=2)])).data)
         assert isinstance(result, DocumentRange)
         assert result.start_line == 2
         assert result.end_line == 3
@@ -917,7 +1005,7 @@ class TestReadDocumentTool:
         lines = [f"line{i}" for i in range(5000)]
         (tmp_path / "big.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path)
-        result = (await tool("big.md")).data
+        result = single((await tool([DocumentRead("big.md")])).data)
         assert isinstance(result, DocumentRange)
         assert result.start_line == 1
         assert result.end_line == 2000
@@ -927,7 +1015,7 @@ class TestReadDocumentTool:
         lines = [f"line{i}" for i in range(100)]
         (tmp_path / "doc.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path, default_lines=10)
-        result = (await tool("doc.md")).data
+        result = single((await tool([DocumentRead("doc.md")])).data)
         assert isinstance(result, DocumentRange)
         assert result.end_line == 10
 
@@ -935,107 +1023,130 @@ class TestReadDocumentTool:
         lines = [f"line{i}" for i in range(100)]
         (tmp_path / "doc.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path, default_lines=10)
-        formatted = (await tool("doc.md")).formatted
+        formatted = (await tool([DocumentRead("doc.md")])).formatted
         assert formatted is not None
         assert "more lines" in formatted
         assert "offset=11" in formatted
 
 
-class TestEditDocumentTool:
-    """The tool resolves and access-checks the path, then delegates to its mutator.
+class TestRunBatch:
+    """The list-first contract every batched tool is built on."""
 
-    The edit algorithm itself lives in ``workspace.edit_document_text`` and is
-    covered by ``TestEditDocumentText``.
+    @staticmethod
+    async def _serve(item: str, share: BatchShare) -> ToolOutput[str]:
+        """Refuse a `bad` item, and finish the first item last."""
+        await asyncio.sleep(0.01 if share.index == 0 else 0)
+
+        if item.startswith("bad"):
+            raise ToolRetry(f"{item} refused")
+
+        return ToolOutput(data=f"{item}:{share.of(10)}")
+
+    async def test_dedupes_and_keeps_request_order_with_split_budgets(self) -> None:
+        out = await run_batch(["c", "a", "c", "b"], self._serve, key=str, concurrency=3)
+
+        assert out.data == ("c:4", "a:3", "b:3")
+        assert out.text == "==> c <==\nc:4\n\n==> a <==\na:3\n\n==> b <==\nb:3"
+
+    async def test_a_failed_item_is_reported_in_place(self) -> None:
+        out = await run_batch(["bad", "a"], self._serve, key=str)
+
+        assert out.data == (ItemFailure("bad", "bad refused"), "a:5")
+        assert "==> bad <==\nfailed: bad refused" in out.text
+        assert TypeAdapter(Batch[str]).dump_python(out.data, mode="json") == [
+            {"item": "bad", "reason": "bad refused", "kind": "failure"},
+            "a:5",
+        ]
+
+    async def test_only_a_batch_with_every_item_failed_is_refused(self) -> None:
+        with pytest.raises(ToolRetry, match="^bad refused$"):
+            await run_batch(["bad"], self._serve, key=str)
+
+        with pytest.raises(ToolRetry, match="Every item failed:\n- bad1: bad1"):
+            await run_batch(["bad1", "bad2"], self._serve, key=str)
+
+
+class TestEditDocumentTool:
+    """The tool resolves and access-checks the path, then commits one edit.
+
+    The edit algorithm itself lives in the changeset gateway and is covered by
+    ``TestEditDocumentText``.
     """
 
-    async def test_delegates_to_mutator(self, tmp_path: Path) -> None:
-        calls: list[tuple[str, str, str, bool, str | None]] = []
+    async def test_commits_every_edit_as_one(self, tmp_path: Path) -> None:
+        calls: list[Changeset[str]] = []
 
-        async def _mutate(
-            filename: str,
-            old_string: str,
-            new_string: str,
-            replace_all: bool,
-            expected_hash: str | None,
-        ) -> str:
-            calls.append((filename, old_string, new_string, replace_all, expected_hash))
+        async def _commit(changeset: Changeset[str]) -> str:
+            calls.append(changeset)
+
             return "edited"
 
-        tool = EditDocumentTool(paths=tmp_path, mutator=_mutate)
-        result = (
-            await tool(
-                "doc.md", "hello", "goodbye", replace_all=True, expected_hash="h"
-            )
-        ).data
+        edits = [TextEdit("hello", "goodbye", True), TextEdit("a", "b")]
+        tool = EditDocumentTool(paths=tmp_path, commit=_commit)
+        result = (await tool("doc.md", edits, expected_hash="h")).data
         assert result == "edited"
-        assert calls == [("doc.md", "hello", "goodbye", True, "h")]
+        assert calls == [Changeset((Edit("doc.md", tuple(edits), "h"),))]
 
     async def test_rejects_inaccessible_path(self, tmp_path: Path) -> None:
-        tool = EditDocumentTool(paths=tmp_path, mutator=_unreachable)
-        with pytest.raises(ToolRetry, match="not accessible"):
-            await tool("../escape.md", "a", "b")
+        tool = EditDocumentTool(paths=tmp_path, commit=_unreachable)
 
-    async def test_translates_mutator_error(self, tmp_path: Path) -> None:
-        async def _mutate(*_: object) -> str:
+        with pytest.raises(ToolRetry, match="not accessible"):
+            await tool("../escape.md", [TextEdit("a", "b")])
+
+    async def test_translates_a_refused_commit(self, tmp_path: Path) -> None:
+        async def _commit(*_: object) -> str:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        tool = EditDocumentTool(paths=tmp_path, mutator=_mutate)
+        tool = EditDocumentTool(paths=tmp_path, commit=_commit)
+
         with pytest.raises(ToolRetry, match="Document not found"):
-            await tool("doc.md", "a", "b")
+            await tool("doc.md", [TextEdit("a", "b")])
 
 
-async def _echo_write(
-    filename: str, content: str, mode: str, expected_hash: str | None
-) -> str:
-    """A write mutator that names the document it was given."""
-    return f"wrote {filename}"
+async def _echo_write(changeset: Changeset[str]) -> str:
+    """A commit that names the document it was given."""
+    return f"wrote {changeset.locations[0]}"
 
 
 class TestWriteDocumentTool:
-    """The tool resolves, access-checks, and glob-filters the path, then delegates.
+    """The tool resolves and access-checks the path, then commits one write.
 
-    The write algorithm itself lives in ``workspace.write_document_text`` and is
+    The write algorithm itself lives in the changeset gateway and is
     covered by ``TestWriteDocumentText``.
     """
 
-    async def test_delegates_to_mutator(self, tmp_path: Path) -> None:
-        calls: list[tuple[str, str, str, str | None]] = []
+    async def test_commits_one_write(self, tmp_path: Path) -> None:
+        calls: list[Changeset[str]] = []
 
-        async def _mutate(
-            filename: str, content: str, mode: str, expected_hash: str | None
-        ) -> str:
-            calls.append((filename, content, mode, expected_hash))
+        async def _commit(changeset: Changeset[str]) -> str:
+            calls.append(changeset)
+
             return "written"
 
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_mutate)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_commit)
         result = (
             await tool("doc.md", "content", mode="append", expected_hash="h")
         ).data
         assert result == "written"
-        assert calls == [("doc.md", "content", "append", "h")]
-
-    async def test_rejects_non_matching_glob(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, glob="*.md", mutator=_unreachable)
-        with pytest.raises(ToolRetry, match="does not match pattern"):
-            await tool("doc.txt", "content")
+        assert calls == [Changeset((Write("doc.md", "content", "append", "h"),))]
 
     async def test_a_row_of_the_wrong_width_is_refused(self, tmp_path: Path) -> None:
         # A summary row written with the separators counted by hand puts its
         # value under the wrong heading, which nothing downstream reports.
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_unreachable)
 
         with pytest.raises(ToolRetry, match="line 3 has 2 fields"):
             await tool("t.csv", "date,load,ew\n2023-01-01,1,2\n,mean: 3\n")
 
     async def test_an_even_table_is_written(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_echo_write)
 
         result = await tool("t.csv", "date,load,ew\n2023-01-01,1,2\n,,3\n")
 
         assert result.data
 
     async def test_the_separator_comes_from_the_suffix(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_unreachable)
 
         with pytest.raises(ToolRetry, match="line 2 has 4 fields"):
             await tool("t.tsv", "a\tb\tc\n1\t2\t3\t4\n")
@@ -1046,7 +1157,7 @@ class TestWriteDocumentTool:
         # A `.csv` is comma-separated by the name it was given, so this is one
         # column with no width to disagree with — and query_table reads it back
         # the same way, which is the point of sharing one separator table.
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_echo_write)
 
         assert (await tool("t.csv", "a;b;c\n1;2;3;4\n")).data
 
@@ -1055,164 +1166,152 @@ class TestWriteDocumentTool:
     ) -> None:
         # An f-string handed the value rather than the text for it, and the gap
         # reads downstream as the four-letter word instead.
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_unreachable)
 
         with pytest.raises(ToolRetry, match="'None'"):
             await tool("t.csv", "date,load\n2023-01-01,1\n2023-01-02,None\n")
 
     async def test_a_lab_sentinel_is_left_alone(self, tmp_path: Path) -> None:
         # `N/A` is written on purpose; `None` never is.
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_echo_write)
 
         assert (await tool("t.csv", "date,load\n2023-01-01,N/A\n")).data
 
     async def test_prose_is_not_a_table(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_echo_write)
 
         assert (await tool("notes.md", "a line\nand, another\n")).data
 
-    async def test_none_glob_allows_any(self, tmp_path: Path) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+    async def test_any_text_document_is_written(self, tmp_path: Path) -> None:
+        tool = WriteDocumentTool(paths=tmp_path, commit=_echo_write)
         result = (await tool("data.txt", "content")).data
         assert result == "wrote data.txt"
 
-    async def test_translates_mutator_error(self, tmp_path: Path) -> None:
+    async def test_translates_a_refused_commit(self, tmp_path: Path) -> None:
         async def _mutate(*_: object) -> str:
             raise HTTPException(status_code=400, detail="Unsupported write mode: x")
 
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_mutate)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_mutate)
+
         with pytest.raises(ToolRetry, match="Unsupported write mode"):
             await tool("doc.md", "content")
 
-    async def test_binary_format_is_refused_before_the_mutator_runs(
+    async def test_binary_format_is_refused_before_the_commit_runs(
         self, tmp_path: Path
     ) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_unreachable)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_unreachable)
+
         with pytest.raises(ToolRetry, match="binary format"):
             await tool("sheet.xlsx", "a,b")
 
     async def test_text_formats_a_converter_claims_are_writable(
         self, tmp_path: Path
     ) -> None:
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
+        tool = WriteDocumentTool(paths=tmp_path, commit=_echo_write)
+
         for name in ("rows.csv", "page.html", "diagram.svg"):
             assert (await tool(name, "x")).data == f"wrote {name}"
 
-    async def test_scratch_answers_to_no_format(self, tmp_path: Path) -> None:
-        """Scratch is bytes the run owns, so the format seam never reaches it."""
-        tool = WriteDocumentTool(paths=tmp_path, mutator=_echo_write)
-        assert (await tool(".scratch/state.parquet", "x")).data.endswith("parquet")
 
+class TestMoveDocumentsTool:
+    """The tool resolves both ends of every move, then delegates the batch."""
 
-class TestMoveDocumentTool:
-    """The tool resolves both ends, then delegates to its two-path mutator."""
+    async def test_delegates_every_move_at_once(self, tmp_path: Path) -> None:
+        calls: list[Changeset[str]] = []
 
-    async def test_delegates_both_ends(self, tmp_path: Path) -> None:
-        calls: list[tuple[str, str]] = []
+        async def _move(changeset: Changeset[str]) -> str:
+            calls.append(changeset)
 
-        async def _move(src: str, dst: str) -> None:
-            calls.append((src, dst))
+            return "moved"
 
         (tmp_path / "old.md").write_text("x")
-        tool = MoveDocumentTool(paths=tmp_path, mutator=_move)
-        result = (await tool("old.md", "notes/new.md")).data
+        (tmp_path / "images").mkdir()
+        tool = MoveDocumentsTool(paths=tmp_path, commit=_move)
+        result = await tool(
+            [DocumentMove("old.md", "notes/new.md"), DocumentMove("images", "notes")]
+        )
 
-        assert calls == [("old.md", "notes/new.md")]
-        assert result == "Moved 'old.md' to 'notes/new.md'."
+        assert calls == [
+            Changeset((Move("old.md", "notes/new.md"), Move("images", "notes")))
+        ]
+        assert result.data == "moved"
 
-    async def test_a_directory_destination_is_a_move_into_it(
+    async def test_a_missing_source_refuses_the_whole_batch(
         self, tmp_path: Path
     ) -> None:
-        """``mv`` semantics: every other mutation refuses a directory, this one does not."""
-        calls: list[tuple[str, str]] = []
-
-        async def _move(src: str, dst: str) -> None:
-            calls.append((src, dst))
-
         (tmp_path / "old.md").write_text("x")
-        (tmp_path / "notes").mkdir()
-        tool = MoveDocumentTool(paths=tmp_path, mutator=_move)
+        tool = MoveDocumentsTool(paths=tmp_path, commit=_unreachable)
 
-        await tool("old.md", "notes")
+        with pytest.raises(ToolRetry, match="'gone.md' not found"):
+            await tool(
+                [DocumentMove("old.md", "new.md"), DocumentMove("gone.md", "b.md")]
+            )
 
-        assert calls == [("old.md", "notes")]
-
-    async def test_refuses_a_scratch_source(self, tmp_path: Path) -> None:
-        """A scratch file has no entry, so the gateway's bare 404 says nothing."""
-        (tmp_path / ".scratch").mkdir()
-        (tmp_path / ".scratch/state.csv").write_text("a")
-        tool = MoveDocumentTool(paths=tmp_path, mutator=_unreachable)
-
-        with pytest.raises(ToolRetry, match="working state"):
-            await tool(".scratch/state.csv", "rows.csv")
-
-    async def test_translates_mutator_error(self, tmp_path: Path) -> None:
-        async def _move(*_: object) -> None:
+    async def test_translates_a_refused_commit(self, tmp_path: Path) -> None:
+        async def _move(*_: object) -> str:
             raise HTTPException(status_code=409, detail="Destination already exists")
 
         (tmp_path / "old.md").write_text("x")
-        tool = MoveDocumentTool(paths=tmp_path, mutator=_move)
+        tool = MoveDocumentsTool(paths=tmp_path, commit=_move)
+
         with pytest.raises(ToolRetry, match="Destination already exists"):
-            await tool("old.md", "new.md")
+            await tool([DocumentMove("old.md", "new.md")])
 
 
-class TestDeleteDocumentTool:
-    """The tool resolves an existing path, then delegates to its mutator."""
+class TestDeleteDocumentsTool:
+    """The tool resolves every existing path, then delegates the batch."""
 
-    async def test_delegates_to_mutator(self, tmp_path: Path) -> None:
-        calls: list[str] = []
+    async def test_delegates_every_path_at_once(self, tmp_path: Path) -> None:
+        calls: list[Changeset[str]] = []
 
-        async def _delete(path: str) -> None:
-            calls.append(path)
+        async def _delete(changeset: Changeset[str]) -> str:
+            calls.append(changeset)
+
+            return "deleted"
 
         (tmp_path / "doc.md").write_text("x")
-        tool = DeleteDocumentTool(paths=tmp_path, mutator=_delete)
+        (tmp_path / "state.json").write_text("{}")
+        tool = DeleteDocumentsTool(paths=tmp_path, commit=_delete)
 
-        assert (await tool("doc.md")).data == "Deleted 'doc.md'."
-        assert calls == ["doc.md"]
+        assert (await tool(["doc.md", "state.json"])).data == "deleted"
+        assert calls == [Changeset((Delete("doc.md"), Delete("state.json")))]
 
-    async def test_reaches_scratch(self, tmp_path: Path) -> None:
-        """A run that can create its own working state can clear it away."""
+    async def test_refuses_a_directory_and_a_missing_document(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "notes").mkdir()
+        tool = DeleteDocumentsTool(paths=tmp_path, commit=_unreachable)
 
-        async def _delete(path: str) -> None:
-            return None
+        with pytest.raises(ToolRetry, match="is a directory"):
+            await tool(["notes"])
 
-        (tmp_path / ".scratch").mkdir()
-        (tmp_path / ".scratch/state.json").write_text("{}")
-        tool = DeleteDocumentTool(paths=tmp_path, mutator=_delete)
-
-        assert (await tool(".scratch/state.json")).data.endswith("state.json'.")
-
-    async def test_rejects_a_missing_document(self, tmp_path: Path) -> None:
-        tool = DeleteDocumentTool(paths=tmp_path, mutator=_unreachable)
-        with pytest.raises(ToolRetry):
-            await tool("gone.md")
+        with pytest.raises(ToolRetry, match="not found"):
+            await tool(["gone.md"])
 
 
 async def _unreachable(*_: object) -> Any:
-    """Every mutator a path-rejection test hands its tool: it must not run."""
-    raise AssertionError("mutator must not run when the path is rejected")
+    """Every commit a path-rejection test hands its tool: it must not run."""
+    raise AssertionError("commit must not run when the path is rejected")
 
 
 class TestJqTool:
     """Tests for JqTool."""
 
     @staticmethod
-    def _result(output: JqResult | RedirectedOutput) -> JqResult:
-        assert isinstance(output, JqResult)
-        return output
+    def _result(output: Batch[JqResult] | RedirectedOutput) -> JqResult:
+        return single(output)
 
     async def test_filter_selects_values(self, tmp_path: Path) -> None:
         (tmp_path / "item.json").write_text(json.dumps({"title": "Hello", "n": 42}))
         tool = JqTool(paths=tmp_path)
-        result = self._result((await tool("item.json", ".title")).data)
+        result = self._result((await tool(["item.json"], ".title")).data)
         assert result.values == ("Hello",)
 
     async def test_missing_filter_reports_the_shape(self, tmp_path: Path) -> None:
         """The cheap first call: keys and types, never the document itself."""
         (tmp_path / "item.json").write_text(json.dumps({"title": "Hello", "n": 42}))
         tool = JqTool(paths=tmp_path)
-        output = await tool("item.json")
+        output = await tool(["item.json"])
         result = self._result(output.data)
         assert result.values == ({"title": "string", "n": "number"},)
         assert "Hello" not in output.text
@@ -1222,35 +1321,35 @@ class TestJqTool:
         (tmp_path / "notes.md").write_text("# notes")
         tool = JqTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not a JSON document"):
-            await tool("notes.md", ".")
+            await tool(["notes.md"], ".")
 
     async def test_invalid_jq_expression(self, tmp_path: Path) -> None:
         (tmp_path / "item.json").write_text(json.dumps({"x": 1}))
         tool = JqTool(paths=tmp_path)
         with pytest.raises(ToolRetry):
-            await tool("item.json", "invalid [[[")
+            await tool(["item.json"], "invalid [[[")
 
     async def test_malformed_document_is_correctable(self, tmp_path: Path) -> None:
         (tmp_path / "item.json").write_text("{not json")
         tool = JqTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="jq failed"):
-            await tool("item.json", ".")
+            await tool(["item.json"], ".")
 
     async def test_nonexistent_file_path(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
-            await tool("missing.json", ".")
+            await tool(["missing.json"], ".")
 
     async def test_path_traversal(self, tmp_path: Path) -> None:
         tool = JqTool(paths=tmp_path)
         with pytest.raises(ToolRetry, match="not found"):
-            await tool("../etc/passwd", ".")
+            await tool(["../etc/passwd"], ".")
 
     async def test_output_budget_cuts_whole_values(self, tmp_path: Path) -> None:
         """What the budget drops is values, so no JSON comes back cut mid-token."""
         (tmp_path / "big.json").write_text(json.dumps(["x" * 100 for _ in range(50)]))
         tool = JqTool(paths=tmp_path, max_formatted_chars=250)
-        output = await tool("big.json", ".[]")
+        output = await tool(["big.json"], ".[]")
         result = self._result(output.data)
 
         rendered = [line for line in output.text.splitlines() if line.startswith('"')]
@@ -1265,7 +1364,7 @@ class TestJqTool:
         """One value cannot bypass the jq-specific output budget."""
         (tmp_path / "big.json").write_text(json.dumps({"body": "x" * 500}))
         tool = JqTool(paths=tmp_path, max_formatted_chars=100)
-        output = await tool("big.json", ".")
+        output = await tool(["big.json"], ".")
         result = self._result(output.data)
 
         assert "(no values)" in output.text
@@ -1278,24 +1377,24 @@ class TestJqTool:
         """The structured redirect stores all jq values, not the display slice."""
         written: dict[str, str] = {}
 
-        async def mutate(
-            path: str, content: str, mode: str, expected_hash: str | None
-        ) -> str:
-            _ = mode, expected_hash
-            written[path] = content
-            return f"wrote {path}"
+        async def mutate(changeset: Changeset[str]) -> str:
+            (write,) = changeset.operations
+            assert isinstance(write, Write)
+            written[write.target] = write.content
+
+            return f"wrote {write.target}"
 
         (tmp_path / "big.json").write_text(json.dumps(list(range(100))))
-        writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
+        writer = WriteDocumentTool(paths=tmp_path, commit=mutate)
         tool = JqTool(
             paths=tmp_path, sink=OutputSink(writer, 0), max_formatted_chars=20
         )
 
-        output = await tool("big.json", ".[]", output_path="result.json")
+        output = await tool(["big.json"], ".[]", output_path="result.json")
         stored = json.loads(written["result.json"])
 
         assert isinstance(output.data, RedirectedOutput)
-        assert stored["values"] == list(range(100))
+        assert stored[0]["values"] == list(range(100))
 
     async def test_a_receipt_says_when_what_it_wrote_was_already_cut(
         self, tmp_path: Path
@@ -1303,19 +1402,16 @@ class TestJqTool:
         # A redirect hands back a size and nothing else, so a cut the tool knew
         # about dies in the receipt unless it is carried: a run that redirected
         # a capped query and computed from the file could not tell.
-        async def mutate(
-            path: str, content: str, mode: str, expected_hash: str | None
-        ) -> str:
-            _ = path, content, mode, expected_hash
+        async def mutate(_changeset: Changeset[str]) -> str:
             return "wrote it"
 
         rows = "\n".join(f"r{i},{i}" for i in range(50))
         (tmp_path / "t.csv").write_text(f"name,val\n{rows}")
-        writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
+        writer = WriteDocumentTool(paths=tmp_path, commit=mutate)
         tool = QueryTableTool(paths=tmp_path, sink=OutputSink(writer, 0), max_rows=10)
 
         output = await tool(
-            "t.csv", "SELECT * FROM t", row_limit=10, output_path="out.json"
+            ["t.csv"], ["SELECT * FROM t"], row_limit=10, output_path="out.json"
         )
 
         assert isinstance(output.data, RedirectedOutput)
@@ -1323,17 +1419,14 @@ class TestJqTool:
         assert "cut short of what you asked for" in output.text
 
     async def test_a_whole_result_is_not_called_partial(self, tmp_path: Path) -> None:
-        async def mutate(
-            path: str, content: str, mode: str, expected_hash: str | None
-        ) -> str:
-            _ = path, content, mode, expected_hash
+        async def mutate(_changeset: Changeset[str]) -> str:
             return "wrote it"
 
         (tmp_path / "t.csv").write_text("name,val\na,1\nb,2\n")
-        writer = WriteDocumentTool(paths=tmp_path, mutator=mutate)
+        writer = WriteDocumentTool(paths=tmp_path, commit=mutate)
         tool = QueryTableTool(paths=tmp_path, sink=OutputSink(writer, 0))
 
-        output = await tool("t.csv", "SELECT * FROM t", output_path="out.json")
+        output = await tool(["t.csv"], ["SELECT * FROM t"], output_path="out.json")
 
         assert isinstance(output.data, RedirectedOutput)
         assert not output.data.truncated
@@ -1521,23 +1614,19 @@ class TestGrepFormatting:
 
 def _recording_python_tool(
     tool: RunPythonTool, workspace: Path
-) -> tuple[RunPythonTool, list[tuple[str, str, str, str | None]]]:
-    """Attach a scoped writer and return its recorded mutations."""
-    calls: list[tuple[str, str, str, str | None]] = []
+) -> tuple[RunPythonTool, list[Changeset[str]]]:
+    """Mount *workspace* writable and return what each run stages."""
+    staged: list[Changeset[str]] = []
 
-    async def mutate(
-        path: str, content: str, mode: str, expected_hash: str | None
-    ) -> str:
-        calls.append((path, content, mode, expected_hash))
-        return "written"
+    async def commit(changes: Changeset[str]) -> ChangesetOutcome:
+        staged.append(changes)
+
+        return PendingChanges("staged-id", ChangesetSummary())
 
     scoped = SearchPath(path=workspace, scope=WorkspaceScope())
-    configured = replace(
-        tool,
-        paths=(scoped,),
-        writer=WriteDocumentTool(paths=(scoped,), mutator=mutate),
-    )
-    return configured, calls
+    configured = replace(tool, paths=(scoped,), writable=(scoped,), commit=commit)
+
+    return configured, staged
 
 
 class TestRunPythonTool:
@@ -1546,7 +1635,7 @@ class TestRunPythonTool:
     @pytest.fixture()
     async def tool(self) -> AsyncIterator[RunPythonTool]:
         async with AsyncMonty(min_processes=1) as pool:
-            yield RunPythonTool(pool=pool)
+            yield RunPythonTool(pool=pool, changeset_limits=LIMITS)
 
     async def test_returns_value_and_printed_output(self, tool: RunPythonTool) -> None:
         result = await tool("import math\nprint('working')\nmath.factorial(5)")
@@ -1557,16 +1646,32 @@ class TestRunPythonTool:
         self, tool: RunPythonTool, tmp_path: Path
     ) -> None:
         """An argument a model spelled empty is the one it did not use."""
-        (tmp_path / ".scratch").mkdir()
-        (tmp_path / ".scratch/run.py").write_text("print('from the script')\n7")
+        (tmp_path / "run.py").write_text("print('from the script')\n7")
         configured = replace(
             tool, paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
         )
 
-        result = await configured(code="", script_path="~/.scratch/run.py")
+        result = await configured(code="", script_path="~/run.py")
 
         assert result.data.result == "7"
         assert result.data.stdout == "from the script"
+
+    async def test_the_environment_mirrors_a_shell(
+        self, tool: RunPythonTool, tmp_path: Path
+    ) -> None:
+        configured = replace(
+            tool, environ={"HOME": "/workspace/~", "USER": "u", "TMPDIR": "/tmp"}
+        )
+
+        result = await configured(
+            "import os\n"
+            "[os.getenv(k) for k in ('HOME', 'USER', 'PWD', 'TMPDIR', 'LANG')]"
+            " + [os.getcwd()]"
+        )
+
+        assert result.data.result == (
+            "['/workspace/~', 'u', '/workspace', '/tmp', 'C.UTF-8', '/workspace']"
+        )
 
     async def test_an_empty_program_says_so(self, tool: RunPythonTool) -> None:
         with pytest.raises(ToolRetry, match="program is empty"):
@@ -1633,27 +1738,6 @@ class TestRunPythonTool:
         assert result.data.stdout == "x" * 19 + "…"
         assert result.data.truncated
 
-    async def test_temporary_files_are_private_to_one_run(
-        self, tool: RunPythonTool
-    ) -> None:
-        result = await tool(
-            "import os\n"
-            "from pathlib import Path\n"
-            # Narrowed, since the run is type-checked: `getenv` is `str | None`
-            # whatever the sandbox seeds, and the assert is what proves it seeded.
-            'tmpdir = os.getenv("TMPDIR")\n'
-            "assert tmpdir is not None\n"
-            'temp = Path(tmpdir) / "work.txt"\n'
-            'temp.write_text("intermediate")\n'
-            "temp.read_text()"
-        )
-        next_run = await tool(
-            'from pathlib import Path\nPath("/tmp/work.txt").exists()'
-        )
-
-        assert result.data.result == "'intermediate'"
-        assert next_run.data.result == "False"
-
     async def test_oversized_document_is_refused_before_it_is_decoded(
         self, tool: RunPythonTool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1683,32 +1767,27 @@ class TestRunPythonTool:
 
         assert "~/big.txt" in str(result.data.result)
 
-    async def test_stored_script_reads_the_mount_and_writes_the_output(
+    async def test_stored_script_reads_the_mount_and_stages_its_writes(
         self, tool: RunPythonTool, tmp_path: Path
     ) -> None:
         (tmp_path / "script.py").write_text(
-            "import os\n"
             "from pathlib import Path\n"
             'text = Path("~/input.txt").read_text()\n'
-            'output = os.getenv("OUTPUT")\n'
-            "assert output is not None\n"
-            "Path(output).write_text(text.upper())\n"
-            "len(text)"
+            'Path("~/output.txt").write_text(text.upper())\n'
+            'Path("~/output.txt").read_text()'
         )
         (tmp_path / "input.txt").write_text("hello")
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+        workspace_tool, staged = _recording_python_tool(tool, tmp_path)
 
-        result = await workspace_tool(
-            script_path="~/script.py",
-            commit_path="~/output.txt",
-        )
+        result = await workspace_tool(script_path="~/script.py")
 
-        assert result.data == PythonResult(
-            result="5",
-            script_path="~/script.py",
-            written_file="~/output.txt",
-        )
-        assert calls == [("~/output.txt", "HELLO", "create", None)]
+        assert [changes.operations for changes in staged] == [
+            (Write("~/output.txt", "HELLO", "create"),)
+        ]
+        assert result.data.result == "'HELLO'"
+        assert result.data.changeset == PendingChanges("staged-id", ChangesetSummary())
+        assert "changeset_id='staged-id'" in result.text
+        assert not (tmp_path / "output.txt").exists()
 
     async def test_stored_script_is_reloaded_after_an_edit(
         self, tool: RunPythonTool, tmp_path: Path
@@ -1742,140 +1821,75 @@ class TestRunPythonTool:
 
         assert result.data.result == "['alpha', 'beta']"
 
-    async def test_document_write_is_refused_by_the_mount(
+    async def test_renames_and_removals_stage_through_normal_path_calls(
         self, tool: RunPythonTool, tmp_path: Path
     ) -> None:
-        source = tmp_path / "source.txt"
-        source.write_text("old")
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+        (tmp_path / "inbox").mkdir()
 
-        with pytest.raises(ToolRetry, match="commit_path"):
-            await workspace_tool(
-                'from pathlib import Path\nPath("~/source.txt").write_text("new")'
-            )
+        for name in ("a", "b"):
+            (tmp_path / "inbox" / f"{name}.md").write_text(name)
 
-        assert source.read_text() == "old"
-        assert calls == []
+        (tmp_path / "stale.md").write_text("old")
+        workspace_tool, staged = _recording_python_tool(tool, tmp_path)
 
-    async def test_scratch_state_is_written_in_place_and_read_back(
-        self, tool: RunPythonTool, tmp_path: Path
-    ) -> None:
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
-
-        written = await workspace_tool(
+        result = await workspace_tool(
             "from pathlib import Path\n"
-            'state = Path("~/.scratch/run/state.json")\n'
-            'state.write_text("{}")\n'
-            "state.read_text()"
-        )
-        later = await workspace_tool(
-            'from pathlib import Path\nPath("~/.scratch/run/state.json").read_text()'
+            'Path("~/archive").mkdir()\n'
+            'for p in Path("~/inbox").iterdir():\n'
+            '    p.rename(Path("~/archive") / p.name)\n'
+            'Path("~/inbox").rmdir()\n'
+            'Path("~/stale.md").unlink()\n'
+            '[p.name for p in Path("~").iterdir()]'
         )
 
-        assert written.data.result == later.data.result == "'{}'"
-        assert (tmp_path / ".scratch" / "run" / "state.json").read_text() == "{}"
-        # Run state is not a document, so it reaches no mutation gateway.
-        assert calls == []
+        assert result.data.result == "['archive']"
+        (changes,) = staged
+        assert [type(op) for op in changes.operations] == [Move, Move, Delete, Delete]
+        assert changes.locations == (
+            "~/inbox/a.md",
+            "~/archive/a.md",
+            "~/inbox/b.md",
+            "~/archive/b.md",
+            "~/inbox",
+            "~/stale.md",
+        )
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["inbox", "stale.md"]
 
-    async def test_scratch_write_is_refused_without_a_writer(
+    async def test_every_change_is_refused_without_a_writable_span(
         self, tool: RunPythonTool, tmp_path: Path
     ) -> None:
         workspace_tool = replace(
             tool, paths=(SearchPath(path=tmp_path, scope=WorkspaceScope()),)
         )
 
-        with pytest.raises(ToolRetry, match="chat mode"):
+        with pytest.raises(ToolRetry, match="cannot be changed"):
             await workspace_tool(
-                "from pathlib import Path\n"
-                'Path("~/.scratch/state.json").write_text("{}")'
+                'from pathlib import Path\nPath("~/state.json").write_text("{}")'
             )
 
-        assert not (tmp_path / ".scratch").exists()
+        assert not (tmp_path / "state.json").exists()
 
-    async def test_existing_output_uses_its_content_hash(
+    async def test_a_program_that_changes_nothing_stages_nothing(
         self, tool: RunPythonTool, tmp_path: Path
     ) -> None:
-        (tmp_path / "output.txt").write_text("old")
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+        (tmp_path / "notes.md").write_text("same")
+        workspace_tool, staged = _recording_python_tool(tool, tmp_path)
 
-        await workspace_tool(
-            "from pathlib import Path\n"
-            'source = Path("~/output.txt").read_text()\n'
-            'Path("/out").write_text(source + " new")',
-            commit_path="~/output.txt",
+        result = await workspace_tool(
+            'text = open("~/notes.md").read()\nopen("~/notes.md", "w").write(text)'
         )
 
-        assert calls == [("~/output.txt", "old new", "replace", content_hash("old"))]
+        assert staged == []
+        assert result.data.changeset is None
 
-    async def test_the_declared_output_is_writable_under_its_own_name(
+    async def test_failed_program_stages_nothing(
         self, tool: RunPythonTool, tmp_path: Path
     ) -> None:
-        # Where the result goes is what the model was just told, so it writes
-        # there.  The document underneath still answers a read until the
-        # program has written one, which is what lets it rewrite in place.
-        source = tmp_path / "output.txt"
-        source.write_text("old")
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
-
-        await workspace_tool(
-            'old = open("~/output.txt").read()\n'
-            'open("~/output.txt", "w").write(old.upper())',
-            commit_path="~/output.txt",
-        )
-
-        assert calls == [("~/output.txt", "OLD", "replace", content_hash("old"))]
-        assert source.read_text() == "old"
-
-    async def test_an_append_to_the_output_starts_from_the_document(
-        self, tool: RunPythonTool, tmp_path: Path
-    ) -> None:
-        # /out is seeded with the document it will become, so an append is
-        # an append rather than a silent truncation of what was already there.
-        (tmp_path / "output.txt").write_text("EXISTING")
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
-
-        await workspace_tool(
-            'open("~/output.txt", "a").write(" more")',
-            commit_path="~/output.txt",
-        )
-
-        assert calls == [
-            ("~/output.txt", "EXISTING more", "replace", content_hash("EXISTING"))
-        ]
-
-    async def test_both_names_of_the_output_are_one_file(
-        self, tool: RunPythonTool, tmp_path: Path
-    ) -> None:
-        # So writing both is not a conflict to resolve: an append appends to
-        # what the other name wrote, and a second write replaces it.
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
-
-        await workspace_tool(
-            'open("/out", "w").write("a")\nopen("~/output.txt", "a").write("b")',
-            commit_path="~/output.txt",
-        )
-
-        assert calls == [("~/output.txt", "ab", "create", None)]
-
-    async def test_unwritten_output_is_reported_rather_than_committed(
-        self, tool: RunPythonTool, tmp_path: Path
-    ) -> None:
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
-
-        result = await workspace_tool("1 + 1", commit_path="~/output.txt")
-
-        assert calls == []
-        assert "no /out file" in result.text
-
-    async def test_failed_program_does_not_persist_output(
-        self, tool: RunPythonTool, tmp_path: Path
-    ) -> None:
-        workspace_tool, calls = _recording_python_tool(tool, tmp_path)
+        workspace_tool, staged = _recording_python_tool(tool, tmp_path)
 
         with pytest.raises(ToolRetry, match="ZeroDivisionError"):
             await workspace_tool(
-                'from pathlib import Path\nPath("/out").write_text("new")\n1 / 0',
-                commit_path="~/output.txt",
+                'from pathlib import Path\nPath("~/output.txt").write_text("new")\n1 / 0'
             )
 
-        assert calls == []
+        assert staged == []

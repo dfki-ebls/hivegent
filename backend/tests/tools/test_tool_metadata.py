@@ -12,7 +12,6 @@ from hivegent.tools.documents import (
 from hivegent.tools.grep import GrepContextArg, GrepPatternArg, GrepTool
 from hivegent.tools.python import (
     CodeArg,
-    CommitPathArg,
     PythonScriptPathArg,
     RunPythonTool,
 )
@@ -70,9 +69,7 @@ def test_agent_python_tool_describes_monty_constraints() -> None:
     assert schema["properties"]["script_path"]["description"] == _description(
         PythonScriptPathArg
     )
-    assert schema["properties"]["commit_path"]["description"] == _description(
-        CommitPathArg
-    )
+    assert set(schema["properties"]) == {"code", "script_path"}
 
 
 async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:

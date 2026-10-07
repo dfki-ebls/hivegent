@@ -1,51 +1,77 @@
-"""Document mutation tool callables — edit, write, move, and delete."""
+"""Document mutation tool callables, which edit, write, move, and delete.
+
+Moves and deletes take a list and edits take a list of replacements, so a
+batch is one call, one approval, and one all-or-nothing commit, and a single item
+is a list of one.  No argument takes a glob: the caller enumerates the paths,
+which is what the approval shows and what lands.
+"""
 
 import csv
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Literal, override
+from typing import Annotated, override
 
 from fastapi import HTTPException
 from pydantic import Field
 
+from ..changes import (
+    Changeset,
+    Delete,
+    Edit,
+    Move,
+    Operation,
+    TextEdit,
+    Write,
+    WriteMode,
+)
 from ..converters import BINARY_WRITE_REASON, DELIMITERS, writes_as_text
-from ..entries import SCRATCH_DIR_NAME, is_scratch_path
 from ..humanize import pluralize
 from .base import (
     AsyncPathTool,
+    Direct,
     SearchPath,
     ToolOutput,
     ToolRetry,
+    batch_field,
+    entry_stat,
+    near_miss_hint,
+    policy_of,
     resolve_accessible_file,
     resolve_file_or_retry,
     workspace_root_hint,
 )
 
 __all__ = [
-    "DeleteDocumentTool",
-    "DeleteMutation",
+    "MAX_BATCH",
+    "Commit",
+    "DeleteDocumentsTool",
+    "DeletePathsArg",
     "DocumentContentArg",
-    "DocumentDestinationArg",
+    "DocumentEditsArg",
+    "DocumentMove",
+    "DocumentMovesArg",
     "DocumentTargetPathArg",
     "EditDocumentTool",
-    "EditMutation",
-    "EditNewStringArg",
-    "EditOldStringArg",
-    "EditReplaceAllArg",
-    "ExistingDocumentPathArg",
     "ExpectedHashArg",
-    "MoveDocumentTool",
-    "MoveMutation",
+    "MoveDocumentsTool",
     "MutationHint",
     "WriteDocumentTool",
     "WriteModeArg",
-    "WriteMutation",
     "check_delimited_rows",
-    "resolve_mutation_target",
+    "delete_changeset",
+    "edit_changeset",
+    "move_changeset",
+    "mutation_errors",
+    "partition",
     "resolve_text_target",
+    "write_changeset",
 ]
+
+MAX_BATCH = 100
+"""Most items one mutation call may carry, which keeps one approval readable."""
 
 DocumentTargetPathArg = Annotated[
     str,
@@ -53,30 +79,6 @@ DocumentTargetPathArg = Annotated[
         description=(
             "Full workspace path of the document to mutate. A document you "
             "create needs a full path too; missing subdirectories are created."
-        ),
-    ),
-]
-
-EditOldStringArg = Annotated[
-    str,
-    Field(
-        description=(
-            "Exact text to replace.  Must occur exactly once unless "
-            "`replace_all` is true."
-        ),
-    ),
-]
-EditNewStringArg = Annotated[
-    str,
-    Field(description="Replacement text."),
-]
-EditReplaceAllArg = Annotated[
-    bool,
-    Field(
-        description=(
-            "When true, replace every occurrence of `old_string` instead "
-            "of requiring a unique match.  Use this for renames and "
-            "global substitutions."
         ),
     ),
 ]
@@ -95,28 +97,74 @@ ExpectedHashArg = Annotated[
         ),
     ),
 ]
-ExistingDocumentPathArg = Annotated[
-    str,
-    Field(
-        description=(
-            "Full workspace path of the document to act on, which must already exist."
+
+
+DocumentEditsArg = Annotated[
+    list[TextEdit],
+    batch_field(
+        (
+            "Replacements applied in order, each to the text the previous one "
+            "left, and saved as one write. Put every change to this document "
+            "in one call rather than one call per change."
         ),
+        max_items=MAX_BATCH,
     ),
 ]
-DocumentDestinationArg = Annotated[
-    str,
-    Field(
-        description=(
-            "Full workspace path to move the document to, which renames it "
-            "when only the last segment differs and re-homes it in another "
-            "workspace when the prefix does. The extension follows the "
-            "document and cannot be changed by moving; a path naming an "
-            "existing directory moves the document into it."
+
+
+@dataclass(slots=True, frozen=True)
+class DocumentMove:
+    """One document or directory and where it goes."""
+
+    source: Annotated[
+        str,
+        Field(
+            description=(
+                "Full workspace path of the document or directory to move, as "
+                "it is now, before any move of this call."
+            ),
         ),
+    ]
+    destination: Annotated[
+        str,
+        Field(
+            description=(
+                "Full workspace path where it ends up once every move of this "
+                "call applied, which renames it when only the last segment "
+                "differs and re-homes it in another workspace when the prefix "
+                "does. A document's extension follows it and cannot be changed "
+                "by moving. A path naming a directory that stays where it is "
+                "moves the source into it. It must be free, or be vacated by "
+                "another move of this call."
+            ),
+        ),
+    ]
+
+
+DocumentMovesArg = Annotated[
+    list[DocumentMove],
+    batch_field(
+        (
+            "Every move to make, applied at once or not at all: sources are "
+            "paths as they are now, destinations where they end up, so chains, "
+            "swaps, and moves into or out of a directory another move takes "
+            "fit in one call. Each source may appear in one move only."
+        ),
+        max_items=MAX_BATCH,
+    ),
+]
+DeletePathsArg = Annotated[
+    list[str],
+    batch_field(
+        (
+            "Full workspace paths of the documents to delete, each of which "
+            "must exist, listed one by one. They are deleted together or not at all."
+        ),
+        max_items=MAX_BATCH,
     ),
 ]
 WriteModeArg = Annotated[
-    Literal["prepend", "append", "replace", "create"],
+    WriteMode,
     Field(
         description=(
             "Write mode: `replace` overwrites or creates the file, `append` "
@@ -126,97 +174,91 @@ WriteModeArg = Annotated[
     ),
 ]
 
-MutationHint = Callable[[str, str], str]
-"""Guidance to append to a mutation's receipt, from its canonical and local paths.
+MutationHint = Callable[[str], str]
+"""Guidance to append to a mutation's receipt, from the canonical path it changed.
 
 Injected by the surface that has something to say rather than baked in, the way
-``filter_func`` and ``mutator`` are: the agent points a stored program at
+``filter_func`` and ``commit`` are: the agent points a stored program at
 ``run_python``, which the MCP surface has no tool for.  Empty for the document
 it has nothing to say about, which is most of them.
 """
 
-EditMutation = Callable[[str, str, str, bool, str | None], Awaitable[str]]
-"""Canonical edit operation for a resolved document path.
+Commit = Callable[[Changeset[str]], Awaitable[str]]
+"""Apply a changeset spelled in canonical paths, returning what it did.
 
-The path is rendered under the search path that claimed it, so a caller
-spanning several roots can route the mutation to the right one.
+Injected by the surface, which routes each path back to the root that claimed
+it, so a batch may span the personal workspace and a group's, and lands each
+root's half the way that root's :class:`~hivegent.tools.base.CommitPolicy` says.
 """
 
-WriteMutation = Callable[[str, str, WriteModeArg, str | None], Awaitable[str]]
-"""Canonical write operation for a resolved document path, rendered as for
-:data:`EditMutation`."""
 
-MoveMutation = Callable[[str, str], Awaitable[None]]
-"""Canonical move operation, taking both ends as canonical paths.
+@contextmanager
+def mutation_errors(into: Callable[[str], Exception], suffix: str = "") -> Generator[None]:
+    """Re-raise a refused mutation as *into* its detail, *suffix* appended as a sentence.
 
-Two paths rather than one because the ends may name different workspaces, which
-is what makes a move the one mutation that can cross from the personal
-workspace into a group's.
-"""
-
-DeleteMutation = Callable[[str], Awaitable[None]]
-"""Canonical delete operation for a resolved document path."""
-
-
-def _mutation_detail(exc: HTTPException | ValueError) -> str:
-    """Extract the human-readable detail from a failed-mutation exception."""
-    return exc.detail if isinstance(exc, HTTPException) else str(exc)
-
-
-def _hinted(hint: MutationHint | None, report: str, target: str, local: str) -> str:
-    """Append the surface's pointer for this document, when it has one.
-
-    Applied here rather than inside the mutator because this is where both
-    spellings are already in hand: *local* is what a path predicate answers to
-    (`.scratch/` is a location, and a canonical path is not what
-    :func:`~hivegent.entries.is_scratch_path` takes), while *target* is what
-    the model has to type back.
+    The gateway refuses with an ``HTTPException`` and a route it cannot find with
+    a ``ValueError``, and this is the one place either becomes the surface's own
+    correctable error, the way :func:`~hivegent.tools.base.translate_tool_retry`
+    is for a :class:`ToolRetry`.
     """
-    extra = hint(target, local) if hint is not None else ""
+    try:
+        yield
+    except (HTTPException, ValueError) as exc:
+        detail = str(exc.detail if isinstance(exc, HTTPException) else exc)
+        raise into(f"{detail.rstrip('.')}. {suffix}" if suffix else detail) from exc
+
+
+def partition(
+    paths: tuple[SearchPath, ...], changeset: Changeset[str]
+) -> tuple[Changeset[str], Changeset[str]]:
+    """Split *changeset* into the operations its roots gate and the ones they take directly.
+
+    A move between a gated root and a direct one is refused, since no single
+    commit covers both ends: its text is written at the destination and the
+    source deleted instead.
+    """
+    gated: list[Operation[str]] = []
+    direct: list[Operation[str]] = []
+
+    for op in changeset.operations:
+        policies = {policy_of(paths, location) for location in Changeset((op,)).locations}
+
+        if isinstance(op, Move) and len(policies) > 1:
+            raise ToolRetry(
+                f"'{op.source}' cannot move to '{op.destination}', since only one of "
+                "them is written directly. Write its text to the destination and "
+                "delete the source instead."
+            )
+
+        (direct if isinstance(policies.pop(), Direct) else gated).append(op)
+
+    return Changeset(tuple(gated)), Changeset(tuple(direct))
+
+
+def _hinted(hint: MutationHint | None, report: str, target: str) -> str:
+    """Append the surface's pointer for the document *target*, when it has one."""
+    extra = hint(target) if hint is not None else ""
 
     return f"{report} {extra}" if extra else report
 
 
-def resolve_mutation_target(
-    paths: tuple[SearchPath, ...], file_path: str
-) -> tuple[str, str, Path]:
-    """Resolve *file_path* for a mutation, or raise a correctable refusal.
+def _resolve_target(paths: tuple[SearchPath, ...], file_path: str) -> tuple[str, Path]:
+    """Resolve *file_path* for a mutation, which need not exist, or refuse it.
 
-    Returns the path rendered under the root that claimed it (what the mutator
-    routes on), the local path (what a glob is matched against), and the file
-    on disk.  Unlike a read, the document need not exist: a mutation may create
-    it, and it may name a directory, which for a move destination means moving
-    into it (the ``mv`` semantics
-    :func:`~hivegent.workspace.paths._resolve_move_destination` applies).  What
-    a directory cannot be is the target of a *text write*, which is where
+    Returns the path rendered under the root that claimed it (what the commit
+    routes on) and the file on disk.  It may name a directory, which for a move
+    destination means moving into it, the ``mv`` semantics the gateway applies.
+    What a directory cannot be is the target of a text write, which is where
     :func:`resolve_text_target` refuses it.
     """
     resolved = resolve_accessible_file(paths, file_path)
     if resolved is None:
         hint = workspace_root_hint(paths, file_path)
         raise ToolRetry(f"'{file_path}' is not accessible.{hint}")
+
     sp, local, absolute = resolved
 
-    return sp.prefixed(local), local, absolute
-
-
-def _check_not_scratch(canonical: str, local: str) -> None:
-    """Refuse a `.scratch/` move source, which has no entry to relocate.
-
-    A move relocates an entry — its description, its original, its assets, and
-    its rows — and a scratch file is bytes with none of those, so the gateway
-    would answer with a bare "not found" that says nothing about why.  Only the
-    source needs this: a scratch *destination* is a reserved path the gateway
-    already refuses by name, in one voice with `.assets`
-    (:func:`~hivegent.workspace.paths._check_not_reserved_path`), and writing
-    and deleting reach scratch freely.
-    """
-    if is_scratch_path(local):
-        raise ToolRetry(
-            f"'{canonical}' is under `{SCRATCH_DIR_NAME}/`, which holds working "
-            "state rather than entries, so there is no document to move. Read "
-            "it and write the text to a document path instead."
-        )
+    return sp.prefixed(local), absolute
 
 
 _NOT_A_VALUE = frozenset({"None", "nan", "NaN", "NaT", "null", "undefined"})
@@ -287,67 +329,123 @@ def check_delimited_rows(canonical_path: str, content: str) -> None:
             )
 
 
-def resolve_text_target(
-    paths: tuple[SearchPath, ...], file_path: str
-) -> tuple[str, str, Path]:
-    """Resolve *file_path* for a mutation that writes text at it.
+def resolve_text_target(paths: tuple[SearchPath, ...], file_path: str) -> str:
+    """Resolve *file_path* for a mutation that writes text at it, to its canonical path.
 
-    :func:`resolve_mutation_target` answers where the path is; this adds the
-    two questions every text write shares and a move or a delete does not, so
-    the surfaces that write text — the write tool, the edit tool, and a
-    redirected ``output_path`` — refuse a directory and a binary target in the
-    same words the gateway would, before an approval is asked for or a program
-    is run.
+    This adds the two questions every text write shares and a move or a delete
+    does not, so the surfaces that write text (the write tool, the edit tool,
+    and a redirected ``output_path``) refuse a directory and a binary target in
+    the same words the gateway would, before an approval is asked for or a
+    program is run.
 
     The format question is asked of a *new* document only, which is the
     gateway's own condition (``current is None and not writes_as_text``): a
     file that already exists is answered from its bytes by the decoder, the
     same question the read tools ask, and a name table has no business
-    overruling it.  ``is_scratch_path`` comes before both, here as in the
-    gateway, since a scratch file is bytes the run owns with no entry, no
-    projection, and no converter to hand them to.
+    overruling it.
     """
-    canonical, local, absolute = resolve_mutation_target(paths, file_path)
+    canonical, absolute = _resolve_target(paths, file_path)
+
     if absolute.is_dir():
         raise ToolRetry(f"'{canonical}' is a directory.")
 
-    if (
-        not is_scratch_path(local)
-        and not absolute.is_file()
-        and not writes_as_text(canonical)
-    ):
+    if not absolute.is_file() and not writes_as_text(canonical):
         raise ToolRetry(f"'{canonical}' {BINARY_WRITE_REASON}.")
 
-    return canonical, local, absolute
+    return canonical
+
+
+def write_changeset(
+    paths: tuple[SearchPath, ...],
+    file_path: str,
+    content: str,
+    mode: WriteModeArg = "replace",
+    expected_hash: str | None = None,
+) -> Changeset[str]:
+    """The changeset :class:`WriteDocumentTool` commits, refused as it would be."""
+    target = resolve_text_target(paths, file_path)
+    check_delimited_rows(target, content)
+
+    return Changeset((Write(target, content, mode, expected_hash),))
+
+
+def edit_changeset(
+    paths: tuple[SearchPath, ...],
+    file_path: str,
+    edits: Sequence[TextEdit],
+    expected_hash: str | None = None,
+) -> Changeset[str]:
+    """The changeset :class:`EditDocumentTool` commits, refused as it would be."""
+    target = resolve_text_target(paths, file_path)
+
+    return Changeset((Edit(target, tuple(edits), expected_hash),))
+
+
+def move_changeset(
+    paths: tuple[SearchPath, ...], moves: Sequence[DocumentMove]
+) -> Changeset[str]:
+    """The changeset :class:`MoveDocumentsTool` commits, or a refusal of the batch.
+
+    A source must exist, as a document or a directory, but a destination need not,
+    since naming a missing one is how a document is renamed.  Whether the moves
+    fit together is the gateway's question, asked of the whole batch at once.
+    """
+    operations: list[Move[str]] = []
+
+    for move in moves:
+        source, absolute = _resolve_target(paths, move.source)
+
+        if entry_stat(absolute) is None:
+            raise ToolRetry(f"'{move.source}' not found.{near_miss_hint(absolute)}")
+
+        destination, _absolute = _resolve_target(paths, move.destination)
+        operations.append(Move(source, destination))
+
+    return Changeset(tuple(operations))
+
+
+def delete_changeset(
+    paths: tuple[SearchPath, ...], file_paths: Sequence[str]
+) -> Changeset[str]:
+    """The changeset :class:`DeleteDocumentsTool` commits, or a refusal of the batch.
+
+    A directory is refused like any reader refuses one: deleting its documents
+    means naming them, so what the user approves is exactly what goes.
+    """
+    operations: list[Delete[str]] = []
+
+    for file_path in file_paths:
+        sp, local, _absolute = resolve_file_or_retry(paths, file_path)
+        operations.append(Delete(sp.prefixed(local)))
+
+    return Changeset(tuple(operations))
 
 
 @dataclass(slots=True, frozen=True)
 class EditDocumentTool(AsyncPathTool[str]):
-    """Edit a document by replacing an exact string with a new string.
+    """Edit a document by replacing exact strings with new strings.
 
-    Resolves and access-checks the path, then delegates the mutation to
-    :attr:`mutator` — the canonical workspace gateway that owns the
-    string-replacement semantics and re-indexing.
+    Resolves and access-checks the path, then hands the edit to :attr:`commit`,
+    which owns the string-replacement semantics and re-indexing.
     """
 
-    mutator: EditMutation = field(kw_only=True)
+    commit: Commit = field(kw_only=True)
     hint: MutationHint | None = None
 
     @override
     async def __call__(
         self,
         file_path: DocumentTargetPathArg,
-        old_string: EditOldStringArg,
-        new_string: EditNewStringArg,
-        replace_all: EditReplaceAllArg = False,
+        edits: DocumentEditsArg,
         expected_hash: ExpectedHashArg = None,
     ) -> ToolOutput[str]:
-        """Replace an exact string in a document.
+        """Replace exact strings in a document, one or many in a single write.
 
-        By default the match must be unique — fails if ``old_string`` does
-        not exist or appears more than once.  Pass ``replace_all=True`` to
-        substitute every occurrence instead.  Pass ``expected_hash`` from a
-        prior read to reject the edit if the document changed since.
+        The edits apply in order, each to the text the previous one left, and
+        either all land or none do.  By default an ``old_string`` must match
+        exactly once.  Set ``replace_all`` on an edit to substitute every
+        occurrence instead.  Pass ``expected_hash`` from a prior read to reject
+        the edit if the document changed since.
 
         Anything ``read_document`` can read, this can edit: a markdown
         document, and equally an original such as a config, data
@@ -356,28 +454,24 @@ class EditDocumentTool(AsyncPathTool[str]):
         Office document, spreadsheet, image, video) cannot be edited —
         replace it by uploading a new version instead.
         """
-        target, local, _absolute = resolve_text_target(self.resolved_paths, file_path)
-        try:
-            data = await self.mutator(
-                target, old_string, new_string, replace_all, expected_hash
-            )
-        except (HTTPException, ValueError) as exc:
-            raise ToolRetry(_mutation_detail(exc)) from exc
-        return ToolOutput(data=_hinted(self.hint, data, target, local))
+        changeset = edit_changeset(self.resolved_paths, file_path, edits, expected_hash)
+
+        with mutation_errors(ToolRetry):
+            data = await self.commit(changeset)
+
+        return ToolOutput(data=_hinted(self.hint, data, changeset.locations[0]))
 
 
 @dataclass(slots=True, frozen=True)
 class WriteDocumentTool(AsyncPathTool[str]):
     """Write content to a document using the requested write mode.
 
-    Resolves and access-checks the path (optionally enforcing :attr:`glob`),
-    then delegates the mutation to :attr:`mutator` — the canonical workspace
-    gateway that owns the write-mode semantics and re-indexing.
+    Resolves and access-checks the path, then hands the write to
+    :attr:`commit`, which owns the write-mode semantics and re-indexing.
     """
 
-    glob: str | None = None
     hint: MutationHint | None = None
-    mutator: WriteMutation = field(kw_only=True)
+    commit: Commit = field(kw_only=True)
 
     @override
     async def __call__(
@@ -400,80 +494,66 @@ class WriteDocumentTool(AsyncPathTool[str]):
         spreadsheet, image, video) cannot be written — replace it by
         uploading a new version instead.
         """
-        target, local, _absolute = resolve_text_target(self.resolved_paths, file_path)
-        if self.glob and not PurePosixPath(local).match(self.glob):
-            raise ToolRetry(f"'{file_path}' does not match pattern '{self.glob}'.")
+        changeset = write_changeset(
+            self.resolved_paths, file_path, content, mode, expected_hash
+        )
 
-        check_delimited_rows(target, content)
+        with mutation_errors(ToolRetry):
+            data = await self.commit(changeset)
 
-        try:
-            data = await self.mutator(target, content, mode, expected_hash)
-        except (HTTPException, ValueError) as exc:
-            raise ToolRetry(_mutation_detail(exc)) from exc
-        return ToolOutput(data=_hinted(self.hint, data, target, local))
+        return ToolOutput(data=_hinted(self.hint, data, changeset.locations[0]))
 
 
 @dataclass(slots=True, frozen=True)
-class MoveDocumentTool(AsyncPathTool[str]):
-    """Move or rename a document, its original, and its child assets.
+class MoveDocumentsTool(AsyncPathTool[str]):
+    """Move or rename documents and directories, all together or not at all.
 
-    Both ends are resolved against the writable span, so a cross-workspace
-    move is allowed exactly when the run may write the source and the
-    destination, and :attr:`mutator` routes each end back to its own store.
+    Both ends of every move are resolved against the writable span, so a
+    cross-workspace move is allowed exactly when the run may write the source
+    and the destination, and :attr:`commit` routes each end back to its own
+    root.
     """
 
-    mutator: MoveMutation = field(kw_only=True)
+    commit: Commit = field(kw_only=True)
 
     @override
-    async def __call__(
-        self,
-        file_path: ExistingDocumentPathArg,
-        destination: DocumentDestinationArg,
-    ) -> ToolOutput[str]:
-        """Move a document to another path, renaming it when the name differs.
+    async def __call__(self, moves: DocumentMovesArg) -> ToolOutput[str]:
+        """Move documents or directories, renaming them when the name differs.
 
-        This is how a document is renamed or re-filed: the entry keeps its
+        This is how documents are renamed or re-filed: an entry keeps its
         content, its extension, its original, and its extracted assets, and
         nothing is re-converted or re-indexed, so it costs far less than
         writing the content out at a new path and deleting the old one.  A
-        destination in another workspace re-homes the document there.
+        directory moves with everything in it, and a destination in another
+        workspace re-homes the source there.  Put every move of one task in a
+        single call: the moves apply at once, so renaming a to b and b to c,
+        or swapping two names, is one call, and the batch is checked as a
+        whole before anything moves and lands completely or not at all.
         """
-        sp, local, _absolute = resolve_file_or_retry(self.resolved_paths, file_path)
-        target = sp.prefixed(local)
-        _check_not_scratch(target, local)
-        moved_to, _local, _dst = resolve_mutation_target(
-            self.resolved_paths, destination
-        )
-        try:
-            await self.mutator(target, moved_to)
-        except (HTTPException, ValueError) as exc:
-            raise ToolRetry(_mutation_detail(exc)) from exc
+        changeset = move_changeset(self.resolved_paths, moves)
 
-        return ToolOutput(data=f"Moved '{target}' to '{moved_to}'.")
+        with mutation_errors(ToolRetry):
+            return ToolOutput(data=await self.commit(changeset))
 
 
 @dataclass(slots=True, frozen=True)
-class DeleteDocumentTool(AsyncPathTool[str]):
-    """Delete a document with everything derived from it."""
+class DeleteDocumentsTool(AsyncPathTool[str]):
+    """Delete documents with everything derived from them, all or none."""
 
-    mutator: DeleteMutation = field(kw_only=True)
+    commit: Commit = field(kw_only=True)
 
     @override
-    async def __call__(self, file_path: ExistingDocumentPathArg) -> ToolOutput[str]:
-        """Delete a document and everything belonging to it.
+    async def __call__(self, paths: DeletePathsArg) -> ToolOutput[str]:
+        """Delete documents and everything belonging to them.
 
         The searchable markdown, the original it was projected from, its
-        extracted assets, and its index entries all go with it, so the
-        document stops being reachable by search, read, or path.  A `.scratch/`
-        file is removed too, which is how a run clears working state it no
-        longer needs.  This cannot be undone: ask the user before deleting
-        anything they did not name.
+        extracted assets, and its index entries all go with each document, so
+        it stops being reachable by search, read, or path.  List every document
+        to delete in one call, and they are removed together or not at all.  This
+        cannot be undone: ask the user before deleting anything they did not
+        name.
         """
-        sp, local, _absolute = resolve_file_or_retry(self.resolved_paths, file_path)
-        target = sp.prefixed(local)
-        try:
-            await self.mutator(target)
-        except (HTTPException, ValueError) as exc:
-            raise ToolRetry(_mutation_detail(exc)) from exc
+        changeset = delete_changeset(self.resolved_paths, paths)
 
-        return ToolOutput(data=f"Deleted '{target}'.")
+        with mutation_errors(ToolRetry):
+            return ToolOutput(data=await self.commit(changeset))

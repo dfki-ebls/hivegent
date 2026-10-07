@@ -1,9 +1,10 @@
 """FastAPI application assembly for Hivegent."""
 
+import asyncio
 import logging
 import re
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 import sqlalchemy as sa
 from fastapi import FastAPI, Request
@@ -21,8 +22,9 @@ from ..observability import configure_observability
 from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state, warm_index
 from ..sandbox import monty_pool_lifespan
+from ..staging import prune_staged
+from ..tmp import sweep_tmp
 from ..workers.pool import pipeline_pool
-from ..workspace import cleanup_scratch_dirs
 from .access_log import install_probe_access_filter
 from .language import LanguageMiddleware
 from .maintenance import load_persisted_state
@@ -103,18 +105,61 @@ async def _verify_fts_config() -> None:
         )
 
 
+_HOUSEKEEPING: tuple[tuple[str, Callable[[], Awaitable[object]]], ...] = (
+    ("staged changesets", prune_staged),
+    ("/tmp folders", sweep_tmp),
+)
+
+
+async def _housekeep(interval: float) -> None:
+    """Prune what expired now, then once every *interval* seconds."""
+    while True:
+        for name, job in _HOUSEKEEPING:
+            try:
+                _ = await job()
+            except Exception:
+                logger.warning("Cleaning up %s failed", name, exc_info=True)
+
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def _housekeeping() -> AsyncGenerator[None]:
+    """Run the cleanups in the background for as long as the app does.
+
+    Never awaited by the boot: the first pass walks every ``/tmp`` folder,
+    which the requests the app starts serving meanwhile do not wait on.
+    """
+    task = asyncio.create_task(_housekeep(settings.tmp.sweep_interval_hours * 3600))
+
+    try:
+        yield
+    finally:
+        _ = task.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Open shared resources and delegate to MCP."""
     # Before anything is opened: a misspelled exclusion withholds nothing, and
     # the boot that would have surfaced it is the cheapest place to say so.
     check_tool_settings()
-    async with monty_pool_lifespan(), shared_http_client_lifespan(), engine_lifespan():
+
+    async with (
+        monty_pool_lifespan(),
+        shared_http_client_lifespan(),
+        engine_lifespan(),
+        AsyncExitStack() as background,
+    ):
         await apply_migrations()
+        # After the migrations, since the /tmp sweep reads conversation rows.
+        await background.enter_async_context(_housekeeping())
         await _verify_vector_dim()
         await _verify_fts_config()
         cleanup_spool_dir()
-        await cleanup_scratch_dirs()
         await load_persisted_state(app)
         await reconcile_index_state()
         # Load the embedding model now so the first upload after boot does not

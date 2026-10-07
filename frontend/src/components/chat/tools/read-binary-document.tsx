@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { parseBatch } from "@/components/chat/tools/batch";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
+import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { keyPrefix } from "@/i18n";
 import { fetchDocumentAsset } from "@/lib/api";
@@ -54,9 +55,10 @@ function BinaryMeta({ result }: { result: BinaryReadResult }) {
 /** Inline preview for image binaries, fetched lazily when the tool is expanded. */
 function ImagePreview({ result }: { result: BinaryReadResult }) {
   const { t } = useTranslation();
+  const conversationId = useConversationId();
   const fetch = useCallback(
-    (signal: AbortSignal) => fetchDocumentAsset(result.file_path, signal),
-    [result.file_path],
+    (signal: AbortSignal) => fetchDocumentAsset(result.file_path, signal, conversationId),
+    [result.file_path, conversationId],
   );
   const { url, error } = useObjectUrl(fetch);
 

@@ -1,191 +1,23 @@
-"""Directory create/move/delete, pruning, and store-wide wipes.
+"""Store-wide wipes.
 
-Operate on whole subtrees of the workspace; document rows follow their files
-via the SQL subtree helpers.  The destructive ops take the lock with a
-``scope`` (or ``whole_store``) so they cannot race a phased upload or a bulk
-import that touches the same subtree.
+Creating, moving, and deleting a directory are changeset items
+(:mod:`~hivegent.workspace.changeset`), so they commit atomically with whatever
+else a change does.  The store-wide wipe takes the lock with ``whole_store`` so
+it cannot race a phased upload or a bulk import.
 """
 
 import asyncio
-from collections.abc import Iterable
-from pathlib import Path, PurePosixPath
 
-from fastapi import HTTPException
-
-from ..concurrency import shield_to_completion
 from ..config import settings
 from ..db import documents as db_documents
-from ..entries import SCRATCH_DIR_NAME
-from ..l10n import Localized
+from ..files import remove_path
 from ..store import Casebase
-from .locks import _locked_for, _reject_if_scope_inflight, store_lock
-from .paths import (
-    DESTINATION_EXISTS,
-    DIRECTORY_NOT_FOUND,
-    DIRECTORY_PATH_REQUIRED,
-    _check_destination_parents,
-    _check_not_reserved_path,
-    _is_blocked_by_other,
-    _is_same_file,
-    _remove_tree,
-    _resolve_move_destination,
-)
+from .locks import _locked_for
 
 __all__ = [
-    "cleanup_scratch_dirs",
-    "clear_scratch",
-    "create_directory",
     "delete_all",
-    "delete_directory",
     "delete_workspace_root",
-    "move_directory",
-    "prune_empty_dirs",
 ]
-
-_PATH_EXISTS = Localized(en="Path already exists", de="Der Pfad existiert bereits")
-_SAME_PATHS = Localized(
-    en="Source and destination are the same",
-    de="Quelle und Ziel sind identisch",
-)
-_INTO_ITSELF = Localized(
-    en="Cannot move a directory into itself",
-    de="Ein Ordner kann nicht in sich selbst bewegt werden",
-)
-
-
-async def create_directory(store: Casebase, path: str) -> None:
-    """Create an empty workspace directory."""
-    if not path:
-        raise HTTPException(status_code=400, detail=DIRECTORY_PATH_REQUIRED.current)
-    _check_not_reserved_path(path)
-    async with _locked_for(store, path):
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        directory_path = workspace_dir / path
-        if directory_path.exists():
-            raise HTTPException(status_code=409, detail=_PATH_EXISTS.current)
-        _check_destination_parents(store, path)
-        directory_path.mkdir(parents=True, exist_ok=True)
-
-
-async def _move_directory_locked(
-    src_store: Casebase, dst_store: Casebase, src: str, dst: str
-) -> None:
-    """Move a directory's files and SQL rows. Caller holds the lock(s).
-
-    Source paths resolve under *src_store*'s workspace and destination paths
-    under *dst_store*'s, so this renames a subtree within one workspace or
-    migrates it to another (personal ↔ group, group ↔ group).
-    """
-    src_workspace = src_store.workspace_dir(settings.data_dir)
-    # Non-creating: the rename step below makes the destination tree, so
-    # validation never needs the directory to exist and a rejected move leaves
-    # no empty workspace behind.
-    dst_workspace = dst_store.workspace_path(settings.data_dir)
-    cross_store = src_store != dst_store
-
-    if not src:
-        raise HTTPException(status_code=400, detail=DIRECTORY_PATH_REQUIRED.current)
-    _check_not_reserved_path(src)
-    src_dir = src_workspace / src
-    if not src_dir.is_dir():
-        raise HTTPException(status_code=404, detail=DIRECTORY_NOT_FOUND.current)
-
-    dst = _resolve_move_destination(
-        dst_workspace, PurePosixPath(src).name, dst, src_dir
-    )
-    _check_not_reserved_path(dst)
-    _reject_if_scope_inflight(dst_store, dst)
-    if not cross_store and dst == src:
-        raise HTTPException(status_code=400, detail=_SAME_PATHS.current)
-    dst_dir = dst_workspace / dst
-    # Reject moving a directory beneath itself.  Inode comparison against the
-    # destination's existing ancestors also catches case-aliased spellings on
-    # a case-insensitive filesystem, where a string prefix check would not.  A
-    # cross-store destination is a different tree, so no ancestor can alias the
-    # source and the loop is a no-op there.
-    for ancestor in dst_dir.parents:
-        if ancestor == dst_workspace:
-            break
-        if _is_same_file(ancestor, src_dir):
-            raise HTTPException(status_code=400, detail=_INTO_ITSELF.current)
-    _check_destination_parents(dst_store, dst)
-    if _is_blocked_by_other(dst_dir, src_dir):
-        raise HTTPException(status_code=409, detail=DESTINATION_EXISTS.current)
-
-    dst_dir.parent.mkdir(parents=True, exist_ok=True)
-    src_dir.rename(dst_dir)
-
-    # Children-only: a same-named sibling document (stem equal to ``src``)
-    # lives outside the directory and keeps its row.
-    await db_documents.move_subtree(src_store, src, dst_store, dst)
-
-
-async def prune_empty_dirs(store: Casebase, sources: Iterable[str]) -> None:
-    """Remove directories left empty after their entries moved away.
-
-    *sources* are the workspace-relative paths of moved entries; every
-    ancestor directory of each is a candidate.  Removal uses non-recursive
-    ``rmdir`` deepest-first, so a directory still holding anything — even
-    content invisible to the directory tree — survives untouched.
-    """
-    candidates = {
-        str(ancestor)
-        for source in sources
-        for ancestor in PurePosixPath(source).parents
-        if str(ancestor) != "."
-    }
-    async with store_lock(store):
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        for rel in sorted(candidates, key=lambda p: p.count("/"), reverse=True):
-            try:
-                (workspace_dir / rel).rmdir()
-            except OSError:
-                continue
-
-
-async def move_directory(
-    src_store: Casebase, dst_store: Casebase, src: str, dst: str
-) -> None:
-    """Move or rename a workspace directory; document rows follow via SQL.
-
-    *src_store* and *dst_store* may be the same casebase (a rename within one
-    workspace) or two different ones (migrating a folder between the personal
-    and a shared workspace).  The FS move + SQL move run to completion under the
-    lock(s) even on a cancel (:func:`shield_to_completion`) so the directory and
-    its rows cannot drift apart.
-    """
-    async with _locked_for(src_store, scope=src, dst_store=dst_store):
-        await shield_to_completion(
-            _move_directory_locked(src_store, dst_store, src, dst)
-        )
-
-
-async def _delete_directory_locked(store: Casebase, path: str) -> None:
-    """Delete a directory's files and SQL rows. Caller holds the lock."""
-    if not path:
-        # A bare scope root resolves to an empty path; deleting it here would
-        # wipe the workspace files while leaving every SQL row behind.  The
-        # full wipe (files + rows) is `delete_all`.
-        raise HTTPException(status_code=400, detail=DIRECTORY_PATH_REQUIRED.current)
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    directory_path = workspace_dir / path
-    if not directory_path.is_dir():
-        raise HTTPException(status_code=404, detail=DIRECTORY_NOT_FOUND.current)
-    await asyncio.to_thread(_remove_tree, directory_path)
-    # Children-only: a same-named sibling document (stem equal to *path*)
-    # lives outside the directory and keeps its row.
-    await db_documents.delete_subtree(store, path)
-
-
-async def delete_directory(store: Casebase, path: str) -> None:
-    """Delete a workspace directory; matching SQL documents cascade out.
-
-    The FS removal + SQL delete run to completion under the lock even on a
-    cancel (:func:`shield_to_completion`) so the directory cannot vanish while
-    its rows linger.
-    """
-    async with _locked_for(store, scope=path):
-        await shield_to_completion(_delete_directory_locked(store, path))
 
 
 async def delete_all(store: Casebase) -> None:
@@ -195,60 +27,7 @@ async def delete_all(store: Casebase) -> None:
     """
     async with _locked_for(store, whole_store=True):
         await db_documents.delete_all(store)
-        await asyncio.to_thread(_remove_tree, store.workspace_path(settings.data_dir))
-
-
-def _prune_scratch_dirs(root: Path) -> int:
-    """Remove every scratch directory under *root*, without descending into one.
-
-    Returns the number of files dropped, which is all a caller can report on:
-    scratch leaves no rows behind and the tree never showed it, so the count is
-    the only evidence the sweep did anything.
-    """
-    removed = 0
-    for dir_path, dir_names, _files in root.walk():
-        if SCRATCH_DIR_NAME not in dir_names:
-            continue
-
-        dir_names.remove(SCRATCH_DIR_NAME)
-        scratch = dir_path / SCRATCH_DIR_NAME
-        # A symlink by that name is not a scratch directory and `rmtree` refuses
-        # one, so it is left alone rather than failing the boot.
-        if not scratch.is_symlink():
-            removed += sum(len(files) for _, _, files in scratch.walk())
-            _remove_tree(scratch)
-
-    return removed
-
-
-async def cleanup_scratch_dirs() -> None:
-    """Drop every workspace scratch directory, called once at startup.
-
-    Scratch is what a run parks between tool calls, not content: nothing indexes
-    it, nothing else refers to it, and nothing prunes it while the server runs,
-    so a boot is the one moment it can be cleared without racing a live turn.
-    It cannot ride reconciliation, which never deletes workspace files — the
-    same reason the job spool is wiped from the lifespan rather than a sweep.
-    """
-    await asyncio.to_thread(
-        _prune_scratch_dirs, Casebase.workspace_root(settings.data_dir)
-    )
-
-
-async def clear_scratch(store: Casebase) -> int:
-    """Drop one casebase's scratch state on request, returning the file count.
-
-    The same removal as the boot sweep, narrowed to a single workspace and taken
-    under its lock, since here it runs against a live server: a run parks scratch
-    through the ordinary locked write path, so the lock is what keeps a clear
-    from landing halfway through one.  Nothing indexes scratch, so no rows follow
-    the files out, and no client is notified for the reason `announcing_mutator`
-    stays quiet on a scratch write: the tree hides `.scratch/` either way.
-    """
-    async with store_lock(store):
-        return await asyncio.to_thread(
-            _prune_scratch_dirs, store.workspace_path(settings.data_dir)
-        )
+        await asyncio.to_thread(remove_path, store.workspace_path(settings.data_dir))
 
 
 async def delete_workspace_root() -> None:
@@ -260,5 +39,5 @@ async def delete_workspace_root() -> None:
     drops the vector rows), since this is a filesystem-only operation.
     """
     workspace_root = Casebase.workspace_root(settings.data_dir)
-    await asyncio.to_thread(_remove_tree, workspace_root)
+    await asyncio.to_thread(remove_path, workspace_root)
     workspace_root.mkdir(parents=True, exist_ok=True)

@@ -96,7 +96,7 @@ def _normalize_disk_paths(workspace: Path) -> tuple[int, int]:
 def _repoint_asset_references(workspace: Path, src_stem: str, dst_stem: str) -> None:
     """Repoint a renamed entry's in-markdown ``<name>.assets/`` references.
 
-    The same fix-up :func:`hivegent.workspace.move_document` performs after a
+    The same fix-up a changeset move performs after a
     rename, through the shared :func:`hivegent.entries.repoint_asset_refs`.  It
     rewrites one embedded path, never the body's own normalization.  Unlike the
     move, a sweep tolerates a description that is missing or not text: it

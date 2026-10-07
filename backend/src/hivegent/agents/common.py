@@ -15,6 +15,7 @@ from ..l10n import DEFAULT_LANGUAGE, Language
 from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, build_search_paths
+from ..tmp import tmp_search_path
 from ..tools.base import SearchPath, query_hint, resolve_accessible_file
 from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
@@ -44,6 +45,10 @@ class UserDeps:
     user_id: str
     store: Casebase
     mode: Mode
+    # The conversation the run belongs to, whose folder `/tmp` names.  A
+    # subagent shares its parent's, and a caller without one (MCP, the admin tool
+    # console) has no `/tmp`, so no root claims a path into it.
+    conversation_id: str | None = None
     # The run's interface language, which selects the language of its
     # instructions and injected notes, while tool schemas and results stay
     # English.  The default serves runs without a user interface (MCP).
@@ -59,9 +64,9 @@ class UserDeps:
     # named to the model and restrict no tool, so they never reach a filter.
     relevant_documents: frozenset[str] = frozenset()
     # Tool names this *request* withheld.  Only the request's half: the
-    # operator's `settings.tools.disabled` is global and is unioned in where
-    # the surface is built, the way `web_enabled` already is, so a deps site
-    # that forgets this field still cannot hand a program an excluded tool.
+    # operator's `settings.tools.disabled` is global and joins it in
+    # `withheld_tools`, so a deps site that forgets this field still cannot
+    # hand a program an excluded tool.
     disabled_tools: frozenset[str] = frozenset()
     llm: LlmConfig | None = None
     # Sink for live subagent transcript snapshots; set only on the chat path,
@@ -88,17 +93,45 @@ class UserDeps:
         """Whether a state-changing tool call must be confirmed by the user."""
         return self.mode not in AUTO_APPROVED_MODES
 
-    def search_paths(self, *, writable: bool = False) -> tuple[SearchPath, ...]:
-        """Workspace roots for this run's document tools, filters applied.
+    @property
+    def tmp(self) -> SearchPath | None:
+        """The conversation's ``/tmp``, ``None`` for a caller without one."""
+        if self.conversation_id is None:
+            return None
 
-        *writable* narrows the groups to those the user may mutate.
-        """
+        return tmp_search_path(settings.data_dir, self.conversation_id)
+
+    @property
+    def withheld_tools(self) -> frozenset[str]:
+        """The tools this run may not call: the request's and the operator's."""
+        return self.disabled_tools.union(settings.tools.disabled)
+
+    def _workspace_paths(self, *, writable: bool) -> tuple[SearchPath, ...]:
         return build_search_paths(
             self.store,
             self.write_group_stores if writable else self.group_stores,
             settings.data_dir,
             filter_for_store=self.filter_for_store,
         )
+
+    def search_paths(self) -> tuple[SearchPath, ...]:
+        """Every root a path tool reads, filters applied: the workspaces and ``/tmp``."""
+        tmp = self.tmp
+        roots = self._workspace_paths(writable=False)
+
+        return roots if tmp is None else (*roots, tmp)
+
+    def writable_paths(self, *, workspace: bool = True) -> tuple[SearchPath, ...]:
+        """Every root a mutation may change, each committing by its own policy.
+
+        The writable workspaces in a mode that may write them, unless
+        *workspace* leaves them out, and ``/tmp``, which every mode may write
+        since it is the conversation's own.
+        """
+        tmp = self.tmp
+        roots = self._workspace_paths(writable=True) if workspace and self.can_write else ()
+
+        return roots if tmp is None else (*roots, tmp)
 
     def filter_for_store(self, store: Casebase) -> DocumentFilter | None:
         """Get the applicable DocumentFilter for a specific store.

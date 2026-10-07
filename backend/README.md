@@ -85,8 +85,8 @@ Every secret setting is a `SecretStr`, so it stays masked in `repr`, logs, and t
 ### The filesystem is the source of truth
 
 The tree under `data/workspace/<store_key>/` is authoritative for document content (markdown, originals, and assets), and the Postgres `documents` plus `chunks` rows are a derived index reconciled from it.
-The single idempotent ingest path is `workspace.sync_entry_from_disk` (one entry) and `workspace.sync_entries_from_disk` (a batch under one casebase lock).
-Both compare the entry's `content_digest` (`config.content_digest`) against the stored one and re-chunk only when the bytes changed, so a full re-derive is cheap.
+The single idempotent ingest path is `workspace.sync_entries_from_disk`, which folds a batch of entries back under one casebase lock.
+It compares the entry's `content_digest` (`config.content_digest`) against the stored one and re-chunk only when the bytes changed, so a full re-derive is cheap.
 A `(mtime, size)` stat fast-path (`documents.content_mtime_ns` / `content_size`, captured by `entries.ContentStat`) avoids even reading a description whose stat is unchanged: the stat is only a pre-filter, so a stat that moved without a content change (a `touch`, a checkout) costs one read and never a re-embed, and a stat that lied the other way cannot happen because the digest is re-checked whenever the stat differs.
 The digest, `mtime`, and `size` are cleared together by `documents.upsert_document` and stamped together by `set_content_state` only once the chunks are durable, so a null digest always means "not indexed yet, re-derive".
 A description with no prior row is ingested and stamped `origin = imported`, since its real provenance is not recoverable from disk.
@@ -117,7 +117,7 @@ The grammar is stated once per surface — `WORKSPACE_PATH_INSTRUCTIONS` for an 
 
 It binds what comes back too: a message naming a path renders it through `workspace.paths._shown` (`store.scope.render` outside the package), since a store-local spelling names a path no tool and no route accepts.
 The `workspace` mutations take the store rather than its directory wherever that is what it costs to say which workspace a path is in.
-`store.scoped_operation` routes each path back to the workspace its prefix names, and `store.scoped_pair_operation` does it for a move's two ends.
+`store.route_path` (behind `workspace.Location.parse`) routes each path back to the workspace its prefix names, so a move's two ends may name different ones.
 The mutating tools span the personal workspace plus the groups the user may write to; the read tools span every readable one.
 
 A group is identified by the ID from its OIDC groups claim and nothing else: the `groups` row, `documents.owner_group_id`, the `group:<id>` directory, and the `@<id>` prefix all use it.
@@ -152,37 +152,52 @@ It is deliberately not `is_projectable_original`, which answers whether the _ing
 A new original must still claim a free stem, so a write can never silently supersede another entry's files, and a binary is replaced by uploading.
 
 The refusal is one sentence (`converters.BINARY_WRITE_REASON`, the write-side counterpart of `text.NOT_TEXT_REASON`) shared by the gateway and by `tools.mutations.resolve_text_target`, which every text-writing surface resolves through.
-That is what puts the refusal in front of the approval prompt rather than behind it: `run_python`'s declared `commit_path` used to be checked only at the commit, so a bad suffix cost the user an approval and the run a whole program before anything said no.
+That is what puts the refusal in front of the approval prompt rather than behind it, and the sandbox mount asks the same question (`writes_as_text`) the moment a program writes a new file, so a bad suffix fails the program where it stands rather than after it ran.
 
 A whole write to a delimited suffix is checked against its own header by `tools.mutations.check_delimited_rows`, since a table built a row at a time is one f-string away from a row of the wrong width, after which every value on it lands under the wrong heading with nothing downstream to report it.
 The header decides the width and `converters.DELIMITERS` decides the separator, one table read by both the write gate and `query_table`'s loader, so a `.csv` is comma-separated by the name it was given and the surface that writes one can never disagree with the one that reads it back.
 An edit replaces a string inside a file it did not build and is left alone.
 
-### Scratch directories
+### A conversation's `/tmp`
 
-A `.scratch/` directory anywhere in a workspace is content and never a document: `entries.is_scratch_path` is checked before the format seam above, so the reconcile walk skips it, a write lands as plain bytes with no projection or stem claim, and the user-facing tree hides it.
-That is where a run parks state between `run_python` calls without paying chunking or leaving a `documents` row to disagree with the disk.
+`/tmp` holds a conversation's working state, content that is never a document: intermediates, the state a later `run_python` call picks up, a program written only to be run, a redirected result.
+Each conversation owns one folder, `<data_dir>/tmp/<conversation_id>/`, outside every workspace, and every agent surface spells it `/tmp`, the way a container session has one `/tmp` for its lifetime.
+There is no user level: conversation ids are server-generated keys and the `conversations` row names the one user a folder belongs to, so ownership is read from the database and never from the path.
+`tmp.tmp_dir(data_dir, conversation_id)` is the one place an id becomes a path, and it refuses an id that is no safe path segment.
 
-The path tools still list, glob, and grep it, since a run has to find its own state back, and `delete_document` removes one file from it, while `_check_not_reserved_path` keeps the upload, move, and directory API out of it as it does `.assets`.
-The approval gate is per path, not per tool (`agents/tools/write.py`): an interactive run writes to scratch without asking, read mode refuses it like any write, write mode approves everything.
-It is cleared by `workspace.directories.cleanup_scratch_dirs` from the lifespan, next to the job spool, because reconciliation never deletes workspace files and a boot is the one moment nothing can be racing a live turn; while running, `DELETE /api/scratch` ("Clear Scratch") sweeps the caller's workspace plus every writable group under its lock and notifies no client.
+`/tmp` is a root beside the workspace roots rather than a corner of one: `UserDeps.search_paths` appends `tmp.tmp_search_path`, a `SearchPath` whose `PrefixScope("/tmp")` renders and strips the prefix (the same `tools.scope.PrefixScope` behind `WorkspaceScope`), so `read_document`, `grep`, `glob_documents`, `list_documents`, `jq`, `query_table`, and `read_binary_document` reach it with no code of their own, a `..` out of it resolves outside the root and is refused, and a conversation can never name another's folder.
+Nothing about a workspace applies to it: it is never reconciled, indexed, or searched, carries no `DocumentFilter`, and announces nothing, so no part of the workspace code knows it exists and no name in a workspace is reserved for it.
+`UserDeps.conversation_id` is set by `build_run_prefix`, which also creates the folder, and a subagent inherits it, so `explore` shares its parent's `/tmp`.
+A caller without a conversation, MCP and the admin tool console, gets no such root, so a `/tmp` path is refused there like any path naming no root, with the roots it does have named.
 
-`SCRATCH_INSTRUCTIONS` is shared between the `compute` and `write` features, and `PYTHON_INSTRUCTIONS` names `.scratch/` as the home of a rerunnable `.py`, since a `.py` elsewhere is an original and gets chunked.
-The mutation receipt says the rest at the one moment the path is in hand: it spells the prefixed path a tool takes back and points a `.scratch/` `.py` at `run_python`'s `script_path`.
-That pointer is a `MutationHint` the write and edit tools take like `filter_func`, injected by `agents/tools/write.py` alone, since the MCP surface writes through the same tools and has no `run_python`, and applied where the tool holds both spellings: `local` answers `is_scratch_path`, `target` is what the model types back.
-`run_python`'s own `output_sink` composes the writer without it, since a commit the model asked for by declaring a `commit_path` is not a program it just stored.
+How a change lands is a property of the root, not of the caller: every `SearchPath` carries a `CommitPolicy`, `Gated` for a workspace (the changeset gateway, behind the approval the mode asks for) or `Direct(max_bytes)` for `/tmp` (written straight into the folder, with no changeset, no approval, and no store lock).
+Every surface that writes asks the root rather than the path: `tools.mutations.partition` splits a changeset into its gated and its direct half, the overlay of a program does the same (`WorkspaceOS.policy`), and `tmp.plan_direct` checks the direct half, which its `DirectPlan.apply` writes once the gated half settled, deriving new text with the gateway's own `workspace.documents.derive_text` (so a hash check, a write mode, and an edit refuse in the gateway's words) and replacing each file atomically (`files.atomic_write`).
+So `write_document`, `edit_document`, `move_documents`, `delete_documents`, a redirected `output_path`, and a program all reach `/tmp` the same way, their validators ask nothing for a direct change, and `/tmp` is writable in every mode, since it is the conversation's own: `UserDeps.writable_paths` leaves the workspaces out in a mode that may not write them, and keeps `/tmp`.
+The `write` feature is therefore offered in every mode, so a read-only run can still store and edit a script it reruns, while its workspace guidance (`WRITE_INSTRUCTIONS`) is a shared block narrowed to the modes that may write the workspaces and `apply_changes` is withheld outside them by its `prepare` hook, since no such run stages anything.
+A move between the two policies is refused by the tools, since no one commit covers both ends, and is a write of the text and a removal in a program.
 
-Two properties are deliberate for now and are the places to revisit first if scratch grows load-bearing.
+`tmp.max_bytes` caps one folder.
+`plan_direct` derives every item first, replays them in `DirectPlan.apply`'s order over the disk to refuse a missing source, a taken destination, or a path below a file, in the gateway's words, and checks the cap against what the items replace, walking the whole folder only when they grow it, so a refused change writes nothing and a folder already over the cap may still shrink.
+`GET /api/documents/{filepath}` reads a `/tmp` path when the request names its `conversation_id`, after checking in the database that the user owns that conversation, and resolves it with the tools' own containment checks, so the chat shows a temporary script's source or image the way it shows a document's.
+A folder ends three ways: deleting its conversation deletes it, `DELETE /api/tmp` ("Clear Temporary Files", which counts the files it removes) and `DELETE /api/user-data` delete the folders of every conversation the database lists for the user, and `tmp.sweep_tmp` deletes one untouched for `tmp.ttl_hours` (judged by the newest mtime anywhere in it, stopping at the first recent one) or one naming no conversation row, looking up only the idle folders' ids.
+The sweep runs in a background task the lifespan starts after the migrations, first at once and then every `tmp.sweep_interval_hours`, beside the staged changeset prune, so the boot waits on neither.
+An orphan is kept for one sweep interval, since a new conversation's row is only written when its first turn ends, and the orphan rule is what catches a user deletion's cascade and a crash.
+A compacted conversation starts with a copy of its source's folder (`copy_tmp`), since its summary may name what the source kept there.
 
-- TODO(scratch): scratch state is workspace-wide rather than conversation-scoped, so one conversation can read another's files by guessing the path, and so can any member of a readable group workspace. A `.scratch/<conversation-id>/` namespace with only the current one in scope is the fix when scratch starts carrying anything a document filter would have hidden.
-- TODO(scratch): scratch has no aggregate quota and is pruned only at startup, so a long-lived server writing unique output paths can fill the disk between boots. Add a per-owner byte quota enforced at write time, an age-based sweep, or deletion of a conversation's namespace when it settles.
+`TMP_INSTRUCTIONS` is shared between the `compute` and `write` features, and `PYTHON_INSTRUCTIONS` names `/tmp` as the home of a rerunnable `.py`, since a `.py` in a workspace is an original and gets chunked.
+The mutation receipt says the rest at the one moment the path is in hand: it points a `/tmp` `.py` at `run_python`'s `script_path`.
+That pointer is a `MutationHint` the write and edit tools take like `filter_func`, injected by `agents/tools/write.py` alone, since the MCP surface writes through the same tools and has no `run_python`.
+`output_sink` composes the writer without it, since a result the model redirected to an `output_path` is not a program it just stored.
+
+- TODO(binary): support binary files in `/tmp`, so any name and suffix is accepted, the workspace-only rules (text suffixes, excluded folder names, `DocumentFilter`) do not apply there, and `run_python` reads and writes bytes (`read_bytes`, `write_bytes`, binary `open` modes) under a per-file byte cap.
+- TODO(binary): support binary files in the workspace, so a binary written or moved there by `run_python` (or later the shell) becomes a staged changeset item that runs the upload conversion pipeline at apply time, and the approval summary names it as an upload with its size and type.
 
 ### Notifications
 
 Every workspace change reaches the client on the per-owner SSE feed, which the frontend turns into a refresh of the named scope.
-Long-running work is a real job and its settled `document.*` event carries it; a mutation that ran inline must publish `ScopeChanged` through `workspace_events` (`notify_workspace_change` holding the store, `announcing_mutator` for the write tools), or every client but the one that asked stays stale.
+Long-running work is a real job and its settled `document.*` event carries it.
+A mutation that ran inline must publish `ScopeChanged` through `workspace_events` (`notify_workspace_change` holding the store, `announce_paths` for the canonical paths a changeset names, which `apply_changeset` calls for the `owner` it is given), or every client but the one that asked stays stale.
 
-A scratch write is the exception, since the tree hides it and the refresh would buy nothing.
 The notification skips the `X-Client-Id` that caused it, so the asking tab keeps its own read-after-write and the others learn from the feed.
 Delivery is per-owner, so a group workspace refreshes for the writer and not yet for the other members.
 `ScopeChanged` is transient and never retained, so the client re-reads every scope it holds on each handshake (`onFeedReady`).
@@ -194,13 +209,13 @@ The live filesystem and its SQL index stay unchanged while commands run, and an 
 None of the pieces below require breaking changes to the code above.
 
 - TODO(shell): put arbitrary command execution behind a dedicated sandbox runner with a narrow session API rather than adding a shell or container-runtime socket to the backend, so the runner can select an OCI sandbox, `systemd-nspawn`, or a stronger runtime without changing the agent tool.
-- TODO(shell): sandbox each session per casebase as an unprivileged user with only that store's working copy visible, no backend secrets or service sockets, no capabilities or devices, a read-only root, and explicit network, CPU, memory, process, duration, output, and disk limits. `subprocesses.run` is unsandboxed and is safe only for the fixed-argument tools (`rg`, `jq`, `pandoc`).
-- TODO(shell): run each session against an isolated working copy or overlay so the casebase lock is never held while commands run, with a copy-based directory or Linux VM for macOS development because overlayfs and `systemd-nspawn` are Linux-only.
-- TODO(shell): compute the session diff in trusted runner code, surface it for approval, and make checkpoints explicit so a session can fold back several times or discard every pending change for free.
-- TODO(shell): add one workspace fold-back gateway that maps every created, changed, renamed, and deleted physical path to its logical entry, prepares converter-backed formats outside the lock, acquires the casebase lock, rejects changes whose live starting hashes moved, marks the affected entries in flight, applies the diff, synchronizes them through the disk-to-SQL ingest seam, clears the claims, and only then notifies clients.
+- TODO(shell): sandbox each session as an unprivileged user that sees two mounts and nothing else: the store's working copy at `/workspace`, and the conversation's folder (`tmp.tmp_dir`) read-write at `/tmp`, with no backend secrets or service sockets, no capabilities or devices, a read-only root, and explicit network, CPU, memory, process, duration, output, and disk limits, the last of them `tmp.max_bytes` for `/tmp`. `subprocesses.run` is unsandboxed and is safe only for the fixed-argument tools (`rg`, `jq`, `pandoc`).
+- TODO(shell): run each session against an isolated working copy or overlay of `/workspace` so the casebase lock is never held while commands run, with a copy-based directory or Linux VM for macOS development because overlayfs and `systemd-nspawn` are Linux-only. `/tmp` needs neither, since it is written directly and asks no approval, exactly as the Python sandbox writes it.
+- TODO(shell): compute the `/workspace` session diff in trusted runner code, surface it for approval, and make checkpoints explicit so a session can fold back several times or discard every pending change for free.
+- TODO(shell): fold the session diff back through `workspace.apply_changeset`, which already prepares converter-backed formats outside the lock, takes every involved casebase lock, rejects changes whose starting basis moved, applies files and rows atomically, marks written entries in flight while they index, and only then notifies clients. The mapping of every created, changed, renamed, and deleted path to one changeset item with its basis already exists for the Python sandbox (`tools.changeset.stage_changes`, see [Writes from a program](#writes-from-a-program)), so a shell session diff can reuse its entry rules.
 - TODO(shell): keep an entry whose synchronization failed out of retrieval rather than serving stale chunks, retain its dirty state for retry, and report the checkpoint as unsettled until every affected indexable entry succeeds.
 - TODO(shell): decide which shell-created binaries and converter-backed formats become entries at fold-back. A plain-text file can use `is_projectable_original`, a changed existing original must refresh its projection, and a new `.pdf` or `.csv` may either run the upload conversion pipeline or remain explicitly inert.
-- TODO(shell): keep all workspace access behind `Casebase.workspace_dir(data_dir)` so the working-copy root can be injected in one place.
+- TODO(shell): keep all workspace access behind `Casebase.workspace_dir(data_dir)` and all `/tmp` access behind `tmp.tmp_dir(data_dir, conversation_id)`, so each mount's root can be injected in one place.
 
 ## Conversations
 
@@ -226,7 +241,7 @@ Only a request carrying a user prompt reserves an id, and `resolve_fork` treats 
 That auto-continuation is also why `ChatAdapter` keeps only the client's _user_ messages (`messages` in `server/vercel.py`).
 The base adapter appends whatever the request carries on top of the caller's `message_history`, and the SDK's approval resend is the assistant message holding the pending tool call, already the last message of the replayed prefix.
 Appending it would put the same `tool_call_id` in the history twice: pydantic-ai closes the stored copy with a synthetic "interrupted" return and gives only the echo the real result, so the model sees its call interrupted and reissues it.
-The decision itself is unaffected, since `deferred_tool_results` reads it from the request rather than from the loaded messages, and a denial carries the frontend's explicit reason, which pydantic-ai maps to `ToolDenied`.
+The decision itself is unaffected, since `ChatAdapter.approval_decisions` reads it from the request rather than from the loaded messages.
 
 An approval the user never answers is closed by the next turn (`decline_pending_approvals`).
 A run that ends awaiting one leaves its call dangling on purpose so a later request can carry the decision and resume it; a request that carries a new prompt instead ends that run for good.
@@ -250,13 +265,22 @@ Nothing may relax that strictness to accommodate a client: `extra='forbid'` is w
 
 ### Tool approvals round-trip symmetrically
 
-A denial is self-describing, since its return carries `outcome='denied'` plus the reason, but an approved call just runs and stores an ordinary successful return, so nothing in the message list would say it was ever gated and the decision the user saw live would vanish on reload.
-`vercel.record_approvals` stamps the released call ids on the metadata of the request carrying their returns, and `dump_messages_with_ids` puts the decision back on the projected part.
+A decision's `reason` is the user's optional note, and the model-facing text is worded here rather than in the browser, in English like every tool result.
+`ChatAdapter.deferred_tool_results` turns a denial into `ToolDenied(denial_message(note))` and hands an approval's note to its call as `DeferredToolResults.metadata`, which pydantic-ai exposes as `RunContext.tool_call_metadata`.
+`agents.approval.ApprovalNotes` appends it to that call's return, so the note is part of the stored result the continuation and every later turn replay, with no extra user turn in the history.
+
+An approved call just runs and stores an ordinary successful return, so nothing in the message list would say it was ever gated, and a denial stores the refusal rather than the note the user typed.
+`vercel.record_approvals` stamps each decision with its note on the metadata of the request carrying the returns, and `dump_messages_with_ids` puts it back on the projected part, overwriting the refusal text the projection copied into `reason`, so `approval.reason` always means the user's note.
+Every denial is recorded that one way, an abandoned one too (below), so the projection overwrites unconditionally.
+The note is appended as one more item of the return value's content list (a plain return becomes its first item, and the client shows a list item by item) rather than as `ToolReturn.content`, which pydantic-ai sends as a separate `UserPromptPart` that would be stored and shown as a user turn nobody typed, and it is appended after `ToolOutputLimit` clamped the return, which the capability order in `build_capabilities` guarantees.
 
 That metadata is UI-owned and never sent to the provider, like the reasoning durations and the turn error beside it.
 It rides on the request node rather than the closer `ToolReturnPart.metadata` because that field is already the tool-output chunk channel (`tools.pydantic_ai.wrap_tool_output`).
 
-An approval the user overtook by sending another message is a denial on both sides, and neither side stores that decision: `vercel.decline_pending_approvals` closes the dangling call in the history on the next request, and `chat-utils.declineAbandonedApprovals` derives the same denial over the live transcript, since only the last message can hold a request that is still answerable.
+The request side travels the same way: the protocol's approval request chunk carries ids only, so `ChatEventStream.handle_run_result` stores what each `ApprovalRequired` carried on the response that asked, under `approvalMetadata` keyed by tool call id.
+The run's one message metadata chunk delivers it live and the stored response projects it again on reload, so the prompt shows the same server-resolved paths either way.
+
+An approval the user overtook by sending another message is a denial on both sides: `vercel.decline_pending_approvals` closes the dangling call in the history on the next request and records the decision, denied with no note, the way `record_approvals` records a user's, and `chat-utils.declineAbandonedApprovals` derives the same denial over the live transcript, since only the last message can hold a request that is still answerable.
 So the buttons disappear the moment the prompt is sent rather than on the reload that would have shown them settled.
 
 ### Compaction is a turn of the conversation
@@ -317,12 +341,20 @@ Importing sibling infrastructure (`converters`, `chunkers`, `subprocesses`, `sec
 The read tools serve the markdown projection, which is what retrieval and citation line anchors are built on.
 Two document shapes are deliberately not served that way, and `converters.TABULAR_SUFFIXES` and `converters.JSON_SUFFIXES` are the one table behind each split, for the same reason `VISION_MEDIA_TYPES` is the one table behind read/read_binary: the specialised tool gates on it and `read_document` points at that tool, so the reader cannot silently spend the context on a document that could have been queried.
 
+### Read tools are list-first
+
+A read tool takes a list of items rather than one (`reads`, `files`, `file_paths`, `urls`, `searches`, `queries`, `patterns`), and a one-item list is how a single item is asked for, so no tool has a singular twin and the schema the model reads is the same either way.
+Batching saves the round-trip a parallel tool call costs a model that emits one call per step, and lets a call share work across its items: `search` resolves its storage, filter, and reranker once and fuses the rankings by reciprocal rank, since cbrkit normalises each query's scores on its own, and `query_table` loads and retypes its files once for every query.
+`tools.base.run_batch` is the one contract behind the per-item tools: items are deduplicated by key and served in request order with bounded concurrency, each renders under a `==> key <==` header within its `BatchShare` of the call's budgets, and a `ToolRetry` from one item becomes its `ItemFailure` in place.
+Only a batch in which every item failed is refused, in the item's own words when there was one, so a one-item list behaves exactly as a scalar call did.
+The adapters accept a bare item where a list is declared (`accept_scalar`), since models often send one, while the published schema still asks for the list.
+`grep` and `list_documents` stay single: one pattern or directory already spans every file.
+
 ### Scope and filters
 
 The chat's document selection is asymmetric.
 `included_documents` is advisory and only named in the prompt (`parse_document_scope`, `format_document_scope`), never a filter, so a run can follow a reference out of the selection.
 Only `excluded_documents` becomes a `DocumentFilter`, enforced by the path tools through `SearchPath.filter_func` and by retrieval in `resolve_accessible_document_ids`, staying one predicate.
-`.scratch/` is exempt inside `DocumentFilter.__call__`, which lets `UserDeps` offer a single `search_paths`.
 
 A filter argument naming a directory that no accessible root holds is refused, never answered with an empty result, since a listing that silently comes back empty reads as an empty workspace and the caller cannot tell that from its own typo.
 `tools.base.resolve_directory` folds the directory and pairs it with the roots that hold it, `missing_directory_retry` is the one refusal, and both reach `list_documents` and `glob_documents` through their `path`.
@@ -331,9 +363,42 @@ The roots come back resolved, so the walk starts at the subtree instead of sweep
 
 ### Mutations
 
-`write_document` and `edit_document` are gated in `agents/tools/write.py`, and `move_document` and `delete_document` are wired there the same way.
-A move is the one mutation with two ends, so it routes through `store.scoped_pair_operation`, announces both scopes with `workspace_events.announce_paths`, and puts both paths in a single `ApprovalRequired`; it relocates an entry, so neither end may be `.scratch/`.
-A delete does reach `.scratch/`, where it is the unlink and nothing else, so a run can clear the state it created.
+Every write, edit, move, delete, and new directory is an item of one `changes.Changeset`, and `workspace.changeset` is the one gateway that commits it, the HTTP routes included.
+The operations are generic over the location type, a canonical `str` where a tool or a staged program spells a path and a `workspace.Location` once `workspace.route` sent it to its casebase, so the tools build them without reaching the workspace.
+The items apply at once rather than in order, the way a diff of two states does: every source and basis names the workspace as it is now, every destination and write target the workspace as it ends up.
+An ordered list of operations had to refuse what no order expresses, a swap or a rotation, and every overlap besides two hand-picked orders, while the sandbox overlay already is a diff of two states and had to be squeezed into one.
+
+`plan_changeset` resolves every source against the disk into units, an entry with its description, original, and assets, or a directory as a whole tree, and maps each to where it ends up: a moved tree carries what lies below it unless a nested item moves or deletes that part on its own.
+It then checks the final state instead of an order: each unit is claimed by one item at most (nesting aside), each final path is filled by one item at most (a text write of an original fills its projection too), every destination is free or vacated by the changeset, so a move onto an occupied path needs a delete of it in the same changeset, no final path lies below a file another item writes, and a new original's stem holds no other entry once everything applied, so deleting an entry frees its stem for a new original in the same changeset while moving one onto it does not.
+A write target resolves through that mapping to the file whose content it replaces, which is how a write follows the move that carries its file, and a destination naming a directory that stays means into it, like `mv`.
+So chains, swaps, rotations, an overwrite, moves and deletes inside a moved directory, and case-only renames all fit in one changeset.
+A `Delete` may state the kind it `expect`s, so a folder sent as a document is refused under the lock rather than checked before it.
+The plan reads the disk in worker threads and the rows of every source in one query, and returns the resolved changeset with the `changes.ChangesetSummary` an approval shows, built from the effects it resolved: creates and updates with a capped diff, moves with their kind, deletes with every companion, new directories.
+
+`apply_changeset` prepares converter-backed originals without a lock, takes the locks of every involved casebase in `store_key` order, resolves again and refuses a text item whose file changed meanwhile, and installs every file change through one rename journal (`paths._Journal`) and every row change in one transaction (`db.engine.session`, which the repository writes join through their `s` argument), so a failure in either restores the files and rolls back the rows.
+Deleted and moved units leave first, deepest first, a moved one parked in the staging area with its rows on a temporary stem under `.changeset-park/`, which exists only inside the transaction and so never meets a listing, the index, or reconcile, then the moved ones land, shallowest first, then the writes and new directories follow.
+Parking is what lets a swap pass through the `(owner, stem_path)` unique constraint, and rows are only updated, never recreated, so a moved document keeps its id and its embeddings.
+It indexes after releasing the locks, the entries concurrently and each entry's assets before it, and announces each changed workspace once.
+
+The HTTP API applies every move, delete, and new directory through `POST /api/changes`, whose body is a list of operations (`server.models.ChangesRequest`) applied as one changeset within the request rather than as a job: a move or delete only renames files and updates rows, so nothing is left to index.
+For clients that change one item at a time, `POST /documents/move/{path}`, `DELETE /documents/{path}`, `POST /directories`, `POST /directories/move`, and `DELETE /directories` are shortcuts that build exactly one such operation and share its code path (`_apply` in `server/routes/documents.py`), so they behave and refuse exactly as the batch route does.
+Its items carry canonical paths, each resolved with write access, and mirror the gateway's operations without a basis, while a delete must name the kind it `expect`s so a client never removes a folder by accident.
+So a single item and a selection go the same way, the batch lands whole or not at all, swaps and chains in it work, and one refusal rejects it with the gateway's message, which names the canonical path it refuses.
+Whatever carries content or starts a job keeps its own route: uploads, writes, asset descriptions, rechunk and reconvert, and wiping a scope.
+
+Paths compare the way the workspace's filesystem compares them.
+`entries.folds_case` probes each filesystem once, by device, and on a case-insensitive filesystem (macOS) claims compare by `entries.path_key`, an existing path is respelled the way the disk spells it (`entries.respell`), so `A.md` and `a.md` are one file with one row, and only a destination's last segment keeps its spelling, which is how a case-only rename renames.
+The tools respell in `tools.base.canonical_local_path`, before any filter is asked, so a hidden `secret.md` cannot be reached as `SECRET.md`, and the sandbox mount resolves through the same function.
+The changeset is plain data that `pydantic.TypeAdapter` round-trips, and every item may carry a basis, a content hash or an `entries.ContentStat`, which is the contract the sandbox overlay feeds in.
+The stat carries the inode beside `(mtime, size)`, in the reconcile fast path too, since a file replaced by another of the same size with its mtime preserved is the one change those two miss, while every in-place write and rename keeps the inode.
+
+The agent's mutation tools are list-first: `move_documents` takes `moves`, `delete_documents` takes `paths`, `edit_document` takes a list of `edits` applied in order as one write, and `write_document` stays one file per call.
+No argument is a glob, so what the user approves is exactly the paths that change.
+The tools build their changeset with the builder their validator calls too (`tools.mutations.write_changeset` and its siblings), hand it to one `Commit` callback, and turn a refusal into a correction through `mutation_errors`.
+`workspace.Gateway` binds the gateway to the stores a surface may write, so the agent and the MCP surface supply only their stores, their gate, and their error type.
+Each validator in `agents/tools/write.py` goes through one `_gate`, which plans the changeset the tool would commit with the `_plan_batch` the commit uses too: the direct half always, so a bad `/tmp` half is refused before anyone is asked, and the gated half only where an approval is asked, raising one `ApprovalRequired`, since an approved resume and a mode that asks nothing are refused by the commit in the same words.
+Every approval, `apply_changes` included, carries the planner's `changes.ChangesetSummary` as its metadata: `{"creates": [{"path", "diff"}], "updates": [{"path", "diff"}], "moves": [{"source", "destination", "is_dir", "replaces"}], "deletes": [...], "mkdirs": [...]}`, every path canonical and every move destination resolved to where it lands.
+A redirected `output_path` is asked about before the tool has produced its result, so its entry carries an empty diff.
 
 ### The image cap belongs to the gateway, not to the reader
 
@@ -341,11 +406,13 @@ A delete does reach `.scratch/`, where it is the unlink and nothing else, so a r
 It matters because the gateway rejects the whole request, not the call that overfilled it: an attachment set over the cap fails the turn with a message the run never sees, while the same refusal raised by the tool is a `ToolRetry` the model fixes by narrowing `pages=`.
 So `ReadBinaryDocumentTool` binds its own budgets to the cap before it renders anything: `max_pages` for PDFs, where the refusal names the argument that fixes it, and `max_frames` for video and animations, which is clamped instead, since a run picks pages but never frames.
 `None` is a gateway with no such limit and leaves the reader's budgets alone.
+A call attaching several files divides the cap between the ones that become images before any is rendered (`run_batch`'s `shares`), since all of them reach the model in one request, while a PDF forwarded natively spends none of it.
 
 One call obeying the cap is not enough, because what the gateway counts is the request, and three separate things fill it: a step of parallel reads each attaching one image, the turn's own attachments, and every image already in the replayed history.
 No per-call budget can see any but the first, so `agents.guards.PromptImageLimit` counts the one thing that matters where the outgoing messages are in hand: it swaps all but the newest `max_images` for a note.
 Trimming rather than refusing keeps the rendering the run already paid for, and the note keeps it honest — the model is told an image it asked for is not in front of it, so it reads the document again instead of answering from a picture it cannot see.
 It rides on the agents in `agents/app.py` rather than being composed per chat run, because a request the gateway will reject is a hazard on every run against it, subagent and MCP ones included.
+The upload pipeline's vision calls are the one exception: they run on the tool-free agent behind `llm.complete`, so converters never import the agents, and `workspace.describe` clamps the frames it samples for a caption to the cap instead.
 
 The trim is spent on the wire and nowhere else, which is what `wrap_model_request` is for: the messages handed to the handler are what the model sees, while the graph keeps its own and records those.
 `before_model_request` is not that seam — `request_context.messages` is the run's history, so a hook that edits it there rewrites the tree the conversation is replayed from and exported out of, which is how `IterationLimitWarner` came to append a nudge as a user turn nobody sent.
@@ -442,7 +509,7 @@ That is why the wrapping FastMCP does for a raw value is mirrored in `wrap_tool_
 Every bulk-output tool (`list_documents`, `glob_documents`, `read_document`, `query_table`, `jq`, `grep`, `search`, and the two web tools) declares an `output_path`, which writes that call's result to a workspace file and hands the model a receipt, so a call whose answer dwarfs the question is worth making when a later _tool call_ is what turns it into an answer.
 
 Not a later program, which is where this and the injected sandbox surface used to claim the same trigger in the same words.
-A model reading both followed the second, and a spreadsheet question that is one `await query_table(...)` became a redirect to `.scratch/*.json`, a `read_document` of it, and a `json.loads` — three calls and a file for what the injected call returns entire.
+A model reading both followed the second, and a spreadsheet question that is one `await query_table(...)` became a redirect to `/tmp/*.json`, a `read_document` of it, and a `json.loads`, three calls and a file for what the injected call returns entire.
 The boundary is now stated once on each side: `output_path` is for a result a later tool call consumes, and when the next step is a program the tool is called inside the program.
 
 The suffix picks the channel, since the two a tool returns are not interchangeable: `.json` stores the structured `data`, which for a grep count, a file listing, or a jq filter is every match rather than the first `max_results` of them, while `.txt` stores the very text the model would have been shown.
@@ -455,67 +522,86 @@ A model that redirected a three-entry listing for no reason was told only "3 ent
 The listing itself had hidden the answer too, so `list_documents`, `glob_documents`, and `grep` now name what they left out on every result, not just an empty one, through one `omission_hints` in `tools/formatting.py`: entries `include_ignored` would reveal, entries below `max_depth`, and the `max_results` cap.
 Each count is what changing that one argument would reveal, and grep's hidden count is a floor, since ripgrep never enters the build and vendor directories it was told to skip.
 
-`output_path` is declared by each tool next to a `sink` field (an `OutputSink`, the writer plus the inline threshold), the way `run_python` declares a writer for the one document its programs persist, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
+`output_path` is declared by each tool next to a `sink` field (an `OutputSink`, the writer plus the inline threshold), the way `run_python` declares the committer its staged changes go through, rather than injected into every tool's schema by the framework adapter: where a result may land is a property of the tool as it was built for a run.
 The MCP surface hands out no sink, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `ToolSpec.without`, which addresses the parameter by the shared `Annotated` alias rather than by a copy of its spelling).
 That is not schema surgery: all three surfaces synthesize a signature rather than edit one, so leaving an argument out is the same act as putting one in.
 Dropping the argument drops the `RedirectedOutput` branch with it, read off the alias's own `Unreachable` metadata rather than named a second time at each call site.
-Read mode still advertises it and refuses at call time, deliberately, since there the argument is dead for this run and live for the next one, which a schema fixed at registration cannot express.
-
-The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink`, `output_writer`, and both validators, which share one `_gate_declared_write`): read mode refuses it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
-What a redirect is worth saying about is a paragraph, and a paragraph restated in eight tool schemas costs more context on every request than the feature saves, so the argument's description states only the mechanism and `REDIRECT_INSTRUCTIONS` carries the rest once, shared between the `explore` and `web` features and composed only in a mode that can write.
+The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink` and `validate_output_path`, which goes through `_gate`): `/tmp` is written directly in every mode, an interactive call asks for approval of a workspace path, write mode approves it, and read mode refuses it like any path outside its writable roots.
+What a redirect is worth saying about is a paragraph, and a paragraph restated in eight tool schemas costs more context on every request than the feature saves, so the argument's description states only the mechanism and `REDIRECT_INSTRUCTIONS` carries the rest once, shared between the `explore` and `web` features in every mode.
 
 ## The Python sandbox
 
 `run_python` is a Monty sandbox with no network or host filesystem access and a budget on execution time and memory that surfaces to the model as a plain `TimeoutError` or `MemoryError`.
 A failed program is a `ModelRetry` and repairing it is how a run converges on Monty's subset, so the agents carry no separate retry budget: `llm.retries` defaults to `None`, which hands `request_limit` down as the budget (`LlmSettings.retry_budget`), leaving the turn's own bound the one thing that ends a correction loop.
-A program comes from either inline `code` or one scoped workspace `.py` `script_path`, which is reloaded on every call so the model can repair it with the edit tool and rerun it, which is why `PYTHON_INSTRUCTIONS` sends anything past a few lines to a `.scratch/` script and keeps inline `code` for a throwaway.
+A program comes from either inline `code` or one scoped workspace `.py` `script_path`, which is reloaded on every call so the model can repair it with the edit tool and rerun it, which is why `PYTHON_INSTRUCTIONS` sends anything past a few lines to a `/tmp` script and keeps inline `code` for a throwaway.
 
 ### The mount
 
-The workspace is mounted read-only and a program opens a document by the path everything else in the turn uses (`~/reports/q1.md`), so the string a tool result returns, a citation carries, and a program opens is one string, and it may open a path it only discovers while running.
-A leading slash is the run's own filesystem instead, `/tmp` and `/out`, which is the whole grammar a program has to hold: no mount prefix to add on the way in and none to strip on the way out, and `path_iterdir` hands back the same spelling it takes.
+The workspace is mounted copy-on-write and a program opens a document by the path everything else in the turn uses (`~/reports/q1.md`), so the string a tool result returns, a citation carries, and a program opens is one string, and it may open a path it only discovers while running.
+The conversation's folder is mounted at `/tmp`, the spelling every tool uses for it too, which is the whole grammar a program has to hold: no mount prefix to add on the way in and none to strip on the way out, and `path_iterdir` hands back the same spelling it takes.
+Any other absolute path is refused with the roots named rather than kept in memory for the call, since whatever a program wrote there would be gone when the next call looked for it, which is exactly the trap a per-run in-memory `/tmp` used to set.
 The run's working directory is `WORKSPACE_MOUNT`, so Monty resolves `~/reports/q1.md` to `/workspace/~/reports/q1.md` before the mount sees it, which also makes the absolute form a model that has met another sandbox reaches for name the same document, while listings and refusals never produce it.
 It stops at the mount: a tool argument is refused for it like any other path that leads with no root, since the approval gate resolves the declared path before the tool sees it and a spelling the tool rewrote afterwards would be gated and shown to the user as a different document than the one written.
 A path that leads with neither (`/workspace/notes.md`, the scope dropped in between) is refused with the roots named, the sandbox's own spelling of `workspace_root_hint`.
 
 `tools/workspace_os.py` is that mount: an `AbstractOS` whose every operation routes through `resolve_accessible_file` and `entry_visible`, the seams the read tools use, so the `DocumentFilter` stays one predicate instead of gaining a third enforcement surface, a hidden document reads as absent rather than as refused, and a legacy encoding is decoded rather than served as mojibake.
 `pydantic_monty.MountDir` would have been less code and none of that, since it maps a host directory in whole.
-Which of the two filesystems answers an operation is decided once, in the `dispatch` override `AbstractOS` offers for it, rather than by a delegate-to-`inner` prologue at the head of every method: asking per method made forgetting one a silent bug in the other filesystem, which is what an unimplemented `path_open` did when it refused `/tmp` as well as the workspace.
+Whether the mount answers an operation, refuses its path, or hands it to `inner` (the environment and the clocks) is decided once, in the `dispatch` override `AbstractOS` offers for it, rather than by a prologue at the head of every method: asking per method made forgetting one a silent bug, which is what an unimplemented `path_open` once was.
 
 Nothing is handed to a program as a host function that the mount already covers: `open` and `iterdir` are the read tools, `re` is grep, and `json` is jq, and ranking a chunk against a question is a `search` call the model makes before it writes the program.
 Monty's `json` has `loads` and `dumps` and no file-reading `load`, which `PYTHON_INSTRUCTIONS` says outright, since `run_python` is the only reader the `.json` redirect channel has.
 Monty has no `glob`, `rglob`, or `fnmatch`, which is why `PYTHON_INSTRUCTIONS` shows the `iterdir` walk, and `path_iterdir` returns its entries sorted, since Monty cannot compare two `Path` values.
 Which modules a program may import is left for the model to find out, since Monty implements a subset only it knows and offers no `importlib`, `sys.modules`, `__import__`, or `dir` to enumerate one: any list written down here goes stale on the next release, and the one that used to stand in `PYTHON_INSTRUCTIONS` advertised `functools` before Monty had it, for as long as nobody tried it.
 A failed import raises `ModuleNotFoundError` naming the module, which is the correction a stale list would have needed anyway.
-A program parks intermediates in `/tmp`, created before the run and named by `TMPDIR`, because Monty has no `tempfile` and the working directory is the read-only mount, and the fresh filesystem disappears after the call.
+A program parks intermediates and the state a later call needs in `/tmp`, named by `TMPDIR`, because Monty has no `tempfile` and anything under the working directory is staged for the user's approval.
+The environment mirrors a shell's: `PWD` is `/workspace` like `os.getcwd()`, `TMPDIR` is `/tmp` where the run has a conversation, `LANG` and `LC_ALL` are `C.UTF-8`, and `agents/tools/compute.py` adds `HOME` (`/workspace/~`, what `~/...` resolves to) and `USER`/`LOGNAME` (the user id).
+Monty has no `os.path`, `Path.home`, or `expanduser`, so `HOME` is the only absolute spelling of the personal workspace a program meets, and no `PATH` is set, since there is nothing to execute.
 Bytes are refused on the mount in either direction, so a document with no text form stays `read_binary_document`'s.
 
 ### Writes from a program
 
-The mount is read-only but for `.scratch/`, which is content rather than a document: no `documents` row, no chunking, no projection, and no notification, so a write there is a file written and nothing else, needing neither the async mutation gateway a filesystem callback cannot await nor an approval a running program cannot stop to ask for.
-It lands on disk as it happens, which is what lets the program read its own state back, and it is the run's own state, so nothing is lost by its surviving a program that later fails.
-The span is the writable one, taken off the tool's `writer` and narrower than the roots it reads, so a program cannot park state in a group the user may only read, and a mode with no writer refuses a scratch write exactly where `write_document` does.
+A program changes the workspace with the ordinary `Path` and `open` calls: write, append, `mkdir`, `unlink`, `rmdir`, and `rename`, for documents and directories alike.
+None of them reaches the disk while it runs, since a filesystem callback can neither await the changeset gateway nor stop for an approval.
+`WorkspaceOS` records each one in a copy-on-write overlay (`nodes`: canonical path to `Text`, `Ref`, `Deleted`, or `Dir`) that every later read, `stat`, and `iterdir` consults before the disk, so a program reads its own writes.
+A rename records a `Ref` to the file it carries and copies no bytes, so a PDF moves as freely as a note, and a directory rename re-keys what lies below it.
+The first touch of a disk file records its `(mtime, size, inode)` stat as the basis its change commits against: a stat rather than a content hash, since a program walking the workspace reads far more than it changes and hashing every read would cost what the per-document budget saves.
 
-A document is written the one way a human can answer for in advance: the program writes `/out` (named by `OUTPUT`, beside `TMPDIR`) and the call commits it to `commit_path` after the program succeeds, through `write_document_text`, with the fingerprint the document had before the run or create-only semantics when it had none, so indexing, workspace locks, and SSE notifications stay on the canonical mutation path.
-An interactive output write requires approval unless it lands in `.scratch/`, write mode approves it, and read mode refuses it.
-Inside the program that path and `/out` are two names for one file: `dispatch` renames the declared output to `/out` before either filesystem sees it, and `/out` is seeded with the document as it stands, from the read the commit's basis was taken from, so it costs nothing.
-A read returns what the document holds, an append appends to it, and a second write replaces it, so the alias needs no list of which Monty operations write.
-The alias is only ever the path the call already approved, so every other document stays refused, and the commit runs once after the program succeeds, skipped with a sentence when the buffer came back exactly as it was seeded.
-Nothing about the workspace is staged: what the program sees is what is on disk, so the mounted view cannot drift from what the call commits.
+Limits are checked as each change is recorded and raised inside the program, so the model can correct it: the writable span (`agents.tools.write.program_paths`, the one `write_document` uses, only `/tmp` in read mode or where `apply_changes` is withheld, which therefore refuses every change to the workspace), `.assets` payloads (hidden from the mount entirely, since they belong to their entry), `writes_as_text` for a new file, the per-document cap, and `ChangesetLimits` from `settings.sandbox.max_changeset_*` (required on the tool side, so the defaults live in the settings alone) for the paths changed, the deletions among them, and the characters written in total.
+A document keeps its extension when renamed, and a rename onto a file replaces it as on POSIX while a directory neither replaces nor is replaced.
+A directory is removed only when nothing is left in it on disk, since one that looks empty to the program may still hold a filtered or excluded file that staging its delete would take along.
+On a case-insensitive workspace a path is respelled the way the overlay or the disk already spells it, through the one seam every tool respells in (`canonical_local_path`), handed a listing that puts the overlay's live names before the disk's, so one file keeps one `path_key` identity, and a filter is asked about the name the file has.
+The disk listings and what `base` found at each path are read once per run, which also lets staging resolve the entries of one folder without listing it once per file.
 
-The argument is `commit_path`, not `output_path`.
-Every other tool's `output_path` captures the call's own result, and a model carrying that meaning over declares a path, returns the document it computed, and writes nothing — which used to cost a sentence of `REDIRECT_INSTRUCTIONS` and one of `PYTHON_INSTRUCTIONS` on every request to undo.
-Two different acts have two different names, and the arg description, the mount's refusal, and the sentence for a run that committed nothing all still say the program writes `/out` itself.
+`/tmp` is recorded in the same overlay, so a program reads its own state back while it runs and one that fails leaves nothing behind.
+The overlay is partitioned by its roots' policies: a direct root's nodes are not charged against `ChangesetLimits`, which exist to keep an approval readable, while the character cap still bounds what the overlay holds.
+A rename never carries anything across policies, since no one commit covers both ends: one that touches a direct root is a write of the file's text and a removal of the source, each landing the way its own root commits, and a directory takes part in none.
+So leaving `/tmp` is a workspace write the user approves, and moving a workspace document into `/tmp` writes the copy at once and stages the removal the user approves, while a binary, which has no text to copy, is refused.
 
-A move or a delete is deliberately not reachable from a program: the agent has `move_document` and `delete_document` as tools of its own, each behind the per-call gate every other write answers to, and granting them as a side effect of a replayed mutation log would put them beyond it.
+Once the program succeeds, `tools.changeset.stage_changes` spells the overlay as one `changes.Changeset[str]`, a direct root's nodes as plain deletes, new directories, and writes, and a gated root's in the gateway's terms, which needs no ordering, since the overlay already maps final paths to the disk paths they come from: a carried directory is one `Move`, a renamed part of an entry is one `Move` of the whole entry (its companion and `.assets` going along), a file written after a rename is that `Move` and a `Write` at the destination, a rename onto a file is a `Delete` of it and the `Move`, a change inside a moved directory names the file as it is now, a removed directory is one `Delete` covering what was below it, and an empty new directory is one `CreateDir`.
+Removing an entry's original removes the entry.
+Removing only the description while the original stays is refused, since the description is the original's searchable text, as is an entry whose parts move to different names or move while another part goes, and a delimited file is checked against its header like any whole write.
+What the user approves is the planner's summary, the same one every other mutation shows, built from what the gateway resolved rather than from the overlay.
+
+`agents/tools/write.py` (`changeset_committer`) then splits the changeset by policy and writes the direct half.
+In write mode the gated half is applied straight away, by the same rule the gate applies to every other workspace write, and `PythonResult.changeset` is an `AppliedChanges` with the gateway's reports.
+Otherwise it is planned first, so a changeset the gateway would refuse fails the run before anything is written, and stored by `staging.stage` as one JSON file under `<data_dir>/changesets/<owner>/`, which survives a reload or a restart, and `PythonResult.changeset` is a `PendingChanges` with the id and the planner's summary.
+A changeset whose `apply_changes` call the next request denies or abandons is discarded there (`discard_unapproved_changes`), and the background prune drops what outlived `staged_changeset_ttl_hours` unanswered.
+Files rather than a table, since a staged changeset is write-once, read-once state with no query beyond its id.
+What is stored is the program's own spelling, a `Changeset[str]` of canonical paths with bases, under its owner's directory, so ownership is the path and discarding one is an unlink: the paths are routed again with the approver's stores when applied, so access revoked in between is honoured.
+
+`apply_changes(changeset_id)` is the second half, registered with the write tools.
+Its validator plans the stored changeset again and raises one `ApprovalRequired` with the summary, which the frontend renders as the full list of changes, and an approved resume neither loads nor plans it again.
+Applying it runs `apply_changeset` like every other mutation tool and returns the gateway's reports, and a basis that moved since the program ran is a 409 the model is told to answer by running the program again.
+The changeset is discarded either way.
+Every mutation surface, the dedicated tools and the sandbox alike, now commits through that one gateway.
 
 ### Injected tools
 
 The mount is why a program needs almost no tools.
 What it cannot be is the four whose answer lives somewhere the sandbox cannot reach, so those are injected as host functions by `tools/monty.py`: `search` needs the database, `web_search` and `web_fetch` need the network, and `query_table` decodes a spreadsheet the mount refuses as binary.
-Before them, a spreadsheet question cost a `query_table` call redirected to a `.scratch/*.json` and a second call to open it, and in `read` mode it cost the whole answer, since the redirect is a write that mode refuses.
+Before them, a spreadsheet question cost a `query_table` call redirected to a `/tmp/*.json` and a second call to open it, and in `read` mode it cost the whole answer, since the redirect is a write that mode refuses.
 
-Nothing that mutates is injected and nothing can be: a running program cannot stop to ask for approval, which is the same constraint that makes `/out` the one document a call may persist.
+Nothing that mutates is injected and nothing can be: a running program cannot stop to ask for approval, which is the same constraint that makes it stage its changes for `apply_changes`.
 Every injected function is a read, so the mode gates none of them.
 What does gate them is whatever gates the tool of the same name, since the two are one namespace: `web_enabled` folds the operator's master switch and the host policy into one flag for the web pair, and `sandbox_surface` unions `settings.tools.disabled` with `deps.disabled_tools` itself.
 That union is computed there rather than carried on deps, so a `UserDeps` built without it — the debug console's, the MCP one's — still cannot hand a program a tool the operator disabled.
@@ -570,11 +656,11 @@ What the sandbox withholds is a narrower question — the operator's `disabled` 
 The read budget is per document (`max_document_chars`) and deliberately not a running total, since a decoded document is the only thing the host holds and it holds one at a time: `read_text_file` reads a file whole and decodes it in one go, then the string crosses into the interpreter and is dropped, so reading a 2000-document, 100 MB workspace moved the server's peak RSS by a megabyte and took half a second.
 A running total would have bounded nothing the host spends while capping the very thing the mount exists for, and it did: the 5M default refused a walk of that workspace a third of the way through.
 The per-document cap is enforced twice, since a byte count only bounds a character count from above: `check_read_budget` refuses a file by size before it is decoded, then the exact length is checked once the text is in hand.
-Inline `code`, the stored script, and the committed output answer to the same cap, each being one text the host holds whole.
+Inline `code`, the stored script, and every file a program writes answer to the same cap, each being one text the host holds whole.
 
 What a program retains is `max_memory`, the interpreter's own budget, and how long it spends retaining it is `request_timeout_seconds` and the agent's `tool_timeout_seconds`, since `max_feed_duration_secs` counts bytecode alone and not the time a host callback takes (measured: five 0.4 s host reads complete under a 0.5 s limit).
 Sleeping is off that clock too, so `max_total_sleep_secs` caps it with the same budget, which a program with a rate-limited web tool to pace still has room for.
-The one cumulative cap is `max_scratch_chars`, because written characters land on disk and stay there, so a loop writing the same megabyte a thousand times spends a gigabyte nothing else here bounds.
+The cumulative caps are the `max_changeset_*` settings, because what a program writes is held in the overlay until the run ends and then lands on disk, so a loop writing the same megabyte a thousand times would otherwise spend a gigabyte nothing else here bounds.
 The worker pool is owned by the FastAPI lifespan (`sandbox.py`), like the HTTP clients, because a tool instance is built per call and a pool per call would spawn and reap a worker every time.
 Every call takes a fresh session out of it, so no program sees another's variables and a session a time limit stopped mid-operation, whose heap Monty no longer vouches for, is never fed again.
 

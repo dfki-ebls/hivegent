@@ -34,12 +34,6 @@ class TestDocumentFilter:
     def test_root_entry_hides_the_whole_store(self) -> None:
         assert not DocumentFilter(excluded=frozenset({"/"}))("any/file.md")
 
-    def test_scratch_is_never_hidden(self) -> None:
-        """A chat selection must not strand a run halfway through its state."""
-        f = DocumentFilter(excluded=frozenset({"/"}))
-        assert f(".scratch/state.json")
-        assert f("notes/.scratch/run.py")
-
 
 class TestParseDocumentScope:
     """Tests for parse_document_scope."""

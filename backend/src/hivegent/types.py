@@ -13,7 +13,7 @@ from .chunkers import ChunkingSpec
 from .config import ADMIN_ROLE
 from .converters import ConversionSpec
 from .db.conversations import ConversationSummary
-from .entries import entry_owns, is_scratch_path, stem_path_from_reference
+from .entries import entry_owns, stem_path_from_reference
 from .llm_config import LlmConfig, ReasoningEffort
 from .prompts import Personality
 from .security import require_safe_headers, require_safe_url_shape
@@ -47,8 +47,6 @@ __all__ = [
     "CompactConversationResponse",
     "ConversationArchive",
     "ConversationListResponse",
-    "CreateDirectoryRequest",
-    "DeleteDirectoryRequest",
     "DirectoryEntry",
     "DirectoryTreeResponse",
     "DocumentFilter",
@@ -64,13 +62,12 @@ __all__ = [
     "McpServerConfig",
     "McpTestResponse",
     "Mode",
-    "MoveDocumentRequest",
     "OidcPublicConfig",
     "PipelineSpec",
     "ProgressReporter",
-    "ScratchClearedResponse",
     "ServerConversation",
     "SettingsResponse",
+    "TmpClearedResponse",
     "ToolInfo",
     "ToolRunResult",
     "ToolSchema",
@@ -124,10 +121,6 @@ class DocumentFilter:
     a question is about steers the run without cutting the rest of the
     workspace out from under it — the model can still follow a reference out
     of them, and no write is refused for landing outside the selection.
-
-    A ``.scratch/`` path is never hidden: it is the run's own working state
-    rather than one of the user's documents, so a selection made for the chat
-    cannot strand a computation halfway through its own state.
     """
 
     excluded: frozenset[str] = field(default_factory=frozenset)
@@ -145,9 +138,7 @@ class DocumentFilter:
 
     def __call__(self, path: str) -> bool:
         """Return whether the file or directory *path* passes the filter."""
-        hidden = any(self._selects(entry, path) for entry in self.excluded)
-
-        return not hidden or is_scratch_path(path)
+        return not any(self._selects(entry, path) for entry in self.excluded)
 
 
 @dataclass(slots=True, frozen=True)
@@ -811,31 +802,6 @@ class DirectoryTreeResponse(BaseModel):
     total_directories: int = Field(description="Total number of directories")
 
 
-class CreateDirectoryRequest(BaseModel):
-    """Request to create a new directory."""
-
-    path: str = Field(description="Relative path of the directory to create")
-
-
-class MoveDocumentRequest(BaseModel):
-    """Request to move a document to a new location."""
-
-    destination: str = Field(description="Destination relative path")
-
-
-class MoveDirectoryRequest(BaseModel):
-    """Request to move/rename a directory."""
-
-    source: str = Field(description="Current relative path of the directory")
-    destination: str = Field(description="New relative path for the directory")
-
-
-class DeleteDirectoryRequest(BaseModel):
-    """Request to delete a directory."""
-
-    path: str = Field(description="Relative path of the directory to delete")
-
-
 class FailedFile(BaseModel):
     """A collection member that was skipped or failed, with a short reason."""
 
@@ -884,10 +850,10 @@ class McpTestResponse(BaseModel):
     )
 
 
-class ScratchClearedResponse(BaseModel):
-    """Result of clearing the agent scratch state in the caller's workspaces."""
+class TmpClearedResponse(BaseModel):
+    """Result of clearing the ``/tmp`` folders of the caller's conversations."""
 
-    files_removed: int = Field(description="Number of scratch files deleted")
+    files_removed: int = Field(description="Number of temporary files deleted")
 
 
 # ─── Admin responses ───────────────────────────────────────────────────

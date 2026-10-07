@@ -46,12 +46,14 @@ __all__ = [
     "RerankSettings",
     "SecuritySettings",
     "Settings",
+    "TmpSettings",
     "TransparencySettings",
     "UrlPolicySettings",
     "content_digest",
     "content_hash",
     "normalize_unicode",
     "reveal",
+    "sanitize_conversation_id",
     "sanitize_document_path",
     "sanitize_group_id",
     "sanitize_user_id",
@@ -107,6 +109,7 @@ _SAFE_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]+")
 
 _USER = Localized(en="User", de="Benutzer")
 _GROUP = Localized(en="Group", de="Gruppen")
+_CONVERSATION = Localized(en="Conversation", de="Konversations")
 
 
 def _empty_id(kind: Localized[str]) -> Localized[str]:
@@ -201,6 +204,15 @@ def sanitize_group_id(group_id: str) -> str:
         ValueError: If the group ID is invalid or contains unsafe characters.
     """
     return _sanitize_id(group_id, _GROUP)
+
+
+def sanitize_conversation_id(conversation_id: str) -> str:
+    """Sanitize a conversation ID, which names its ``/tmp`` folder on disk.
+
+    Raises:
+        ValueError: If the ID is invalid or contains unsafe characters.
+    """
+    return _sanitize_id(conversation_id, _CONVERSATION)
 
 
 def normalize_unicode(value: str) -> str:
@@ -768,6 +780,14 @@ class SandboxSettings(BaseModel):
     also rejects unsound code that would have run — ``Path(os.getenv("TMPDIR"))``
     for its ``str | None``, where the program should name ``/tmp`` outright —
     and turning it off leaves the stub in the prompt as guidance.
+
+    The ``max_changeset_*`` limits bound what one program may stage as
+    workspace changes: paths it creates, changes, moves, or deletes, how many
+    of those are deletions, and the characters it writes in total.  A program
+    that passes one is told so where it stands, as an exception it can handle.
+    ``staged_changeset_ttl_hours`` is how long a staged changeset waits for
+    ``apply_changes`` before the background sweep, which runs with the
+    ``/tmp`` one, discards it.
     """
 
     min_processes: int = 1
@@ -777,6 +797,26 @@ class SandboxSettings(BaseModel):
     max_duration_seconds: float = 5.0
     max_memory_bytes: int = 256_000_000
     type_check: bool = True
+    max_changeset_operations: int = 200
+    max_changeset_deletes: int = 100
+    max_changeset_chars: int = 20_000_000
+    staged_changeset_ttl_hours: float = 24.0
+
+
+class TmpSettings(BaseModel):
+    """Lifetime and size of a conversation's ``/tmp`` folder.
+
+    ``/tmp`` is ``<data_dir>/tmp/<conversation_id>/``, outside every
+    workspace.  A folder untouched for ``ttl_hours`` is swept in the background
+    at startup and every ``sweep_interval_hours`` after, as is one whose
+    conversation is gone,
+    and deleting the conversation deletes it at once.  ``max_bytes`` caps what
+    one folder may hold, checked on every write into it.
+    """
+
+    ttl_hours: float = Field(default=72.0, gt=0)
+    sweep_interval_hours: float = Field(default=1.0, gt=0)
+    max_bytes: int = Field(default=100_000_000, ge=0)
 
 
 class ComputeSettings(BaseModel):
@@ -974,6 +1014,7 @@ class NetworkSettings(BaseModel):
     webfetch_max_line_chars: int = 2000
     webfetch_max_formatted_chars: int = 50_000
     webfetch_max_redirects: int = 5
+    web_keepalive_seconds: float = 60.0
     websearch_default_edition: str = "en"
     contact_email: str = ""
     unix_sockets: dict[str, Path] = {}
@@ -1014,7 +1055,6 @@ class Settings(BaseSettings):
             secrets_dir=os.environ.get("CREDENTIALS_DIRECTORY"),
             secrets_dir_missing="ok",
         )
-    web_keepalive_seconds: float = 60.0
 
         return (
             init_settings,
@@ -1037,6 +1077,7 @@ class Settings(BaseSettings):
     security: SecuritySettings = SecuritySettings()
     tools: ToolsSettings = ToolsSettings()
     sandbox: SandboxSettings = SandboxSettings()
+    tmp: TmpSettings = TmpSettings()
     compute: ComputeSettings = ComputeSettings()
     conversion: ConversionSettings = ConversionSettings()
     limits: LimitsSettings = LimitsSettings()

@@ -127,11 +127,10 @@ export const UserResponseSchema = z.object({
   groups: z.array(GroupInfoSchema).default([]),
   roles: z.array(z.string()).default([]),
 });
-
-export const ScratchClearedResponseSchema = z.object({
+export const TmpClearedResponseSchema = z.object({
   files_removed: z.number(),
 });
-export type ScratchClearedResponse = z.infer<typeof ScratchClearedResponseSchema>;
+export type TmpClearedResponse = z.infer<typeof TmpClearedResponseSchema>;
 
 // ============================================================
 // Admin response schemas
@@ -236,7 +235,6 @@ export const TransparencyConfigSchema = z.object({
   contact_email: z.string().nullable(),
   minimum_watermark_tokens: z.number(),
 });
-
 export const TransparencyDetectionResponseSchema = z.object({
   status: z.enum(["detected", "not_detected", "inconclusive"]),
   method: z.literal("watermark"),
@@ -277,7 +275,6 @@ export const ChunkInfoSchema = z.object({
   start_line: z.number(),
   end_line: z.number(),
 });
-
 /** Response from the chunks endpoint. */
 export const ChunkedDocumentResponseSchema = z.object({
   pipeline: z.string(),
@@ -330,19 +327,17 @@ export const DocumentStatsSchema = z.object({
   word_count: z.number(),
   char_count: z.number(),
 });
-
 /** Batch document line counts, keyed by the requested workspace path. */
 export const DocumentLineCountsResponseSchema = z.object({
   line_counts: z.record(z.string(), z.number()),
 });
-
 export const DocumentRangeSchema = z.object({
+  file_path: z.string(),
   start_line: z.number(),
   end_line: z.number(),
   total_lines: z.number(),
   content: z.string(),
   content_hash: z.string(),
-  file_path: z.string(),
 });
 export type DocumentRange = z.infer<typeof DocumentRangeSchema>;
 
@@ -351,7 +346,6 @@ export const GrepLineSchema = z.object({
   text: z.string(),
   is_match: z.boolean(),
 });
-
 export const GrepMatchSchema = z.object({
   filename: z.string(),
   lines: z.array(GrepLineSchema),
@@ -371,7 +365,6 @@ export const RetrievedChunkSchema = z.object({
   end_index: z.number(),
   image_path: z.string().nullable().optional(),
 });
-
 /** Summary information for listing conversations. */
 export const ConversationSummarySchema = z.object({
   id: z.string(),
@@ -387,7 +380,6 @@ export const ConversationListResponseSchema = z.object({
   conversations: z.array(ConversationSummarySchema),
   total_count: z.number(),
 });
-
 /** Response for conversation compaction. */
 export const CompactConversationResponseSchema = z.object({
   new_conversation_id: z.string(),
@@ -406,7 +398,6 @@ export type GenerateTitleResponse = z.infer<typeof GenerateTitleResponseSchema>;
 export const TranscriptionResponseSchema = z.object({
   text: z.string(),
 });
-
 /** A file or directory entry in the document tree (recursive). */
 export interface DirectoryEntry {
   type: "file" | "directory";
@@ -454,7 +445,6 @@ export const JobProgressSchema = z.object({
   current: z.number(),
   total: z.number(),
 });
-
 /**
  * Snapshot of a background job — the generic shape the `/jobs` feed emits
  * and the job tray renders, independent of which feature submitted it.
@@ -481,10 +471,8 @@ export const ScopeChangedSchema = z.object({
   type: z.literal("scope-changed"),
   scope: z.string(),
 });
-
 /** A job feed event: a job snapshot, the seed-complete marker, or a change. */
 export const FeedEventSchema = z.union([JobViewSchema, FeedReadySchema, ScopeChangedSchema]);
-
 /** Terminal job statuses — no further updates will arrive. */
 export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
   "succeeded",

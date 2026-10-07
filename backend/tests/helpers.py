@@ -13,8 +13,12 @@ from PIL.PngImagePlugin import PngInfo
 
 from hivegent.tools.base import Batch, ItemFailure, ToolOutput
 from hivegent.tools.sink import RedirectedOutput
+from hivegent.tools.workspace_os import ChangesetLimits
 
-__all__ = ["png_bytes", "returned", "single"]
+__all__ = ["LIMITS", "png_bytes", "returned", "single"]
+
+LIMITS = ChangesetLimits(max_operations=200, max_deletes=100, max_chars=20_000_000)
+"""What one program may stage in a test that is not about the limits."""
 
 
 def png_bytes(info: PngInfo | None = None) -> bytes:

@@ -37,7 +37,6 @@ from .chunks import delete_documents as _delete_chunked_documents
 from .config import settings
 from .db import documents as db_documents
 from .entries import (
-    SCRATCH_DIR_NAME,
     description_path_for_stem,
     is_description_file,
     is_projectable_original,
@@ -98,14 +97,8 @@ def _disk_entry_references(store: Casebase) -> list[str]:
     if not workspace.exists():
         return []
     stems: set[str] = set()
-    # Pruned rather than filtered: a scratch subtree can hold far more files
-    # than the workspace it sits in, and `rglob` pays a `stat` per file before a
-    # filter could discard it.  Not descending is what keeps the walk
-    # proportional to the content, so the skip costs one test per directory.
-    for dir_path, dir_names, file_names in workspace.walk():
-        if SCRATCH_DIR_NAME in dir_names:
-            dir_names.remove(SCRATCH_DIR_NAME)
 
+    for dir_path, _dir_names, file_names in workspace.walk():
         for name in file_names:
             rel = str((dir_path / name).relative_to(workspace).as_posix())
             if is_description_file(rel) or is_projectable_original(rel):

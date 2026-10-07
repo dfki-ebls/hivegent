@@ -22,7 +22,7 @@ vi.mock("@/lib/feature-flags", () => ({
   },
 }));
 
-import { buildLlmConfig, getDirectories, getSettings, requiresConversion } from "@/lib/api";
+import { buildLlmConfig, getDirectories, getDocumentContent, getSettings, requiresConversion } from "@/lib/api";
 import { waitForBackendReady } from "@/lib/health";
 
 // authFetch gates every request on backend readiness; resolve the cached probe
@@ -30,6 +30,18 @@ import { waitForBackendReady } from "@/lib/health";
 beforeAll(async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
   await waitForBackendReady();
+});
+
+describe("getDocumentContent", () => {
+  it("reads a /tmp path from the conversation that owns it", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("print(1)")));
+
+    expect(await getDocumentContent("/tmp/my report.py", "c1")).toBe("print(1)");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/documents/%2Ftmp/my%20report.py?conversation_id=c1"),
+      expect.anything(),
+    );
+  });
 });
 
 describe("requiresConversion", () => {

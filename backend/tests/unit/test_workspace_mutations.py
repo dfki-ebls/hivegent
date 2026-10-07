@@ -1,10 +1,10 @@
-"""Unit tests for the canonical workspace text-mutation gateways.
+"""Unit tests for text writes and edits through the changeset gateway.
 
 These exercise the edit/write algorithm (occurrence counting, ``replace_all``,
-write modes, error reporting) without a database by stubbing the re-indexing
-both persistence paths run: a description is indexed where it lies, while a
-text original's rewrite lands through the phased commit that regenerates its
-markdown projection.
+in-order multi-edits, write modes, error reporting) without a database by
+stubbing the re-indexing both persistence paths run: a description is indexed
+where it lies, while a text original's rewrite regenerates its markdown
+projection through the upload conversion.
 """
 
 from collections.abc import Iterator
@@ -15,6 +15,15 @@ import pytest
 from fastapi import HTTPException
 
 from hivegent import workspace
+from hivegent.changes import (
+    Changeset,
+    Delete,
+    Edit,
+    Operation,
+    TextEdit,
+    Write,
+    WriteMode,
+)
 from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import content_digest, content_hash, settings
 from hivegent.converters import VISION_MEDIA_TYPES
@@ -23,8 +32,41 @@ from hivegent.db.documents import EntryState
 from hivegent.entries import ContentStat
 from hivegent.server.operations import reads
 from hivegent.store import Casebase
+from hivegent.workspace import Location, changeset, commit
 from hivegent.workspace import assets as workspace_assets
-from hivegent.workspace import commit, documents
+
+
+async def _single(operation: Operation[Location]) -> str:
+    (report,) = await workspace.apply_changeset(Changeset((operation,)))
+
+    return report
+
+
+async def _write(
+    store: Casebase,
+    path: str,
+    content: str,
+    mode: WriteMode = "replace",
+    expected_hash: str | None = None,
+) -> str:
+    return await _single(Write(Location(store, path), content, mode, expected_hash))
+
+
+async def _edit(
+    store: Casebase,
+    path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+    expected_hash: str | None = None,
+) -> str:
+    edit = TextEdit(old_string, new_string, replace_all)
+
+    return await _single(Edit(Location(store, path), (edit,), expected_hash))
+
+
+async def _delete(store: Casebase, path: str) -> str:
+    return await _single(Delete(Location(store, path)))
 
 
 class _Chunked:
@@ -49,7 +91,7 @@ def workspace_dir(
     async def _no_rows(*_args: object, **_kwargs: object) -> int:
         return 0
 
-    monkeypatch.setattr(documents, "chunk_and_index_document", _noop)
+    monkeypatch.setattr(changeset, "chunk_and_index_document", _noop)
     monkeypatch.setattr(commit, "chunk_and_index_document", _chunked)
     monkeypatch.setattr(db_documents, "get_entry_metadata", _noop)
     monkeypatch.setattr(db_documents, "delete_subtree", _no_rows)
@@ -63,13 +105,13 @@ class TestEditDocumentText:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         (workspace_dir / "doc.md").write_text("hello world")
-        result = await workspace.edit_document_text(user_store, "doc.md", "hello", "hi")
+        result = await _edit(user_store, "doc.md", "hello", "hi")
         assert "Replaced 1 occurrence" in result
         assert (workspace_dir / "doc.md").read_text() == "hi world"
 
     async def test_replace_all(self, user_store: Casebase, workspace_dir: Path) -> None:
         (workspace_dir / "doc.md").write_text("foo foo foo")
-        result = await workspace.edit_document_text(
+        result = await _edit(
             user_store, "doc.md", "foo", "bar", replace_all=True
         )
         assert "Replaced 3 occurrences" in result
@@ -80,7 +122,8 @@ class TestEditDocumentText:
     ) -> None:
         (workspace_dir / "doc.md").write_text("hello world")
         with pytest.raises(HTTPException) as exc:
-            await workspace.edit_document_text(user_store, "doc.md", "absent", "x")
+            await _edit(user_store, "doc.md", "absent", "x")
+
         assert exc.value.status_code == 422
 
     async def test_duplicate_without_replace_all_is_rejected(
@@ -88,21 +131,23 @@ class TestEditDocumentText:
     ) -> None:
         (workspace_dir / "doc.md").write_text("hi hi")
         with pytest.raises(HTTPException) as exc:
-            await workspace.edit_document_text(user_store, "doc.md", "hi", "yo")
+            await _edit(user_store, "doc.md", "hi", "yo")
+
         assert "appears 2 times" in str(exc.value.detail)
 
     async def test_missing_file_is_404(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         with pytest.raises(HTTPException) as exc:
-            await workspace.edit_document_text(user_store, "nope.md", "a", "b")
+            await _edit(user_store, "nope.md", "a", "b")
+
         assert exc.value.status_code == 404
 
     async def test_matching_expected_hash_succeeds(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         (workspace_dir / "doc.md").write_text("hello world")
-        result = await workspace.edit_document_text(
+        result = await _edit(
             user_store,
             "doc.md",
             "hello",
@@ -111,12 +156,34 @@ class TestEditDocumentText:
         )
         assert "Replaced 1 occurrence" in result
 
+    async def test_edits_apply_in_order_as_one_write(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("a b a")
+        edits = (TextEdit("a", "x", replace_all=True), TextEdit("x b", "done"))
+
+        result = await _single(Edit(Location(user_store, "doc.md"), edits))
+
+        assert result == "Applied 2 edits with 3 replacements to '~/doc.md'."
+        assert (workspace_dir / "doc.md").read_text() == "done x"
+
+    async def test_a_failing_edit_names_itself_and_writes_nothing(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("a b")
+        edits = (TextEdit("a", "x"), TextEdit("missing", "y"))
+
+        with pytest.raises(HTTPException, match="Edit 2 of 2: old_string not found"):
+            await _single(Edit(Location(user_store, "doc.md"), edits))
+
+        assert (workspace_dir / "doc.md").read_text() == "a b"
+
     async def test_stale_expected_hash_is_409(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         (workspace_dir / "doc.md").write_text("hello world")
         with pytest.raises(HTTPException) as exc:
-            await workspace.edit_document_text(
+            await _edit(
                 user_store, "doc.md", "hello", "hi", expected_hash="stale0000000"
             )
         assert exc.value.status_code == 409
@@ -128,17 +195,17 @@ class TestCanonicalPathsInMessages:
     async def test_receipt_and_refusals_carry_the_scope_prefix(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        receipt = await workspace.write_document_text(user_store, "a/b.md", "hi")
+        receipt = await _write(user_store, "a/b.md", "hi")
         assert "'~/a/b.md'" in receipt
 
         with pytest.raises(HTTPException, match=r"'~/a/b\.md' changed since"):
-            await workspace.write_document_text(
+            await _write(
                 user_store, "a/b.md", "x", expected_hash="0" * 12
             )
 
         (workspace_dir / "blocker.md").write_text("in the way")
         with pytest.raises(HTTPException, match=r"parent '~/blocker\.md' is a file"):
-            await workspace.write_document_text(
+            await _write(
                 user_store, "blocker.md/child.md", "nope"
             )
 
@@ -148,28 +215,20 @@ class TestCanonicalPathsInMessages:
         async def _noop(*_args: object, **_kwargs: object) -> None:
             return None
 
-        monkeypatch.setattr(workspace.documents, "chunk_and_index_document", _noop)
+        monkeypatch.setattr(changeset, "chunk_and_index_document", _noop)
         store = Casebase.for_group("team")
         store.workspace_dir(data_dir).mkdir(parents=True, exist_ok=True)
 
-        receipt = await workspace.write_document_text(store, "notes.md", "hi")
+        receipt = await _write(store, "notes.md", "hi")
 
         assert "'@team/notes.md'" in receipt
 
 
 class TestWriteDocumentText:
-    async def test_rejects_scratch_directory_as_a_file(
-        self, user_store: Casebase, workspace_dir: Path
-    ) -> None:
-        with pytest.raises(HTTPException, match="scratch directory"):
-            await workspace.write_document_text(user_store, ".scratch", "orphan")
-
-        assert not (workspace_dir / ".scratch").exists()
-
     async def test_replace_creates_file(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        result = await workspace.write_document_text(user_store, "new.md", "content")
+        result = await _write(user_store, "new.md", "content")
         assert "Wrote" in result
         assert (workspace_dir / "new.md").read_text() == "content"
 
@@ -177,7 +236,7 @@ class TestWriteDocumentText:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         """A new document lands wherever its path says, folders and all."""
-        result = await workspace.write_document_text(
+        result = await _write(
             user_store, "reports/2026/q1.md", "content"
         )
         assert "Wrote" in result
@@ -186,13 +245,13 @@ class TestWriteDocumentText:
     async def test_create_mode_rejects_existing_path(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        result = await workspace.write_document_text(
+        result = await _write(
             user_store, "fresh.md", "body", mode="create"
         )
         assert "Created" in result
 
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(
+            await _write(
                 user_store, "fresh.md", "other", mode="create"
             )
         assert exc.value.status_code == 409
@@ -200,7 +259,7 @@ class TestWriteDocumentText:
 
     async def test_append(self, user_store: Casebase, workspace_dir: Path) -> None:
         (workspace_dir / "doc.md").write_text("start")
-        result = await workspace.write_document_text(
+        result = await _write(
             user_store, "doc.md", " end", mode="append"
         )
         assert "Appended" in result
@@ -208,7 +267,7 @@ class TestWriteDocumentText:
 
     async def test_prepend(self, user_store: Casebase, workspace_dir: Path) -> None:
         (workspace_dir / "doc.md").write_text("end")
-        result = await workspace.write_document_text(
+        result = await _write(
             user_store, "doc.md", "start ", mode="prepend"
         )
         assert "Prepended" in result
@@ -218,7 +277,7 @@ class TestWriteDocumentText:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(
+            await _write(
                 user_store, "nope.md", "x", mode="append"
             )
         assert exc.value.status_code == 404
@@ -228,7 +287,7 @@ class TestWriteDocumentText:
     ) -> None:
         (workspace_dir / "doc.md").write_text("start")
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(
+            await _write(
                 user_store,
                 "doc.md",
                 " end",
@@ -241,7 +300,7 @@ class TestWriteDocumentText:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         (workspace_dir / "doc.md").write_text("start")
-        result = await workspace.write_document_text(
+        result = await _write(
             user_store,
             "doc.md",
             " end",
@@ -256,7 +315,7 @@ class TestWriteDocumentText:
     ) -> None:
         """A hash for a file that does not exist signals a hallucinated read."""
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(
+            await _write(
                 user_store, "new.md", "body", expected_hash="deadbeef0000"
             )
         assert exc.value.status_code == 409
@@ -275,7 +334,7 @@ class TestTextOriginals:
     ) -> None:
         (workspace_dir / "settings.ini").write_text("[db]\nhost = old\n")
 
-        result = await workspace.edit_document_text(
+        result = await _edit(
             user_store, "settings.ini", "old", "new"
         )
 
@@ -290,7 +349,7 @@ class TestTextOriginals:
         original = workspace_dir / "settings.ini"
         original.write_bytes("city = Köln\n".encode(encoding))
 
-        result = await workspace.edit_document_text(
+        result = await _edit(
             user_store, "settings.ini", "Köln", "Berlin"
         )
 
@@ -301,7 +360,7 @@ class TestTextOriginals:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         """An SVG is text, so it is written and indexed rather than captioned."""
-        await workspace.write_document_text(user_store, "diagram.svg", "<svg/>")
+        await _write(user_store, "diagram.svg", "<svg/>")
 
         assert (workspace_dir / "diagram.svg").read_text() == "<svg/>"
         assert "<svg/>" in (workspace_dir / "diagram.md").read_text()
@@ -310,7 +369,7 @@ class TestTextOriginals:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         """A converter claiming the format does not make it unwritable."""
-        await workspace.write_document_text(user_store, "data/rows.csv", "a,b\n1,2\n")
+        await _write(user_store, "data/rows.csv", "a,b\n1,2\n")
 
         assert (workspace_dir / "data/rows.csv").read_text() == "a,b\n1,2\n"
         assert (workspace_dir / "data/rows.md").exists()
@@ -319,15 +378,33 @@ class TestTextOriginals:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(user_store, "sheet.xlsx", "a,b")
+            await _write(user_store, "sheet.xlsx", "a,b")
 
         assert exc.value.status_code == 400
         assert not (workspace_dir / "sheet.xlsx").exists()
 
+    @pytest.mark.parametrize("reverse", [False, True])
+    async def test_original_and_projection_cannot_both_be_written(
+        self, user_store: Casebase, workspace_dir: Path, reverse: bool
+    ) -> None:
+        for name in ("doc.txt", "doc.md"):
+            (workspace_dir / name).write_text("before")
+
+        operations = tuple(
+            Write(Location(user_store, name), "after") for name in ("doc.txt", "doc.md")
+        )
+
+        with pytest.raises(HTTPException, match="more than one change") as exc:
+            await changeset.apply_changeset(Changeset(operations[::-1] if reverse else operations))
+
+        assert exc.value.status_code == 400
+        assert (workspace_dir / "doc.txt").read_text() == "before"
+        assert (workspace_dir / "doc.md").read_text() == "before"
+
     async def test_write_creates_the_entry_and_its_projection(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        await workspace.write_document_text(user_store, "conf/app.xml", "<a/>")
+        await _write(user_store, "conf/app.xml", "<a/>")
 
         assert (workspace_dir / "conf/app.xml").read_text() == "<a/>"
         assert "<a/>" in (workspace_dir / "conf/app.md").read_text()
@@ -338,7 +415,7 @@ class TestTextOriginals:
         (workspace_dir / "report.pdf").write_bytes(b"%PDF\x00\x01binary")
 
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(user_store, "report.pdf", "text")
+            await _write(user_store, "report.pdf", "text")
 
         assert exc.value.status_code == 422
         assert (workspace_dir / "report.pdf").read_bytes().startswith(b"%PDF")
@@ -358,7 +435,7 @@ class TestTextOriginals:
         path.write_text("plain text wearing a binary extension")
 
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(user_store, path.name, "replacement")
+            await _write(user_store, path.name, "replacement")
 
         assert exc.value.status_code == 422
         assert path.read_text() == "plain text wearing a binary extension"
@@ -368,7 +445,7 @@ class TestTextOriginals:
     ) -> None:
         """Only formats projected verbatim can be conjured out of text."""
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(user_store, "report.docx", "text")
+            await _write(user_store, "report.docx", "text")
 
         assert exc.value.status_code == 400
         assert not (workspace_dir / "report.docx").exists()
@@ -380,7 +457,7 @@ class TestTextOriginals:
         (workspace_dir / "notes.md").write_text("hand written")
 
         with pytest.raises(HTTPException) as exc:
-            await workspace.write_document_text(user_store, "notes.ini", "x = 1")
+            await _write(user_store, "notes.ini", "x = 1")
 
         assert exc.value.status_code == 409
         assert (workspace_dir / "notes.md").read_text() == "hand written"
@@ -425,7 +502,7 @@ class TestSyncEntryFromDisk:
             # Stale stat forces the read + hash; the digest then matches.
             return EntryState(
                 content_digest=content_digest("body"),
-                content_stat=ContentStat(mtime_ns=0, size=0),
+                content_stat=ContentStat(mtime_ns=0, size=0, inode=0),
                 metadata=_entry_metadata(),
             )
 
@@ -445,9 +522,9 @@ class TestSyncEntryFromDisk:
             workspace.indexing, "chunk_and_index_document", chunk_and_index_document
         )
 
-        changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
+        changed = await workspace.sync_entries_from_disk(user_store, ["doc.md"])
 
-        assert changed is True
+        assert changed == 1
         assert len(updated) == 1
         assert updated[0].original_path == "doc.pdf"
         assert updated[0].assets_dir == "doc.assets"
@@ -479,9 +556,9 @@ class TestSyncEntryFromDisk:
             workspace.indexing, "chunk_and_index_document", chunk_and_index_document
         )
 
-        changed = await workspace.sync_entry_from_disk(user_store, "settings.ini")
+        changed = await workspace.sync_entries_from_disk(user_store, ["settings.ini"])
 
-        assert changed is True
+        assert changed == 1
         assert "host = local" in (workspace_dir / "settings.md").read_text()
         assert indexed[0][0] == "settings.md"
         assert indexed[0][1].original_path == "settings.ini"
@@ -520,9 +597,9 @@ class TestSyncEntryFromDisk:
             workspace.indexing, "chunk_and_index_document", chunk_and_index_document
         )
 
-        changed = await workspace.sync_entry_from_disk(user_store, "settings.md")
+        changed = await workspace.sync_entries_from_disk(user_store, ["settings.md"])
 
-        assert changed is True
+        assert changed == 1
         assert "host = new" in description.read_text()
         assert "host = old" not in description.read_text()
         assert len(indexed) == 1
@@ -551,9 +628,9 @@ class TestSyncEntryFromDisk:
         )
         monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fail)
 
-        changed = await workspace.sync_entry_from_disk(user_store, "blob.bin")
+        changed = await workspace.sync_entries_from_disk(user_store, ["blob.bin"])
 
-        assert changed is False
+        assert changed == 0
         assert not (workspace_dir / "blob.md").exists()
         assert (workspace_dir / "blob.bin").exists()
         assert dropped == ["blob.md"]
@@ -582,9 +659,9 @@ class TestSyncEntryFromDisk:
         monkeypatch.setattr(db_documents, "update_entry", fail)
         monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", fail)
 
-        changed = await workspace.sync_entry_from_disk(user_store, "doc.md")
+        changed = await workspace.sync_entries_from_disk(user_store, ["doc.md"])
 
-        assert changed is False
+        assert changed == 0
 
 
 class TestDeleteAssetDescription:
@@ -656,49 +733,4 @@ class TestDeleteAssetDescription:
 
         with pytest.raises(HTTPException) as exc:
             await workspace.delete_asset_description(user_store, "doc.md", "img.png")
-        assert exc.value.status_code == 404
-
-
-class TestClearScratch:
-    async def test_drops_nested_scratch_and_keeps_documents(
-        self, user_store: Casebase, workspace_dir: Path
-    ) -> None:
-        (workspace_dir / ".scratch").mkdir()
-        (workspace_dir / ".scratch" / "state.json").write_text("{}")
-        (workspace_dir / "notes" / ".scratch").mkdir(parents=True)
-        (workspace_dir / "notes" / ".scratch" / "run.py").write_text("print(1)")
-        (workspace_dir / "notes" / "doc.md").write_text("content")
-
-        assert await workspace.clear_scratch(user_store) == 2
-
-        assert not (workspace_dir / ".scratch").exists()
-        assert not (workspace_dir / "notes" / ".scratch").exists()
-        assert (workspace_dir / "notes" / "doc.md").read_text() == "content"
-
-    async def test_empty_workspace_clears_nothing(
-        self, user_store: Casebase, workspace_dir: Path
-    ) -> None:
-        assert await workspace.clear_scratch(user_store) == 0
-
-
-class TestDeleteScratch:
-    """A run that can create its own working state can clear it away again."""
-
-    async def test_delete_unlinks_a_scratch_file(
-        self, user_store: Casebase, workspace_dir: Path
-    ) -> None:
-        (workspace_dir / ".scratch").mkdir()
-        (workspace_dir / ".scratch/state.json").write_text("{}")
-
-        await workspace.delete_document(user_store, ".scratch/state.json")
-
-        assert not (workspace_dir / ".scratch/state.json").exists()
-        assert (workspace_dir / ".scratch").is_dir()
-
-    async def test_delete_reports_a_scratch_file_that_was_never_there(
-        self, user_store: Casebase
-    ) -> None:
-        with pytest.raises(HTTPException) as exc:
-            await workspace.delete_document(user_store, ".scratch/gone.json")
-
         assert exc.value.status_code == 404

@@ -1,10 +1,19 @@
 """Unit tests for the concrete WorkspaceScope grammar (~/@ convention)."""
 
+from pathlib import Path
+
 import pytest
 
+from hivegent import entries
 from hivegent.agents.common import UserDeps
 from hivegent.server.common import parse_document_scope
-from hivegent.store import Casebase, WorkspaceScope, scoped_operation
+from hivegent.store import Casebase, WorkspaceScope, route_path
+from hivegent.tmp import tmp_dir
+from hivegent.tools.base import SearchPath, resolve_accessible_file
+
+
+def _deps(conversation_id: str | None) -> UserDeps:
+    return UserDeps("u", Casebase.for_user("u"), "interactive", conversation_id)
 
 
 class TestWorkspaceScope:
@@ -32,26 +41,58 @@ class TestWorkspaceScope:
             WorkspaceScope.parse("reports/q1.md")
 
 
-class TestScopedOperation:
+class TestRoutePath:
     """Routing a canonical path to the store it names."""
 
     _stores = (Casebase.for_user("u"), Casebase.for_group("team"))
 
-    @staticmethod
-    async def _op(store: Casebase, local: str, suffix: str) -> str:
-        return f"{store.store_key}:{local}:{suffix}"
+    def test_routes_to_each_addressed_store(self) -> None:
+        assert route_path(self._stores, "~/notes.md") == (self._stores[0], "notes.md")
+        assert route_path(self._stores, "@team/a.md") == (self._stores[1], "a.md")
 
-    async def test_runs_against_each_addressed_store(self) -> None:
-        run = scoped_operation(self._op, self._stores)
-
-        assert await run("~/notes.md", "x") == "user:u:notes.md:x"
-        assert await run("@team/notes.md", "x") == "group:team:notes.md:x"
-
-    async def test_rejects_a_store_outside_the_given_set(self) -> None:
-        run = scoped_operation(self._op, self._stores)
-
+    def test_rejects_a_store_outside_the_given_set(self) -> None:
         with pytest.raises(ValueError, match="No accessible workspace"):
-            await run("@other/notes.md", "x")
+            route_path(self._stores, "@other/notes.md")
+
+
+class TestConversationTmp:
+    """`/tmp` is the conversation's own folder, outside every workspace."""
+
+    def test_each_conversation_resolves_only_its_own_folder(self, data_dir: Path) -> None:
+        for conversation in ("c1", "c2"):
+            folder = tmp_dir(data_dir, conversation)
+            folder.mkdir(parents=True)
+            (folder / "state.json").write_text(conversation)
+
+        for conversation, other in (("c1", "c2"), ("c2", "c1")):
+            paths = _deps(conversation).search_paths()
+            sp, local, absolute = resolve_accessible_file(
+                paths, "/tmp/state.json"
+            ) or pytest.fail("unresolved")
+            assert sp.prefixed(local) == "/tmp/state.json"
+            assert absolute.read_text() == conversation
+            assert resolve_accessible_file(paths, f"/tmp/../{other}/state.json") is None
+
+        # A caller without a conversation, such as MCP, has no `/tmp` at all.
+        assert resolve_accessible_file(_deps(None).search_paths(), "/tmp/state.json") is None
+
+        with pytest.raises(ValueError, match="Invalid conversation ID"):
+            _ = tmp_dir(data_dir, "../c1")
+
+
+class TestCaseFolding:
+    """Paths compare the way the workspace's filesystem compares them."""
+
+    def test_a_filter_is_asked_about_the_name_on_disk(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hidden `secret.md` is not reachable as `SECRET.md` where case folds."""
+        monkeypatch.setattr(entries, "folds_case", lambda _directory: True)
+        (tmp_path / "secret.md").write_text("x")
+        paths = (SearchPath(tmp_path, WorkspaceScope(), lambda local: local != "secret.md"),)
+
+        assert resolve_accessible_file(paths, "~/secret.md") is None
+        assert resolve_accessible_file(paths, "~/SECRET.md") is None
 
 
 class TestDocumentScopePrompt:

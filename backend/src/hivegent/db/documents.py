@@ -8,7 +8,7 @@ cascade-delete with their owning document, so deletes only need to
 touch ``documents``.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Self, TypedDict
@@ -53,6 +53,7 @@ __all__ = [
     "delete_documents",
     "delete_subtree",
     "get_document",
+    "get_entries_metadata",
     "get_entry_metadata",
     "get_entry_state",
     "get_line_counts",
@@ -77,29 +78,34 @@ class EntryState:
 
 
 class _StatColumns(TypedDict):
-    """The two nullable stat columns, written and nulled together."""
+    """The three nullable stat columns, written and nulled together."""
 
     content_mtime_ns: int | None
     content_size: int | None
+    content_inode: int | None
 
 
 def _stat_columns(stat: ContentStat | None) -> _StatColumns:
-    """Map a stat fingerprint, or its absence, onto its two nullable columns.
+    """Map a stat fingerprint, or its absence, onto its three nullable columns.
 
-    The ``(content_mtime_ns, content_size)`` pair is always written and nulled
-    together, so the ``None``-collapse lives here instead of at every writer.
+    The columns are always written and nulled together, so the ``None``-collapse
+    lives here instead of at every writer.
     """
     return {
         "content_mtime_ns": stat.mtime_ns if stat else None,
         "content_size": stat.size if stat else None,
+        "content_inode": stat.inode if stat else None,
     }
 
 
 def _stat_from_row(row: Document) -> ContentStat | None:
-    """Rebuild the stat fingerprint persisted across the two stat columns."""
-    if row.content_mtime_ns is None or row.content_size is None:
+    """Rebuild the stat fingerprint persisted across the three stat columns."""
+    if row.content_mtime_ns is None or row.content_size is None or row.content_inode is None:
         return None
-    return ContentStat(mtime_ns=row.content_mtime_ns, size=row.content_size)
+
+    return ContentStat(
+        mtime_ns=row.content_mtime_ns, size=row.content_size, inode=row.content_inode
+    )
 
 
 # ─── Filters ───────────────────────────────────────────────────────────
@@ -260,6 +266,40 @@ async def get_entry_metadata(store: Casebase, reference: str) -> EntryMetadata |
     async with session() as s:
         row = await _find(s, store, stem_path)
         return _entry_from_row(row) if row is not None else None
+
+
+async def get_entries_metadata(
+    references: Iterable[tuple[Casebase, str]],
+) -> dict[tuple[Casebase, str], EntryMetadata]:
+    """Load the persisted metadata of many entries in one query, by store and stem.
+
+    The batch sibling of :func:`get_entry_metadata`, and an entry without a row is
+    absent from the result.
+    """
+    stems: dict[Casebase, set[str]] = {}
+
+    for store, reference in references:
+        stems.setdefault(store, set()).add(stem_path_from_reference(reference))
+
+    if not stems:
+        return {}
+
+    where = sa.or_(
+        *(
+            sa.and_(_owner_filter(store), Document.stem_path.in_(paths))
+            for store, paths in stems.items()
+        )
+    )
+
+    async with session() as s:
+        rows = (await s.scalars(select(Document).where(where))).all()
+
+    return {
+        (Casebase.for_owner(row.owner_user_id, row.owner_group_id), row.stem_path): (
+            _entry_from_row(row)
+        )
+        for row in rows
+    }
 
 
 async def get_entry_state(store: Casebase, reference: str) -> EntryState | None:
@@ -546,15 +586,19 @@ async def set_content_state(
         )
 
 
-async def delete_document(store: Casebase, reference: str) -> bool:
+async def delete_document(
+    store: Casebase, reference: str, *, s: AsyncSession | None = None
+) -> bool:
     """Delete a document and its chunks.  Returns ``True`` if one was removed."""
     stem_path = stem_path_from_reference(reference)
-    async with session() as s:
-        result = await s.execute(
+
+    async with session(s) as tx:
+        result = await tx.execute(
             delete(Document).where(
                 _owner_filter(store), Document.stem_path == stem_path
             )
         )
+
     return affected_rows(result) > 0
 
 
@@ -574,7 +618,9 @@ async def delete_documents(store: Casebase, references: Sequence[str]) -> int:
     return affected_rows(result)
 
 
-async def delete_subtree(store: Casebase, prefix: str) -> int:
+async def delete_subtree(
+    store: Casebase, prefix: str, *, s: AsyncSession | None = None
+) -> int:
     """Delete every document whose stem lies strictly below ``prefix/``.
 
     A same-named sibling document (stem equal to *prefix*) is left alone —
@@ -582,10 +628,12 @@ async def delete_subtree(store: Casebase, prefix: str) -> int:
     """
     if not prefix:
         return 0
-    async with session() as s:
-        result = await s.execute(
+
+    async with session(s) as tx:
+        result = await tx.execute(
             delete(Document).where(_owner_filter(store), stem_subtree_filter(prefix))
         )
+
     return affected_rows(result)
 
 
@@ -610,7 +658,12 @@ async def delete_all_documents() -> int:
 
 
 async def move_document(
-    src_store: Casebase, src_stem: str, dst_store: Casebase, dst_stem: str
+    src_store: Casebase,
+    src_stem: str,
+    dst_store: Casebase,
+    dst_stem: str,
+    *,
+    s: AsyncSession | None = None,
 ) -> bool:
     """Rename a document's ``stem_path``, re-owning it when the store changes.
 
@@ -625,19 +678,27 @@ async def move_document(
     cross_store = src_store != dst_store
     if not cross_store and src_stem == dst_stem:
         return False
-    async with session() as s:
+
+    async with session(s) as tx:
         if cross_store:
-            await _ensure_owner(s, dst_store)
-        result = await s.execute(
+            await _ensure_owner(tx, dst_store)
+
+        result = await tx.execute(
             update(Document)
             .where(_owner_filter(src_store), Document.stem_path == src_stem)
             .values(stem_path=dst_stem, **_owner_kwargs(dst_store))
         )
+
     return affected_rows(result) > 0
 
 
 async def move_subtree(
-    src_store: Casebase, src_prefix: str, dst_store: Casebase, dst_prefix: str
+    src_store: Casebase,
+    src_prefix: str,
+    dst_store: Casebase,
+    dst_prefix: str,
+    *,
+    s: AsyncSession | None = None,
 ) -> None:
     """Move every document strictly below ``src_prefix/`` to ``dst_prefix/``.
 
@@ -651,10 +712,12 @@ async def move_subtree(
     cross_store = src_store != dst_store
     if not src_prefix or (not cross_store and src_prefix == dst_prefix):
         return
-    async with session() as s:
+
+    async with session(s) as tx:
         if cross_store:
-            await _ensure_owner(s, dst_store)
-        await s.execute(
+            await _ensure_owner(tx, dst_store)
+
+        await tx.execute(
             update(Document)
             .where(_owner_filter(src_store), stem_subtree_filter(src_prefix))
             .values(

@@ -5,7 +5,7 @@ import json
 import re
 import types
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Hashable, Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Generator, Hashable, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import cache, cached_property, reduce
@@ -44,10 +44,12 @@ from ..concurrency import bounded_gather
 from ..config import normalize_unicode
 from ..converters import is_json, is_tabular
 from ..entries import (
+    Listdir,
     description_path_for_stem,
     find_original_for_stem,
     is_description_file,
     is_inside_assets_dir,
+    respell,
     stem_path_from_reference,
 )
 from ..text import MAX_BYTES_PER_CHAR, NOT_TEXT_REASON, DecodedText, read_text_file
@@ -63,7 +65,10 @@ __all__ = [
     "Batch",
     "BatchShare",
     "BinaryAttachment",
+    "CommitPolicy",
+    "Direct",
     "FullLinesArg",
+    "Gated",
     "IncludeIgnoredArg",
     "ItemFailure",
     "PathTool",
@@ -92,6 +97,7 @@ __all__ = [
     "match_scope",
     "missing_directory_retry",
     "near_miss_hint",
+    "policy_of",
     "query_hint",
     "read_text_or_retry",
     "resolve_accessible_file",
@@ -122,7 +128,7 @@ class ToolRetry(Exception):
 
 
 @contextmanager
-def translate_tool_retry(into: Callable[[str], Exception]) -> Iterator[None]:
+def translate_tool_retry(into: Callable[[str], Exception]) -> Generator[None]:
     """Re-raise any :class:`ToolRetry` from the block as *into* the message.
 
     The single translation point each framework adapter wraps its tool call
@@ -185,6 +191,28 @@ arguments repeating it cost more on every request than the one sentence saves.
 """
 
 
+@dataclass(slots=True, frozen=True)
+class Gated:
+    """A root whose changes commit through the changeset gateway, approved where the mode asks."""
+
+
+@dataclass(slots=True, frozen=True)
+class Direct:
+    """A root whose changes are written straight into its folder, with no approval.
+
+    Attributes:
+        max_bytes: What the folder may hold once a change is written.
+    """
+
+    max_bytes: int
+
+
+type CommitPolicy = Gated | Direct
+"""How a change to a root's files lands, which is a property of the root alone."""
+
+_GATED = Gated()
+
+
 # Not frozen, alone among the value types here, because it normalises its own
 # input: a root has to be resolved before anything can be contained in it, and
 # a frozen dataclass can only assign in `__post_init__` by reaching around its
@@ -206,11 +234,13 @@ class SearchPath:
         scope: Addressing scope whose prefix tags filenames from this path.
             ``None`` means the path carries no prefix (a single bare root).
         filter_func: Optional predicate controlling file visibility.
+        policy: How a change to a file under the root commits.
     """
 
     path: Path
     scope: Scope | None = None
     filter_func: SearchPathFilterFunc = None
+    policy: CommitPolicy = _GATED
 
     def __post_init__(self) -> None:
         """Fold the root once, here, rather than once per path resolved under it.
@@ -231,6 +261,16 @@ class SearchPath:
     def prefixed(self, filename: str) -> str:
         """Return *filename* rendered under this path's scope."""
         return self.scope.render(filename) if self.scope is not None else filename
+
+
+def policy_of(paths: tuple[SearchPath, ...], canonical: str) -> CommitPolicy:
+    """How a change to *canonical* commits: its root's policy, gated where no root claims it.
+
+    An unclaimed path is gated because the gateway is what refuses one.
+    """
+    resolved = resolve_search_path(paths, canonical)
+
+    return _GATED if resolved is None else resolved[0].policy
 
 
 def coerce_paths(
@@ -430,25 +470,33 @@ def entry_stat(path: Path) -> stat_result | None:
     return None if S_ISLNK(st.st_mode) else st
 
 
-def canonical_local_path(root: Path, local: str) -> tuple[str, Path] | None:
+def canonical_local_path(
+    root: Path, local: str, listdir: Listdir | None = None
+) -> tuple[str, Path] | None:
     """Resolve *local* under an already-resolved *root* to its canonical form.
 
     The one place a spelling becomes an identity: ``..`` segments are folded
-    away and symlinks are followed, so the name a filter is asked about is the
-    file the operation would actually touch, not the alias it was addressed
-    by. Returns ``None`` when the target escapes *root* or is *root* itself,
-    which names no entry.
+    away, symlinks are followed, and on a case-insensitive filesystem every
+    existing segment is respelled the way the disk spells it, so the name a
+    filter is asked about is the file the operation would actually touch, not
+    the alias it was addressed by: ``SECRET.md`` is asked about as the hidden
+    ``secret.md`` it opens.  *listdir* lets a caller cache the listings that
+    takes.  Returns ``None`` when the target escapes *root* or is *root*
+    itself, which names no entry.
     """
     absolute = (root / local).resolve()
     if not absolute.is_relative_to(root) or absolute == root:
         return None
 
-    return absolute.relative_to(root).as_posix(), absolute
+    local = respell(root, absolute.relative_to(root).as_posix(), listdir)
+
+    return local, root / local
 
 
 def resolve_accessible_file(
     paths: tuple[SearchPath, ...],
     file_path: str,
+    listdir: Listdir | None = None,
 ) -> tuple[SearchPath, str, Path] | None:
     """Resolve *file_path* to its search path, canonical name, and absolute path.
 
@@ -464,7 +512,8 @@ def resolve_accessible_file(
     if resolved is None:
         return None
     sp, local = resolved
-    canonical = canonical_local_path(sp.path, local)
+    canonical = canonical_local_path(sp.path, local, listdir)
+
     if canonical is None:
         return None
     local, absolute = canonical
@@ -859,12 +908,14 @@ async def run_batch[I, R](
     key: Callable[[I], str],
     concurrency: int = 1,
     identity: Callable[[R], Hashable] | None = None,
+    shares: Callable[[I], bool] | None = None,
 ) -> ToolOutput[Batch[R]]:
     """Run *run* over every distinct item and present the results side by side.
 
     Items are deduplicated by *key*, keeping the first, and run at most
     *concurrency* at a time while the result keeps request order.  Each item
-    is handed its :class:`BatchShare` to split the call's budgets with.  A
+    is handed its :class:`BatchShare` to split the call's budgets with, among
+    the items *shares* picks when given, the others being handed them whole.  A
     :class:`ToolRetry` from one item becomes its :class:`ItemFailure`, and only
     a batch in which every item failed is refused as a whole.  *identity*
     names what makes two results the same, for items that only turn out to be
@@ -879,18 +930,18 @@ async def run_batch[I, R](
         unique.setdefault(key(item), item)
 
     count = len(unique)
+    sharing = [name for name, item in unique.items() if shares is None or shares(item)]
+    split = {name: BatchShare(index, len(sharing)) for index, name in enumerate(sharing)}
 
-    async def attempt(entry: tuple[int, tuple[str, I]]) -> ToolOutput[R] | ItemFailure:
-        index, (name, item) = entry
+    async def attempt(entry: tuple[str, I]) -> ToolOutput[R] | ItemFailure:
+        name, item = entry
 
         try:
-            return await run(item, BatchShare(index, count))
+            return await run(item, split.get(name, BatchShare(0, 1)))
         except ToolRetry as exc:
             return ItemFailure(item=name, reason=str(exc))
 
-    outcomes = await bounded_gather(
-        enumerate(unique.items()), attempt, limit=concurrency
-    )
+    outcomes = await bounded_gather(unique.items(), attempt, limit=concurrency)
     seen: dict[Hashable, str] = {}
     data: list[R | ItemFailure] = []
     blocks: list[str] = []

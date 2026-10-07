@@ -33,7 +33,6 @@ from .paths import _write_markdown_file
 
 __all__ = [
     "sync_entries_from_disk",
-    "sync_entry_from_disk",
 ]
 
 logger = logging.getLogger(__name__)
@@ -156,16 +155,6 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
         )
     )
     return True
-
-
-async def sync_entry_from_disk(store: Casebase, reference: str) -> bool:
-    """Bring one logical entry's SQL state into agreement with its disk bytes.
-
-    Lock-acquiring form of :func:`_sync_entry_from_disk_locked`.  Returns
-    whether SQL changed.
-    """
-    async with _locked_for(store, reference):
-        return await _sync_entry_from_disk_locked(store, reference)
 
 
 async def sync_entries_from_disk(store: Casebase, references: Iterable[str]) -> int:

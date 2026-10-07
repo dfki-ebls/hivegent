@@ -326,10 +326,11 @@ class Document(Timestamped, Base):
     # of the content) and surfaced to the frontend so a coverage map can place
     # partial reads without re-reading the file.
     line_count: Mapped[int]
-    # ``(mtime_ns, size)`` of the indexed markdown: a stat fast-path that lets
-    # the reconciler skip re-reading a description whose stat is unchanged.
+    # ``(mtime_ns, size, inode)`` of the indexed markdown: a stat fast-path that
+    # lets the reconciler skip re-reading a description whose stat is unchanged.
     content_mtime_ns: Mapped[int | None] = mapped_column(sa.BigInteger())
     content_size: Mapped[int | None] = mapped_column(sa.BigInteger())
+    content_inode: Mapped[int | None] = mapped_column(sa.BigInteger())
 
     owner_user: Mapped[User | None] = relationship(
         back_populates="documents", foreign_keys=[owner_user_id]

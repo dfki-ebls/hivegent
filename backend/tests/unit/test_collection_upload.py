@@ -190,7 +190,7 @@ async def test_markdown_owns_stem_when_original_sorts_before_md(
 
     # 'report.docx' sorts lexically before 'report.md', but the markdown must
     # still own the entry and the docx fold in as its companion original rather
-    # than claiming the stem and getting re-converted from scratch.
+    # than claiming the stem and getting re-converted anew.
     archive = _make_zip(tmp_path, {"report.docx": b"doc", "report.md": b"# body"})
     complete = await _run(user_store, archive)
 

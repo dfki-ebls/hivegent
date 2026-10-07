@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { parseJson } from "@/lib/chat/tool-part";
+import { parseJson, prettyPrint, type ToolPart } from "@/lib/chat/tool-part";
 import { cn } from "@/lib/utils";
 
 interface ToolSectionProps {
@@ -35,16 +35,29 @@ export function ToolSection({
 
 interface ToolPreProps {
   children: string;
+  /** Set the block off in a scrolling box, for long output or content. */
+  boxed?: boolean;
   className?: string;
 }
 
 /** Pre-formatted block for values that carry their own line breaks. */
-export function ToolPre({ children, className }: ToolPreProps) {
+export function ToolPre({ children, boxed = false, className }: ToolPreProps) {
   return (
-    <pre className={cn("whitespace-pre-wrap break-words font-mono text-xs", className)}>
+    <pre
+      className={cn(
+        "whitespace-pre-wrap break-words font-mono text-xs",
+        boxed && "max-h-80 overflow-auto rounded-md bg-muted/40 p-2",
+        className,
+      )}
+    >
       {children}
     </pre>
   );
+}
+
+/** A workspace path or other server value set inline in prose. */
+export function PathCode({ children }: { children?: ReactNode }) {
+  return <code className="break-all font-mono text-xs">{children}</code>;
 }
 
 /**
@@ -113,6 +126,34 @@ export function ToolResult({ children }: ToolResultProps) {
     <ToolSection title={t(($) => $.chat.tools.sections.result)} border>
       {children}
     </ToolSection>
+  );
+}
+
+interface ToolOutputResultProps {
+  part: ToolPart;
+  /** The output's text form, in place of pretty-printing the raw output. */
+  formatted?: string | null;
+}
+
+/**
+ * The call's raw output, for tools without a structured view of it.
+ *
+ * A list output is a content list, such as a result followed by the user's
+ * approval note, so each item gets its own block.
+ */
+export function ToolOutputResult({ part, formatted }: ToolOutputResultProps) {
+  if (part.output === undefined) return null;
+
+  const items: unknown[] = Array.isArray(part.output) ? part.output : [part.output];
+
+  return (
+    <ToolResult>
+      {formatted != null ? (
+        <ToolPre>{formatted}</ToolPre>
+      ) : (
+        items.map((item, index) => <ToolPre key={index}>{prettyPrint(item)}</ToolPre>)
+      )}
+    </ToolResult>
   );
 }
 

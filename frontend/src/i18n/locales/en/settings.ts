@@ -79,13 +79,13 @@ export const settings = {
       description:
         "This will permanently delete all saved memory. The assistant will no longer remember information from previous conversations.",
     },
-    clearScratch: {
-      label: "Clear Scratch",
-      title: "Clear scratch files?",
+    clearTmp: {
+      label: "Clear Temporary Files",
+      title: "Clear temporary files?",
       description:
-        "This will delete the working files the assistant parks between tool calls, in your own workspace and every group you can write to. Your documents are untouched.",
-      done_one: "Cleared {{count}} scratch file",
-      done_other: "Cleared {{count}} scratch files",
+        "This will delete the working files the assistant keeps for each of your conversations. Ongoing conversations lose their parked state, and your documents are untouched.",
+      done_one: "Cleared {{count}} temporary file",
+      done_other: "Cleared {{count}} temporary files",
     },
     resetDefaults: "Reset to Server Defaults",
   },
