@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useInView } from "@/hooks/use-in-view";
+import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { cn } from "@/lib/utils";
 import { fetchDocumentAsset } from "@/lib/api";
@@ -19,9 +20,10 @@ interface AssetImageProps {
 /** Lazily fetches a workspace asset and renders it once scrolled into view. */
 export function AssetImage({ filePath, alt, className, wrapperClassName }: AssetImageProps) {
   const { t } = useTranslation();
+  const conversationId = useConversationId();
   const fetch = useCallback(
-    (signal: AbortSignal) => fetchDocumentAsset(filePath, signal),
-    [filePath],
+    (signal: AbortSignal) => fetchDocumentAsset(filePath, signal, conversationId),
+    [filePath, conversationId],
   );
   const [ref, inView] = useInView();
   const { url, error } = useObjectUrl(inView ? fetch : null);

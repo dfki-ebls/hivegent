@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useInView } from "@/hooks/use-in-view";
+import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset } from "@/lib/api";
 
@@ -22,7 +23,11 @@ interface ImageRefProps {
 
 export function ImageRef({ src, alt }: ImageRefProps) {
   const { t } = useTranslation();
-  const fetch = useCallback((signal: AbortSignal) => fetchDocumentAsset(src ?? "", signal), [src]);
+  const conversationId = useConversationId();
+  const fetch = useCallback(
+    (signal: AbortSignal) => fetchDocumentAsset(src ?? "", signal, conversationId),
+    [src, conversationId],
+  );
   const [ref, inView] = useInView();
   const { url, error } = useObjectUrl(src && inView ? fetch : null);
 

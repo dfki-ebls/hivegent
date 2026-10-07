@@ -31,6 +31,7 @@ function ApprovalControls({ id, title, round }: ApprovalControlsProps) {
   const staging = round.ids.length > 1;
   const choice = round.choices[id];
   const blockedReason = staging ? undefined : round.blockedReason;
+  const { key, ...note } = round.noteField(id);
 
   const action = (approved: boolean): ComponentProps<typeof ConfirmationAction> => ({
     variant: (staging ? choice === approved : approved) ? "default" : "outline",
@@ -42,10 +43,11 @@ function ApprovalControls({ id, title, round }: ApprovalControlsProps) {
   return (
     <>
       <Input
+        key={key}
         className="h-8"
         aria-label={t(($) => $.chat.tools.approval.note, { call: title })}
         placeholder={t(($) => $.chat.tools.approval.notePlaceholder)}
-        {...round.noteField(id)}
+        {...note}
       />
       <ConfirmationActions>
         {blockedReason && (

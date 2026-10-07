@@ -39,13 +39,13 @@ function renderMessage(
 ) {
   const decide = vi.fn<ToolApprovalGate["decide"]>();
   const noop = () => {};
-  render(
+  const message = (requests: string[]) => (
     <ToolApprovalProvider value={{ decide, blockedReason }}>
       <MessageBubble
         message={{
           id: "m1",
           role: "assistant",
-          parts: ids.map(part),
+          parts: requests.map(part),
           metadata: { approvalMetadata },
         }}
         isLastMessage
@@ -56,8 +56,9 @@ function renderMessage(
         onSubmitEdit={noop}
         onRegenerate={noop}
       />
-    </ToolApprovalProvider>,
+    </ToolApprovalProvider>
   );
+  const { rerender } = render(message(ids));
 
   if (open) {
     for (const trigger of screen.getAllByRole("button", { expanded: false })) {
@@ -67,7 +68,11 @@ function renderMessage(
 
   const cards = screen.getAllByRole("alert");
 
-  return { decide, card: (index: number) => within(cards[index]) };
+  return {
+    decide,
+    card: (index: number) => within(cards[index]),
+    rerender: (requests: string[]) => rerender(message(requests)),
+  };
 }
 
 describe("tool approval", () => {
@@ -126,6 +131,34 @@ describe("tool approval", () => {
           { id: "call-2", approved: true, reason: "Keep backups." },
         ],
       ],
+    ]);
+  });
+
+  it("keeps a shared note as requests arrive and starts the next round blank", () => {
+    const { decide, rerender } = renderMessage(["call-1", "call-2"]);
+
+    fireEvent.change(screen.getByLabelText("Note for all actions (optional)"), {
+      target: { value: "Keep backups." },
+    });
+    rerender(["call-1", "call-2", "call-3"]);
+    rerender(["call-0", "call-1", "call-2", "call-3"]);
+    fireEvent.click(screen.getByRole("button", { name: "Approve all" }));
+
+    expect(decide).toHaveBeenLastCalledWith([
+      { id: "call-0", approved: true, reason: "Keep backups." },
+      { id: "call-1", approved: true, reason: "Keep backups." },
+      { id: "call-2", approved: true, reason: "Keep backups." },
+      { id: "call-3", approved: true, reason: "Keep backups." },
+    ]);
+
+    rerender(["call-4", "call-5"]);
+    expect(screen.getByLabelText("Note for all actions (optional)"))
+      .toHaveProperty("value", "");
+    fireEvent.click(screen.getByRole("button", { name: "Deny all" }));
+
+    expect(decide).toHaveBeenLastCalledWith([
+      { id: "call-4", approved: false },
+      { id: "call-5", approved: false },
     ]);
   });
 

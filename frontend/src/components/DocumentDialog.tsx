@@ -14,6 +14,7 @@ import { errorMessage, isWebUrl } from "@/lib/utils";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useConversationId } from "@/hooks/chat/use-conversation-id";
 
 import {
   buildAuxLlmConfig,
@@ -240,6 +241,7 @@ function DocumentDialogBody({
   onSave,
 }: Omit<DocumentDialogProps, "open">) {
   const { t } = useTranslation();
+  const conversationId = useConversationId();
   // Local content is only used in managed mode (custom getContent fetcher).
   // In fetched mode the store is the source of truth (see `fullContent` below).
   const [localFullContent, setLocalFullContent] = useState<string | null>(null);
@@ -369,7 +371,7 @@ function DocumentDialogBody({
     if (!needsContent) return;
 
     let cancelled = false;
-    getDocumentContent(filename)
+    getDocumentContent(filename, conversationId)
       .then((content) => {
         if (cancelled) return;
         if (isManagedMode) {
@@ -388,7 +390,7 @@ function DocumentDialogBody({
     return () => {
       cancelled = true;
     };
-  }, [needsContent, filename, isManagedMode, markFullDocument]);
+  }, [needsContent, filename, conversationId, isManagedMode, markFullDocument]);
 
   // Scroll the highlight into view when its DOM element mounts. The span
   // is keyed by the active chunk identifier (see renderChunkHighlight), so

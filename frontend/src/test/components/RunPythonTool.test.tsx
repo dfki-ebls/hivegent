@@ -1,11 +1,23 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RunPythonTool } from "@/components/chat/tools/run-python";
+import { DocumentDialog } from "@/components/DocumentDialog";
+import { ImageRef } from "@/components/ImageRef";
+import { WorkspaceImage } from "@/components/WorkspaceImage";
+import { AssetImage } from "@/components/documents/AssetImage";
 import { ConversationIdProvider } from "@/hooks/chat/use-conversation-id";
-import { getDocumentContent } from "@/lib/api";
+import { fetchDocumentAsset, getDocumentContent } from "@/lib/api";
 import type { ToolPart } from "@/lib/chat/tool-part";
 
-vi.mock("@/lib/api", () => ({ getDocumentContent: vi.fn<typeof getDocumentContent>() }));
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  getDocumentContent: vi.fn<typeof getDocumentContent>(),
+  fetchDocumentAsset: vi.fn<typeof fetchDocumentAsset>(),
+}));
+
+vi.mock("@/hooks/use-in-view", () => ({ useInView: () => [() => {}, true] }));
+
+afterEach(() => vi.unstubAllGlobals());
 
 const finished: ToolPart = {
   type: "tool-run_python",
@@ -102,4 +114,47 @@ describe("RunPythonTool", () => {
       expect(screen.queryByRole("alert")?.textContent ?? null).toBe(approved ? "Approved" : null);
     },
   );
+});
+
+describe("temporary document previews", () => {
+  it.each([
+    <AssetImage key="asset" filePath="/tmp/image.png" alt="Preview" />,
+    <ImageRef key="reference" src="/tmp/image.png" alt="Preview" />,
+    <WorkspaceImage key="markdown" src="image.png" documentPath="/tmp/notes.md" alt="Preview" />,
+  ])("loads each image with its owning conversation", async (preview) => {
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static revokeObjectURL = vi.fn<typeof URL.revokeObjectURL>();
+      },
+    );
+    vi.mocked(fetchDocumentAsset).mockResolvedValue("blob:preview");
+    vi.mocked(fetchDocumentAsset).mockClear();
+
+    render(<ConversationIdProvider value="c1">{preview}</ConversationIdProvider>);
+
+    await waitFor(() =>
+      expect(fetchDocumentAsset).toHaveBeenLastCalledWith(
+        "/tmp/image.png",
+        expect.any(AbortSignal),
+        "c1",
+      ),
+    );
+    expect((await screen.findByRole("img", { name: "Preview" })).getAttribute("src")).toBe(
+      "blob:preview",
+    );
+  });
+
+  it("loads complete temporary text with its owning conversation", async () => {
+    vi.mocked(getDocumentContent).mockResolvedValue("Temporary document contents");
+
+    render(
+      <ConversationIdProvider value="c1">
+        <DocumentDialog open onOpenChange={() => {}} filename="/tmp/notes.md" initialFullDoc />
+      </ConversationIdProvider>,
+    );
+
+    expect(await screen.findByText("Temporary document contents")).toBeTruthy();
+    expect(getDocumentContent).toHaveBeenLastCalledWith("/tmp/notes.md", "c1");
+  });
 });

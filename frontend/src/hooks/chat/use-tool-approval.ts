@@ -36,6 +36,7 @@ export function useToolApproval(): ToolApprovalGate {
 
 /** The props binding a note field, uncontrolled so typing re-renders nothing but the field. */
 export interface NoteField {
+  key: string;
   defaultValue: string;
   onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
 }
@@ -71,6 +72,7 @@ function joinNotes(...notes: (string | undefined)[]): string | undefined {
 
 function bindNote(notes: Map<string, string>, key: string): NoteField {
   return {
+    key,
     defaultValue: notes.get(key) ?? "",
     onChange: (event) => notes.set(key, event.target.value),
   };
@@ -78,8 +80,7 @@ function bindNote(notes: Map<string, string>, key: string): NoteField {
 
 /**
  * Stage decisions for the *pending* requests.
- * Everything is keyed by request id, or by all of them for the shared note,
- * so a later round of the same message starts blank.
+ * Requests that overlap belong to the same round, even when more arrive earlier.
  * The notes are handed over on sending rather than held in state,
  * and the round keeps its identity until the requests or choices change.
  */
@@ -91,6 +92,14 @@ export function useApprovalRoundState(pending: readonly string[]): ApprovalRound
   const [choices, setChoices] = useState<Readonly<Record<string, boolean>>>({});
   const notes = useRef(new Map<string, string>()).current;
   const sharedNotes = useRef(new Map<string, string>()).current;
+  const [round, setRound] = useState({ ids, key: ids[0] ?? "" });
+
+  if (round.ids !== ids) {
+    setRound({
+      ids,
+      key: ids.some((id) => round.ids.includes(id)) ? round.key : ids[0] ?? "",
+    });
+  }
 
   return useMemo(
     () => ({
@@ -98,12 +107,12 @@ export function useApprovalRoundState(pending: readonly string[]): ApprovalRound
       choices,
       blockedReason,
       stage: (id, approved) => setChoices((prev) => ({ ...prev, [id]: approved })),
-      noteField: (id) => (id === undefined ? bindNote(sharedNotes, key) : bindNote(notes, id)),
+      noteField: (id) => bindNote(id === undefined ? sharedNotes : notes, id ?? round.key),
       send: (approved) =>
         decide(
           ids.flatMap((id) => {
             const choice = approved ?? choices[id];
-            const reason = joinNotes(sharedNotes.get(key), notes.get(id));
+            const reason = joinNotes(sharedNotes.get(round.key), notes.get(id));
 
             if (choice === undefined) return [];
 
@@ -111,7 +120,7 @@ export function useApprovalRoundState(pending: readonly string[]): ApprovalRound
           }),
         ),
     }),
-    [ids, key, choices, blockedReason, decide, notes, sharedNotes],
+    [ids, round.key, choices, blockedReason, decide, notes, sharedNotes],
   );
 }
 

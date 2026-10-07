@@ -1,11 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 
 import { ConnectingScreen } from "@/components/ConnectingScreen";
 import { browserLanguage, i18n } from "@/i18n";
 
 afterEach(async () => {
-  await i18n.changeLanguage("en");
+  await act(() => i18n.changeLanguage("en"));
 });
 
 it("renders the interface in German", async () => {

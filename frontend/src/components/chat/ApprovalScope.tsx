@@ -24,6 +24,7 @@ function ApprovalBar({ round }: { round: ApprovalRound }) {
 
   const decided = round.ids.filter((id) => round.choices[id] !== undefined).length;
   const blocked = round.blockedReason !== undefined;
+  const { key, ...note } = round.noteField();
 
   return (
     <section
@@ -39,10 +40,11 @@ function ApprovalBar({ round }: { round: ApprovalRound }) {
         )}
       </div>
       <Textarea
+        key={key}
         className="min-h-12"
         aria-label={t(($) => $.chat.tools.approval.sharedNote)}
         placeholder={t(($) => $.chat.tools.approval.sharedNote)}
-        {...round.noteField()}
+        {...note}
       />
       <div className="flex flex-wrap items-center justify-end gap-2">
         <span className="mr-auto text-xs text-muted-foreground" aria-live="polite">

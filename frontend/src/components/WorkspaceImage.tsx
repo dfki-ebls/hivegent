@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useInView } from "@/hooks/use-in-view";
+import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { fetchDocumentAsset } from "@/lib/api";
 
@@ -39,14 +40,15 @@ function isWorkspaceRelative(src: string): boolean {
  */
 export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) {
   const { t } = useTranslation();
+  const conversationId = useConversationId();
   const fetch = useCallback(
     (signal: AbortSignal) => {
       // Resolve relative path against the document directory (prefix preserved).
       const lastSlash = documentPath.lastIndexOf("/");
       const docDir = lastSlash >= 0 ? documentPath.substring(0, lastSlash) : "";
-      return fetchDocumentAsset(docDir ? `${docDir}/${src}` : src!, signal);
+      return fetchDocumentAsset(docDir ? `${docDir}/${src}` : src!, signal, conversationId);
     },
-    [src, documentPath],
+    [src, documentPath, conversationId],
   );
 
   const supported = !!src && isWorkspaceRelative(src);
