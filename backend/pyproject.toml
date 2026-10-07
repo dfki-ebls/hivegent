@@ -86,7 +86,9 @@ pythonPlatform = "Linux"
 ignore_no_config = true
 
 [tool.pytest]
-testpaths = ["tests"]
+testpaths = ["src", "tests"]
+# Optional converter backends may be absent, and alembic env.py only runs under alembic.
+addopts = ["--doctest-modules", "--doctest-ignore-import-errors", "--ignore=src/hivegent/migrations"]
 asyncio_mode = "auto"
 # docling's own pipeline cache key serializes its options, deprecated computed
 # fields included, so `force_full_page_ocr` warns although nothing here sets it.
