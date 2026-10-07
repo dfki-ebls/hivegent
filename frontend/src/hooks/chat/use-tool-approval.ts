@@ -1,4 +1,13 @@
-import { createContext, useContext } from "react";
+import { type ChangeEvent, createContext, useContext, useMemo, useRef, useState } from "react";
+import type { z } from "zod";
+
+/** The user's answer to one approval request. */
+export interface ApprovalDecision {
+  id: string;
+  approved: boolean;
+  /** The user's note for the assistant, omitted when they wrote none. */
+  reason?: string;
+}
 
 /**
  * Who may answer the transcript's approval prompts, and whether right now.
@@ -11,8 +20,8 @@ import { createContext, useContext } from "react";
  * it arrives by context instead of being threaded through the message tree.
  */
 export interface ToolApprovalGate {
-  /** Record the decision and let the run continue. */
-  decide: (id: string, approved: boolean) => void;
+  /** Record the decisions and let the run continue once all are in. */
+  decide: (decisions: readonly ApprovalDecision[]) => void;
   /** Set when the decision cannot be taken now; shown in place of the buttons. */
   blockedReason?: string;
 }
@@ -23,4 +32,124 @@ export const ToolApprovalProvider = ToolApprovalContext.Provider;
 
 export function useToolApproval(): ToolApprovalGate {
   return useContext(ToolApprovalContext);
+}
+
+/** The props binding a note field, uncontrolled so typing re-renders nothing but the field. */
+export interface NoteField {
+  defaultValue: string;
+  onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+}
+
+/**
+ * The unanswered requests of one message and what the user has entered for them.
+ *
+ * A lone request is answered from its card at once. Several are staged from
+ * their cards and sent together, since the run continues only once every
+ * request is answered.
+ */
+export interface ApprovalRound extends Pick<ToolApprovalGate, "blockedReason"> {
+  /** The request ids, in transcript order. */
+  ids: readonly string[];
+  /** Staged choices by request id. */
+  choices: Readonly<Record<string, boolean>>;
+  stage: (id: string, approved: boolean) => void;
+  /** Bind the note of the request *id*, or the note for every request of the round when omitted. */
+  noteField: (id?: string) => NoteField;
+  /** Answer every request with *approved*, or with its staged choice when omitted. */
+  send: (approved?: boolean) => void;
+}
+
+/** The notes that apply to a call, or none when the user wrote neither. */
+function joinNotes(...notes: (string | undefined)[]): string | undefined {
+  return (
+    notes
+      .map((note) => note?.trim())
+      .filter(Boolean)
+      .join("\n\n") || undefined
+  );
+}
+
+function bindNote(notes: Map<string, string>, key: string): NoteField {
+  return {
+    defaultValue: notes.get(key) ?? "",
+    onChange: (event) => notes.set(key, event.target.value),
+  };
+}
+
+/**
+ * Stage decisions for the *pending* requests.
+ * Everything is keyed by request id, or by all of them for the shared note,
+ * so a later round of the same message starts blank.
+ * The notes are handed over on sending rather than held in state,
+ * and the round keeps its identity until the requests or choices change.
+ */
+export function useApprovalRoundState(pending: readonly string[]): ApprovalRound {
+  const { decide, blockedReason } = useToolApproval();
+  const key = pending.join("\n");
+  // The caller derives the ids anew on every streaming render, their key stays put.
+  const ids = useMemo(() => (key ? key.split("\n") : []), [key]);
+  const [choices, setChoices] = useState<Readonly<Record<string, boolean>>>({});
+  const notes = useRef(new Map<string, string>()).current;
+  const sharedNotes = useRef(new Map<string, string>()).current;
+
+  return useMemo(
+    () => ({
+      ids,
+      choices,
+      blockedReason,
+      stage: (id, approved) => setChoices((prev) => ({ ...prev, [id]: approved })),
+      noteField: (id) => (id === undefined ? bindNote(sharedNotes, key) : bindNote(notes, id)),
+      send: (approved) =>
+        decide(
+          ids.flatMap((id) => {
+            const choice = approved ?? choices[id];
+            const reason = joinNotes(sharedNotes.get(key), notes.get(id));
+
+            if (choice === undefined) return [];
+
+            return [reason ? { id, approved: choice, reason } : { id, approved: choice }];
+          }),
+        ),
+    }),
+    [ids, key, choices, blockedReason, decide, notes, sharedNotes],
+  );
+}
+
+const ApprovalRoundContext = createContext<ApprovalRound | undefined>(undefined);
+
+/** `ApprovalScope` provides its message's round, so the cards of its pending calls can answer. */
+export const ApprovalRoundProvider = ApprovalRoundContext.Provider;
+
+export function useApprovalRound(): ApprovalRound | undefined {
+  return useContext(ApprovalRoundContext);
+}
+
+/**
+ * What each approval-gated call of one message asked with, keyed by tool call id.
+ *
+ * The protocol's approval request carries ids only, so the backend sends the
+ * metadata of every `ApprovalRequired` as message metadata (`APPROVAL_METADATA_KEY`
+ * in `backend/src/hivegent/server/vercel.py`) and stores it with the response,
+ * so the prompt shows the same server-resolved details live and after a reload.
+ * It is a context apart from the round, so staging a choice leaves the other cards be.
+ */
+const ApprovalMetadataContext = createContext<Readonly<Record<string, unknown>> | undefined>(
+  undefined,
+);
+
+/** `ApprovalScope` provides its message's metadata. */
+export const ApprovalMetadataProvider = ApprovalMetadataContext.Provider;
+
+/**
+ * The approval metadata of *part*'s call when it matches *schema*.
+ * Undefined for a call that asked nobody, or whose metadata has another shape.
+ */
+export function useApprovalMetadata<T>(
+  part: { toolCallId?: string },
+  schema: z.ZodType<T>,
+): T | undefined {
+  const byCallId = useContext(ApprovalMetadataContext);
+  const metadata = part.toolCallId ? byCallId?.[part.toolCallId] : undefined;
+
+  return useMemo(() => schema.safeParse(metadata).data, [schema, metadata]);
 }

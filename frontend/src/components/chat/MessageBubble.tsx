@@ -7,8 +7,9 @@ import {
   MessageActions,
   MessageContent,
 } from "@/components/ai-elements/message";
+import { ApprovalScope } from "@/components/chat/ApprovalScope";
 import { MessagePart } from "@/components/chat/MessagePart";
-import { type ChatMessage, isChatBusy } from "@/lib/chat/chat-utils";
+import { type ChatMessage, isChatBusy, pendingApprovalIds } from "@/lib/chat/chat-utils";
 import { indexToolData } from "@/lib/chat/tool-part";
 
 const MS_IN_S = 1000;
@@ -31,7 +32,6 @@ interface MessageBubbleProps {
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
   onRegenerate: () => void;
-  onExecutePlan?: () => void;
 }
 
 export function MessageBubble({
@@ -43,7 +43,6 @@ export function MessageBubble({
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
-  onExecutePlan,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const isAssistant = message.role === "assistant";
@@ -60,28 +59,33 @@ export function MessageBubble({
     <Message from={message.role}>
       {/* Assistant content spans full width so tool cards don't shrink to a short line. */}
       <MessageContent className={isAssistant ? "w-full gap-1.5" : "gap-1.5"}>
-        {parts.map((part, partIndex) => {
-          const reasoningDuration =
-            part.type === "reasoning"
-              ? reasoningDurationSeconds(message.metadata, reasoningIndex++)
-              : undefined;
+        {/* Only the last message holds requests that are still answerable. */}
+        <ApprovalScope
+          pending={isAssistant && isLastMessage ? pendingApprovalIds(message) : []}
+          metadata={message.metadata?.approvalMetadata}
+        >
+          {parts.map((part, partIndex) => {
+            const reasoningDuration =
+              part.type === "reasoning"
+                ? reasoningDurationSeconds(message.metadata, reasoningIndex++)
+                : undefined;
 
-          return (
-            <MessagePart
-              key={partIndex}
-              toolData={toolData}
-              part={part}
-              reasoningDuration={reasoningDuration}
-              isUserMessage={isUser}
-              messageId={message.id}
-              isEditing={editingId === message.id}
-              canCopy={canCopy}
-              onCancelEdit={onCancelEdit}
-              onSubmitEdit={onSubmitEdit}
-              onExecutePlan={isAssistant && isLastMessage ? onExecutePlan : undefined}
-            />
-          );
-        })}
+            return (
+              <MessagePart
+                key={partIndex}
+                toolData={toolData}
+                part={part}
+                reasoningDuration={reasoningDuration}
+                isUserMessage={isUser}
+                messageId={message.id}
+                isEditing={editingId === message.id}
+                canCopy={canCopy}
+                onCancelEdit={onCancelEdit}
+                onSubmitEdit={onSubmitEdit}
+              />
+            );
+          })}
+        </ApprovalScope>
       </MessageContent>
       {(canEdit || canRetry) && (
         <MessageActions className={isUser ? "ml-auto" : undefined}>

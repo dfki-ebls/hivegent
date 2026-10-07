@@ -1,4 +1,3 @@
-import type { ToolUIPart } from "ai";
 import { type ComponentProps, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -13,7 +12,9 @@ import { Tool, ToolContent } from "@/components/ai-elements/tool";
 import { Badge } from "@/components/ui/badge";
 import { CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ApprovalRequest } from "@/components/chat/tools/ApprovalRequest";
+import { ChangesetSummarySchema } from "@/components/chat/tools/changeset";
 import { ToolError, ToolParameters } from "@/components/ToolDisplay";
+import { useApprovalMetadata } from "@/hooks/chat/use-tool-approval";
 import { type ToolPart, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
 
 const STATUS_ICONS: Record<ToolPart["state"], ReactNode> = {
@@ -54,13 +55,12 @@ interface ToolCardProps extends CollapsibleProps {
   title?: string;
   /** Present the call's input; defaults to the raw parameter list. */
   parameters?: ReactNode;
-  /** What the call is about to do, in place of the generic approval question. */
-  approvalPrompt?: ReactNode;
   children?: ReactNode;
 }
 
 /**
  * Shared tool-call card for status, parameters, approval, and results.
+ * A call that changes the workspace asks with its changeset summary as approval metadata.
  * Approval can arrive after mount, so the card opens when a decision is pending.
  * Pass `open` and `onOpenChange` to control tool-specific expansion.
  */
@@ -69,7 +69,6 @@ export function ToolCard({
   part,
   title,
   parameters,
-  approvalPrompt,
   children,
   open,
   onOpenChange,
@@ -77,8 +76,9 @@ export function ToolCard({
   const { t } = useTranslation();
   const state: ToolPart["state"] = part.state ?? "output-available";
   const input = toolInput<Record<string, unknown>>(part);
-  const approval = "approval" in part ? (part as ToolUIPart).approval : undefined;
+  const summary = useApprovalMetadata(part, ChangesetSummarySchema);
 
+  const cardTitle = title ?? toolDisplayName(t, toolName);
   const awaitingApproval = state === "approval-requested";
   const [selfOpen, setSelfOpen] = useState(false);
 
@@ -93,13 +93,17 @@ export function ToolCard({
       className="mb-0"
       onOpenChange={handleOpenChange}
     >
-      <ToolCardHeader title={title ?? toolDisplayName(t, toolName)} state={state} />
+      <ToolCardHeader title={cardTitle} state={state} />
       <ToolContent>
         {parameters ?? (input && <ToolParameters params={input} />)}
-        {approval && (
-          <ApprovalRequest toolName={toolName} approval={approval} state={state}>
-            {approvalPrompt}
-          </ApprovalRequest>
+        {part.approval && (
+          <ApprovalRequest
+            toolName={toolName}
+            title={cardTitle}
+            approval={part.approval}
+            state={state}
+            summary={summary}
+          />
         )}
         {children}
         {state === "output-error" && part.errorText && <ToolError message={part.errorText} />}

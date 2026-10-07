@@ -105,6 +105,8 @@ export function isContextLengthError(error: string | undefined): boolean {
 export interface ChatMessageMetadata {
   reasoningDurationsMs?: number[];
   chatError?: string;
+  /** What each pending call's `ApprovalRequired` carried, keyed by tool call id. */
+  approvalMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -161,6 +163,11 @@ type PendingApproval = Extract<DynamicToolUIPart | ToolUIPart, { state: "approva
 
 function isPendingApproval(part: ChatMessage["parts"][number]): part is PendingApproval {
   return "approval" in part && part.state === "approval-requested";
+}
+
+/** The ids of the requests in *message* nobody has answered yet. */
+export function pendingApprovalIds(message: ChatMessage): string[] {
+  return message.parts.filter(isPendingApproval).map((part) => part.approval.id);
 }
 
 /** The same part as the denial it has become, matching a reloaded one. */

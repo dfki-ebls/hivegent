@@ -24,7 +24,6 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Container,
     Iterable,
     Mapping,
     Sequence,
@@ -33,6 +32,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, TypedDict, override
 
+from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
     ModelMessage,
@@ -43,17 +43,20 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.tools import DeferredToolResults
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import (
+    DynamicToolApprovalRespondedPart,
     DynamicToolUIPart,
     ToolApprovalResponded,
+    ToolApprovalRespondedPart,
     ToolUIPart,
     UIMessage,
 )
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ErrorChunk
 from starlette.responses import Response
 
+from ..agents.approval import APPROVAL_NOTE_KEY
 from ..agents.subagent_events import SubagentUpdate
 from ..db._common import new_id
 from ..db.conversations import is_user_request
@@ -61,7 +64,7 @@ from ..l10n import Localized
 from ..llm import is_context_overflow
 
 __all__ = [
-    "APPROVED_CALLS_KEY",
+    "APPROVAL_METADATA_KEY",
     "CONTEXT_LENGTH_EXCEEDED",
     "SDK_VERSION",
     "SUBAGENT_CHUNK_TYPE",
@@ -70,6 +73,7 @@ __all__ = [
     "chat_error_text",
     "close_orphan_tool_calls",
     "decline_pending_approvals",
+    "denial_message",
     "dump_messages_with_ids",
     "record_approvals",
     "record_turn_error",
@@ -116,9 +120,15 @@ _SAVE_FAILED = Localized(
 # transient chunk, not a message part, and is lost on reload).
 CHAT_ERROR_KEY = "chatError"
 
-# Message metadata key listing the tool calls a user approval released, set on
-# the request that carries their returns (see `record_approvals`).
-APPROVED_CALLS_KEY = "approvedToolCalls"
+# Message metadata key mapping each tool call a user decision resolved to that
+# decision, set on the request that carries their returns (see `record_approvals`).
+_APPROVAL_DECISIONS_KEY = "approvalDecisions"
+
+_DECISIONS = TypeAdapter(dict[str, ToolApprovalResponded])
+
+# Message metadata key mapping each approval-pending tool call id to the
+# metadata its `ApprovalRequired` carried, set on the response that asked.
+APPROVAL_METADATA_KEY = "approvalMetadata"
 
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
 
@@ -133,6 +143,34 @@ class BranchInfo(TypedDict):
     branchCount: int
     branchIndex: int
     siblingIds: list[str]
+
+
+def denial_message(note: str | None) -> str:
+    """What the model reads for a call the user denied, with their *note* if any.
+
+    The note may say what to do instead, so it takes precedence over the
+    standing instruction to stop and wait.
+
+    >>> denial_message(None).startswith("The user rejected this tool call")
+    True
+    >>> "Use the archive folder." in denial_message("Use the archive folder.")
+    True
+    """
+    if not note:
+        return (
+            "The user rejected this tool call, so it was not executed. Do not call "
+            "the same tool again with the same or similar arguments. Stop working on "
+            "this step, tell the user what you were about to do, and wait for their "
+            "instructions."
+        )
+
+    return (
+        "The user rejected this tool call, so it was not executed, and left this "
+        f"note:\n\n{note}\n\nFollow the note if it says what to do instead. "
+        "Otherwise do not call the same tool again with the same or similar "
+        "arguments, tell the user what you were about to do, and wait for their "
+        "instructions."
+    )
 
 
 def chat_error_text(error: Exception) -> str:
@@ -156,6 +194,12 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     We persist this as application message metadata instead of provider
     metadata, so it stays UI-owned and is not sent back to providers as part
     metadata on follow-up turns.
+
+    The metadata of every ``ApprovalRequired`` the run ended on rides the same
+    channel under :data:`APPROVAL_METADATA_KEY`, since the protocol's approval
+    request chunk carries ids only.  It reaches the client in the run's one
+    metadata chunk and is stored on the response that holds the pending calls,
+    so a reload shows the same server-resolved details the live prompt did.
     """
 
     _thinking_started_at: float | None = None
@@ -193,12 +237,25 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     async def handle_run_result(
         self, event: AgentRunResultEvent
     ) -> AsyncIterator[BaseChunk]:
+        response = event.result.response
+        ui_metadata: dict[str, Any] = {}
+
         if self._thinking_durations_ms:
-            response = event.result.response
-            response.metadata = {
-                **(response.metadata or {}),
-                REASONING_DURATIONS_KEY: self._thinking_durations_ms,
+            ui_metadata[REASONING_DURATIONS_KEY] = self._thinking_durations_ms
+
+        output = event.result.output
+
+        if isinstance(output, DeferredToolRequests) and (
+            approvals := {
+                call.tool_call_id: output.metadata[call.tool_call_id]
+                for call in output.approvals
+                if call.tool_call_id in output.metadata
             }
+        ):
+            ui_metadata[APPROVAL_METADATA_KEY] = approvals
+
+        if ui_metadata:
+            response.metadata = {**(response.metadata or {}), **ui_metadata}
 
         async for chunk in super().handle_run_result(event):
             yield chunk
@@ -225,11 +282,58 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
         assistant message holding the pending call — already the last message
         of the replayed prefix, so appending it duplicates the ``tool_call_id``
         and loops the run (see ``backend/README.md``).  Approval decisions are
-        unaffected: :attr:`deferred_tool_results` reads them from the request
+        unaffected: :attr:`approval_decisions` reads them from the request
         itself rather than from these messages.
         """
         return self.load_messages(
             [message for message in self.run_input.messages if message.role == "user"]
+        )
+
+    @cached_property
+    def approval_decisions(self) -> dict[str, ToolApprovalResponded]:
+        """The user's answers to pending approvals, keyed by tool call id.
+
+        Only ``approval-responded`` parts count: a denial the client already
+        shows as ``output-denied`` was resolved by an earlier request.
+        """
+        return {
+            part.tool_call_id: part.approval
+            for message in self.run_input.messages
+            if message.role == "assistant"
+            for part in message.parts
+            if isinstance(
+                part, ToolApprovalRespondedPart | DynamicToolApprovalRespondedPart
+            )
+            and isinstance(part.approval, ToolApprovalResponded)
+        }
+
+    @cached_property
+    @override
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Resume the run with the user's decisions and their notes.
+
+        The client's ``reason`` is the user's own note on either decision.  A
+        denial wraps it into the refusal the model reads (:func:`denial_message`)
+        and an approval hands it to the call as metadata, which
+        :class:`~hivegent.agents.approval.ApprovalNotes` appends to its result.
+        """
+        decisions = self.approval_decisions
+
+        if not decisions:
+            return None
+
+        return DeferredToolResults(
+            approvals={
+                call_id: True
+                if decision.approved
+                else ToolDenied(denial_message(decision.reason))
+                for call_id, decision in decisions.items()
+            },
+            metadata={
+                call_id: {APPROVAL_NOTE_KEY: decision.reason}
+                for call_id, decision in decisions.items()
+                if decision.approved and decision.reason
+            },
         )
 
 
@@ -249,65 +353,87 @@ async def _persist_safely(
 
 
 def record_approvals(
-    messages: Sequence[ModelMessage], results: DeferredToolResults | None
+    messages: Sequence[ModelMessage], decisions: Mapping[str, ToolApprovalResponded]
 ) -> None:
-    """Store which of this turn's calls a user approval released, for reload.
+    """Store this turn's approval decisions and the user's notes, for reload.
 
-    A denial is self-describing: its return carries ``outcome='denied'`` and the
-    reason, so it projects back to the refusal the user saw.  An approval is
-    not.  The call simply runs and stores an ordinary successful return, so
-    nothing in the message list says it was ever gated, and the "Approved" line
-    that was on screen live is gone on reload while a denial's survives.
+    An approved call simply runs and stores an ordinary successful return, so
+    nothing in the message list says it was ever gated, and a denial stores the
+    refusal the model reads rather than the note the user typed.  Either way
+    the decision on screen live would not survive a reload.
 
-    The decision is recorded on the request carrying the released call's return,
-    which is UI-owned metadata that never reaches the provider, like the
-    reasoning durations and the turn error beside it.  The return part's own
-    ``metadata`` would be the closer home but is already the tool-output chunk
-    channel (see ``tools.pydantic_ai.wrap_tool_output``).
+    Each decision is recorded on the request carrying its call's return, which
+    is UI-owned metadata that never reaches the provider, like the reasoning
+    durations and the turn error beside it.  The return part's own ``metadata``
+    would be the closer home but is already the tool-output chunk channel (see
+    ``tools.pydantic_ai.wrap_tool_output``).
     :func:`dump_messages_with_ids` reads it back.  Mutates in place.
     """
-    approved = {
-        call_id
-        for call_id, decision in (results.approvals if results else {}).items()
-        if decision is True
-    }
-    if not approved:
+    if not decisions:
         return
 
     for message in messages:
         if not isinstance(message, ModelRequest):
             continue
 
-        released = [
-            part.tool_call_id
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_call_id in approved
-        ]
-        if released:
-            message.metadata = {
-                **(message.metadata or {}),
-                APPROVED_CALLS_KEY: released,
-            }
+        _stamp(
+            message,
+            {
+                part.tool_call_id: decisions[part.tool_call_id]
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_call_id in decisions
+            },
+        )
 
 
-def _attach_approvals(messages: Iterable[UIMessage], approved: Container[str]) -> None:
-    """Re-attach the approval decision to the parts of *approved* calls.
+def _stamp(message: ModelRequest, decisions: Mapping[str, ToolApprovalResponded]) -> None:
+    """Store *decisions* on the request carrying their calls' returns, the one form every decision takes."""
+    if decisions:
+        message.metadata = {
+            **(message.metadata or {}),
+            _APPROVAL_DECISIONS_KEY: _DECISIONS.dump_python(
+                dict(decisions), mode="json", by_alias=True, exclude_none=True
+            ),
+        }
 
-    The counterpart of :func:`record_approvals`: what the run does not record,
-    the projection puts back, so an approved call reloads with the same chip a
-    denied one does.  The approval id is not a match key (``tool_call_id`` is),
-    so it is derived rather than minted, as upstream does for a pending one.
+
+def _recorded_decisions(
+    messages: Iterable[ModelMessage],
+) -> dict[str, ToolApprovalResponded]:
+    """The decisions :func:`record_approvals` stored on *messages*."""
+    decisions: dict[str, ToolApprovalResponded] = {}
+
+    for message in messages:
+        recorded = (message.metadata or {}).get(_APPROVAL_DECISIONS_KEY)
+
+        if recorded is None:
+            continue
+
+        try:
+            decisions.update(_DECISIONS.validate_python(recorded))
+        except ValidationError:
+            logger.warning("Ignoring malformed approval decisions %r", recorded)
+
+    return decisions
+
+
+def _attach_approvals(
+    messages: Iterable[UIMessage], decisions: Mapping[str, ToolApprovalResponded]
+) -> None:
+    """Put the recorded decision back on the part of every call it resolved.
+
+    The counterpart of :func:`record_approvals`, so a reloaded card shows the
+    decision and note it showed live, rather than the refusal text the
+    projection copies from a denied return into ``reason``, the user's note.
+    Every denial is recorded, an abandoned one by
+    :func:`decline_pending_approvals`, so the recorded decision always wins.
     """
     for message in messages:
         for part in message.parts:
-            if (
-                isinstance(part, ToolUIPart | DynamicToolUIPart)
-                and part.approval is None
-                and part.tool_call_id in approved
+            if isinstance(part, ToolUIPart | DynamicToolUIPart) and (
+                decision := decisions.get(part.tool_call_id)
             ):
-                part.approval = ToolApprovalResponded(
-                    id=part.tool_call_id, approved=True
-                )
+                part.approval = decision
 
 
 def dump_messages_with_ids(
@@ -327,8 +453,8 @@ def dump_messages_with_ids(
     rather than raising.  When given, *siblings* maps a forking node to its
     ordered sibling ids; its :class:`BranchInfo` is merged under a ``branch``
     metadata key (leaving the framework key intact) so the frontend can render
-    branch navigation.  Calls released by an approval are re-annotated with the
-    decision the run itself does not record (see :func:`record_approvals`).
+    branch navigation.  Calls a user decided are re-annotated with the decision
+    and note the run itself does not record (see :func:`record_approvals`).
     """
     node_by_obj = {id(msg): node_id for node_id, msg in pairs}
 
@@ -352,17 +478,8 @@ def dump_messages_with_ids(
         generate_message_id=assign_id,
         sdk_version=SDK_VERSION,
     )
-    _attach_approvals(
-        ui_messages,
-        frozenset(
-            call_id
-            for _, msg in pairs
-            if isinstance(
-                released := (msg.metadata or {}).get(APPROVED_CALLS_KEY), list
-            )
-            for call_id in released
-        ),
-    )
+    _attach_approvals(ui_messages, _recorded_decisions(msg for _, msg in pairs))
+
     return ui_messages
 
 
@@ -484,7 +601,8 @@ def decline_pending_approvals(prefix: Sequence[ModelMessage]) -> ModelRequest | 
 
     Answering it as a denial instead says what actually happened, and once the
     refusal is stored the history holds a resolved call rather than one that is
-    repaired again on every future turn.
+    repaired again on every future turn.  The denial is recorded like a user's
+    (:func:`record_approvals`), with no note, since nobody typed one.
 
     Only a trailing response is considered, and then every call it holds is
     unanswered by construction: a result is a ``ModelRequest`` part, so it can
@@ -495,18 +613,31 @@ def decline_pending_approvals(prefix: Sequence[ModelMessage]) -> ModelRequest | 
     if not prefix or not isinstance(last := prefix[-1], ModelResponse):
         return None
 
-    returns = [
-        ToolReturnPart(
-            tool_name=part.tool_name,
-            content=ABANDONED_APPROVAL_DENIAL,
-            tool_call_id=part.tool_call_id,
-            outcome="denied",
-        )
-        for part in last.parts
-        if isinstance(part, ToolCallPart)
-    ]
+    calls = [part for part in last.parts if isinstance(part, ToolCallPart)]
 
-    return ModelRequest(parts=returns) if returns else None
+    if not calls:
+        return None
+
+    declined = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name=part.tool_name,
+                content=ABANDONED_APPROVAL_DENIAL,
+                tool_call_id=part.tool_call_id,
+                outcome="denied",
+            )
+            for part in calls
+        ]
+    )
+    _stamp(
+        declined,
+        {
+            part.tool_call_id: ToolApprovalResponded(id=part.tool_call_id, approved=False)
+            for part in calls
+        },
+    )
+
+    return declined
 
 
 def record_turn_error(messages: list[ModelMessage], error_text: str) -> None:
@@ -535,7 +666,7 @@ def record_turn_error(messages: list[ModelMessage], error_text: str) -> None:
 
 
 async def run_and_persist[DepsT, OutputT](
-    adapter: VercelAIAdapter[DepsT, OutputT],
+    adapter: ChatAdapter[DepsT, OutputT],
     stream: AsyncIterator[BaseChunk],
     *,
     persist: PersistTurn,
@@ -567,12 +698,12 @@ async def run_and_persist[DepsT, OutputT](
     a trailing error chunk; on a client disconnect the write is shielded and a
     failure can only be logged.
 
-    Every write goes through :func:`record_approvals` first, so a call the user
-    released is stored with that fact whichever way the turn ended.
+    Every write goes through :func:`record_approvals` first, so each decision the
+    user made is stored with its note whichever way the turn ended.
     """
 
     async def persist_turn(messages: Sequence[ModelMessage]) -> None:
-        record_approvals(messages, adapter.deferred_tool_results)
+        record_approvals(messages, adapter.approval_decisions)
         await persist(messages)
 
     async def drain() -> AsyncIterator[BaseChunk]:

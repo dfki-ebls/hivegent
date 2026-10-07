@@ -13,6 +13,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     TextPart,
     UserContent,
     UserPromptPart,
@@ -24,6 +25,7 @@ from starlette.responses import Response
 from ...agents import (
     UserDeps,
     base_agent,
+    discard_unapproved_changes,
     turn_usage_limits,
     user_agent,
 )
@@ -58,6 +60,7 @@ from ...llm import (
     resolve_thinking,
     thinking_model_settings,
 )
+from ...tmp import remove_tmp
 from ...tools.formatting import BLOCK_SEP
 from ...transparency import sign_provenance
 from ...types import (
@@ -73,10 +76,7 @@ from ...types import (
     UpdateTitleRequest,
 )
 from ..cancellation import run_until_disconnect
-from ..common import (
-    build_run_prefix,
-    prepare_llm_config,
-)
+from ..common import build_run_prefix, prepare_llm_config
 from ..operations import attachment_disposition
 from ..vercel import (
     SDK_VERSION,
@@ -277,17 +277,19 @@ async def delete_conversation(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    """Delete a conversation."""
+    """Delete a conversation and its ``/tmp`` folder."""
     if not await remove_conversation(user.id, conversation_id):
         raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
+
+    await remove_tmp([conversation_id])
 
 
 @router.delete("/conversations", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_all_conversations_route(
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    """Delete all conversations for the authenticated user."""
-    await delete_all_conversations(user.id)
+    """Delete all conversations for the authenticated user, and their ``/tmp`` folders."""
+    await remove_tmp(await delete_all_conversations(user.id))
 
 
 @router.post("/conversations/{conversation_id}/compaction")
@@ -306,7 +308,7 @@ async def create_conversation_compaction(
     which needs the full context window rather than a small scoped-task model.
     """
 
-    run_prefix = build_run_prefix(request, user)
+    run_prefix = build_run_prefix(request, user, conversation_id)
 
     try:
         result = await run_until_disconnect(
@@ -518,7 +520,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     # the compaction request that has to reproduce the same prefix.
     config = ChatRequestConfig.model_validate(await request.json())
 
-    run_prefix = build_run_prefix(config, user)
+    run_prefix = build_run_prefix(config, user, conversation_id)
     thinking = resolve_thinking(config.reasoning_effort)
     model_settings = thinking_model_settings(thinking, run_prefix.llm)
 
@@ -555,6 +557,14 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         regenerate=config.trigger == "regenerate-message",
         message_id=config.message_id,
     )
+
+    # Changes a program staged for an approval this request denies or abandons
+    # can never be applied, so they go now rather than at the next boot sweep.
+    if prefix and isinstance(prefix[-1], ModelResponse):
+        approved = {
+            call for call, decision in adapter.approval_decisions.items() if decision.approved
+        }
+        await discard_unapproved_changes(user.id, prefix[-1], approved)
 
     # A turn that ended awaiting approval left its call dangling so this request
     # could answer it.  One that carries anything else abandons that approval,

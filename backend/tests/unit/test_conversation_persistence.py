@@ -11,11 +11,13 @@ interrupted finishes, and the hard-fail error chunk) and
 """
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
 
 import pytest
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
+from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -40,15 +42,18 @@ from pydantic_ai.ui.vercel_ai.request_types import (
 from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
+from hivegent.agents.approval import ApprovalNotes, approval_note_text
 from hivegent.db.conversations import ActiveNode, _fork_for_path, import_conversation
 from hivegent.server.routes.conversations import _instruction_snapshots
 from hivegent.server.vercel import (
+    APPROVAL_METADATA_KEY,
     CHAT_ERROR_KEY,
     REASONING_DURATIONS_KEY,
     SDK_VERSION,
     ChatAdapter,
     PersistTurn,
     decline_pending_approvals,
+    denial_message,
     dump_messages_with_ids,
     run_and_persist,
 )
@@ -57,8 +62,6 @@ from hivegent.types import (
     ConversationArchive,
     ServerConversation,
 )
-
-_TOOL_DENIED_REASON = "The user rejected this tool call. Do not retry it."
 
 
 def _texts(messages: Sequence[ModelMessage]) -> list[str]:
@@ -93,13 +96,16 @@ def _tool_states(messages: Sequence[ModelMessage]) -> list[str | None]:
     ]
 
 
-def _tool_approvals(messages: Sequence[ModelMessage]) -> list[bool | None]:
-    """Approval decisions the tool cards a message list projects to carry."""
+def _tool_approvals(
+    messages: Sequence[ModelMessage],
+) -> list[tuple[bool | None, str | None]]:
+    """Approval decisions and notes the tool cards a message list projects to carry."""
     return [
-        getattr(getattr(part, "approval", None), "approved", None)
+        (getattr(approval, "approved", None), getattr(approval, "reason", None))
         for message in _ui_messages(messages)
         for part in message.parts
         if str(getattr(part, "type", "")).startswith("tool-")
+        for approval in [getattr(part, "approval", None)]
     ]
 
 
@@ -117,6 +123,7 @@ def _adapter(
         model=model or TestModel(custom_output_text="ANSWER"),
         output_type=output_type,
         deps_type=type(None),
+        capabilities=[ApprovalNotes()],
     )
 
     if tool_raises:
@@ -127,8 +134,11 @@ def _adapter(
 
     if tool_needs_approval:
 
-        @agent.tool_plain(requires_approval=True)
-        def write(value: str) -> str:
+        @agent.tool
+        def write(ctx: RunContext[None], value: str) -> str:
+            if not ctx.tool_call_approved:
+                raise ApprovalRequired({"value": value})
+
             return "written"
 
     return ChatAdapter[None, str | DeferredToolRequests](
@@ -254,7 +264,32 @@ async def test_approval_pending_turn_keeps_its_dangling_call() -> None:
     assert _tool_states(messages) == ["approval-requested"]
 
 
-def _answer_approval(pending: Sequence[ModelMessage], *, approved: bool) -> UIMessage:
+async def test_approval_metadata_reaches_the_stream_and_the_reload() -> None:
+    """What an ``ApprovalRequired`` carried is shown live and after a reload alike."""
+    recorded, body = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    call = _parts(recorded[0], ToolCallPart)[0]
+    expected = {call.tool_call_id: {"value": call.args_as_dict()["value"]}}
+
+    streamed = [
+        chunk["messageMetadata"]
+        for line in body.splitlines()
+        if line.startswith("data: {")
+        and (chunk := json.loads(line.removeprefix("data: ")))["type"]
+        == "message-metadata"
+    ]
+    reloaded = _ui_messages(recorded[0])[-1].metadata
+
+    assert streamed[-1][APPROVAL_METADATA_KEY] == expected
+    assert isinstance(reloaded, dict)
+    assert reloaded[APPROVAL_METADATA_KEY] == expected
+
+
+def _answer_approval(
+    pending: Sequence[ModelMessage], *, approved: bool, note: str | None = None
+) -> UIMessage:
     """Echo the assistant message holding the pending call, approval answered.
 
     Exactly what the AI SDK re-sends when it auto-continues: the last message,
@@ -269,7 +304,7 @@ def _answer_approval(pending: Sequence[ModelMessage], *, approved: bool) -> UIMe
             approval=ToolApprovalResponded(
                 id=part.tool_call_id,
                 approved=approved,
-                reason=None if approved else _TOOL_DENIED_REASON,
+                reason=note,
             ),
         )
         for part in message.parts
@@ -304,7 +339,40 @@ async def test_answered_approval_resolves_the_stored_call_once(
     assert len(calls) == 1
     assert len(returns) == 1
     assert returns[0].tool_call_id == calls[0].tool_call_id
-    assert str(returns[0].content) == ("written" if approved else _TOOL_DENIED_REASON)
+    assert str(returns[0].content) == ("written" if approved else denial_message(None))
+
+
+@pytest.mark.parametrize("approved", [True, False])
+async def test_a_decision_note_reaches_the_model_and_the_reload(approved: bool) -> None:
+    """The user's note on either decision is in the tool result the model reads.
+
+    A denial carries it in the refusal, an approval appends it to the result of
+    the call it released.  The reloaded card shows the note as typed, not the
+    model-facing text around it.
+    """
+    note = "Keep a copy of the old version."
+    seen: list[ModelMessage] = []
+
+    async def respond(
+        messages: Sequence[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str]:
+        seen.extend(messages)
+        yield "ANSWER"
+
+    pending, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    recorded, _ = await _run_turn(
+        [_answer_approval(pending[0], approved=approved, note=note)],
+        model=FunctionModel(stream_function=respond),
+        message_history=pending[0],
+        tool_needs_approval=True,
+    )
+
+    expected = ["written", approval_note_text(note)] if approved else denial_message(note)
+    assert [part.content for part in _parts(seen, ToolReturnPart)] == [expected]
+    assert _tool_approvals(recorded[0]) == [(approved, note)]
 
 
 @pytest.mark.parametrize("approved", [True, False])
@@ -330,7 +398,7 @@ async def test_a_settled_approval_reloads_with_its_decision(approved: bool) -> N
     assert _tool_states(recorded[0]) == [
         "output-available" if approved else "output-denied"
     ]
-    assert _tool_approvals(recorded[0]) == [approved]
+    assert _tool_approvals(recorded[0]) == [(approved, None)]
 
 
 async def test_abandoned_approval_is_declined_for_the_next_turn() -> None:
@@ -350,8 +418,10 @@ async def test_abandoned_approval_is_declined_for_the_next_turn() -> None:
     returns = _parts([declined], ToolReturnPart)
     assert [r.outcome for r in returns] == ["denied"]
     assert returns[0].tool_call_id == _parts(pending[0], ToolCallPart)[0].tool_call_id
-    # The card reloads as a refusal rather than asking for approval all over again.
+    # The card reloads as a refusal rather than asking for approval all over again,
+    # with no note, since nobody typed one.
     assert _tool_states([*pending[0], declined]) == ["output-denied"]
+    assert _tool_approvals([*pending[0], declined]) == [(False, None)]
 
 
 async def test_a_settled_turn_has_no_approval_to_decline() -> None:

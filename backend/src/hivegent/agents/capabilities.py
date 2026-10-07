@@ -61,6 +61,7 @@ from ..types import (
     ToolSchema,
     ToolsSpec,
 )
+from .approval import ApprovalNotes
 from .common import UserDeps, scope_instructions
 from .guards import IterationLimitWarner, ToolOutputLimit
 from .tools import (
@@ -86,7 +87,6 @@ __all__ = [
     "invoke_agent_tool",
     "unlisted_tool_names",
 ]
-
 
 
 type FeatureInstruction = Localized[str] | SystemPromptFunc[UserDeps]
@@ -334,6 +334,9 @@ def build_capabilities(
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)
 
     # Cross-cutting run-loop safeguards, applied to every run regardless of mode.
+    # `after_tool_execute` hooks run in reverse order, so the user's approval
+    # note is appended to the already clamped return and never cut off.
+    result.append(ApprovalNotes())
     result.append(ToolOutputLimit(max_chars=settings.llm.tool_output_max_chars))
     result.append(IterationLimitWarner(max_requests=settings.llm.request_limit))
 

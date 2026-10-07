@@ -17,6 +17,7 @@ import { useCompaction } from "@/hooks/chat/use-compaction";
 import { useBuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useChatErrorLogger } from "@/hooks/chat/use-chat-error-logger";
 import { useConversationHistory } from "@/hooks/chat/use-conversation-history";
+import { ConversationIdProvider } from "@/hooks/chat/use-conversation-id";
 import { useHivegentChat } from "@/hooks/chat/use-hivegent-chat";
 import { SubagentLiveProvider } from "@/hooks/chat/use-subagent-live";
 import { useMessageEditing } from "@/hooks/chat/use-message-editing";
@@ -201,12 +202,13 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
 
   const approvalGate = useMemo<ToolApprovalGate>(
     () => ({
-      decide: (approvalId, approved) =>
-        void addToolApprovalResponse({
-          id: approvalId,
-          approved,
-          reason: approved ? undefined : i18n.t(($) => $.chat.sidebar.toolDenied),
-        }),
+      // The SDK records decisions one at a time and continues the run once the
+      // last one is in, so a batch still sends a single continuation. The
+      // reason is the user's own note, and the backend words the refusal the model
+      // reads around it.
+      decide: (decisions) => {
+        for (const decision of decisions) void addToolApprovalResponse(decision);
+      },
       // The SDK records but does not dispatch a decision made while the
       // previous turn's final chunks are still draining, so the buttons wait
       // for it to settle.
@@ -333,31 +335,33 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
       />
 
       <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
-        <SubagentLiveProvider value={subagentSteps}>
-          <ToolApprovalProvider value={approvalGate}>
-            <MessageList
-              messages={messages}
-              messageKey={messageKey}
-              status={status}
-              chatError={visibleChatError}
-              compactDisabled={compactDisabled}
-              isLoadingHistory={isLoadingHistory}
-              compactedFrom={compactedFrom}
-              editingId={editingId}
-              onNavigatePrevious={handleConversationSelect}
-              onRetry={handleRetry}
-              onCompact={() => void compact(true)}
-              onDismissError={() => {
-                clearError();
-                setDismissedErrorId(lastMessage?.id ?? null);
-              }}
-              onSetEditing={setEditing}
-              onCancelEdit={clearEditing}
-              onSubmitEdit={handleEditMessage}
-              onRegenerate={handleRegenerate}
-            />
-          </ToolApprovalProvider>
-        </SubagentLiveProvider>
+        <ConversationIdProvider value={serverId}>
+          <SubagentLiveProvider value={subagentSteps}>
+            <ToolApprovalProvider value={approvalGate}>
+              <MessageList
+                messages={messages}
+                messageKey={messageKey}
+                status={status}
+                chatError={visibleChatError}
+                compactDisabled={compactDisabled}
+                isLoadingHistory={isLoadingHistory}
+                compactedFrom={compactedFrom}
+                editingId={editingId}
+                onNavigatePrevious={handleConversationSelect}
+                onRetry={handleRetry}
+                onCompact={() => void compact(true)}
+                onDismissError={() => {
+                  clearError();
+                  setDismissedErrorId(lastMessage?.id ?? null);
+                }}
+                onSetEditing={setEditing}
+                onCancelEdit={clearEditing}
+                onSubmitEdit={handleEditMessage}
+                onRegenerate={handleRegenerate}
+              />
+            </ToolApprovalProvider>
+          </SubagentLiveProvider>
+        </ConversationIdProvider>
 
         <div className="border-t p-4 space-y-3">
           {messages.length === 0 && <ChatSuggestions onSelect={handleSendMessage} />}
