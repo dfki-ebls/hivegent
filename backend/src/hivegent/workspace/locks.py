@@ -8,7 +8,7 @@ by lock-free inventory reads to hide half-written entries.
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 
@@ -102,7 +102,7 @@ def _discard_inflight(store: Casebase, reference: str) -> None:
 
 
 @contextmanager
-def _store_claim(store: Casebase) -> Iterator[None]:
+def _store_claim(store: Casebase) -> Generator[None]:
     """Mark the whole store as having a bulk import in flight for the block.
 
     Re-entrant (reference counted) so two concurrent collections on one store

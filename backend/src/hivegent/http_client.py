@@ -10,7 +10,7 @@ are independent policies, and pooling the web client is what keeps a research
 turn from paying a fresh CONNECT and TLS handshake per tool call.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -48,7 +48,7 @@ def _unix_socket_mounts() -> dict[str, httpx2.AsyncHTTPTransport]:
 
 
 @asynccontextmanager
-async def _open_clients() -> AsyncIterator[_Clients]:
+async def _open_clients() -> AsyncGenerator[_Clients]:
     """Open one client per variant, keyed so they share one code path."""
     network = settings.network
     timeout = httpx2.Timeout(
@@ -98,7 +98,7 @@ _shared = LifespanResource(
 
 
 @asynccontextmanager
-async def shared_http_client_lifespan() -> AsyncIterator[None]:
+async def shared_http_client_lifespan() -> AsyncGenerator[None]:
     """Open the process-wide safe HTTP clients for the duration of the context.
 
     Owned by the FastAPI lifespan: opens before the app accepts requests

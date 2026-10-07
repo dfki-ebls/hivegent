@@ -11,7 +11,7 @@ store.
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -282,7 +282,7 @@ type _Reserve = Callable[[], Awaitable[_Reserved]]
 @asynccontextmanager
 async def _reserved_upload(
     store: Casebase, stem_reference: str, reserve: _Reserve
-) -> AsyncIterator[_Reserved]:
+) -> AsyncGenerator[_Reserved]:
     """Reserve and claim an upload until its prepare and apply phases settle."""
     async with AsyncExitStack() as claim:
         async with _locked_for(store, stem_reference):

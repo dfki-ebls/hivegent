@@ -12,7 +12,7 @@ from the ``Accept-Language`` header of every request and every agent tool call
 pins to the default.
 """
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -83,7 +83,7 @@ def current_language() -> Language:
 
 
 @contextmanager
-def use_language(language: Language) -> Iterator[None]:
+def use_language(language: Language) -> Generator[None]:
     """Serve everything inside the block in *language*."""
     token = _current.set(language)
 

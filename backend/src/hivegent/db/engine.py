@@ -7,7 +7,7 @@ URL until they actually connect — keeps tests, doc builds, and tooling
 imports cheap.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from functools import cache
 
@@ -69,7 +69,7 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 
 @asynccontextmanager
-async def engine_lifespan() -> AsyncIterator[None]:
+async def engine_lifespan() -> AsyncGenerator[None]:
     """Dispose the engine's connection pool and clear the caches on shutdown."""
     try:
         yield

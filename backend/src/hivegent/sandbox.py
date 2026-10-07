@@ -7,7 +7,7 @@ would pay for per call, which is also why the pool is owned here rather than by
 the tool: a tool instance is built per call.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from pydantic_monty import AsyncMonty
@@ -19,7 +19,7 @@ __all__ = ["get_monty_pool", "monty_pool_lifespan"]
 
 
 @asynccontextmanager
-async def _open_pool() -> AsyncIterator[AsyncMonty]:
+async def _open_pool() -> AsyncGenerator[AsyncMonty]:
     """Spawn the configured worker pool and reap it on exit."""
     sandbox = settings.sandbox
     async with AsyncMonty(
@@ -35,7 +35,7 @@ _shared = LifespanResource("Monty sandbox pool", "monty_pool_lifespan", _open_po
 
 
 @asynccontextmanager
-async def monty_pool_lifespan() -> AsyncIterator[None]:
+async def monty_pool_lifespan() -> AsyncGenerator[None]:
     """Open the process-wide sandbox worker pool for the duration of the context.
 
     Owned by the FastAPI lifespan: the workers start before the app accepts

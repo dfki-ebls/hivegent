@@ -1,6 +1,6 @@
 """Process-wide resources owned by the application lifespan."""
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 __all__ = ["LifespanResource"]
@@ -37,7 +37,7 @@ class LifespanResource[T]:
         self._resource: T | None = None
 
     @asynccontextmanager
-    async def lifespan(self) -> AsyncIterator[None]:
+    async def lifespan(self) -> AsyncGenerator[None]:
         """Open the resource for the duration of the context."""
         if self._active:
             raise RuntimeError(f"{self._name} lifespan entered while already active")

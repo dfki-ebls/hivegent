@@ -11,7 +11,7 @@ import logging
 import mimetypes
 import re
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -191,7 +191,7 @@ class _Reserved:
 
 
 @contextmanager
-def _source_on_disk(filepath: str, content: bytes) -> Iterator[Path]:
+def _source_on_disk(filepath: str, content: bytes) -> Generator[Path]:
     """Materialise upload bytes at a temp path for converters that read a file.
 
     Keeps the original basename so format detection by suffix still works, and

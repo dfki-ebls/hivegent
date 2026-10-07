@@ -3,7 +3,7 @@
 import asyncio
 import os
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from multiprocessing import active_children
 
@@ -28,7 +28,7 @@ async def test_lifespan_reserves_ownership_before_resource_startup() -> None:
     opened: list[bool] = []
 
     @asynccontextmanager
-    async def open_resource() -> AsyncIterator[object]:
+    async def open_resource() -> AsyncGenerator[object]:
         opened.append(True)
         await asyncio.sleep(0)
         yield object()
