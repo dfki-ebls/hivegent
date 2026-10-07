@@ -22,7 +22,6 @@ __all__ = [
     "MATH_INSTRUCTIONS",
     "MEMORY_INSTRUCTIONS_EMPTY",
     "PERSONALITY_TEMPLATES",
-    "PLAN_INSTRUCTIONS",
     "PYTHON_INSTRUCTIONS",
     "REDIRECT_INSTRUCTIONS",
     "SANDBOX_TYPE_CHECK_INSTRUCTIONS",
@@ -561,21 +560,6 @@ Anything the user asked for is a document and goes to a normal path instead.
 Dein eigener Arbeitszustand gehört in einen `.scratch/`-Ordner, auch ein Programm, das du nur geschrieben hast, um es auszuführen: Eine Datei dort bleibt im Arbeitsbereich, und du kannst sie lesen, schreiben, auflisten und mit grep durchsuchen, aber sie wird nie indexiert, der Benutzer:in nie als Dokument angezeigt und beim Neustart des Servers gelöscht.
 Der Name beginnt mit einem Punkt, und der Ordner entsteht überall dort, wo du ihn angibst. Schreib also `~/.scratch/notes.json` oder `~/reports/.scratch/notes.json`, nie `scratch/notes.json`, denn das würde einen gewöhnlichen Ordner mit Dokumenten hinterlassen.
 Alles, worum die Benutzer:in gebeten hat, ist ein Dokument und gehört stattdessen an einen normalen Pfad.
-""",
-)
-
-PLAN_INSTRUCTIONS: Localized[str] = Localized(
-    en="""
-You are in plan mode.
-Explore the user's documents to understand the context, then create a plan using the create_plan tool.
-If the user provides feedback, refine the plan and call create_plan again with the updated steps.
-Do not attempt any write operations in this mode.
-""",
-    de="""
-Du bist im Planmodus.
-Erkunde die Dokumente der Benutzer:in, um den Kontext zu verstehen, und erstelle dann mit dem Tool create_plan einen Plan.
-Wenn die Benutzer:in Feedback gibt, verfeinere den Plan und ruf create_plan erneut mit den aktualisierten Schritten auf.
-Versuche in diesem Modus keine Schreibvorgänge.
 """,
 )
 

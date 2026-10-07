@@ -202,8 +202,8 @@ class WorkspaceOS(AbstractOS):
 
     The writable span, narrower than the roots above: a program reads every
     workspace the user can see and parks state only in one they may mutate.
-    Empty in a mode that may not write at all, which is what makes read and
-    plan modes refuse a scratch write like every other.
+    Empty in a mode that may not write at all, which is what makes read
+    mode refuse a scratch write like every other.
     """
 
     max_document_chars: int = 5_000_000

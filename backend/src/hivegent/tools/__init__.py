@@ -29,7 +29,6 @@ from .mutations import (
     MoveDocumentTool,
     WriteDocumentTool,
 )
-from .plan import CreatePlanTool
 from .python import PythonResult, RunPythonTool
 from .retrieval import SearchResult, SearchType, VectorSearchTool
 from .scope import Scope
@@ -41,7 +40,6 @@ __all__ = [
     "DEFAULT_EXCLUDE_DIRS",
     "BinaryAttachment",
     "BinaryReadResult",
-    "CreatePlanTool",
     "DeleteDocumentTool",
     "DocumentRange",
     "DocumentSummary",

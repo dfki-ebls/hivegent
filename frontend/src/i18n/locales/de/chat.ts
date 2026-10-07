@@ -19,7 +19,6 @@ export const chat = {
   sidebar: {
     imported: "Konversation importiert",
     approvalBlocked: "Verfügbar, sobald die aktuelle Antwort fertig ist.",
-    executePlan: "Führe den Plan aus.",
     toolDenied:
       "Dieser Tool-Aufruf wurde abgelehnt und daher nicht ausgeführt. Rufe dasselbe Tool nicht erneut mit denselben oder ähnlichen Argumenten auf. Brich diesen Schritt ab, erkläre, was du vorhattest, und warte auf weitere Anweisungen.",
   },
@@ -165,7 +164,6 @@ export const chat = {
   },
   tools: {
     names: {
-      create_plan: "Plan erstellen",
       delete_document: "Dokument löschen",
       edit_document: "Dokument bearbeiten",
       explore: "Erkunden",
@@ -207,11 +205,6 @@ export const chat = {
       deny: "Ablehnen",
       approved: "Erlaubt",
       denied: "Abgelehnt",
-    },
-    plan: {
-      fallbackTitle: "Plan",
-      toggle: "Plan ein- oder ausblenden",
-      execute: "Plan ausführen",
     },
     subagent: {
       reasoning: "Denkprozess",

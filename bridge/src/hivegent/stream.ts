@@ -18,7 +18,6 @@ const TOOL_STATUS: Record<string, string> = {
   explore: "Researching…",
   web_search: "Searching the web…",
   web_fetch: "Reading a web page…",
-  create_plan: "Planning…",
 };
 
 function statusLabel(toolName: string | undefined): string {

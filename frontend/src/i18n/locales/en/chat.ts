@@ -17,7 +17,6 @@ export const chat = {
   sidebar: {
     imported: "Conversation imported",
     approvalBlocked: "Available once the current response finishes.",
-    executePlan: "Execute the plan.",
     toolDenied:
       "The user rejected this tool call, so it was not executed. Do not call the same tool again with the same or similar arguments. Stop working on this step, tell the user what you were about to do, and wait for their instructions.",
   },
@@ -159,7 +158,6 @@ export const chat = {
   },
   tools: {
     names: {
-      create_plan: "Create Plan",
       delete_document: "Delete Document",
       edit_document: "Edit Document",
       explore: "Explore",
@@ -201,11 +199,6 @@ export const chat = {
       deny: "Deny",
       approved: "Approved",
       denied: "Denied",
-    },
-    plan: {
-      fallbackTitle: "Plan",
-      toggle: "Toggle plan",
-      execute: "Execute Plan",
     },
     subagent: {
       reasoning: "Reasoning",

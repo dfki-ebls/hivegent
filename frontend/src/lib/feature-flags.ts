@@ -68,11 +68,9 @@ export interface FeatureFlags {
 
   /**
    * Allow users to pick the agent mode from the composer — whether writes
-   * are confirmed, withheld, unattended, or planned.  When disabled, the
-   * Mode selector is hidden and outgoing requests always send
-   * `mode: "interactive"`, so writes keep asking for confirmation, the
-   * backend never appends the plan instructions, and the "Execute the plan"
-   * follow-up never appears.
+   * are confirmed, withheld, or unattended.  When disabled, the Mode selector
+   * is hidden and outgoing requests always send `mode: "interactive"`, so
+   * writes keep asking for confirmation.
    */
   agentModes: boolean;
 

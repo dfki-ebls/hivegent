@@ -9,7 +9,7 @@ export interface BuildRequestBodyArgs {
   reasoningEffort: ReasoningEffort;
 }
 
-export type BuildRequestBody = (modeOverride?: AgentMode) => ChatRequestConfig;
+export type BuildRequestBody = () => ChatRequestConfig;
 
 export function useBuildRequestBody({
   agentMode,
@@ -20,11 +20,11 @@ export function useBuildRequestBody({
   const excluded = useDocumentFilterStore((s) => s.excluded);
 
   return useCallback(
-    (modeOverride?: AgentMode) => ({
+    () => ({
       personality,
       system_message: personality === "custom" ? customSystemMessage : undefined,
       reasoning_effort: reasoningEffort,
-      mode: buildModePayload(modeOverride ?? agentMode),
+      mode: buildModePayload(agentMode),
       llm: buildLlmConfig(overrides),
       included_documents: included,
       excluded_documents: excluded,

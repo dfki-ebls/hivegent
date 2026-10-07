@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import type { SyncOutput, ToolPart } from "@/lib/chat/tool-part";
-import { CreatePlanTool } from "@/components/chat/tools/create-plan";
 import { syncGrepOutput } from "@/components/chat/tools/grep";
 import {
   ReadBinaryDocumentTool,
@@ -15,7 +14,6 @@ import { syncWebSearchOutput } from "@/components/chat/tools/web-search";
 export interface ToolRenderProps {
   part: ToolPart;
   metadata: unknown;
-  onExecutePlan?: () => void;
 }
 
 export interface ToolHandler {
@@ -35,11 +33,6 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   web_fetch: { syncOutput: syncWebFetchOutput },
   run_python: {
     render: ({ part, metadata }) => <RunPythonTool part={part} metadata={metadata} />,
-  },
-  create_plan: {
-    render: ({ part, onExecutePlan }) => (
-      <CreatePlanTool part={part} onExecutePlan={onExecutePlan} />
-    ),
   },
 };
 

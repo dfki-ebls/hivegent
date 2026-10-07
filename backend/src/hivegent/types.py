@@ -289,15 +289,13 @@ class ToolRunResult(BaseModel):
     elapsed_ms: float
 
 
-type Mode = Literal["interactive", "read", "write", "plan"]
+type Mode = Literal["interactive", "read", "write"]
 """Agent mode accepted from the API.
 
 The mode selects which features a run is composed from and how their tools are
 gated: ``interactive`` (the default) offers the mutating features and asks the
 user to confirm every document write, ``write`` runs them unattended, and
-``read`` withholds them entirely.  ``plan`` is ``read`` plus the planning tool
-and its instructions, so the agent drafts a plan for the user to approve
-instead of acting.
+``read`` withholds them entirely.
 """
 
 MODE_VALUES: frozenset[Mode] = frozenset(get_args(Mode.__value__))

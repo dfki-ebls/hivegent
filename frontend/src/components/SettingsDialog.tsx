@@ -176,7 +176,6 @@ export function SettingsDialog() {
   }, [open]);
 
   const toolsByGroup = tools.reduce<Record<string, ToolInfo[]>>((acc, tool) => {
-    if (!featureFlags.agentModes && tool.group === "plan") return acc;
     (acc[tool.group] ??= []).push(tool);
     return acc;
   }, {});

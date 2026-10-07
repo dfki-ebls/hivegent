@@ -848,15 +848,14 @@ export type Personality = "default" | "concise" | "detailed" | "structured" | "c
 export const PersonalitySchema = z.enum(["default", "concise", "detailed", "structured", "custom"]);
 
 /** Every agent mode, in display order. Labels live in the `options.mode` catalog section. */
-export const AGENT_MODES = ["interactive", "read", "write", "plan"] as const;
+export const AGENT_MODES = ["interactive", "read", "write"] as const;
 
 /**
  * Agent mode controlling which tools are offered and how writes are gated.
  *
  * `interactive` (the default) offers the write tools but asks for confirmation
  * before every call, `read` withholds them entirely, and `write` runs them
- * unattended. `plan` is `read` plus the planning tool, so the agent drafts a
- * plan for the user to approve instead of acting.
+ * unattended.
  */
 export type AgentMode = (typeof AGENT_MODES)[number];
 

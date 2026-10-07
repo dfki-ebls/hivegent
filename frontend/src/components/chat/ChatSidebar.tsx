@@ -227,16 +227,6 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     await sendUserMessage({ text: last.text, files: last.files, messageId: last.id });
   }, [messages, sendUserMessage, clearAll]);
 
-  // Leaves plan mode for the default one, so the plan's writes are carried out
-  // but each is still confirmed by the user.
-  const handleExecutePlan = useCallback(async () => {
-    setAgentMode("interactive");
-    await sendUserMessage(
-      { text: i18n.t(($) => $.chat.sidebar.executePlan) },
-      buildRequestBody("interactive"),
-    );
-  }, [buildRequestBody, sendUserMessage]);
-
   const handleNewChat = useCallback(async () => {
     clearFilter();
     setActiveTab("chat");
@@ -365,7 +355,6 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
               onCancelEdit={clearEditing}
               onSubmitEdit={handleEditMessage}
               onRegenerate={handleRegenerate}
-              onExecutePlan={agentMode === "plan" ? handleExecutePlan : undefined}
             />
           </ToolApprovalProvider>
         </SubagentLiveProvider>

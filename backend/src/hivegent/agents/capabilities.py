@@ -45,7 +45,6 @@ from ..prompts import (
     GROUNDING_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS_EMPTY,
-    PLAN_INSTRUCTIONS,
     PYTHON_INSTRUCTIONS,
     REDIRECT_INSTRUCTIONS,
     SCRATCH_INSTRUCTIONS,
@@ -70,7 +69,6 @@ from .tools import (
     conversation_toolset,
     explore_toolset,
     memory_toolset,
-    plan_toolset,
     sandbox_instructions,
     subagent_toolset,
     web_toolset,
@@ -90,7 +88,6 @@ __all__ = [
 ]
 
 
-_PLAN: frozenset[Mode] = frozenset({"plan"})
 
 type FeatureInstruction = Localized[str] | SystemPromptFunc[UserDeps]
 """A fixed block in every language, or a callable resolved per run."""
@@ -155,7 +152,7 @@ class Feature:
 
 
 # The single source of truth for the agent's features.  ``explore``, ``write``,
-# ``plan``, and ``memory`` carry their own instructions: ``explore`` states the
+# and ``memory`` carry their own instructions: ``explore`` states the
 # grounding and version discipline for the retrieval tools it owns and describes
 # the live document scope (so the model knows which documents the user
 # selected), ``write`` says who decides where a new document goes, and
@@ -194,7 +191,6 @@ FEATURES: tuple[Feature, ...] = (
     ),
     Feature.build("web", web_toolset),
     Feature.build("conversation", conversation_toolset),
-    Feature.build("plan", plan_toolset, instructions=[PLAN_INSTRUCTIONS], modes=_PLAN),
 )
 
 
@@ -299,8 +295,8 @@ def build_capabilities(
     covers *extra* as well, which is the only reach an operator has over the
     tools a user-configured MCP server brings.
 
-    The mode selects which features are offered at all (``read`` and ``plan``
-    are handed none of the mutating ones); whether a write the remaining ones
+    The mode selects which features are offered at all (``read`` is handed
+    none of the mutating ones); whether a write the remaining ones
     perform pauses for the user is decided per call by the gate in
     ``agents/tools/write.py``, which alone can see the path.
 

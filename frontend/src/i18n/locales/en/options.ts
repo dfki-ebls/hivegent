@@ -11,7 +11,6 @@ export const options = {
     interactive: "Interactive",
     read: "Read",
     write: "Write",
-    plan: "Plan",
   },
   reasoningEffort: {
     auto: "Auto",

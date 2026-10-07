@@ -43,7 +43,6 @@ interface MessageListProps {
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
   onRegenerate: () => void;
-  onExecutePlan?: () => void;
 }
 
 export function MessageList({
@@ -63,7 +62,6 @@ export function MessageList({
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
-  onExecutePlan,
 }: MessageListProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const contextLimitReached = isContextLengthError(chatError);
@@ -114,7 +112,6 @@ export function MessageList({
                   onCancelEdit={onCancelEdit}
                   onSubmitEdit={onSubmitEdit}
                   onRegenerate={onRegenerate}
-                  onExecutePlan={index === messages.length - 1 ? onExecutePlan : undefined}
                 />
               </MessageScrollerItem>
             ))}

@@ -5,7 +5,6 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from "ai";
 import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
-import type { ChatRequestConfig } from "@/lib/types";
 import { useCallback, useMemo, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
 import {
@@ -90,9 +89,7 @@ export function useHivegentChat(
         // options the approval was recorded with, so a per-call body leaves
         // that request settingless and the turn resumes with the server's
         // defaults — no document scope, no model override, no MCP servers.
-        // A per-call `body` still wins, for the one caller that overrides the
-        // mode it is currently in.
-        prepareSendMessagesRequest: ({ api, body, id: chatId, messages, trigger, messageId }) => {
+        prepareSendMessagesRequest: ({ api, id: chatId, messages, trigger, messageId }) => {
           const lastMessage = trigger === "regenerate-message" ? undefined : messages.at(-1);
           return {
             api:
@@ -101,7 +98,6 @@ export function useHivegentChat(
                 : api,
             body: {
               ...requestBody?.(),
-              ...body,
               id: chatId,
               messages: lastMessage ? [lastMessage] : [],
               trigger,
@@ -167,14 +163,14 @@ export function useHivegentChat(
   const { sendMessage, regenerate } = chat;
 
   const sendUserMessage = useCallback(
-    async (input: SendUserMessageInput, body?: ChatRequestConfig) => {
+    async (input: SendUserMessageInput) => {
       const headers = await getAuthHeaders();
       // One payload shape for every send. An edit/retry addresses a node with
       // `messageId`, but it still submits a whole user message, so it carries
       // the attachments too — the server forks a fresh message there rather
       // than reusing the stored one, so anything left out is gone.
       const payload = { text: input.text, files: input.files, messageId: input.messageId };
-      await sendMessage(payload, { headers, body });
+      await sendMessage(payload, { headers });
     },
     [sendMessage],
   );

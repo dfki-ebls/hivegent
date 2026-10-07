@@ -23,7 +23,6 @@ interface MessagePartProps {
   canCopy: boolean;
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
-  onExecutePlan?: () => void;
 }
 
 export function MessagePart({
@@ -36,7 +35,6 @@ export function MessagePart({
   canCopy,
   onCancelEdit,
   onSubmitEdit,
-  onExecutePlan,
 }: MessagePartProps) {
   const { t } = useTranslation();
 
@@ -83,19 +81,18 @@ export function MessagePart({
     return null;
   }
 
-  return <ToolMessagePart toolData={toolData} part={part} onExecutePlan={onExecutePlan} />;
+  return <ToolMessagePart toolData={toolData} part={part} />;
 }
 
 interface ToolMessagePartProps {
   toolData: ReadonlyMap<string, unknown>;
   part: UIMessage["parts"][number];
-  onExecutePlan?: () => void;
 }
 
 // Tool parts only: the live-subagent context subscription lives here rather
 // than in MessagePart, so only tool parts depend on the live map (other part
 // types never subscribe to it).
-function ToolMessagePart({ toolData, part, onExecutePlan }: ToolMessagePartProps) {
+function ToolMessagePart({ toolData, part }: ToolMessagePartProps) {
   const toolCallId = "toolCallId" in part ? (part.toolCallId as string) : undefined;
   const liveSubagent = useSubagentLive(toolCallId);
 
@@ -112,11 +109,7 @@ function ToolMessagePart({ toolData, part, onExecutePlan }: ToolMessagePartProps
 
   const handler = getToolHandler(info.toolName);
   if (handler?.render) {
-    return handler.render({
-      part: part as ToolPart,
-      metadata: info.metadata,
-      onExecutePlan,
-    });
+    return handler.render({ part: part as ToolPart, metadata: info.metadata });
   }
 
   return (

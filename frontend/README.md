@@ -20,7 +20,6 @@ Editing a message or regenerating a reply forks a sibling branch server-side and
 
 `prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request, rather than each call site attaching a body.
 The SDK issues the post-approval continuation itself, with only the options the decision was recorded with, so settings attached per call would leave that one request bare and resume the turn with the server's defaults: no document scope, no model override, no MCP servers.
-A per-call `body` still wins, which is how "Execute the plan" leaves the mode it is currently in.
 
 ## Tool approvals
 

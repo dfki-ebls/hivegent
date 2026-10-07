@@ -164,7 +164,7 @@ A `.scratch/` directory anywhere in a workspace is content and never a document:
 That is where a run parks state between `run_python` calls without paying chunking or leaving a `documents` row to disagree with the disk.
 
 The path tools still list, glob, and grep it, since a run has to find its own state back, and `delete_document` removes one file from it, while `_check_not_reserved_path` keeps the upload, move, and directory API out of it as it does `.assets`.
-The approval gate is per path, not per tool (`agents/tools/write.py`): an interactive run writes to scratch without asking, read and plan modes refuse it like any write, write mode approves everything.
+The approval gate is per path, not per tool (`agents/tools/write.py`): an interactive run writes to scratch without asking, read mode refuses it like any write, write mode approves everything.
 It is cleared by `workspace.directories.cleanup_scratch_dirs` from the lifespan, next to the job spool, because reconciliation never deletes workspace files and a boot is the one moment nothing can be racing a live turn; while running, `DELETE /api/scratch` ("Clear Scratch") sweeps the caller's workspace plus every writable group under its lock and notifies no client.
 
 `SCRATCH_INSTRUCTIONS` is shared between the `compute` and `write` features, and `PYTHON_INSTRUCTIONS` names `.scratch/` as the home of a rerunnable `.py`, since a `.py` elsewhere is an original and gets chunked.
@@ -459,9 +459,9 @@ Each count is what changing that one argument would reveal, and grep's hidden co
 The MCP surface hands out no sink, so it leaves the argument out of the signature it builds (`register_mcp_tools(..., omit=(OutputPathArg,))` via `ToolSpec.without`, which addresses the parameter by the shared `Annotated` alias rather than by a copy of its spelling).
 That is not schema surgery: all three surfaces synthesize a signature rather than edit one, so leaving an argument out is the same act as putting one in.
 Dropping the argument drops the `RedirectedOutput` branch with it, read off the alias's own `Unreachable` metadata rather than named a second time at each call site.
-A read or plan mode still advertises it and refuses at call time, deliberately, since there the argument is dead for this run and live for the next one, which a schema fixed at registration cannot express.
+Read mode still advertises it and refuses at call time, deliberately, since there the argument is dead for this run and live for the next one, which a schema fixed at registration cannot express.
 
-The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink`, `output_writer`, and both validators, which share one `_gate_declared_write`): read and plan modes refuse it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
+The write is the same one the write tools perform, so it answers to the same gate (`agents/tools/write.py` owns `output_sink`, `output_writer`, and both validators, which share one `_gate_declared_write`): read mode refuses it, an interactive call asks for approval unless the path lands in `.scratch/`, write mode approves it.
 What a redirect is worth saying about is a paragraph, and a paragraph restated in eight tool schemas costs more context on every request than the feature saves, so the argument's description states only the mechanism and `REDIRECT_INSTRUCTIONS` carries the rest once, shared between the `explore` and `web` features and composed only in a mode that can write.
 
 ## The Python sandbox
@@ -497,7 +497,7 @@ It lands on disk as it happens, which is what lets the program read its own stat
 The span is the writable one, taken off the tool's `writer` and narrower than the roots it reads, so a program cannot park state in a group the user may only read, and a mode with no writer refuses a scratch write exactly where `write_document` does.
 
 A document is written the one way a human can answer for in advance: the program writes `/out` (named by `OUTPUT`, beside `TMPDIR`) and the call commits it to `commit_path` after the program succeeds, through `write_document_text`, with the fingerprint the document had before the run or create-only semantics when it had none, so indexing, workspace locks, and SSE notifications stay on the canonical mutation path.
-An interactive output write requires approval unless it lands in `.scratch/`, write mode approves it, and read or plan mode refuses it.
+An interactive output write requires approval unless it lands in `.scratch/`, write mode approves it, and read mode refuses it.
 Inside the program that path and `/out` are two names for one file: `dispatch` renames the declared output to `/out` before either filesystem sees it, and `/out` is seeded with the document as it stands, from the read the commit's basis was taken from, so it costs nothing.
 A read returns what the document holds, an append appends to it, and a second write replaces it, so the alias needs no list of which Monty operations write.
 The alias is only ever the path the call already approved, so every other document stays refused, and the commit runs once after the program succeeds, skipped with a sentence when the buffer came back exactly as it was seeded.
@@ -513,7 +513,7 @@ A move or a delete is deliberately not reachable from a program: the agent has `
 
 The mount is why a program needs almost no tools.
 What it cannot be is the four whose answer lives somewhere the sandbox cannot reach, so those are injected as host functions by `tools/monty.py`: `search` needs the database, `web_search` and `web_fetch` need the network, and `query_table` decodes a spreadsheet the mount refuses as binary.
-Before them, a spreadsheet question cost a `query_table` call redirected to a `.scratch/*.json` and a second call to open it, and in `read` and `plan` mode it cost the whole answer, since the redirect is a write those modes refuse.
+Before them, a spreadsheet question cost a `query_table` call redirected to a `.scratch/*.json` and a second call to open it, and in `read` mode it cost the whole answer, since the redirect is a write that mode refuses.
 
 Nothing that mutates is injected and nothing can be: a running program cannot stop to ask for approval, which is the same constraint that makes `/out` the one document a call may persist.
 Every injected function is a read, so the mode gates none of them.

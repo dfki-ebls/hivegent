@@ -52,7 +52,6 @@ export const settings = {
       memory: "Gedächtnis",
       web: "Web",
       conversation: "Konversation",
-      plan: "Plan",
     },
     mcp: {
       label: "MCP-Server",

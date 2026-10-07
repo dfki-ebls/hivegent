@@ -1,7 +1,6 @@
 import {
   CircleQuestionMarkIcon,
   EyeIcon,
-  ListChecksIcon,
   PencilIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -18,7 +17,6 @@ const MODE_ICONS: Record<AgentMode, LucideIcon> = {
   interactive: CircleQuestionMarkIcon,
   read: EyeIcon,
   write: PencilIcon,
-  plan: ListChecksIcon,
 };
 
 export function ModeSelector({ value, onChange }: ModeSelectorProps) {
