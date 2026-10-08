@@ -88,6 +88,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     messageKey,
     setMessages,
     addToolApprovalResponse,
+    addToolOutput,
     stop,
     sendUserMessage,
     regenerateTurn,
@@ -209,12 +210,13 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
       decide: (decisions) => {
         for (const decision of decisions) void addToolApprovalResponse(decision);
       },
+      addToolOutput,
       // The SDK records but does not dispatch a decision made while the
       // previous turn's final chunks are still draining, so the buttons wait
       // for it to settle.
       blockedReason: isStreaming ? t(($) => $.chat.sidebar.approvalBlocked) : undefined,
     }),
-    [addToolApprovalResponse, isStreaming, t],
+    [addToolApprovalResponse, addToolOutput, isStreaming, t],
   );
 
   const handleRegenerate = useCallback(async () => {

@@ -81,7 +81,7 @@ from ..operations import attachment_disposition
 from ..vercel import (
     SDK_VERSION,
     ChatAdapter,
-    decline_pending_approvals,
+    abandon_pending_calls,
     dump_messages_with_ids,
     run_and_persist,
 )
@@ -533,6 +533,8 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
                 request, agent=user_agent, sdk_version=SDK_VERSION
             ),
         )
+        # Validates the client's answers to pending questions as well.
+        resumed = adapter.deferred_tool_results is not None
     except ValidationError as exc:
         raise HTTPException(
             status_code=422, detail=_INVALID_CHAT_REQUEST.current
@@ -566,14 +568,14 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         }
         await discard_unapproved_changes(user.id, prefix[-1], approved)
 
-    # A turn that ended awaiting approval left its call dangling so this request
-    # could answer it.  One that carries anything else abandons that approval,
-    # and the dangling call has to be closed here or every later turn replays it
-    # as a generic "interrupted" result and the model reissues the same call
-    # again and again.  Stored as its own node, so the delta below still starts
-    # with the message whose id is announced.
-    if adapter.deferred_tool_results is None:
-        declined = decline_pending_approvals(prefix)
+    # A turn that ended awaiting approval or answers left its calls dangling so
+    # this request could answer them.  One that carries anything else abandons
+    # them, and the dangling calls have to be closed here or every later turn
+    # replays them as a generic "interrupted" result and the model reissues the
+    # same calls again and again.  Stored as its own node, so the delta below
+    # still starts with the message whose id is announced.
+    if not resumed:
+        declined = abandon_pending_calls(prefix)
         if declined is not None:
             fork_id = await append_branch(user.id, conversation_id, fork_id, [declined])
             prefix = [*prefix, declined]

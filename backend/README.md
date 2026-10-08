@@ -252,7 +252,7 @@ The base adapter appends whatever the request carries on top of the caller's `me
 Appending it would put the same `tool_call_id` in the history twice: pydantic-ai closes the stored copy with a synthetic "interrupted" return and gives only the echo the real result, so the model sees its call interrupted and reissues it.
 The decision itself is unaffected, since `ChatAdapter.approval_decisions` reads it from the request rather than from the loaded messages.
 
-An approval the user never answers is closed by the next turn (`decline_pending_approvals`).
+An approval or question the user never answers is closed by the next turn (`abandon_pending_calls`).
 A run that ends awaiting one leaves its call dangling on purpose so a later request can carry the decision and resume it; a request that carries a new prompt instead ends that run for good.
 Left in the stored history the dangling call is not inert: pydantic-ai repairs it on the way to the provider with a generic "interrupted" result, the model reads that as a transient failure and reissues the identical call, and one abandoned approval is enough to have every later turn repeat it.
 The refusal is stored as its own node before the run, which both states what happened and makes the delta's head the new user message, so the node id announced in `X-Message-Id` still lands on it.
@@ -290,8 +290,16 @@ It rides on the request node rather than the closer `ToolReturnPart.metadata` be
 The request side travels the same way: the protocol's approval request chunk carries ids only, so `ChatEventStream.handle_run_result` stores what each `ApprovalRequired` carried on the response that asked, under `approvalMetadata` keyed by tool call id.
 The run's one message metadata chunk delivers it live and the stored response projects it again on reload, so the prompt shows the same server-resolved paths either way.
 
-An approval the user overtook by sending another message is a denial on both sides: `vercel.decline_pending_approvals` closes the dangling call in the history on the next request and records the decision, denied with no note, the way `record_approvals` records a user's, and `chat-utils.declineAbandonedApprovals` derives the same denial over the live transcript, since only the last message can hold a request that is still answerable.
+An approval the user overtook by sending another message is a denial on both sides: `vercel.abandon_pending_calls` closes the dangling call in the history on the next request and records the decision, denied with no note, the way `record_approvals` records a user's, and `chat-utils.closeAbandonedCalls` derives the same denial over the live transcript, since only the last message can hold a request that is still answerable.
 So the buttons disappear the moment the prompt is sent rather than on the reload that would have shown them settled.
+
+### Questions are deferred calls answered by the client
+
+`ask_user` (`agents/tools/ask.py`) only raises `CallDeferred`, so the run ends with the questions pending, like an approval, and the client sends the answers as the call's output.
+An approval cannot carry them, since its response is a yes or no with a note.
+`ChatAdapter.question_answers` validates each `output-available` part of the tool against `AskAnswer` and resumes the run with it as `DeferredToolResults.calls`, so the answer is the stored return the model reads and the reloaded card shows, with nothing extra to record.
+A dismissal is the client's `output-error`, and an abandoned question is closed the same way, both as a failed return whose text (`DISMISSED_QUESTIONS`) the server words.
+The projection reads every dangling call as an approval request, so `dump_messages_with_ids` reopens a pending question as `input-available`.
 
 ### Compaction is a turn of the conversation
 

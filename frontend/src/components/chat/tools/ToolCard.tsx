@@ -27,18 +27,26 @@ const STATUS_ICONS: Record<ToolPart["state"], ReactNode> = {
   "output-error": <XCircleIcon className="size-4 text-red-600" />,
 };
 
+interface ToolCardHeaderProps {
+  title: string;
+  state: ToolPart["state"];
+  /** Override the status label, for a tool whose states mean something else. */
+  status?: string;
+  icon?: ReactNode;
+}
+
 /** The AI Elements `ToolHeader` hardcodes English status labels, so the card renders its own. */
-function ToolCardHeader({ title, state }: { title: string; state: ToolPart["state"] }) {
+export function ToolCardHeader({ title, state, status, icon }: ToolCardHeaderProps) {
   const { t } = useTranslation();
 
   return (
     <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 p-3">
       <div className="flex items-center gap-2">
-        <WrenchIcon className="size-4 text-muted-foreground" />
+        {icon ?? <WrenchIcon className="size-4 text-muted-foreground" />}
         <span className="font-medium text-sm">{title}</span>
         <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
           {STATUS_ICONS[state]}
-          {t(($) => $.chat.tools.status[state])}
+          {status ?? t(($) => $.chat.tools.status[state])}
         </Badge>
       </div>
       <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />

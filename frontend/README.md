@@ -28,7 +28,7 @@ The buttons therefore stay disabled until the turn settles (the gate's `blockedR
 Without that, a decision taken while the last chunks drained would be recorded, never sent, and leave the call dangling for the backend to close.
 
 The prompt itself is re-derived from stored history rather than stored as a decision, since a tool call with no result is an open approval.
-An approval the user overtakes by sending another message is declined on both sides: `chat-utils.declineAbandonedApprovals` derives the denial over the live transcript while the backend closes the dangling call on the next request.
+An approval the user overtakes by sending another message is declined on both sides: `chat-utils.closeAbandonedCalls` derives the denial over the live transcript while the backend closes the dangling call on the next request.
 
 The protocol's approval request carries ids only, so the changeset summary the planner resolved for the prompt arrives as message metadata keyed by tool call id, live and after a reload alike.
 `MessageBubble` provides it per message and `ToolCard` reads its own call's entry with `useApprovalMetadata(part, schema)`, which validates it with zod.
@@ -41,6 +41,14 @@ The fine-grained choices need no extra collapsible, since the cards themselves a
 The gate's `decide` takes the whole batch and records each decision in turn, and since the SDK continues only once the last one is in, that still sends a single continuation.
 
 A note travels as the decision's `reason`, which is the user's own text on both decisions: the backend words the refusal the model reads around it for a denial and appends it to the result of an approved call (see `../backend/README.md`), and records it so the resolved card shows it live and after a reload alike.
+
+## Questions are answered in their card
+
+`ask_user` is a tool without a server-side body, so the card (`components/chat/tools/ask-user.tsx`) answers it with `addToolOutput` through the same gate as approvals, which keeps the buttons disabled while the turn settles.
+It composes the AI Elements `Question`, one per question in a tab, with an "Other" choice whose text becomes the typed answer and a note field per question, and sends every answer at once.
+`Question` is not yet in the AI Elements registry, so `components/ai-elements/question.tsx` is the upstream file with the registry's import paths.
+`chat-utils.shouldContinueRun` resumes the run once the last step holds an answered question and nothing unsettled, rather than the SDK's `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
+A dismissal is an `output-error`, and a question the user overtakes with another message is dismissed on both sides, like an approval.
 
 ## Interface language
 

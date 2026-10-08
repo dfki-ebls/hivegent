@@ -1,18 +1,15 @@
 import { useChat } from "@ai-sdk/react";
-import {
-  type FileUIPart,
-  DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
-} from "ai";
+import { type FileUIPart, DefaultChatTransport } from "ai";
 import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useCallback, useMemo, useState } from "react";
 import { getAuthHeaders } from "@/lib/api";
 import {
   type ChatMessage,
   adoptMessageNodeId,
-  declineAbandonedApprovals,
+  closeAbandonedCalls,
   isChatBusy,
   lastUserIndex,
+  shouldContinueRun,
 } from "@/lib/chat/chat-utils";
 import { API_BASE_URL } from "@/lib/health";
 import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
@@ -134,7 +131,7 @@ export function useHivegentChat(
   const chat = useChat<ChatMessage>({
     id,
     transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    sendAutomaticallyWhen: shouldContinueRun,
     onData: (dataPart) => {
       if (dataPart.type !== "data-subagent") return;
 
@@ -179,10 +176,10 @@ export function useHivegentChat(
     await regenerate({ headers: await getAuthHeaders() });
   }, [regenerate]);
 
-  // An approval the user overtook with another message is dead: the next
-  // request closes it as a denial server-side, so the transcript every consumer
+  // An approval or question the user overtook with another message is dead:
+  // the next request closes it server-side, so the transcript every consumer
   // reads says so too, instead of leaving live buttons on a settled decision.
-  const messages = useMemo(() => declineAbandonedApprovals(chat.messages), [chat.messages]);
+  const messages = useMemo(() => closeAbandonedCalls(chat.messages), [chat.messages]);
 
   const isStreaming = isChatBusy(chat.status);
   const messageKey = useCallback(

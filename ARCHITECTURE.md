@@ -102,6 +102,7 @@ A feature is withheld by the chat mode it declares, by a request's `disabled_too
 | `memory`       | Persistent cross-conversation memory (mutating modes only). | `save_memory`                                                                                                      |
 | `web`          | Direct web lookup and page retrieval.                       | `web_search`, `web_fetch`                                                                                          |
 | `conversation` | Access to persisted conversation history (off by default).  | `list_conversations`, `get_conversation`                                                                           |
+| `ask`          | Multiple-choice questions answered by the user.             | `ask_user`                                                                                                         |
 
 ## Asset processing
 

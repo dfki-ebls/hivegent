@@ -1,5 +1,12 @@
 import type { UIMessage } from "@ai-sdk/react";
-import type { ChatStatus, DynamicToolUIPart, FileUIPart, ToolUIPart } from "ai";
+import {
+  type ChatStatus,
+  type DynamicToolUIPart,
+  type FileUIPart,
+  type ToolUIPart,
+  isToolUIPart,
+} from "ai";
+import { ASK_USER_PART, DISMISSED_ERROR } from "@/lib/chat/ask-user";
 
 /** Whether a chat request is waiting for or receiving model output. */
 export function isChatBusy(status: ChatStatus): boolean {
@@ -170,43 +177,87 @@ export function pendingApprovalIds(message: ChatMessage): string[] {
   return message.parts.filter(isPendingApproval).map((part) => part.approval.id);
 }
 
-/** The same part as the denial it has become, matching a reloaded one. */
-function declineApproval(part: ChatMessage["parts"][number]): ChatMessage["parts"][number] {
-  if (!isPendingApproval(part)) return part;
+type PendingQuestion = Extract<ToolUIPart, { state: "input-available" }>;
 
-  return {
-    ...part,
-    state: "output-denied",
-    approval: { ...part.approval, approved: false },
-  };
+/** Whether a part is a question call nobody has answered yet. */
+function isPendingQuestion(part: ChatMessage["parts"][number]): part is PendingQuestion {
+  return part.type === ASK_USER_PART && "state" in part && part.state === "input-available";
+}
+
+/** The same part as the denial or dismissal it has become, matching a reloaded one. */
+function closeCall(part: ChatMessage["parts"][number]): ChatMessage["parts"][number] {
+  if (isPendingApproval(part)) {
+    return { ...part, state: "output-denied", approval: { ...part.approval, approved: false } };
+  }
+
+  if (isPendingQuestion(part)) {
+    const { state: _, ...call } = part;
+
+    return { ...call, state: "output-error", errorText: DISMISSED_ERROR };
+  }
+
+  return part;
 }
 
 /**
- * Close the approval requests the user walked away from by sending another
- * message, so they read as the denials they have become.
+ * Close the approval requests and questions the user walked away from by
+ * sending another message, so they read as the denials and dismissals they
+ * have become.
  *
  * The backend does the same to the stored history on the next request
- * (`decline_pending_approvals` in `backend/src/hivegent/server/vercel.py`): a
+ * (`abandon_pending_calls` in `backend/src/hivegent/server/vercel.py`): a
  * dangling call that a new prompt has overtaken can never be answered, so it is
- * closed as a denial. Deriving that here rather than recording a second
- * decision keeps the live tab showing what a reload already shows, and stops
- * the card offering buttons for a decision the server has made. Only the last
- * message can hold a live request — the run that asked is the end of the
- * transcript until the next turn appends to it — so anything before it is
- * abandoned by construction.
+ * closed. Deriving that here rather than recording a second decision keeps the
+ * live tab showing what a reload already shows, and stops the card offering
+ * buttons for a decision the server has made. Only the last message can hold a
+ * live request — the run that asked is the end of the transcript until the
+ * next turn appends to it — so anything before it is abandoned by construction.
  *
  * Returns *messages* itself when nothing dangles, allocating nothing, so the
  * common case re-renders nothing on a transcript that grows with every chunk.
  */
-export function declineAbandonedApprovals(messages: ChatMessage[]): ChatMessage[] {
+export function closeAbandonedCalls(messages: ChatMessage[]): ChatMessage[] {
   const isAbandoned = (message: ChatMessage, index: number) =>
-    index < messages.length - 1 && message.parts.some(isPendingApproval);
+    index < messages.length - 1 &&
+    message.parts.some((part) => isPendingApproval(part) || isPendingQuestion(part));
 
   if (!messages.some(isAbandoned)) return messages;
 
   return messages.map((message, index) =>
-    isAbandoned(message, index)
-      ? { ...message, parts: message.parts.map(declineApproval) }
-      : message,
+    isAbandoned(message, index) ? { ...message, parts: message.parts.map(closeCall) } : message,
   );
+}
+
+/** Whether a call is done, or decided and waiting for the continuation to run it. */
+function isSettled(part: ToolUIPart | DynamicToolUIPart): boolean {
+  return (
+    (part.state === "output-available" && part.preliminary !== true) ||
+    part.state === "output-error" ||
+    part.state === "output-denied" ||
+    part.state === "approval-responded"
+  );
+}
+
+/**
+ * Whether the user's decisions or answers settled the last step, so the run continues.
+ *
+ * The SDK's `lastAssistantMessageIsCompleteWithApprovalResponses` extended to
+ * answered questions. Its `lastAssistantMessageIsCompleteWithToolCalls` would
+ * also fire for a stopped step of server tools, which pydantic-ai does not mark
+ * `providerExecuted`, so something the user answered must be among them.
+ */
+export function shouldContinueRun({ messages }: { messages: ChatMessage[] }): boolean {
+  const message = messages.at(-1);
+
+  if (message?.role !== "assistant") return false;
+
+  const step = message.parts.slice(message.parts.findLastIndex((p) => p.type === "step-start") + 1);
+  const calls = step.filter(isToolUIPart);
+  const answered = calls.some(
+    (part) =>
+      part.state === "approval-responded" ||
+      (part.type === ASK_USER_PART && part.state !== "input-available"),
+  );
+
+  return answered && calls.every(isSettled);
 }

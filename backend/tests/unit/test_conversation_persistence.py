@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
@@ -28,7 +29,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaThinkingPart,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.ui.vercel_ai.request_types import (
@@ -37,12 +44,16 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     ToolApprovalRequestedPart,
     ToolApprovalResponded,
     ToolApprovalRespondedPart,
+    ToolInputAvailablePart,
+    ToolOutputAvailablePart,
+    ToolOutputErrorPart,
     UIMessage,
 )
 from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
 from hivegent.agents.approval import ApprovalNotes, approval_note_text
+from hivegent.agents.tools.ask import DISMISSED_QUESTIONS, ask_user
 from hivegent.db.conversations import ActiveNode, _fork_for_path, import_conversation
 from hivegent.server.routes.conversations import _instruction_snapshots
 from hivegent.server.vercel import (
@@ -52,7 +63,7 @@ from hivegent.server.vercel import (
     SDK_VERSION,
     ChatAdapter,
     PersistTurn,
-    decline_pending_approvals,
+    abandon_pending_calls,
     denial_message,
     dump_messages_with_ids,
     run_and_persist,
@@ -115,9 +126,10 @@ def _adapter(
     model: Model | None = None,
     tool_raises: bool = False,
     tool_needs_approval: bool = False,
+    asks_user: bool = False,
 ) -> ChatAdapter[None, str | DeferredToolRequests]:
     output_type: OutputSpec[str | DeferredToolRequests] = (
-        [str, DeferredToolRequests] if tool_needs_approval else str
+        [str, DeferredToolRequests] if tool_needs_approval or asks_user else str
     )
     agent = Agent[None, str | DeferredToolRequests](
         model=model or TestModel(custom_output_text="ANSWER"),
@@ -125,6 +137,9 @@ def _adapter(
         deps_type=type(None),
         capabilities=[ApprovalNotes()],
     )
+
+    if asks_user:
+        agent.tool_plain(ask_user)
 
     if tool_raises:
 
@@ -157,6 +172,7 @@ async def _run_turn(
     message_history: Sequence[ModelMessage] | None = None,
     tool_raises: bool = False,
     tool_needs_approval: bool = False,
+    asks_user: bool = False,
     persist: PersistTurn | None = None,
 ) -> tuple[list[list[ModelMessage]], str]:
     """Run one turn through ``run_and_persist``; return recorded turns + body."""
@@ -165,6 +181,7 @@ async def _run_turn(
         model=model,
         tool_raises=tool_raises,
         tool_needs_approval=tool_needs_approval,
+        asks_user=asks_user,
     )
     recorded: list[list[ModelMessage]] = []
 
@@ -412,7 +429,7 @@ async def test_abandoned_approval_is_declined_for_the_next_turn() -> None:
         [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
         tool_needs_approval=True,
     )
-    declined = decline_pending_approvals(pending[0])
+    declined = abandon_pending_calls(pending[0])
     assert declined is not None
 
     returns = _parts([declined], ToolReturnPart)
@@ -430,8 +447,128 @@ async def test_a_settled_turn_has_no_approval_to_decline() -> None:
         [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])]
     )
 
-    assert decline_pending_approvals(settled[0]) is None
-    assert decline_pending_approvals([]) is None
+    assert abandon_pending_calls(settled[0]) is None
+    assert abandon_pending_calls([]) is None
+
+
+_QUESTIONS = {
+    "questions": [
+        {
+            "header": "Scope",
+            "question": "Which scope?",
+            "options": [{"label": "All", "recommended": True}, {"label": "Some"}],
+        }
+    ]
+}
+
+
+def _asking_model(seen: list[ModelMessage]) -> FunctionModel:
+    """Ask :data:`_QUESTIONS` on a fresh prompt and answer once resumed."""
+
+    async def respond(
+        messages: Sequence[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        seen.extend(messages)
+
+        if isinstance(messages[-1].parts[-1], UserPromptPart):
+            yield {0: DeltaToolCall(name="ask_user", json_args=json.dumps(_QUESTIONS))}
+        else:
+            yield "ANSWER"
+
+    return FunctionModel(stream_function=respond)
+
+
+async def _pending_question() -> list[ModelMessage]:
+    recorded, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        model=_asking_model([]),
+        asks_user=True,
+    )
+    return recorded[0]
+
+
+def _reply(
+    pending: Sequence[ModelMessage], output: object | None
+) -> UIMessage:
+    """Echo the assistant message with its question answered, or dismissed for ``None``."""
+    message = _ui_messages(pending)[-1]
+    message.parts = [
+        ToolOutputErrorPart(
+            type=part.type,
+            tool_call_id=part.tool_call_id,
+            input=part.input,
+            error_text="dismissed",
+        )
+        if output is None
+        else ToolOutputAvailablePart(
+            type=part.type,
+            tool_call_id=part.tool_call_id,
+            input=part.input,
+            output=output,
+        )
+        for part in message.parts
+        if isinstance(part, ToolInputAvailablePart)
+    ]
+    return message
+
+
+async def test_a_pending_question_reloads_awaiting_its_answer() -> None:
+    """A deferred question stays open and reloads as a question, not an approval."""
+    pending = await _pending_question()
+
+    assert not _parts(pending, ToolReturnPart)
+    assert _tool_states(pending) == ["input-available"]
+
+
+@pytest.mark.parametrize(
+    ("output", "state", "content"),
+    [
+        (
+            [{"selected": ["All"], "note": " Skip drafts. "}],
+            "output-available",
+            [{"selected": ["All"], "note": "Skip drafts."}],
+        ),
+        (None, "output-error", DISMISSED_QUESTIONS),
+    ],
+)
+async def test_a_reply_to_a_question_resumes_the_run(
+    output: object | None, state: str, content: object
+) -> None:
+    """The answer, or the dismissal, is the result of the call the model reads."""
+    pending = await _pending_question()
+    seen: list[ModelMessage] = []
+    recorded, _ = await _run_turn(
+        [_reply(pending, output)],
+        model=_asking_model(seen),
+        message_history=pending,
+        asks_user=True,
+    )
+
+    assert [part.content for part in _parts(seen, ToolReturnPart)] == [content]
+    assert "ANSWER" in _texts(recorded[0])
+    assert _tool_states(recorded[0]) == [state]
+
+
+async def test_an_invalid_answer_is_rejected() -> None:
+    """The client writes the answer, so one that answers nothing never reaches the model."""
+    pending = await _pending_question()
+    adapter = _adapter([_reply(pending, [{"selected": []}])], asks_user=True)
+
+    with pytest.raises(ValidationError):
+        _ = adapter.deferred_tool_results
+
+
+async def test_an_abandoned_question_is_dismissed() -> None:
+    """A prompt sent instead of answers closes the question as dismissed, not denied."""
+    pending = await _pending_question()
+    closed = abandon_pending_calls(pending)
+    assert closed is not None
+
+    assert [part.content for part in _parts([closed], ToolReturnPart)] == [
+        DISMISSED_QUESTIONS
+    ]
+    assert _tool_states([*pending, closed]) == ["output-error"]
+    assert _tool_approvals([*pending, closed]) == [(None, None)]
 
 
 async def test_generic_run_error_is_recorded_for_reload() -> None:

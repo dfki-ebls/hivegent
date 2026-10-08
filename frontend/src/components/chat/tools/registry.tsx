@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { isCatalogKey } from "@/i18n";
 import type { SyncOutput, ToolName, ToolPart } from "@/lib/chat/tool-part";
+import { AskUserTool } from "@/components/chat/tools/ask-user";
 import { syncGrepOutput } from "@/components/chat/tools/grep";
 import {
   ReadBinaryDocumentTool,
@@ -38,6 +39,7 @@ const TOOL_HANDLERS: Partial<Record<ToolName, ToolHandler>> = {
     render: ({ part, metadata }) => <RunPythonTool part={part} metadata={metadata} />,
   },
   write_document: { render: ({ part }) => <WriteDocumentTool part={part} /> },
+  ask_user: { render: ({ part }) => <AskUserTool part={part} /> },
 };
 
 export function getToolHandler(name: string): ToolHandler | undefined {

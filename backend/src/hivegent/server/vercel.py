@@ -34,6 +34,7 @@ from typing import Any, TypedDict, override
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import AgentRunResultEvent, capture_run_messages
+from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -48,8 +49,12 @@ from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRespondedPart,
     DynamicToolUIPart,
+    ToolApprovalRequestedPart,
     ToolApprovalResponded,
     ToolApprovalRespondedPart,
+    ToolInputAvailablePart,
+    ToolOutputAvailablePart,
+    ToolOutputErrorPart,
     ToolUIPart,
     UIMessage,
 )
@@ -58,6 +63,7 @@ from starlette.responses import Response
 
 from ..agents.approval import APPROVAL_NOTE_KEY
 from ..agents.subagent_events import SubagentUpdate
+from ..agents.tools.ask import ANSWERS, ASK_USER_TOOL, DISMISSED_QUESTIONS
 from ..db._common import new_id
 from ..db.conversations import is_user_request
 from ..l10n import Localized
@@ -70,9 +76,9 @@ __all__ = [
     "SUBAGENT_CHUNK_TYPE",
     "BranchInfo",
     "ChatAdapter",
+    "abandon_pending_calls",
     "chat_error_text",
     "close_orphan_tool_calls",
-    "decline_pending_approvals",
     "denial_message",
     "dump_messages_with_ids",
     "record_approvals",
@@ -129,6 +135,8 @@ _DECISIONS = TypeAdapter(dict[str, ToolApprovalResponded])
 # Message metadata key mapping each approval-pending tool call id to the
 # metadata its `ApprovalRequired` carried, set on the response that asked.
 APPROVAL_METADATA_KEY = "approvalMetadata"
+
+_ASK_USER_PART = f"tool-{ASK_USER_TOOL}"
 
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
 
@@ -308,21 +316,54 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
         }
 
     @cached_property
+    def question_answers(self) -> dict[str, Any]:
+        """The user's replies to ``ask_user`` calls, keyed by tool call id.
+
+        An answer is the client's ``output-available`` part, validated since
+        the client wrote it, and a dismissal its ``output-error`` part, whose
+        text gives way to :data:`DISMISSED_QUESTIONS`.  The client re-sends
+        every settled card of the message, so questions it answered by an
+        earlier request are here too, and pydantic-ai ignores results for calls
+        that are no longer pending.
+
+        Raises:
+            pydantic.ValidationError: If an answer does not fit its schema.
+        """
+        return {
+            part.tool_call_id: ToolFailed(DISMISSED_QUESTIONS)
+            if isinstance(part, ToolOutputErrorPart)
+            else ANSWERS.dump_python(
+                ANSWERS.validate_python(part.output), mode="json", exclude_none=True
+            )
+            for message in self.run_input.messages
+            if message.role == "assistant"
+            for part in message.parts
+            if isinstance(part, ToolOutputAvailablePart | ToolOutputErrorPart)
+            and part.type == _ASK_USER_PART
+        }
+
+    @cached_property
     @override
     def deferred_tool_results(self) -> DeferredToolResults | None:
-        """Resume the run with the user's decisions and their notes.
+        """Resume the run with the user's decisions, notes, and answers.
 
         The client's ``reason`` is the user's own note on either decision.  A
         denial wraps it into the refusal the model reads (:func:`denial_message`)
         and an approval hands it to the call as metadata, which
         :class:`~hivegent.agents.approval.ApprovalNotes` appends to its result.
+        Answers to questions are the results of their calls as they stand.
+
+        Raises:
+            pydantic.ValidationError: If an answer does not fit its schema.
         """
         decisions = self.approval_decisions
+        answers = self.question_answers
 
-        if not decisions:
+        if not decisions and not answers:
             return None
 
         return DeferredToolResults(
+            calls=answers,
             approvals={
                 call_id: True
                 if decision.approved
@@ -426,7 +467,7 @@ def _attach_approvals(
     decision and note it showed live, rather than the refusal text the
     projection copies from a denied return into ``reason``, the user's note.
     Every denial is recorded, an abandoned one by
-    :func:`decline_pending_approvals`, so the recorded decision always wins.
+    :func:`abandon_pending_calls`, so the recorded decision always wins.
     """
     for message in messages:
         for part in message.parts:
@@ -434,6 +475,28 @@ def _attach_approvals(
                 decision := decisions.get(part.tool_call_id)
             ):
                 part.approval = decision
+
+
+def _reopen_questions(messages: Sequence[UIMessage]) -> None:
+    """Show the pending questions as awaiting their answers, not an approval.
+
+    The projection reads any dangling call as an approval request, since a call
+    the run deferred looks the same in the history as one it gated.  Only the
+    last message can hold one (see :func:`abandon_pending_calls`).
+    """
+    if not messages:
+        return
+
+    parts = messages[-1].parts
+
+    for index, part in enumerate(parts):
+        if isinstance(part, ToolApprovalRequestedPart) and part.type == _ASK_USER_PART:
+            parts[index] = ToolInputAvailablePart(
+                type=part.type,
+                tool_call_id=part.tool_call_id,
+                input=part.input,
+                call_provider_metadata=part.call_provider_metadata,
+            )
 
 
 def dump_messages_with_ids(
@@ -454,7 +517,8 @@ def dump_messages_with_ids(
     ordered sibling ids; its :class:`BranchInfo` is merged under a ``branch``
     metadata key (leaving the framework key intact) so the frontend can render
     branch navigation.  Calls a user decided are re-annotated with the decision
-    and note the run itself does not record (see :func:`record_approvals`).
+    and note the run itself does not record (see :func:`record_approvals`), and
+    pending questions are reopened rather than shown as approval requests.
     """
     node_by_obj = {id(msg): node_id for node_id, msg in pairs}
 
@@ -479,6 +543,7 @@ def dump_messages_with_ids(
         sdk_version=SDK_VERSION,
     )
     _attach_approvals(ui_messages, _recorded_decisions(msg for _, msg in pairs))
+    _reopen_questions(ui_messages)
 
     return ui_messages
 
@@ -587,12 +652,13 @@ def close_orphan_tool_calls(
     return [*messages, ModelRequest(parts=returns)]
 
 
-def decline_pending_approvals(prefix: Sequence[ModelMessage]) -> ModelRequest | None:
-    """Refuse the approval requests *prefix* ends on, or ``None`` if it ends on none.
+def abandon_pending_calls(prefix: Sequence[ModelMessage]) -> ModelRequest | None:
+    """Close the calls *prefix* ends on, or return ``None`` if it ends on none.
 
-    A run that finishes awaiting approval leaves its call dangling on purpose,
-    so the next request can carry the decision and resume it.  A next request
-    that carries a new prompt instead ends that run for good: the call can never
+    A run that finishes awaiting approval or answers leaves its calls dangling
+    on purpose, so the next request can carry the decisions and resume it.  A
+    next request that carries a new prompt instead ends that run for good: the
+    call can never
     be answered now, yet it stays in the stored history, where pydantic-ai
     repairs it on the way to the provider with a generic ``interrupted``
     result.  The model reads that as a transient failure and reissues the
@@ -602,7 +668,8 @@ def decline_pending_approvals(prefix: Sequence[ModelMessage]) -> ModelRequest | 
     Answering it as a denial instead says what actually happened, and once the
     refusal is stored the history holds a resolved call rather than one that is
     repaired again on every future turn.  The denial is recorded like a user's
-    (:func:`record_approvals`), with no note, since nobody typed one.
+    (:func:`record_approvals`), with no note, since nobody typed one.  A
+    question is closed as dismissed, just as if the user had dismissed it.
 
     Only a trailing response is considered, and then every call it holds is
     unanswered by construction: a result is a ``ModelRequest`` part, so it can
@@ -618,23 +685,23 @@ def decline_pending_approvals(prefix: Sequence[ModelMessage]) -> ModelRequest | 
     if not calls:
         return None
 
+    approvals = {part.tool_call_id for part in calls if part.tool_name != ASK_USER_TOOL}
     declined = ModelRequest(
         parts=[
             ToolReturnPart(
                 tool_name=part.tool_name,
-                content=ABANDONED_APPROVAL_DENIAL,
+                content=ABANDONED_APPROVAL_DENIAL
+                if part.tool_call_id in approvals
+                else DISMISSED_QUESTIONS,
                 tool_call_id=part.tool_call_id,
-                outcome="denied",
+                outcome="denied" if part.tool_call_id in approvals else "failed",
             )
             for part in calls
         ]
     )
     _stamp(
         declined,
-        {
-            part.tool_call_id: ToolApprovalResponded(id=part.tool_call_id, approved=False)
-            for part in calls
-        },
+        {call_id: ToolApprovalResponded(id=call_id, approved=False) for call_id in approvals},
     )
 
     return declined

@@ -40,7 +40,7 @@ function renderMessage(
   const decide = vi.fn<ToolApprovalGate["decide"]>();
   const noop = () => {};
   const message = (requests: string[]) => (
-    <ToolApprovalProvider value={{ decide, blockedReason }}>
+    <ToolApprovalProvider value={{ decide, addToolOutput: noop, blockedReason }}>
       <MessageBubble
         message={{
           id: "m1",

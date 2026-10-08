@@ -49,6 +49,7 @@ export const settings = {
       memory: "Memory",
       web: "Web",
       conversation: "Conversation",
+      ask: "Questions",
     },
     mcp: {
       label: "MCP Servers",

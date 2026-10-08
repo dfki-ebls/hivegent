@@ -1,5 +1,6 @@
 """Built-in agent toolset registrations."""
 
+from .ask import ask_toolset
 from .conversation import conversation_toolset
 from .explore import explore_toolset
 from .memory import memory_toolset
@@ -18,6 +19,7 @@ __all__ = [
     "SANDBOX_FUNCTION_NAMES",
     "SUBAGENT_CAPABILITIES",
     "SubagentName",
+    "ask_toolset",
     "conversation_toolset",
     "discard_unapproved_changes",
     "explore_toolset",

@@ -163,6 +163,7 @@ export const chat = {
   tools: {
     names: {
       apply_changes: "Änderungen anwenden",
+      ask_user: "Rückfragen",
       delete_documents: "Dokumente löschen",
       edit_document: "Dokument bearbeiten",
       explore: "Erkunden",
@@ -214,6 +215,23 @@ export const chat = {
       yourNote: "Dein Hinweis:",
       progress: "{{decided}} von {{count}} entschieden",
       submit: "Entscheidungen senden",
+    },
+    ask: {
+      status: {
+        pending: "Wartet auf Antwort",
+        answered: "Beantwortet",
+        dismissed: "Verworfen",
+      },
+      recommended: "Empfohlen",
+      other: "Andere",
+      otherPlaceholder: "Eigene Antwort eingeben",
+      note: "Hinweis für den Assistenten (optional)",
+      notePlaceholder: "Was der Assistent beachten soll",
+      yourNote: "Dein Hinweis:",
+      progress: "{{answered}} von {{count}} beantwortet",
+      dismiss: "Verwerfen",
+      submit: "Antworten senden",
+      dismissed: "Du hast diese Fragen verworfen.",
     },
     mutations: {
       titleWithPath: "{{tool}} · {{name}}",

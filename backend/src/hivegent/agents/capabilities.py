@@ -66,6 +66,7 @@ from .guards import IterationLimitWarner
 from .tools import (
     INJECTABLE_TOOL_NAMES,
     SANDBOX_FUNCTION_NAMES,
+    ask_toolset,
     conversation_toolset,
     explore_toolset,
     memory_toolset,
@@ -190,6 +191,7 @@ FEATURES: tuple[Feature, ...] = (
     ),
     Feature.build("web", web_toolset),
     Feature.build("conversation", conversation_toolset),
+    Feature.build("ask", ask_toolset),
 )
 
 

@@ -4,10 +4,11 @@ import {
   type ChatMessage,
   activeChatError,
   adoptMessageNodeId,
-  declineAbandonedApprovals,
+  closeAbandonedCalls,
   getLastUserMessage,
   isContextLengthError,
   recordChatError,
+  shouldContinueRun,
   showThinkingLoader,
 } from "@/lib/chat/chat-utils";
 
@@ -157,7 +158,7 @@ describe("getLastUserMessage", () => {
   });
 });
 
-describe("declineAbandonedApprovals", () => {
+describe("closeAbandonedCalls", () => {
   const pending = (): ChatMessage => ({
     id: "a1",
     role: "assistant",
@@ -176,16 +177,61 @@ describe("declineAbandonedApprovals", () => {
   it("leaves a request the user can still answer alone", () => {
     const messages = [msg("user", "q"), pending()];
 
-    expect(declineAbandonedApprovals(messages)).toBe(messages);
+    expect(closeAbandonedCalls(messages)).toBe(messages);
   });
 
   it("closes a request the next message overtook, as the backend does", () => {
     const messages = [msg("user", "q"), pending(), msg("user", "never mind, do this instead")];
-    const declined = declineAbandonedApprovals(messages);
+    const declined = closeAbandonedCalls(messages);
     const part = declined[1].parts[0];
 
     expect(part).toMatchObject({ state: "output-denied", approval: { approved: false } });
     // Untouched messages keep their identity, so nothing else re-renders.
     expect(declined[0]).toBe(messages[0]);
+  });
+
+  it("dismisses a question the next message overtook, as the backend does", () => {
+    const messages = [msg("user", "q"), asked(), msg("user", "skip that")];
+
+    expect(closeAbandonedCalls(messages)[1].parts[1]).toMatchObject({ state: "output-error" });
+  });
+});
+
+function asked(answered = false): ChatMessage {
+  const call = { type: "tool-ask_user", toolCallId: "ask-1", input: {} } as const;
+
+  return {
+    id: "a1",
+    role: "assistant",
+    parts: [
+      { type: "step-start" },
+      answered
+        ? { ...call, state: "output-available", output: [] }
+        : { ...call, state: "input-available" },
+    ],
+  };
+}
+
+describe("shouldContinueRun", () => {
+  it("continues once the user answered the questions the run ended on", () => {
+    expect(shouldContinueRun({ messages: [msg("user", "q"), asked()] })).toBe(
+      false,
+    );
+    expect(shouldContinueRun({ messages: [msg("user", "q"), asked(true)] })).toBe(
+      true,
+    );
+  });
+
+  it("does not resend a stopped step of server tools", () => {
+    const stopped: ChatMessage = {
+      id: "a1",
+      role: "assistant",
+      parts: [
+        { type: "step-start" },
+        { type: "tool-search", toolCallId: "s-1", state: "output-available", input: {}, output: "" },
+      ],
+    };
+
+    expect(shouldContinueRun({ messages: [msg("user", "q"), stopped] })).toBe(false);
   });
 });

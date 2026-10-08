@@ -157,6 +157,7 @@ export const chat = {
   tools: {
     names: {
       apply_changes: "Apply Changes",
+      ask_user: "Questions",
       delete_documents: "Delete Documents",
       edit_document: "Edit Document",
       explore: "Explore",
@@ -208,6 +209,23 @@ export const chat = {
       yourNote: "Your note:",
       progress: "{{decided}} of {{count}} decided",
       submit: "Submit decisions",
+    },
+    ask: {
+      status: {
+        pending: "Awaiting Answer",
+        answered: "Answered",
+        dismissed: "Dismissed",
+      },
+      recommended: "Recommended",
+      other: "Other",
+      otherPlaceholder: "Type your own answer",
+      note: "Note for the assistant (optional)",
+      notePlaceholder: "Anything the assistant should keep in mind",
+      yourNote: "Your note:",
+      progress: "{{answered}} of {{count}} answered",
+      dismiss: "Dismiss",
+      submit: "Submit answers",
+      dismissed: "You dismissed these questions.",
     },
     mutations: {
       titleWithPath: "{{tool}} · {{name}}",
