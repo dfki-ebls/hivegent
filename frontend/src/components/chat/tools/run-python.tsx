@@ -2,13 +2,7 @@ import { ChevronRightIcon, FileCodeIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
-import {
-  CodeBlock,
-  CodeBlockActions,
-  CodeBlockCopyButton,
-  CodeBlockFilename,
-  CodeBlockHeader,
-} from "@/components/ai-elements/code-block";
+import { HighlightedCode } from "@/components/HighlightedCode";
 import {
   ChangesetSummarySchema,
   ChangesetView,
@@ -104,9 +98,7 @@ function ScriptSourceView({ path, conversationId }: { path: string; conversation
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-md">
-      <CodeBlock code={source.code} language="python" showLineNumbers />
-    </div>
+    <HighlightedCode code={source.code} language="python" lineNumbers className="min-h-0 flex-1" />
   );
 }
 
@@ -116,11 +108,17 @@ function ScriptSourceDialog({ path }: { path: string }) {
 
   return (
     <Dialog>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="xs" disabled={path.startsWith("/tmp/") && !conversationId}>
-          <FileCodeIcon aria-hidden />
-          {t(($) => $.viewSource)}
-        </Button>
+      <DialogTrigger
+        render={
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={path.startsWith("/tmp/") && !conversationId}
+          />
+        }
+      >
+        <FileCodeIcon aria-hidden />
+        {t(($) => $.viewSource)}
       </DialogTrigger>
       <DialogContent className="flex h-[min(85vh,56rem)] flex-col sm:max-w-4xl">
         <DialogHeader>
@@ -138,14 +136,7 @@ function Program({ code, scriptPath }: { code?: string; scriptPath?: string }) {
 
   if (code) {
     return (
-      <CodeBlock code={code} language="python">
-        <CodeBlockHeader>
-          <CodeBlockFilename>{t(($) => $.inlineProgram)}</CodeBlockFilename>
-          <CodeBlockActions>
-            <CodeBlockCopyButton className="size-6" />
-          </CodeBlockActions>
-        </CodeBlockHeader>
-      </CodeBlock>
+      <HighlightedCode code={code} language="python" title={t(($) => $.inlineProgram)} copyable />
     );
   }
 
@@ -197,7 +188,7 @@ function HostCalls({ calls }: { calls: HostCall[] }) {
       <CollapsibleTrigger className="group flex items-center gap-1 text-muted-foreground">
         <ChevronRightIcon
           aria-hidden
-          className="size-3.5 transition-transform group-data-[state=open]:rotate-90"
+          className="size-3.5 transition-transform group-aria-expanded:rotate-90"
         />
         {t(($) => $.hostCalls, { count: calls.length })}
       </CollapsibleTrigger>

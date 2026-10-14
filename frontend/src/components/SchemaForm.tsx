@@ -10,13 +10,7 @@ import { useTranslation } from "react-i18next";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { OptionSelect } from "@/components/OptionSelect";
 import { Switch } from "@/components/ui/switch";
 
 /** A single property definition from a JSON Schema. */
@@ -115,21 +109,12 @@ function ScalarField({
     return (
       <div className="grid gap-1.5">
         <Label htmlFor={id}>{label}</Label>
-        <Select
+        <OptionSelect
+          id={id}
           value={String((value ?? prop.default ?? "") as string | number)}
-          onValueChange={(v) => onChange(v)}
-        >
-          <SelectTrigger id={id}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {prop.enum.map((opt) => (
-              <SelectItem key={opt} value={opt}>
-                {opt}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          options={prop.enum.map((option) => ({ value: option, label: option }))}
+          onChange={onChange}
+        />
         {prop.description && <p className="text-xs text-muted-foreground">{prop.description}</p>}
       </div>
     );

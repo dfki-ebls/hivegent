@@ -9,8 +9,8 @@ import { cn, DOCS_URL } from "@/lib/utils";
  * Points at the handbook in the interface language, which is served under its
  * own path segment (`/en/`, `/de/`).
  * Styled by callers via `className`. Every other anchor prop is forwarded too,
- * so slotting this into a `DropdownMenuItem` still receives the ref and pointer
- * handlers Radix needs to highlight the entry. */
+ * so rendering this as a `DropdownMenuItem` still receives the ref and pointer
+ * handlers Base UI needs to highlight the entry. */
 export function DocsLink({ className, ...props }: ComponentProps<"a">) {
   const { t } = useTranslation();
 

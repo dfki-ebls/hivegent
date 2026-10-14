@@ -19,6 +19,7 @@ export function ImagePart({ url, filename }: ImagePartProps) {
       src={url}
       alt={filename ?? t(($) => $.chat.messages.attachedImage)}
       title={filename}
+      data-slot="message-image"
       className="max-h-64 w-auto max-w-full rounded-md border object-contain"
     />
   );

@@ -77,10 +77,8 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogTrigger asChild>
-        <Button variant="link" size="xs" className="h-auto px-1 text-xs">
-          {t(($) => $.trigger)}
-        </Button>
+      <DialogTrigger render={<Button variant="link" size="xs" className="h-auto px-1 text-xs" />}>
+        {t(($) => $.trigger)}
       </DialogTrigger>
       <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>

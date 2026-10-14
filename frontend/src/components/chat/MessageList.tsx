@@ -9,12 +9,12 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
-import { Loader } from "@/components/ai-elements/loader";
 import { ChatError } from "@/components/chat/ChatError";
 import { CompactionBanner } from "@/components/chat/CompactionBanner";
 import { ContextLimitBanner } from "@/components/chat/ContextLimitBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Spinner } from "@/components/ui/spinner";
 import { keyPrefix } from "@/i18n";
 import {
   type ChatMessage,
@@ -69,7 +69,7 @@ export function MessageList({
   if (isLoadingHistory) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
-        <Loader />
+        <Spinner />
       </div>
     );
   }
@@ -117,7 +117,7 @@ export function MessageList({
             ))}
             {showThinkingLoader(messages, status) && (
               <MessageScrollerItem className="flex justify-center">
-                <Loader />
+                <Spinner />
               </MessageScrollerItem>
             )}
             {contextLimitReached && (

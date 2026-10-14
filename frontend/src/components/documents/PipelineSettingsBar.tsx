@@ -6,13 +6,7 @@ import { featureFlags } from "@/lib/feature-flags";
 import { AssetProcessingMode, type ChunkingPipeline, type ConversionPipeline } from "@/lib/types";
 import { PipelineSelector } from "@/components/PipelineSelector";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { OptionSelect } from "@/components/OptionSelect";
 
 const T_OPTIONS = keyPrefix(($) => $.documents.pipelines);
 
@@ -34,6 +28,10 @@ export function PipelineSettingsBar({
   onAssetModeChange,
 }: PipelineSettingsBarProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
+  const assetModes = Object.values(AssetProcessingMode).map((mode) => ({
+    value: mode,
+    label: t(($) => $.assetMode[mode]),
+  }));
 
   // The upload target lives in the drop zone now; this bar carries only the
   // pipeline/asset controls, so it renders nothing when both are flagged off.
@@ -66,21 +64,15 @@ export function PipelineSettingsBar({
             <Images className="h-4 w-4" />
             {t(($) => $.assets)}
           </Label>
-          <Select
+          <OptionSelect
+            id="asset-mode-select"
+            className="w-[120px]"
+            size="sm"
             value={assetMode}
-            onValueChange={(v) => onAssetModeChange(v as AssetProcessingMode)}
-          >
-            <SelectTrigger id="asset-mode-select" className="w-[120px]" size="sm">
-              <SelectValue placeholder={t(($) => $.selectAssetMode)} />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.values(AssetProcessingMode).map((mode) => (
-                <SelectItem key={mode} value={mode}>
-                  {t(($) => $.assetMode[mode])}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={assetModes}
+            onChange={onAssetModeChange}
+            placeholder={t(($) => $.selectAssetMode)}
+          />
         </div>
       )}
     </div>

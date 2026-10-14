@@ -14,9 +14,10 @@
     "vitest"
   ],
   "ignorePatterns": [
-    "**/src/components/ai-elements/**",
     "**/src/components/ui/**",
+    "**/src/hooks/use-highlighted-code.ts",
     "**/src/hooks/use-mobile.ts",
+    "**/src/lib/highlighter.tsx",
     "**/src/**/*.gen.ts"
   ]
 }

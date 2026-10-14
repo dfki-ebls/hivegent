@@ -397,7 +397,8 @@ function DirectoryRow({
         checkbox={
           onToggleSelect && (
             <Checkbox
-              checked={selectionState}
+              checked={selectionState === true}
+              indeterminate={selectionState === "indeterminate"}
               onCheckedChange={() => onToggleSelect()}
               className="shrink-0"
             />

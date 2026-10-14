@@ -402,17 +402,17 @@ export function ScopeSection({
           DROP_CLASSES[rootDropState],
         )}
       >
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
-            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </Button>
+        <CollapsibleTrigger
+          render={<Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" />}
+        >
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </CollapsibleTrigger>
         {isGroup ? (
           <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
-        {canWrite ? labelButton : <CollapsibleTrigger asChild>{labelButton}</CollapsibleTrigger>}
+        {canWrite ? labelButton : <CollapsibleTrigger render={labelButton} />}
         <div className="flex gap-0.5">
           <FilterToggleButtons
             state={filterStateOf(scope)}
@@ -452,7 +452,8 @@ export function ScopeSection({
               fileCount > 0 && (
                 <div className="flex items-center gap-2 px-2 py-1">
                   <Checkbox
-                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    checked={allSelected}
+                    indeterminate={someSelected && !allSelected}
                     onCheckedChange={toggleSelectAll}
                   />
                   <span className="text-xs text-muted-foreground">{t(($) => $.selectAll)}</span>

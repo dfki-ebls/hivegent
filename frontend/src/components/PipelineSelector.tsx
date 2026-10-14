@@ -2,7 +2,6 @@ import type { TFunction } from "i18next";
 import { FileType, type LucideIcon, Scissors } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { z } from "zod";
 
 import {
   getChunkingPipelineConfig,
@@ -12,9 +11,7 @@ import {
 } from "@/lib/api";
 import {
   ChunkingPipeline,
-  ChunkingPipelineSchema,
   ConversionPipeline,
-  ConversionPipelineSchema,
   type PipelineConfigInfo,
   type PipelineKind,
 } from "@/lib/types";
@@ -22,13 +19,7 @@ import { usePipelineConfig } from "@/hooks/use-pipeline-config";
 import { PIPELINE_CONFIG_FIELDS, useSettingsStore } from "@/stores/settings-store";
 import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { OptionSelect } from "@/components/OptionSelect";
 
 interface PipelineValues {
   conversion: ConversionPipeline;
@@ -37,7 +28,6 @@ interface PipelineValues {
 
 interface PipelineRegistry<P extends string> {
   icon: LucideIcon;
-  schema: z.ZodType<P>;
   auto: P;
   list: () => Promise<P[]>;
   text: (t: TFunction, pipeline: P) => { label: string; description: string };
@@ -47,7 +37,6 @@ interface PipelineRegistry<P extends string> {
 const REGISTRIES: { [K in PipelineKind]: PipelineRegistry<PipelineValues[K]> } = {
   conversion: {
     icon: FileType,
-    schema: ConversionPipelineSchema,
     auto: ConversionPipeline.AUTO,
     list: listConversionPipelines,
     text: (t, pipeline) =>
@@ -56,7 +45,6 @@ const REGISTRIES: { [K in PipelineKind]: PipelineRegistry<PipelineValues[K]> } =
   },
   chunking: {
     icon: Scissors,
-    schema: ChunkingPipelineSchema,
     auto: ChunkingPipeline.AUTO,
     list: listChunkingPipelines,
     text: (t, pipeline) => t(($) => $.options.chunkingPipeline[pipeline], { returnObjects: true }),
@@ -100,6 +88,7 @@ export function PipelineSelector<K extends PipelineKind>({
     registry.fetchConfig,
   );
   const Icon = registry.icon;
+  const options = pipelines.map((pipeline) => ({ value: pipeline, ...registry.text(t, pipeline) }));
   const id = `${kind}-pipeline-select`;
   // Widened from `K`, since the selector API cannot index a catalog by a type parameter.
   const stage: PipelineKind = kind;
@@ -110,29 +99,16 @@ export function PipelineSelector<K extends PipelineKind>({
         <Icon className="h-4 w-4" />
         {t(($) => $.documents.pipelines[stage])}
       </Label>
-      <Select
+      <OptionSelect
+        id={id}
+        className="w-[140px]"
+        size="sm"
         value={value}
-        onValueChange={(v) => {
-          const parsed = registry.schema.safeParse(v);
-          if (parsed.success) onChange(parsed.data);
-        }}
+        options={options}
+        onChange={onChange}
+        placeholder={t(($) => $.documents.pipelines.select[stage])}
         disabled={disabled}
-      >
-        <SelectTrigger id={id} className="w-[140px]" size="sm">
-          <SelectValue placeholder={t(($) => $.documents.pipelines.select[stage])} />
-        </SelectTrigger>
-        <SelectContent>
-          {pipelines.map((pipeline) => {
-            const { label, description } = registry.text(t, pipeline);
-
-            return (
-              <SelectItem key={pipeline} value={pipeline} title={description}>
-                {label}
-              </SelectItem>
-            );
-          })}
-        </SelectContent>
-      </Select>
+      />
       {pipelines.includes(value) && pipelineConfig && (
         <PipelineConfigDialog
           pipelineLabel={registry.text(t, value).label}

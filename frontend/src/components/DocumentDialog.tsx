@@ -399,7 +399,7 @@ function DocumentDialogBody({
     if (!node) return;
     const behavior = isInitialScrollRef.current ? "instant" : "smooth";
     isInitialScrollRef.current = false;
-    // Single rAF to let the Radix ScrollArea viewport settle.
+    // Single rAF to let the ScrollArea viewport settle.
     requestAnimationFrame(() => {
       // Center chunks that fit, but anchor the start of chunks taller than
       // the viewport so their beginning stays visible instead of being

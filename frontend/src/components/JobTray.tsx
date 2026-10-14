@@ -279,23 +279,21 @@ export function JobTray() {
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2">
-          {activeCount > 0 ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : attentionCount > 0 ? (
-            <AlertCircle className="h-4 w-4 text-destructive" />
-          ) : (
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
-          )}
-          <span className="hidden sm:inline">
-            {activeCount > 0
-              ? t(($) => $.documents.jobs.processing, { count: activeCount })
-              : attentionCount > 0
-                ? t(($) => $.documents.jobs.needAttention, { count: attentionCount })
-                : t(($) => $.documents.jobs.status.done)}
-          </span>
-        </Button>
+      <PopoverTrigger render={<Button variant="ghost" size="sm" className="gap-2" />}>
+        {activeCount > 0 ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : attentionCount > 0 ? (
+          <AlertCircle className="h-4 w-4 text-destructive" />
+        ) : (
+          <CheckCircle2 className="h-4 w-4 text-green-600" />
+        )}
+        <span className="hidden sm:inline">
+          {activeCount > 0
+            ? t(($) => $.documents.jobs.processing, { count: activeCount })
+            : attentionCount > 0
+              ? t(($) => $.documents.jobs.needAttention, { count: attentionCount })
+              : t(($) => $.documents.jobs.status.done)}
+        </span>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-0">
         <div className="border-b px-3 py-2 text-sm font-medium">

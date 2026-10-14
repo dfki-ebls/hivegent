@@ -2,7 +2,8 @@ import { BrainIcon, type LucideIcon, MessageSquareIcon, WrenchIcon } from "lucid
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought";
+import { TraceStep } from "@/components/chat/TraceStep";
+import { Trace } from "@/components/ui/trace";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { ToolPre, ToolResult, ToolSection } from "@/components/ToolDisplay";
@@ -53,26 +54,29 @@ export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
   return (
     <ToolCard toolName={toolName} part={part} open={open} onOpenChange={setOpen}>
       {(steps.length > 0 || isRunning) && (
-        <ToolSection title={t(($) => $.chat.tools.sections.steps)} border>
+        <ToolSection title={t(($) => $.chat.tools.sections.steps)}>
           {steps.length > 0 ? (
-            <div className="space-y-3">
+            <Trace>
               {steps.map((step, index) => {
-                const { icon, label } = describeStep(t, step);
+                const { icon: Icon, label } = describeStep(t, step);
                 const active = isRunning && index === steps.length - 1;
+
                 return (
-                  <ChainOfThoughtStep
+                  <TraceStep
                     key={index}
-                    icon={icon}
-                    label={label}
-                    status={active ? "active" : "complete"}
+                    icon={<Icon />}
+                    title={label}
+                    status={active ? "running" : undefined}
                   />
                 );
               })}
-            </div>
+            </Trace>
           ) : (
-            <p className="text-muted-foreground animate-pulse">
-              {t(($) => $.common.states.working)}
-            </p>
+            <TraceStep
+              icon={<WrenchIcon />}
+              title={t(($) => $.common.states.working)}
+              status="running"
+            />
           )}
         </ToolSection>
       )}

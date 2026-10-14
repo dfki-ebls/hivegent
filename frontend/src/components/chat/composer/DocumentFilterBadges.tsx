@@ -1,7 +1,7 @@
 import { EyeOff, FileText, Folder, type LucideIcon, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { PromptInputHeader } from "@/components/ai-elements/prompt-input";
 import { Badge } from "@/components/ui/badge";
+import { InputGroupAddon } from "@/components/ui/input-group";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 
 /** Directory entries end with `/`; a bare scope (`~`, `@team`) is a whole workspace. */
@@ -47,7 +47,7 @@ export function DocumentFilterBadges() {
   if (included.length === 0 && excluded.length === 0) return null;
 
   return (
-    <PromptInputHeader>
+    <InputGroupAddon align="block-start" className="flex-wrap">
       {included.map((entry) => (
         <FilterBadge
           key={`inc-${entry}`}
@@ -66,6 +66,6 @@ export function DocumentFilterBadges() {
           onRemove={onRemove}
         />
       ))}
-    </PromptInputHeader>
+    </InputGroupAddon>
   );
 }

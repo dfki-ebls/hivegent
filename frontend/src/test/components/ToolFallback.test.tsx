@@ -19,7 +19,7 @@ describe("ToolFallback", () => {
       <ToolFallback toolName="write_document" part={part("input-available")} />,
     );
 
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Write Document" })).toBeNull();
 
     rerender(
       <ToolFallback
@@ -28,7 +28,7 @@ describe("ToolFallback", () => {
       />,
     );
 
-    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Write Document" })).toBeTruthy();
   });
 
   it("shows the note the user sent with the decision", () => {
@@ -40,7 +40,9 @@ describe("ToolFallback", () => {
     );
     fireEvent.click(screen.getByText("Write Document"));
 
-    expect(screen.getByRole("alert").textContent).toBe("DeniedYour note: Wrong folder.");
+    expect(screen.getByRole("group", { name: "Write Document" }).textContent).toBe(
+      "DeniedYour note: Wrong folder.",
+    );
   });
 
   it("shows a list output item by item, such as a result and its approval note", () => {

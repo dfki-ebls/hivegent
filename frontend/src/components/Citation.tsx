@@ -156,15 +156,12 @@ export function Citation({ src, line }: CitationProps) {
       className="inline-flex flex-wrap items-center gap-1 rounded-full align-middle text-xs font-normal"
     >
       <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="flex cursor-pointer items-center gap-1 rounded-full hover:text-accent-foreground"
-            onClick={() => setOpen("document")}
-          >
-            <FileTextIcon className="h-3 w-3 shrink-0" />
-            {displayName}
-          </button>
+        <TooltipTrigger
+          className="flex cursor-pointer items-center gap-1 rounded-full hover:text-accent-foreground"
+          onClick={() => setOpen("document")}
+        >
+          <FileTextIcon className="h-3 w-3 shrink-0" />
+          {displayName}
         </TooltipTrigger>
         <TooltipContent>{t(($) => $.openDocument)}</TooltipContent>
       </Tooltip>
@@ -174,16 +171,18 @@ export function Citation({ src, line }: CitationProps) {
 
         return (
           <Tooltip key={index}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                disabled={!available}
-                className="rounded-full bg-background/60 px-1.5 enabled:cursor-pointer enabled:hover:bg-accent disabled:text-muted-foreground"
-                onClick={() => setOpen(index)}
-              >
-                {chunkPositionLabel(position)}
-              </button>
-            </TooltipTrigger>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  disabled={!available}
+                  className="rounded-full bg-background/60 px-1.5 enabled:cursor-pointer enabled:hover:bg-accent disabled:text-muted-foreground"
+                  onClick={() => setOpen(index)}
+                >
+                  {chunkPositionLabel(position)}
+                </button>
+              }
+            />
             <TooltipContent>
               {available ? t(($) => $.openEvidence) : t(($) => $.noEvidence)}
             </TooltipContent>

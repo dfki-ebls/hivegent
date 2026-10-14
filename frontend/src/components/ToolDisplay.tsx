@@ -6,18 +6,12 @@ import { cn } from "@/lib/utils";
 interface ToolSectionProps {
   title: string;
   variant?: "default" | "error";
-  border?: boolean;
   children: ReactNode;
 }
 
-export function ToolSection({
-  title,
-  variant = "default",
-  border = false,
-  children,
-}: ToolSectionProps) {
+export function ToolSection({ title, variant = "default", children }: ToolSectionProps) {
   return (
-    <div className={cn("space-y-2 p-4", border && "border-t")}>
+    <div className="space-y-2">
       <h4
         className={cn(
           "font-medium text-xs uppercase tracking-wide",
@@ -122,11 +116,7 @@ interface ToolResultProps {
 export function ToolResult({ children }: ToolResultProps) {
   const { t } = useTranslation();
 
-  return (
-    <ToolSection title={t(($) => $.chat.tools.sections.result)} border>
-      {children}
-    </ToolSection>
-  );
+  return <ToolSection title={t(($) => $.chat.tools.sections.result)}>{children}</ToolSection>;
 }
 
 interface ToolOutputResultProps {
@@ -165,7 +155,7 @@ export function ToolError({ message }: ToolErrorProps) {
   const { t } = useTranslation();
 
   return (
-    <ToolSection title={t(($) => $.common.states.error)} variant="error" border>
+    <ToolSection title={t(($) => $.common.states.error)} variant="error">
       <ToolPre>{message}</ToolPre>
     </ToolSection>
   );

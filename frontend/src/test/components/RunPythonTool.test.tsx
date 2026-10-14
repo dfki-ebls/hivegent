@@ -111,7 +111,9 @@ describe("RunPythonTool", () => {
       expect(screen.getByText("No Python code or script path was provided.")).toBeTruthy();
       expect(screen.getByText("The program is empty.")).toBeTruthy();
 
-      expect(screen.queryByRole("alert")?.textContent ?? null).toBe(approved ? "Approved" : null);
+      expect(screen.queryByRole("group", { name: "Run Python" })?.textContent ?? null).toBe(
+        approved ? "Approved" : null,
+      );
     },
   );
 });

@@ -1,17 +1,13 @@
 import type { ComponentProps } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import {
-  Confirmation,
-  ConfirmationAction,
-  ConfirmationActions,
-  ConfirmationRequest,
-} from "@/components/ai-elements/confirmation";
-import {
   type ChangesetSummary,
   ChangesetView,
   changeCount,
 } from "@/components/chat/tools/changeset";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Item, ItemActions, ItemContent } from "@/components/ui/item";
 import { type ApprovalRound, useApprovalRound } from "@/hooks/chat/use-tool-approval";
 import { type ToolPart, toolDisplayName } from "@/lib/chat/tool-part";
 
@@ -33,7 +29,7 @@ function ApprovalControls({ id, title, round }: ApprovalControlsProps) {
   const blockedReason = staging ? undefined : round.blockedReason;
   const { key, ...note } = round.noteField(id);
 
-  const action = (approved: boolean): ComponentProps<typeof ConfirmationAction> => ({
+  const action = (approved: boolean): ComponentProps<typeof Button> => ({
     variant: (staging ? choice === approved : approved) ? "default" : "outline",
     "aria-pressed": staging ? choice === approved : undefined,
     disabled: blockedReason !== undefined,
@@ -49,17 +45,17 @@ function ApprovalControls({ id, title, round }: ApprovalControlsProps) {
         placeholder={t(($) => $.chat.tools.approval.notePlaceholder)}
         {...note}
       />
-      <ConfirmationActions>
+      <ItemActions className="justify-end">
         {blockedReason && (
           <span className="mr-auto text-xs text-muted-foreground">{blockedReason}</span>
         )}
-        <ConfirmationAction {...action(false)}>
+        <Button size="sm" {...action(false)}>
           {t(($) => $.chat.tools.approval.deny)}
-        </ConfirmationAction>
-        <ConfirmationAction {...action(true)}>
+        </Button>
+        <Button size="sm" {...action(true)}>
           {t(($) => $.chat.tools.approval.approve)}
-        </ConfirmationAction>
-      </ConfirmationActions>
+        </Button>
+      </ItemActions>
     </>
   );
 }
@@ -83,41 +79,45 @@ export function ApprovalRequest({ toolName, title, approval, state, summary }: A
   if (!pending && approval.approved === undefined) return null;
 
   return (
-    <Confirmation approval={approval} state={state}>
-      <ConfirmationRequest>
-        <p className="text-sm">
-          {summary ? (
-            t(($) => $.chat.tools.changeset.question, { count: changeCount(summary) })
-          ) : (
-            <Trans
-              i18nKey={($) => $.chat.tools.approval.question}
-              values={{ tool: toolDisplayName(t, toolName) }}
-              components={{ bold: <strong /> }}
-            />
-          )}
-        </p>
-      </ConfirmationRequest>
-      {/* Outside the request, so the changes stay visible once the call is resolved. */}
-      {summary && <ChangesetView summary={summary} />}
-      {round?.ids.includes(approval.id) && (
-        <ApprovalControls id={approval.id} title={title} round={round} />
-      )}
-      {!pending && approval.approved === true && (
-        <span className="text-sm text-green-700 dark:text-green-400">
-          {t(($) => $.chat.tools.approval.approved)}
-        </span>
-      )}
-      {!pending && approval.approved === false && (
-        <span className="text-sm text-orange-700 dark:text-orange-400">
-          {t(($) => $.chat.tools.approval.denied)}
-        </span>
-      )}
-      {!pending && approval.reason && (
-        <p className="text-sm whitespace-pre-wrap">
-          <span className="text-muted-foreground">{t(($) => $.chat.tools.approval.yourNote)} </span>
-          {approval.reason}
-        </p>
-      )}
-    </Confirmation>
+    <Item variant="outline" size="sm" render={<fieldset />} aria-label={title}>
+      <ItemContent className="gap-3">
+        {pending && (
+          <p>
+            {summary ? (
+              t(($) => $.chat.tools.changeset.question, { count: changeCount(summary) })
+            ) : (
+              <Trans
+                i18nKey={($) => $.chat.tools.approval.question}
+                values={{ tool: toolDisplayName(t, toolName) }}
+                components={{ bold: <strong /> }}
+              />
+            )}
+          </p>
+        )}
+        {/* Outside the question, so the changes stay visible once the call is resolved. */}
+        {summary && <ChangesetView summary={summary} />}
+        {round?.ids.includes(approval.id) && (
+          <ApprovalControls id={approval.id} title={title} round={round} />
+        )}
+        {!pending && approval.approved === true && (
+          <span className="text-green-700 dark:text-green-400">
+            {t(($) => $.chat.tools.approval.approved)}
+          </span>
+        )}
+        {!pending && approval.approved === false && (
+          <span className="text-orange-700 dark:text-orange-400">
+            {t(($) => $.chat.tools.approval.denied)}
+          </span>
+        )}
+        {!pending && approval.reason && (
+          <p className="whitespace-pre-wrap">
+            <span className="text-muted-foreground">
+              {t(($) => $.chat.tools.approval.yourNote)}{" "}
+            </span>
+            {approval.reason}
+          </p>
+        )}
+      </ItemContent>
+    </Item>
   );
 }

@@ -105,7 +105,7 @@ export function ToolDebugConsole() {
   const isAdmin = useSettingsStore(selectIsAdmin);
   const [tools, setTools] = useState<ToolSchema[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ToolRunResult | null>(null);
@@ -142,7 +142,7 @@ export function ToolDebugConsole() {
   }, [tools]);
 
   // Reset the form to the selected tool's schema defaults whenever it changes.
-  function handleSelect(name: string) {
+  function handleSelect(name: string | null) {
     const tool = tools.find((candidate) => candidate.name === name);
     setSelected(name);
     setResult(null);

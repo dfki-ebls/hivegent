@@ -7,7 +7,6 @@ export default {
     input: ["src/**/*.{ts,tsx}"],
     ignore: [
       "src/components/ui/**",
-      "src/components/ai-elements/**",
       "src/test/**",
       "src/routeTree.gen.ts",
     ],

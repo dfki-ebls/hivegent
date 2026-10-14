@@ -57,12 +57,10 @@ function ActionMenu({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="secondary" size="sm">
-          <Icon className="h-4 w-4 mr-1" />
-          {label}
-          <ChevronDown className="h-3.5 w-3.5 ml-1 opacity-70" />
-        </Button>
+      <DropdownMenuTrigger render={<Button variant="secondary" size="sm" />}>
+        <Icon className="h-4 w-4 mr-1" />
+        {label}
+        <ChevronDown className="h-3.5 w-3.5 ml-1 opacity-70" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         <DropdownMenuItem onClick={onFile}>

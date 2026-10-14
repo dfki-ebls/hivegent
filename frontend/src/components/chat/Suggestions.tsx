@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Suggestion, Suggestions as SuggestionsRoot } from "@/components/ai-elements/suggestion";
+import { Button } from "@/components/ui/button";
 import { keyPrefix } from "@/i18n";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.suggestions);
@@ -15,12 +15,17 @@ export function ChatSuggestions({ onSelect }: ChatSuggestionsProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   return (
-    <SuggestionsRoot className="flex-wrap">
+    <div className="flex flex-wrap gap-2">
       {SUGGESTIONS.map((id) => (
-        <Suggestion key={id} suggestion={t(($) => $[id].prompt)} onClick={onSelect}>
+        <Button
+          key={id}
+          variant="outline"
+          size="sm"
+          onClick={() => onSelect(t(($) => $[id].prompt))}
+        >
           {t(($) => $[id].label)}
-        </Suggestion>
+        </Button>
       ))}
-    </SuggestionsRoot>
+    </div>
   );
 }

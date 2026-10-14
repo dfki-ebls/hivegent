@@ -21,7 +21,6 @@ import { featureFlags } from "@/lib/feature-flags";
 import {
   type McpOAuth2Config,
   type McpServerEntry,
-  type Personality,
   PersonalitySchema,
   type ToolInfo,
 } from "@/lib/types";
@@ -50,13 +49,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { OptionSelect } from "@/components/OptionSelect";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { FormSection } from "@/components/FormSection";
@@ -94,11 +87,9 @@ function ConfirmButton({ icon, label, title, description, onConfirm }: ConfirmBu
 
   return (
     <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          {icon}
-          {label}
-        </Button>
+      <AlertDialogTrigger render={<Button variant="outline" size="sm" />}>
+        {icon}
+        {label}
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -167,6 +158,16 @@ export function SettingsDialog() {
   // Test connection state: index -> result
   const [testResults, setTestResults] = useState<Record<number, McpTestResult | "loading">>({});
 
+  const personalities = PersonalitySchema.options.map((value) => ({
+    value,
+    label: tOptions(($) => $.personality[value]),
+  }));
+  const authModes: { value: AuthMode; label: string }[] = [
+    { value: "none", label: t(($) => $.mcp.authNone) },
+    { value: "headers", label: t(($) => $.mcp.authHeaders) },
+    { value: "oauth2", label: t(($) => $.mcp.authOAuth2) },
+  ];
+
   useEffect(() => {
     if (!open || !featureFlags.toolsSpec) return;
 
@@ -228,11 +229,9 @@ export function SettingsDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="icon">
-          <SettingsIcon />
-          <span className="sr-only">{t(($) => $.title)}</span>
-        </Button>
+      <DialogTrigger render={<Button variant="ghost" size="icon" />}>
+        <SettingsIcon />
+        <span className="sr-only">{t(($) => $.title)}</span>
       </DialogTrigger>
       <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -314,18 +313,7 @@ export function SettingsDialog() {
               label={t(($) => $.personality.label)}
               description={t(($) => $.personality.description)}
             >
-              <Select value={personality} onValueChange={(v) => setPersonality(v as Personality)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PersonalitySchema.options.map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {tOptions(($) => $.personality[value])}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <OptionSelect value={personality} options={personalities} onChange={setPersonality} />
             </FormSection>
 
             {personality === "custom" && (
@@ -474,16 +462,12 @@ export function SettingsDialog() {
                     {/* Auth mode selector */}
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">{t(($) => $.mcp.auth)}</span>
-                      <Select value={authMode} onValueChange={(v) => setAuthMode(v as AuthMode)}>
-                        <SelectTrigger className="h-7 text-xs w-auto">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">{t(($) => $.mcp.authNone)}</SelectItem>
-                          <SelectItem value="headers">{t(($) => $.mcp.authHeaders)}</SelectItem>
-                          <SelectItem value="oauth2">{t(($) => $.mcp.authOAuth2)}</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <OptionSelect
+                        className="h-7 text-xs w-auto"
+                        value={authMode}
+                        options={authModes}
+                        onChange={setAuthMode}
+                      />
                     </div>
 
                     {/* Headers editor */}

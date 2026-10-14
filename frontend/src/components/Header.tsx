@@ -40,11 +40,11 @@ function UserMenu() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2 cursor-pointer">
-          <User className="h-4 w-4" />
-          <span className="hidden sm:inline">{userName}</span>
-        </Button>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="sm" className="gap-2 cursor-pointer" />}
+      >
+        <User className="h-4 w-4" />
+        <span className="hidden sm:inline">{userName}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {decodedIdToken.email && (
@@ -55,23 +55,17 @@ function UserMenu() {
             <DropdownMenuSeparator />
           </>
         )}
-        <DropdownMenuItem asChild>
-          <Link to="/settings/account" className="flex items-center gap-2">
-            <UserCog className="h-4 w-4" />
-            {t(($) => $.app.userMenu.account)}
-          </Link>
+        <DropdownMenuItem
+          render={<Link to="/settings/account" className="flex items-center gap-2" />}
+        >
+          <UserCog className="h-4 w-4" />
+          {t(($) => $.app.userMenu.account)}
         </DropdownMenuItem>
-        {DOCS_URL && (
-          <DropdownMenuItem asChild>
-            <DocsLink />
-          </DropdownMenuItem>
-        )}
+        {DOCS_URL && <DropdownMenuItem render={<DocsLink />} />}
         {isAdmin && (
-          <DropdownMenuItem asChild>
-            <Link to="/debug" className="flex items-center gap-2">
-              <Bug className="h-4 w-4" />
-              {t(($) => $.app.userMenu.toolDebugger)}
-            </Link>
+          <DropdownMenuItem render={<Link to="/debug" className="flex items-center gap-2" />}>
+            <Bug className="h-4 w-4" />
+            {t(($) => $.app.userMenu.toolDebugger)}
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />

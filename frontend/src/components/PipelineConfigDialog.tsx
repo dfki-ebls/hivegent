@@ -113,17 +113,19 @@ export function PipelineConfigDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          disabled={disabled}
-          title={configureLabel}
-        >
-          <SettingsIcon className={`h-3.5 w-3.5 ${hasConfig ? "text-primary" : ""}`} />
-          <span className="sr-only">{configureLabel}</span>
-        </Button>
+      <DialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            disabled={disabled}
+            title={configureLabel}
+          />
+        }
+      >
+        <SettingsIcon className={`h-3.5 w-3.5 ${hasConfig ? "text-primary" : ""}`} />
+        <span className="sr-only">{configureLabel}</span>
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
@@ -147,12 +149,14 @@ export function PipelineConfigDialog({
           {/* Advanced JSON editor */}
           {hasSchema && (
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="w-full justify-start text-xs">
-                  {advancedOpen
-                    ? t(($) => $.documents.pipelineConfig.hideAdvanced)
-                    : t(($) => $.documents.pipelineConfig.showAdvanced)}
-                </Button>
+              <CollapsibleTrigger
+                render={
+                  <Button variant="ghost" size="sm" className="w-full justify-start text-xs" />
+                }
+              >
+                {advancedOpen
+                  ? t(($) => $.documents.pipelineConfig.hideAdvanced)
+                  : t(($) => $.documents.pipelineConfig.showAdvanced)}
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="grid gap-1.5 mt-2">

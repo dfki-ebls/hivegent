@@ -1,15 +1,18 @@
 import type { ChatStatus } from "ai";
-import { PencilIcon, RefreshCcwIcon } from "lucide-react";
+import { CopyIcon, PencilIcon, RefreshCcwIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Message,
-  MessageAction,
-  MessageActions,
-  MessageContent,
-} from "@/components/ai-elements/message";
 import { ApprovalScope } from "@/components/chat/ApprovalScope";
 import { MessagePart } from "@/components/chat/MessagePart";
-import { type ChatMessage, isChatBusy, pendingApprovalIds } from "@/lib/chat/chat-utils";
+import { Button } from "@/components/ui/button";
+import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  type ChatMessage,
+  isChatBusy,
+  joinTextParts,
+  pendingApprovalIds,
+} from "@/lib/chat/chat-utils";
 import { indexToolData } from "@/lib/chat/tool-part";
 
 const MS_IN_S = 1000;
@@ -21,6 +24,25 @@ function reasoningDurationSeconds(
   const durationMs = metadata?.reasoningDurationsMs?.[reasoningIndex];
 
   return typeof durationMs === "number" ? Math.ceil(durationMs / MS_IN_S) : undefined;
+}
+
+interface MessageActionProps {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}
+
+function MessageAction({ label, onClick, children }: MessageActionProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} />}
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 interface MessageBubbleProps {
@@ -52,13 +74,15 @@ export function MessageBubble({
   const canEdit = isUser && (status === "ready" || status === "error") && editingId !== message.id;
   const parts = message.parts ?? [];
   const toolData = indexToolData(parts);
-  const canCopy = (isAssistant || isUser) && !isStreaming && editingId !== message.id;
+  const canCopy =
+    parts.some((part) => part.type === "text" && part.text !== "") &&
+    !isStreaming &&
+    editingId !== message.id;
   let reasoningIndex = 0;
 
   return (
-    <Message from={message.role}>
-      {/* Assistant content spans full width so tool cards don't shrink to a short line. */}
-      <MessageContent className={isAssistant ? "w-full gap-1.5" : "gap-1.5"}>
+    <Message align={isUser ? "end" : "start"}>
+      <MessageContent>
         {/* Only the last message holds requests that are still answerable. */}
         <ApprovalScope
           pending={isAssistant && isLastMessage ? pendingApprovalIds(message) : []}
@@ -79,31 +103,38 @@ export function MessageBubble({
                 isUserMessage={isUser}
                 messageId={message.id}
                 isEditing={editingId === message.id}
-                canCopy={canCopy}
                 onCancelEdit={onCancelEdit}
                 onSubmitEdit={onSubmitEdit}
               />
             );
           })}
         </ApprovalScope>
+        {(canCopy || canEdit || canRetry) && (
+          <MessageFooter>
+            {canCopy && (
+              <MessageAction
+                onClick={() => void navigator.clipboard.writeText(joinTextParts(parts) ?? "")}
+                label={t(($) => $.common.actions.copy)}
+              >
+                <CopyIcon />
+              </MessageAction>
+            )}
+            {canEdit && (
+              <MessageAction
+                onClick={() => onSetEditing(message.id)}
+                label={t(($) => $.common.actions.edit)}
+              >
+                <PencilIcon />
+              </MessageAction>
+            )}
+            {canRetry && (
+              <MessageAction onClick={onRegenerate} label={t(($) => $.common.actions.retry)}>
+                <RefreshCcwIcon />
+              </MessageAction>
+            )}
+          </MessageFooter>
+        )}
       </MessageContent>
-      {(canEdit || canRetry) && (
-        <MessageActions className={isUser ? "ml-auto" : undefined}>
-          {canEdit && (
-            <MessageAction
-              onClick={() => onSetEditing(message.id)}
-              label={t(($) => $.common.actions.edit)}
-            >
-              <PencilIcon className="size-3" />
-            </MessageAction>
-          )}
-          {canRetry && (
-            <MessageAction onClick={onRegenerate} label={t(($) => $.common.actions.retry)}>
-              <RefreshCcwIcon className="size-3" />
-            </MessageAction>
-          )}
-        </MessageActions>
-      )}
     </Message>
   );
 }

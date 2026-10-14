@@ -2,7 +2,7 @@ import { ArrowRightIcon, FolderIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
-import { CodeBlock, CodeBlockHeader, CodeBlockTitle } from "@/components/ai-elements/code-block";
+import { HighlightedCode } from "@/components/HighlightedCode";
 import { PathCode } from "@/components/ToolDisplay";
 import { Badge } from "@/components/ui/badge";
 import { keyPrefix } from "@/i18n";
@@ -49,13 +49,12 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 function Diffs({ files }: { files: ChangesetSummary["creates"] }) {
   return files.map((file) =>
     file.diff ? (
-      <CodeBlock key={file.path} code={file.diff} language="diff">
-        <CodeBlockHeader>
-          <CodeBlockTitle>
-            <PathCode>{file.path}</PathCode>
-          </CodeBlockTitle>
-        </CodeBlockHeader>
-      </CodeBlock>
+      <HighlightedCode
+        key={file.path}
+        code={file.diff}
+        language="diff"
+        title={<PathCode>{file.path}</PathCode>}
+      />
     ) : (
       <p key={file.path}>
         <PathCode>{file.path}</PathCode>

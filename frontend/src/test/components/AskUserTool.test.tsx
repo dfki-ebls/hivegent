@@ -40,19 +40,21 @@ function renderQuestions() {
 describe("ask user", () => {
   it("submits one answer per question, with typed answers and notes", () => {
     const addToolOutput = renderQuestions();
-    const submit = screen.getByRole("button", { name: "Submit answers" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByRole("alert").textContent).toBe("Choose or type an answer to continue.");
 
     fireEvent.click(screen.getByRole("radio", { name: /All/ }));
-    fireEvent.change(screen.getByLabelText("Note for the assistant (optional)"), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Note for the assistant (optional)" }), {
       target: { value: " Skip drafts. " },
     });
-    expect(submit).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
-    fireEvent.mouseDown(screen.getByRole("tab", { name: "Format" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "PDF" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Other" }));
-    fireEvent.change(screen.getByLabelText("Other"), { target: { value: "HTML" } });
-    fireEvent.click(submit);
+    fireEvent.change(screen.getByRole("textbox", { name: "Other" }), {
+      target: { value: " HTML " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Submit answers" }));
 
     expect(addToolOutput.mock.calls).toEqual([
       [

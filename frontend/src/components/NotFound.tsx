@@ -26,11 +26,9 @@ export function NotFound() {
           {t(($) => $.app.notFound.description)}
         </p>
       </div>
-      <Button asChild>
-        <Link to="/">
-          <MoveLeft className="mr-2 h-4 w-4" />
-          {t(($) => $.app.notFound.backHome)}
-        </Link>
+      <Button render={<Link to="/" />}>
+        <MoveLeft className="mr-2 h-4 w-4" />
+        {t(($) => $.app.notFound.backHome)}
       </Button>
     </div>
   );

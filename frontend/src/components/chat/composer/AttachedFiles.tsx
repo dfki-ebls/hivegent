@@ -1,41 +1,58 @@
-import { X } from "lucide-react";
+import type { FileUIPart } from "ai";
+import { XIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
-  PromptInputHeader,
-  usePromptInputAttachments,
-} from "@/components/ai-elements/prompt-input";
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment";
+import { InputGroupAddon } from "@/components/ui/input-group";
 
-/** Renders thumbnails for attached images. Must be inside <PromptInput>. */
-export function AttachedFiles() {
+export interface ComposerFile {
+  id: string;
+  part: FileUIPart;
+}
+
+interface AttachedFilesProps {
+  files: ComposerFile[];
+  onRemove: (id: string) => void;
+}
+
+/** The images attached to the draft, each with a button to remove it. */
+export function AttachedFiles({ files, onRemove }: AttachedFilesProps) {
   const { t } = useTranslation();
-  const { files, remove } = usePromptInputAttachments();
 
   if (files.length === 0) return null;
 
   return (
-    <PromptInputHeader>
-      {files.map((file) => (
-        <div key={file.id} className="group relative">
-          <img
-            src={file.url}
-            alt={file.filename ?? t(($) => $.chat.messages.attachedImage)}
-            title={file.filename}
-            className="h-14 w-14 rounded-md border object-cover"
-          />
-          <button
-            type="button"
-            aria-label={
-              file.filename
-                ? t(($) => $.chat.composer.removeAttachment, { name: file.filename })
-                : t(($) => $.chat.composer.removeImage)
-            }
-            className="absolute -right-1.5 -top-1.5 rounded-full border bg-background p-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-            onClick={() => remove(file.id)}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
+    <InputGroupAddon align="block-start" className="flex-wrap">
+      {files.map(({ id, part: file }) => (
+        <Attachment key={id} size="sm">
+          <AttachmentMedia variant="image">
+            <img src={file.url} alt={file.filename ?? t(($) => $.chat.messages.attachedImage)} />
+          </AttachmentMedia>
+          {file.filename && (
+            <AttachmentContent>
+              <AttachmentTitle>{file.filename}</AttachmentTitle>
+            </AttachmentContent>
+          )}
+          <AttachmentActions>
+            <AttachmentAction
+              aria-label={
+                file.filename
+                  ? t(($) => $.chat.composer.removeAttachment, { name: file.filename })
+                  : t(($) => $.chat.composer.removeImage)
+              }
+              onClick={() => onRemove(id)}
+            >
+              <XIcon />
+            </AttachmentAction>
+          </AttachmentActions>
+        </Attachment>
       ))}
-    </PromptInputHeader>
+    </InputGroupAddon>
   );
 }

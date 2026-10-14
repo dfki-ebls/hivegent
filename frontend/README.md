@@ -16,6 +16,15 @@ Adopting it re-keys that bubble and therefore remounts it; the alternative, tran
 Submit, edit, regenerate, retry, and stop work end-to-end.
 Editing a message or regenerating a reply forks a sibling branch server-side and preserves the prior one, but the UI to navigate those branches is not built yet.
 
+## AI Elements are composed, not vendored
+
+The chat follows the shadcn/ui AI Elements patterns, composed in place from the generated components in `components/ui` (`Trace`, `Message`, `Bubble`, `CodeBlock`, `Questionnaire`, `InputGroup`, `Attachment`), rather than wrapping each pattern in a file of its own.
+Every generated component uses Base UI, so its triggers take a `render` element instead of `asChild`, and `npm run shadcnup` installs or refreshes every component of the registry.
+
+Replies render with Streamdown, but its fenced code goes to the same `CodeBlock` as the tool cards (`MarkdownCode` in `chat/markdown/MarkdownText.tsx`), highlighted by the Shiki core with the JavaScript regex engine and the languages listed in `lib/highlighter.tsx`.
+That replaces `@streamdown/code`, whose full Shiki bundle emitted a chunk per language and the Oniguruma WASM.
+Mermaid fences and inline code keep Streamdown's own rendering, and the Mermaid plugin is imported on the first diagram, since Mermaid outweighs the rest of the chat.
+
 ## Chat settings ride on every request
 
 `prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request, rather than each call site attaching a body.
@@ -45,8 +54,8 @@ A note travels as the decision's `reason`, which is the user's own text on both 
 ## Questions are answered in their card
 
 `ask_user` is a tool without a server-side body, so the card (`components/chat/tools/ask-user.tsx`) answers it with `addToolOutput` through the same gate as approvals, which keeps the buttons disabled while the turn settles.
-It composes the AI Elements `Question`, one per question in a tab, with an "Other" choice whose text becomes the typed answer and a note field per question, and sends every answer at once.
-`Question` is not yet in the AI Elements registry, so `components/ai-elements/question.tsx` is the upstream file with the registry's import paths.
+It composes the shadcn/ui `Questionnaire`, one step per question with a free-text answer beside the options and a note field, and sends every answer at once from the last step.
+The checked options of a question's field are its picks, and its text input carries the typed answer.
 `chat-utils.shouldContinueRun` resumes the run once the last step holds an answered question and nothing unsettled, rather than the SDK's `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
 A dismissal is an `output-error`, and a question the user overtakes with another message is dismissed on both sides, like an approval.
 
@@ -83,7 +92,6 @@ Viewing an older branch just swaps the messages the client renders; the choice b
 So there is **no** `/branches/select` endpoint, no `set_active_leaf`, and no schema change — only a read-only projection plus telling the server where a turn continues from.
 
 The backend already emits the navigation data: `GET /conversations/{id}/messages` returns `UIMessage`s whose forking nodes carry `metadata.branch = { branchCount, branchIndex, siblingIds }`.
-The AI Elements branch components already exist, unwired, in `src/components/ai-elements/message.tsx` (`MessageBranch`, `MessageBranchPrevious`, `MessageBranchNext`, `MessageBranchPage`).
 
 Backend additions, both read-only and with no new column:
 
@@ -97,4 +105,4 @@ Frontend steps:
 - In `MessageBubble.tsx` (and `parts/UserTextPart.tsx` / `MessagePart.tsx` for placement), render a prev/next selector showing `branchIndex + 1` of `branchCount` whenever `branchCount > 1`, on both user bubbles (edit forks) and assistant bubbles (regenerate forks).
 - Wire the handlers in `ChatSidebar.tsx`: resolve the target sibling from `branch.siblingIds` plus the direction, call `loadBranch`, `setMessages` with the returned path, and clear the fetched-documents panel. Pure client view state, no server round-trip, disabled while streaming.
 - When the user continues, edits, or regenerates while viewing a branch, include the continuation anchor in the chat request so the new chain forks off that branch and becomes the newest.
-- Prefer a small presentational selector bound to `branchIndex` / `branchCount` over the existing `MessageBranch` context provider, which assumes it owns the alternative children rather than driving a server fetch.
+- Keep the selector a small presentational component bound to `branchIndex` / `branchCount` in the `MessageFooter`, since the fetch drives the alternatives rather than the component owning them.

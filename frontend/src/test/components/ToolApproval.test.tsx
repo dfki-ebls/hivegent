@@ -66,7 +66,7 @@ function renderMessage(
     }
   }
 
-  const cards = screen.getAllByRole("alert");
+  const cards = screen.getAllByRole("group", { name: "Send Mail" });
 
   return {
     decide,

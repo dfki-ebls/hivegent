@@ -1,7 +1,4 @@
 import type { UIMessage } from "@ai-sdk/react";
-import { CopyIcon } from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { MessageAction, MessageActions } from "@/components/ai-elements/message";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
 import { ReasoningPart } from "@/components/chat/parts/ReasoningPart";
@@ -20,7 +17,6 @@ interface MessagePartProps {
   isUserMessage: boolean;
   messageId: string;
   isEditing: boolean;
-  canCopy: boolean;
   onCancelEdit: () => void;
   onSubmitEdit: (messageId: string, newText: string) => void;
 }
@@ -32,37 +28,20 @@ export function MessagePart({
   isUserMessage,
   messageId,
   isEditing,
-  canCopy,
   onCancelEdit,
   onSubmitEdit,
 }: MessagePartProps) {
-  const { t } = useTranslation();
-
   if (part.type === "text") {
-    return (
-      <div className="flex flex-col gap-1.5">
-        {isUserMessage ? (
-          <UserTextPart
-            text={part.text}
-            messageId={messageId}
-            isEditing={isEditing}
-            onCancelEdit={onCancelEdit}
-            onSubmitEdit={onSubmitEdit}
-          />
-        ) : (
-          <MarkdownText>{part.text}</MarkdownText>
-        )}
-        {canCopy && (
-          <MessageActions className={isUserMessage ? "ml-auto" : undefined}>
-            <MessageAction
-              onClick={() => void navigator.clipboard.writeText(part.text)}
-              label={t(($) => $.common.actions.copy)}
-            >
-              <CopyIcon className="size-3" />
-            </MessageAction>
-          </MessageActions>
-        )}
-      </div>
+    return isUserMessage ? (
+      <UserTextPart
+        text={part.text}
+        messageId={messageId}
+        isEditing={isEditing}
+        onCancelEdit={onCancelEdit}
+        onSubmitEdit={onSubmitEdit}
+      />
+    ) : (
+      <MarkdownText>{part.text}</MarkdownText>
     );
   }
 

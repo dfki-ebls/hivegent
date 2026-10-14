@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -14,7 +15,11 @@ interface UserTextPartProps {
 export function UserTextPart({ isEditing, ...props }: UserTextPartProps) {
   if (isEditing) return <UserTextEditor {...props} />;
 
-  return <div className="whitespace-pre-wrap">{props.text}</div>;
+  return (
+    <Bubble variant="muted">
+      <BubbleContent className="whitespace-pre-wrap">{props.text}</BubbleContent>
+    </Bubble>
+  );
 }
 
 // Mounted only while editing, so every edit starts from the current text.
@@ -32,7 +37,7 @@ function UserTextEditor({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="w-full space-y-2">
       <Textarea
         value={editText}
         onChange={(e) => setEditText(e.target.value)}

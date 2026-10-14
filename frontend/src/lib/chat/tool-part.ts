@@ -1,13 +1,13 @@
 import type { UIMessage } from "@ai-sdk/react";
+import type { DynamicToolUIPart, ToolUIPart } from "ai";
 import type { TFunction } from "i18next";
 import type { z } from "zod";
-import type { ToolPart } from "@/components/ai-elements/tool";
 import { isCatalogKey } from "@/i18n";
 import { chat } from "@/i18n/locales/en/chat";
 import { snakeCaseToTitleCase } from "@/lib/utils";
 import type { AddChunk, AddImage, MarkFullDocument } from "@/stores/fetched-documents-store";
 
-export type { ToolPart };
+export type ToolPart = ToolUIPart | DynamicToolUIPart;
 
 /** Everything a tool handler may draw on to persist what its call captured. */
 export interface SyncOutputContext {

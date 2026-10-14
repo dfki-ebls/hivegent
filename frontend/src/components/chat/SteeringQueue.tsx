@@ -1,50 +1,32 @@
-import { MessageSquarePlusIcon } from "lucide-react";
+import { CircleIcon, MessageSquarePlusIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import {
-  Queue,
-  QueueItem,
-  QueueItemContent,
-  QueueItemIndicator,
-  QueueList,
-  QueueSection,
-  QueueSectionContent,
-  QueueSectionLabel,
-  QueueSectionTrigger,
-} from "@/components/ai-elements/queue";
+import { TraceStep, TraceStepTrigger } from "@/components/chat/TraceStep";
+import { Trace, TraceCollapsible, TraceCollapsibleContent } from "@/components/ui/trace";
 import type { SteeringMessage } from "@/hooks/chat/use-steering-queue";
 
 interface SteeringQueueProps {
   queue: SteeringMessage[];
 }
 
+/** The messages sent while the assistant works, waiting for its next step. */
 export function SteeringQueue({ queue }: SteeringQueueProps) {
   const { t } = useTranslation();
 
   if (queue.length === 0) return null;
 
   return (
-    <Queue>
-      <QueueSection>
-        <QueueSectionTrigger>
-          <QueueSectionLabel
-            count={queue.length}
-            label={t(($) => $.chat.steering.queued, { count: queue.length })}
-            icon={<MessageSquarePlusIcon className="size-4" />}
-          />
-        </QueueSectionTrigger>
-        <QueueSectionContent>
-          <QueueList>
-            {queue.map((msg) => (
-              <QueueItem key={msg.id}>
-                <div className="flex items-center gap-2">
-                  <QueueItemIndicator />
-                  <QueueItemContent>{msg.text}</QueueItemContent>
-                </div>
-              </QueueItem>
-            ))}
-          </QueueList>
-        </QueueSectionContent>
-      </QueueSection>
-    </Queue>
+    <TraceCollapsible defaultOpen>
+      <TraceStepTrigger
+        icon={<MessageSquarePlusIcon />}
+        title={t(($) => $.chat.steering.queued, { count: queue.length })}
+      />
+      <TraceCollapsibleContent>
+        <Trace>
+          {queue.map((msg) => (
+            <TraceStep key={msg.id} icon={<CircleIcon />} title={msg.text} />
+          ))}
+        </Trace>
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
   );
 }
