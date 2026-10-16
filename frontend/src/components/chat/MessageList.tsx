@@ -108,10 +108,13 @@ export function MessageList({
               </MessageScrollerItem>
             )}
             {messages.map((message, index) => (
+              // Rendered in full: a reply often is many times the placeholder height that content-visibility
+              // reserves offscreen, so laying it out first while scrolling up shook the transcript.
               <MessageScrollerItem
                 key={messageKey(message.id)}
                 messageId={message.id}
                 scrollAnchor={message.role === "user"}
+                className="[content-visibility:visible]"
               >
                 <MessageBubble
                   message={message}
