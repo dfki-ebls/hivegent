@@ -135,6 +135,7 @@ DOCLING_EXTENSIONS = frozenset(
         ".mp3",
         ".mp4",
         ".msg",
+        ".numbers",
         ".nxml",
         ".odp",
         ".ods",
