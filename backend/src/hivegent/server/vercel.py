@@ -101,7 +101,8 @@ SDK_VERSION = 7
 SUBAGENT_CHUNK_TYPE = "data-subagent"
 
 # Message metadata key carrying per-reasoning-block stream durations in
-# milliseconds, ordered by the reasoning parts in the assistant response.
+# milliseconds, keyed by run id and ordered by the reasoning parts of that run,
+# so the runs of one turn merge into one object like any other metadata.
 REASONING_DURATIONS_KEY = "reasoningDurationsMs"
 
 # Content for the synthetic failed return that closes a tool call left dangling
@@ -249,7 +250,9 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
         ui_metadata: dict[str, Any] = {}
 
         if self._thinking_durations_ms:
-            ui_metadata[REASONING_DURATIONS_KEY] = self._thinking_durations_ms
+            ui_metadata[REASONING_DURATIONS_KEY] = {
+                event.result.run_id: self._thinking_durations_ms
+            }
 
         output = event.result.output
 
@@ -499,6 +502,48 @@ def _reopen_questions(messages: Sequence[UIMessage]) -> None:
             )
 
 
+def _merge_metadata(base: object, override: object) -> object:
+    """Merge *override* into *base* as the AI SDK merges a message metadata chunk.
+
+    Objects merge key by key, and anything else, a list included, is replaced.
+    """
+    if override is None:
+        return base
+
+    if not (isinstance(base, dict) and isinstance(override, dict)):
+        return override
+
+    return {
+        **base,
+        **{
+            key: _merge_metadata(base.get(key), value)
+            for key, value in override.items()
+        },
+    }
+
+
+def _fold_turns(messages: Iterable[UIMessage]) -> list[UIMessage]:
+    """Fold each assistant turn into one message, as the client streams it.
+
+    The projection gives every model response a message of its own, while the
+    client streams all responses of a turn into one, the continuation after an
+    approval included.  A turn folds into its first message, whose id is the
+    node that edit, regenerate, and branch navigation address, since only a
+    turn's first response has siblings.
+    """
+    folded: list[UIMessage] = []
+
+    for message in messages:
+        if folded and folded[-1].role == message.role == "assistant":
+            head = folded[-1]
+            head.parts.extend(message.parts)
+            head.metadata = _merge_metadata(head.metadata, message.metadata)
+        else:
+            folded.append(message)
+
+    return folded
+
+
 def dump_messages_with_ids(
     pairs: Sequence[tuple[str, ModelMessage]],
     *,
@@ -517,8 +562,9 @@ def dump_messages_with_ids(
     ordered sibling ids; its :class:`BranchInfo` is merged under a ``branch``
     metadata key (leaving the framework key intact) so the frontend can render
     branch navigation.  Calls a user decided are re-annotated with the decision
-    and note the run itself does not record (see :func:`record_approvals`), and
-    pending questions are reopened rather than shown as approval requests.
+    and note the run itself does not record (see :func:`record_approvals`),
+    pending questions are reopened rather than shown as approval requests, and
+    each assistant turn is one message, as it streamed (see :func:`_fold_turns`).
     """
     node_by_obj = {id(msg): node_id for node_id, msg in pairs}
 
@@ -537,10 +583,12 @@ def dump_messages_with_ids(
     def assign_id(msg: ModelMessage, _role: str, _index: int) -> str:
         return node_by_obj.get(id(msg)) or new_id()
 
-    ui_messages = ChatAdapter.dump_messages(
-        [msg for _, msg in pairs],
-        generate_message_id=assign_id,
-        sdk_version=SDK_VERSION,
+    ui_messages = _fold_turns(
+        ChatAdapter.dump_messages(
+            [msg for _, msg in pairs],
+            generate_message_id=assign_id,
+            sdk_version=SDK_VERSION,
+        )
     )
     _attach_approvals(ui_messages, _recorded_decisions(msg for _, msg in pairs))
     _reopen_questions(ui_messages)

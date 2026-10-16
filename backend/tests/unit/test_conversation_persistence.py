@@ -700,13 +700,15 @@ async def test_reasoning_duration_is_persisted_as_message_metadata(
 
     response = next(msg for msg in recorded[0] if isinstance(msg, ModelResponse))
 
-    assert response.metadata == {REASONING_DURATIONS_KEY: [2400]}
+    durations = {response.run_id: [2400]}
+
+    assert response.metadata == {REASONING_DURATIONS_KEY: durations}
     assert "reasoningDurationsMs" in body
 
     ui = dump_messages_with_ids([("n1", response)])
 
     assert isinstance(ui[0].metadata, dict)
-    assert ui[0].metadata[REASONING_DURATIONS_KEY] == [2400]
+    assert ui[0].metadata[REASONING_DURATIONS_KEY] == durations
     assert "pydantic_ai" in ui[0].metadata
 
 
@@ -875,13 +877,14 @@ def test_regenerate_forks_at_the_nearest_user_turn() -> None:
 
 
 def test_dump_messages_with_ids_anchors_node_ids() -> None:
-    """Each ``UIMessage.id`` is its head node id; tool-return rows emit none."""
+    """Each ``UIMessage.id`` is its head node id, and a turn is one message."""
     pairs: list[tuple[str, ModelMessage]] = [
         ("n1", ModelRequest(parts=[UserPromptPart(content="q")])),
         (
             "n2",
             ModelResponse(
-                parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c1")]
+                parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c1")],
+                metadata={REASONING_DURATIONS_KEY: {"r1": [1000]}},
             ),
         ),
         (
@@ -890,19 +893,27 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
                 parts=[ToolReturnPart(tool_name="t", content="r", tool_call_id="c1")]
             ),
         ),
-        ("n4", ModelResponse(parts=[TextPart(content="answer")])),
+        (
+            "n4",
+            ModelResponse(
+                parts=[TextPart(content="answer")],
+                metadata={REASONING_DURATIONS_KEY: {"r2": [2400]}},
+            ),
+        ),
     ]
 
-    ui = dump_messages_with_ids(pairs, siblings={"n4": ["n4", "n5"]})
+    ui = dump_messages_with_ids(pairs, siblings={"n2": ["n2", "n5"]})
 
-    ids = [msg.id for msg in ui]
-    # The user request and each assistant response head are addressable; the
+    # The turn folds into its first response, as it streamed, and the
     # tool-return-only request emits no UIMessage.
-    assert ids == ["n1", "n2", "n4"]
+    assert [msg.id for msg in ui] == ["n1", "n2"]
 
-    # branchCount / branchIndex are derived from the sibling list.
-    answer = next(msg for msg in ui if msg.id == "n4")
+    answer = ui[1]
+    assert [part.type for part in answer.parts] == ["tool-t", "text"]
+    # Metadata merges as the client merges a continuation's.
     assert isinstance(answer.metadata, dict)
+    assert answer.metadata[REASONING_DURATIONS_KEY] == {"r1": [1000], "r2": [2400]}
+    # branchCount / branchIndex are derived from the sibling list.
     assert answer.metadata["branch"]["branchCount"] == 2
     assert answer.metadata["branch"]["branchIndex"] == 0
-    assert answer.metadata["branch"]["siblingIds"] == ["n4", "n5"]
+    assert answer.metadata["branch"]["siblingIds"] == ["n2", "n5"]

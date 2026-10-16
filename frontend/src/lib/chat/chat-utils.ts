@@ -110,7 +110,8 @@ export function isContextLengthError(error: string | undefined): boolean {
  * on reload (see the `*_KEY` constants in `backend/src/hivegent/server/vercel.py`).
  */
 export interface ChatMessageMetadata {
-  reasoningDurationsMs?: number[];
+  /** How long each reasoning part streamed, keyed by run in turn order. */
+  reasoningDurationsMs?: Record<string, number[]>;
   chatError?: string;
   /** What each pending call's `ApprovalRequired` carried, keyed by tool call id. */
   approvalMetadata?: Record<string, unknown>;

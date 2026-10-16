@@ -103,11 +103,12 @@ function AssistantMessage({ message, isLastMessage, streaming, retry }: Assistan
   );
   const toolData = indexToolData(message.parts);
   // The backend times each reasoning part in order, and the parts render in order.
+  const reasoningDurations = Object.values(message.metadata?.reasoningDurationsMs ?? {}).flat();
   let reasoningRank = 0;
   const renderPart = ({ part, index }: IndexedPart) => {
     const durationMs =
       part.type === "reasoning"
-        ? message.metadata?.reasoningDurationsMs?.[reasoningRank++]
+        ? reasoningDurations[reasoningRank++]
         : undefined;
 
     return (
