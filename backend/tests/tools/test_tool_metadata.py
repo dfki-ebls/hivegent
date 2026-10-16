@@ -1,4 +1,5 @@
 from pydantic import TypeAdapter
+from typing_extensions import TypeForm
 
 from hivegent.agents import explore_toolset
 from hivegent.agents.tools import python_toolset
@@ -19,7 +20,7 @@ from hivegent.tools.retrieval import SearchTypeArg
 from hivegent.tools.table import QueryTableTool, TableRowLimitArg
 
 
-def _description(annotation: object) -> str | None:
+def _description(annotation: TypeForm[object]) -> str | None:
     return TypeAdapter(annotation).json_schema().get("description")
 
 

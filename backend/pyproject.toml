@@ -79,6 +79,9 @@ file_template = "%%(year)d%%(month).2d%%(day).2d_%%(hour).2d%%(minute).2d_%%(rev
 # branch, which is where `multiprocessing.Pipe` yields `PipeConnection` and no
 # amount of local casting reads honestly.
 pythonPlatform = "Linux"
+# Pydantic's `TypeAdapter` takes a `TypeForm` (PEP 747), which pyright only
+# infers for type aliases and `Annotated` forms behind this flag.
+enableExperimentalFeatures = true
 
 [tool.logfire]
 # `configure_observability` is a no-op unless an OTLP endpoint or
