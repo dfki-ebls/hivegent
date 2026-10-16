@@ -10,6 +10,7 @@ import { Citation } from "@/components/Citation";
 import { HighlightedCode } from "@/components/HighlightedCode";
 import { ImageRef } from "@/components/ImageRef";
 import { STREAMDOWN_PLUGINS } from "@/components/chat/markdown/config";
+import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
 import { normalizeDisplayMath, normalizeMath } from "@/lib/normalize-math";
 import { normalizeVoidTags } from "@/lib/normalize-void-tags";
 
@@ -23,8 +24,9 @@ function FencedCode({ code, language }: { code: string; language: string }) {
     <HighlightedCode
       code={code}
       language={language}
-      title={language}
+      title={language || "text"}
       copyable={!incomplete}
+      size="default"
       className="my-4"
     />
   );
@@ -60,6 +62,7 @@ export function MarkdownText({ children }: { children: string }) {
 
   return (
     <Streamdown
+      isAnimating={useMessageStreaming()}
       className={CLASS_NAME}
       allowedTags={TEXT_ALLOWED_TAGS}
       components={TEXT_COMPONENTS}
@@ -76,6 +79,7 @@ export function ReasoningMarkdown({ children }: { children: string }) {
 
   return (
     <Streamdown
+      isAnimating={useMessageStreaming()}
       className={CLASS_NAME}
       components={REASONING_COMPONENTS}
       plugins={STREAMDOWN_PLUGINS}

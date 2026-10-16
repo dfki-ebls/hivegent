@@ -13,6 +13,7 @@ interface ComposerSelectProps<T extends string> {
   onChange: (value: T) => void;
   icon: LucideIcon;
   options: readonly { value: T; label: string; icon?: LucideIcon }[];
+  className?: string;
 }
 
 /** A menu in the composer's toolbar that picks one of *options*. */
@@ -21,15 +22,18 @@ export function ComposerSelect<T extends string>({
   onChange,
   icon: Icon,
   options,
+  className,
 }: ComposerSelectProps<T>) {
   const current = options.find((option) => option.value === value);
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<InputGroupButton size="sm" variant="outline" />}>
-        <Icon />
+      <DropdownMenuTrigger
+        render={<InputGroupButton size="sm" variant="outline" className={className} />}
+      >
+        <Icon data-icon="inline-start" />
         {current?.label}
-        <ChevronDownIcon />
+        <ChevronDownIcon data-icon="inline-end" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         <DropdownMenuRadioGroup

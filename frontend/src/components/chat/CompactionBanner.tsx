@@ -1,42 +1,36 @@
 import { HistoryIcon } from "lucide-react";
-import { Trans, useTranslation } from "react-i18next";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useTranslation } from "react-i18next";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 
 interface CompactionBannerProps {
-  compactedFrom: string | null;
+  compactedFrom: string;
   onNavigatePrevious: (previousId: string) => void;
 }
 
-// In-progress feedback lives in a toast (see use-compaction): it stays
-// visible regardless of scroll position and is scoped to the conversation
-// being compacted, unlike an inline banner driven by hook-instance state.
+/**
+ * The divider above a conversation compacted from another, which opens the previous one.
+ * In-progress feedback lives in a toast (see `use-compaction`), which stays visible whatever the scroll position.
+ */
 export function CompactionBanner({ compactedFrom, onNavigatePrevious }: CompactionBannerProps) {
   const { t } = useTranslation();
-
-  if (!compactedFrom) return null;
+  const label = t(($) => $.chat.compaction.continued);
 
   return (
-    <Alert>
-      <HistoryIcon className="h-4 w-4" />
-      <AlertTitle>{t(($) => $.chat.compaction.bannerTitle)}</AlertTitle>
-      <AlertDescription>
-        <p>
-          <Trans
-            i18nKey={($) => $.chat.compaction.bannerText}
-            components={{
-              previous: (
-                // The translated sentence supplies the button's text.
-                // oxlint-disable-next-line jsx-a11y/control-has-associated-label
-                <button
-                  type="button"
-                  onClick={() => onNavigatePrevious(compactedFrom)}
-                  className="underline hover:text-primary"
-                />
-              ),
-            }}
-          />
-        </p>
-      </AlertDescription>
-    </Alert>
+    <Marker
+      variant="separator"
+      className="hover:text-foreground"
+      render={
+        <button
+          type="button"
+          aria-label={label}
+          onClick={() => onNavigatePrevious(compactedFrom)}
+        />
+      }
+    >
+      <MarkerIcon>
+        <HistoryIcon />
+      </MarkerIcon>
+      <MarkerContent>{label}</MarkerContent>
+    </Marker>
   );
 }

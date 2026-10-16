@@ -2,20 +2,21 @@ import type { ChatStatus, FileUIPart } from "ai";
 import { ArrowUpIcon, ImagePlusIcon, SquareIcon } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 import { AttachedFiles, type ComposerFile } from "@/components/chat/composer/AttachedFiles";
+import { ChatTextarea } from "@/components/chat/composer/ChatTextarea";
 import { DictateButton } from "@/components/chat/composer/DictateButton";
 import { DocumentFilterBadges } from "@/components/chat/composer/DocumentFilterBadges";
 import { ModeSelector } from "@/components/chat/composer/ModeSelector";
 import { ReasoningEffortSelector } from "@/components/chat/composer/ReasoningEffortSelector";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { WithTooltip } from "@/components/TooltipButton";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
-  InputGroupTextarea,
 } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
+import { toast } from "@/components/ui/toast";
 import { keyPrefix } from "@/i18n";
 import { formatFileSize } from "@/i18n/format";
 import { featureFlags } from "@/lib/feature-flags";
@@ -81,17 +82,23 @@ export function Composer({
     const capacity = (limits?.max_count ?? Infinity) - files.length;
 
     if (accepted.length < incoming.length) {
-      toast.error(t(($) => $.attachmentErrors.accept));
+      toast.add({ type: "error", title: t(($) => $.attachmentErrors.accept) });
     }
 
     if (sized.length < accepted.length) {
-      toast.error(
-        t(($) => $.attachmentErrors.maxFileSize, { size: formatFileSize(limits?.max_bytes ?? 0) }),
-      );
+      toast.add({
+        type: "error",
+        title: t(($) => $.attachmentErrors.maxFileSize, {
+          size: formatFileSize(limits?.max_bytes ?? 0),
+        }),
+      });
     }
 
     if (sized.length > capacity) {
-      toast.error(t(($) => $.attachmentErrors.maxFiles, { count: limits?.max_count ?? 0 }));
+      toast.add({
+        type: "error",
+        title: t(($) => $.attachmentErrors.maxFiles, { count: limits?.max_count ?? 0 }),
+      });
     }
 
     const added = await Promise.all(
@@ -110,6 +117,9 @@ export function Composer({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!canSend) return;
+
     onSubmit(
       textareaRef.current?.value ?? "",
       files.map((file) => file.part),
@@ -147,16 +157,12 @@ export function Composer({
           files={files}
           onRemove={(id) => setFiles((prev) => prev.filter((file) => file.id !== id))}
         />
-        <InputGroupTextarea
+        <ChatTextarea
           ref={textareaRef}
           onChange={(event) => setHasText(event.target.value.trim() !== "")}
           placeholder={isStreaming ? t(($) => $.steerPlaceholder) : t(($) => $.placeholder)}
-          className="max-h-48 min-h-16 p-3"
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              if (canSend) event.currentTarget.form?.requestSubmit();
-            } else if (
+            if (
               event.key === "Backspace" &&
               event.currentTarget.value === "" &&
               files.length > 0
@@ -174,21 +180,22 @@ export function Composer({
           }}
         />
         <InputGroupAddon align="block-end" className="flex-wrap">
-          <InputGroupButton
-            size="icon-sm"
-            title={t(($) => $.attachImageHint)}
-            aria-label={t(($) => $.attachImage)}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <ImagePlusIcon />
-          </InputGroupButton>
+          <WithTooltip label={t(($) => $.attachImageHint)}>
+            <InputGroupButton size="icon-sm" onClick={() => fileInputRef.current?.click()}>
+              <ImagePlusIcon />
+            </InputGroupButton>
+          </WithTooltip>
           <DictateButton
             disabled={status !== "ready"}
             transcribe={onAudioRecorded}
             onText={dictate}
           />
           <SettingsDialog />
-          <ReasoningEffortSelector value={reasoningEffort} onChange={onReasoningEffortChange} />
+          <ReasoningEffortSelector
+            value={reasoningEffort}
+            onChange={onReasoningEffortChange}
+            className="ml-auto"
+          />
           {featureFlags.agentModes && (
             <ModeSelector value={agentMode} onChange={onAgentModeChange} />
           )}
@@ -197,7 +204,7 @@ export function Composer({
             type={isStreaming ? "button" : "submit"}
             size="icon-sm"
             variant="default"
-            className="ml-auto rounded-full"
+            className="rounded-full"
             aria-label={isStreaming ? t(($) => $.stop) : t(($) => $.submit)}
             disabled={!isStreaming && !canSend}
             onClick={isStreaming ? onStop : undefined}

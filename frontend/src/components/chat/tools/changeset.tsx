@@ -1,16 +1,23 @@
-import { ArrowRightIcon, FolderIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  ArrowRightLeftIcon,
+  FilePenIcon,
+  FilePlusIcon,
+  FileXIcon,
+  FolderInputIcon,
+  FolderPlusIcon,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
-import { HighlightedCode } from "@/components/HighlightedCode";
-import { PathCode } from "@/components/ToolDisplay";
-import { Badge } from "@/components/ui/badge";
+import { TraceStep, TraceStepCollapsible } from "@/components/chat/TraceStep";
+import { CodeBlock, CodeBlockContent, CodeBlockLine } from "@/components/ui/code-block";
+import { Trace } from "@/components/ui/trace";
 import { keyPrefix } from "@/i18n";
-import { PathMoveSchema, type PathMove } from "@/lib/types";
+import { PathMoveSchema } from "@/lib/types";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.changeset);
 
 const FileDiffSchema = z.object({ path: z.string(), diff: z.string() });
+type FileDiff = z.infer<typeof FileDiffSchema>;
 
 /**
  * Mirrors `ChangesetSummary` in `backend/src/hivegent/changes.py`,
@@ -27,114 +34,85 @@ export type ChangesetSummary = z.infer<typeof ChangesetSummarySchema>;
 
 /** How many changes *summary* lists, as `ChangesetSummary.count` counts them on the server. */
 export function changeCount(summary: ChangesetSummary): number {
-  return (
-    summary.creates.length +
-    summary.updates.length +
-    summary.moves.length +
-    summary.deletes.length +
-    summary.mkdirs.length
-  );
+  return Object.values(summary).reduce((count, changes) => count + changes.length, 0);
 }
 
-function Group({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="space-y-1">
-      <p className="text-muted-foreground text-xs">{title}</p>
-      {children}
-    </div>
-  );
+/** The hunks of a unified diff, without the file headers above the first one. */
+function hunkLines(diff: string): string[] {
+  const lines = diff.replace(/\n$/, "").split("\n");
+  const start = lines.findIndex((line) => line.startsWith("@@"));
+
+  return start === -1 ? lines : lines.slice(start);
 }
 
-/** Each file with its unified diff, or its path alone when the diff is not known yet. */
-function Diffs({ files }: { files: ChangesetSummary["creates"] }) {
-  return files.map((file) =>
-    file.diff ? (
-      <HighlightedCode
-        key={file.path}
-        code={file.diff}
-        language="diff"
-        title={<PathCode>{file.path}</PathCode>}
-      />
+function DiffLines({ lines }: { lines: string[] }) {
+  return lines.map((line, index) =>
+    line.startsWith("@@") ? (
+      <CodeBlockLine key={index} className="text-muted-foreground">
+        {line}
+      </CodeBlockLine>
     ) : (
-      <p key={file.path}>
-        <PathCode>{file.path}</PathCode>
-      </p>
+      <CodeBlockLine
+        key={index}
+        variant={line.startsWith("+") ? "added" : line.startsWith("-") ? "removed" : "default"}
+      >
+        {line.slice(1)}
+      </CodeBlockLine>
     ),
   );
 }
 
-function PathList({ paths }: { paths: readonly string[] }) {
-  return (
-    <ul className="space-y-1">
-      {paths.map((path) => (
-        <li key={path}>
-          <PathCode>{path}</PathCode>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function MoveRow({ move }: { move: PathMove }) {
+/** A created or changed file, which opens to its diff once the diff is known. */
+function FileChange({ file, created }: { file: FileDiff; created: boolean }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
+  const lines = hunkLines(file.diff);
+  const additions = lines.filter((line) => line.startsWith("+")).length;
+  const deletions = lines.filter((line) => line.startsWith("-")).length;
+  const path = file.path;
 
   return (
-    <li className="flex flex-wrap items-center gap-x-2">
-      {move.is_dir && (
-        <>
-          <FolderIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-          <span className="sr-only">{t(($) => $.folder)}</span>
-        </>
+    <TraceStepCollapsible
+      icon={created ? <FilePlusIcon /> : <FilePenIcon />}
+      title={created ? t(($) => $.created, { path }) : t(($) => $.updated, { path })}
+      description={file.diff ? `+${additions} −${deletions}` : undefined}
+    >
+      {file.diff && (
+        <CodeBlock size="sm">
+          <CodeBlockContent className="max-h-80 scroll-fade-y">
+            <DiffLines lines={lines} />
+          </CodeBlockContent>
+        </CodeBlock>
       )}
-      <PathCode>{move.source}</PathCode>
-      <ArrowRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-      <PathCode>{move.destination}</PathCode>
-      {move.replaces && <Badge variant="secondary">{t(($) => $.replaces)}</Badge>}
-    </li>
+    </TraceStepCollapsible>
   );
 }
 
-function MoveList({ moves }: { moves: readonly PathMove[] }) {
-  return (
-    <ul className="space-y-1">
-      {moves.map((move) => (
-        <MoveRow key={move.source} move={move} />
-      ))}
-    </ul>
-  );
-}
-
-/** Every change of one changeset: moves, new and changed files with their diffs, deletions, then new folders. */
+/** Every change of one changeset as a line each: moves, new and changed files, deletions, then new folders. */
 export function ChangesetView({ summary }: { summary: ChangesetSummary }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   return (
-    <div className="space-y-3">
-      {summary.moves.length > 0 && (
-        <Group title={t(($) => $.moves)}>
-          <MoveList moves={summary.moves} />
-        </Group>
-      )}
-      {summary.creates.length > 0 && (
-        <Group title={t(($) => $.creates)}>
-          <Diffs files={summary.creates} />
-        </Group>
-      )}
-      {summary.updates.length > 0 && (
-        <Group title={t(($) => $.updates)}>
-          <Diffs files={summary.updates} />
-        </Group>
-      )}
-      {summary.deletes.length > 0 && (
-        <Group title={t(($) => $.deletes)}>
-          <PathList paths={summary.deletes} />
-        </Group>
-      )}
-      {summary.mkdirs.length > 0 && (
-        <Group title={t(($) => $.mkdirs)}>
-          <PathList paths={summary.mkdirs} />
-        </Group>
-      )}
-    </div>
+    <Trace>
+      {summary.moves.map((move) => (
+        <TraceStep
+          key={move.source}
+          icon={move.is_dir ? <FolderInputIcon /> : <ArrowRightLeftIcon />}
+          title={t(($) => $.moved, { source: move.source, destination: move.destination })}
+          description={move.replaces ? t(($) => $.replaces) : undefined}
+        />
+      ))}
+      {summary.creates.map((file) => (
+        <FileChange key={file.path} file={file} created />
+      ))}
+      {summary.updates.map((file) => (
+        <FileChange key={file.path} file={file} created={false} />
+      ))}
+      {summary.deletes.map((path) => (
+        <TraceStep key={path} icon={<FileXIcon />} title={t(($) => $.deleted, { path })} />
+      ))}
+      {summary.mkdirs.map((path) => (
+        <TraceStep key={path} icon={<FolderPlusIcon />} title={t(($) => $.mkdir, { path })} />
+      ))}
+    </Trace>
   );
 }

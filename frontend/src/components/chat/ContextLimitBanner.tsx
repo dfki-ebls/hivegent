@@ -1,6 +1,7 @@
-import { Minimize2 } from "lucide-react";
+import { Minimize2Icon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { ChatAlert } from "@/components/chat/ChatAlert";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import { Button } from "@/components/ui/button";
 import { keyPrefix } from "@/i18n";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.contextLimit);
@@ -15,15 +16,18 @@ export function ContextLimitBanner({ disabled, onCompact, onDismiss }: ContextLi
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   return (
-    <ChatAlert
-      icon={Minimize2}
+    <ErrorAlert
+      icon={<Minimize2Icon />}
       title={t(($) => $.title)}
-      message={t(($) => $.message)}
-      actionIcon={Minimize2}
-      actionLabel={t(($) => $.action)}
-      actionDisabled={disabled}
-      onAction={onCompact}
       onDismiss={onDismiss}
-    />
+      action={
+        <Button variant="outline" size="sm" onClick={onCompact} disabled={disabled}>
+          <Minimize2Icon data-icon="inline-start" />
+          {t(($) => $.action)}
+        </Button>
+      }
+    >
+      {t(($) => $.message)}
+    </ErrorAlert>
   );
 }

@@ -40,8 +40,8 @@ describe("ToolFallback", () => {
     );
     fireEvent.click(screen.getByText("Write Document"));
 
-    expect(screen.getByRole("group", { name: "Write Document" }).textContent).toBe(
-      "DeniedYour note: Wrong folder.",
+    expect(screen.getByText("Wrong folder.", { exact: false }).textContent).toBe(
+      "Denied · Your note: Wrong folder.",
     );
   });
 
@@ -55,7 +55,9 @@ describe("ToolFallback", () => {
     );
     fireEvent.click(screen.getByText("Write Document"));
 
-    expect(screen.getByText("Wrote '~/notes.md'.").tagName).toBe("PRE");
-    expect(screen.getByText(note).tagName).toBe("PRE");
+    const result = screen.getByText("Wrote '~/notes.md'.").closest("pre");
+
+    expect(result).toBeTruthy();
+    expect(screen.getByText(note).closest("pre")).not.toBe(result);
   });
 });

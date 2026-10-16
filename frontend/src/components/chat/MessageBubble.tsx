@@ -1,12 +1,17 @@
 import type { ChatStatus } from "ai";
-import { CopyIcon, PencilIcon, RefreshCcwIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckIcon, CopyIcon, PencilIcon, RefreshCcwIcon } from "lucide-react";
+import { memo, type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApprovalScope } from "@/components/chat/ApprovalScope";
-import { MessagePart } from "@/components/chat/MessagePart";
-import { Button } from "@/components/ui/button";
+import { type ChatPart, MessagePart, partLayout } from "@/components/chat/MessagePart";
+import { ImagePart } from "@/components/chat/parts/ImagePart";
+import { UserTextPart } from "@/components/chat/parts/UserTextPart";
+import { TooltipButton } from "@/components/TooltipButton";
+import { AttachmentGroup } from "@/components/ui/attachment";
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { toast } from "@/components/ui/toast";
+import { Trace } from "@/components/ui/trace";
+import { MessageStreamingProvider } from "@/hooks/chat/use-message-streaming";
 import {
   type ChatMessage,
   isChatBusy,
@@ -14,34 +19,122 @@ import {
   pendingApprovalIds,
 } from "@/lib/chat/chat-utils";
 import { indexToolData } from "@/lib/chat/tool-part";
+import { stripVoidTags } from "@/lib/normalize-void-tags";
 
 const MS_IN_S = 1000;
 
-function reasoningDurationSeconds(
-  metadata: ChatMessage["metadata"],
-  reasoningIndex: number,
-): number | undefined {
-  const durationMs = metadata?.reasoningDurationsMs?.[reasoningIndex];
+/** Copies the text *getText* builds on click, and confirms it with a check for two seconds. */
+function CopyAction({ getText }: { getText: () => string }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
 
-  return typeof durationMs === "number" ? Math.ceil(durationMs / MS_IN_S) : undefined;
-}
+  useEffect(() => {
+    if (!copied) return;
 
-interface MessageActionProps {
-  label: string;
-  onClick: () => void;
-  children: ReactNode;
-}
+    const timeout = setTimeout(() => setCopied(false), 2000);
 
-function MessageAction({ label, onClick, children }: MessageActionProps) {
+    return () => clearTimeout(timeout);
+  }, [copied]);
+
+  // Async, so a browser without the clipboard API outside a secure context rejects rather than throws.
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(getText());
+      setCopied(true);
+    } catch {
+      toast.add({ type: "error", title: t(($) => $.common.states.copyFailed) });
+    }
+  };
+
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} />}
-      >
-        {children}
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    <TooltipButton label={t(($) => $.common.actions.copy)} onClick={() => void copy()}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </TooltipButton>
+  );
+}
+
+/** A reply's text as markdown: its paragraphs between steps kept apart, its citation and image tags dropped. */
+function replyMarkdown(message: ChatMessage): string {
+  return message.parts
+    .flatMap((part) => (part.type === "text" && part.text.trim() ? [stripVoidTags(part.text).trim()] : []))
+    .join("\n\n");
+}
+
+interface IndexedPart {
+  part: ChatPart;
+  index: number;
+}
+
+type Block = { kind: "steps"; parts: IndexedPart[] } | ({ kind: "block" } & IndexedPart);
+
+/** The parts of a reply, where each run of steps between two blocks forms one trace. */
+function layoutBlocks(parts: ChatPart[], streaming: boolean): Block[] {
+  const blocks: Block[] = [];
+
+  parts.forEach((part, index) => {
+    const layout = partLayout(part, streaming);
+    const last = blocks.at(-1);
+
+    if (layout === "block") {
+      blocks.push({ kind: "block", part, index });
+    } else if (layout === "step" && last?.kind === "steps") {
+      last.parts.push({ part, index });
+    } else if (layout === "step") {
+      blocks.push({ kind: "steps", parts: [{ part, index }] });
+    }
+  });
+
+  return blocks;
+}
+
+interface AssistantMessageProps {
+  message: ChatMessage;
+  isLastMessage: boolean;
+  streaming: boolean;
+  footer: ReactNode;
+}
+
+function AssistantMessage({ message, isLastMessage, streaming, footer }: AssistantMessageProps) {
+  const toolData = indexToolData(message.parts);
+  // The backend times each reasoning part in order, and the parts render in order.
+  let reasoningRank = 0;
+  const renderPart = ({ part, index }: IndexedPart) => {
+    const durationMs =
+      part.type === "reasoning"
+        ? message.metadata?.reasoningDurationsMs?.[reasoningRank++]
+        : undefined;
+
+    return (
+      <MessagePart
+        key={index}
+        part={part}
+        toolData={toolData}
+        reasoningDuration={durationMs === undefined ? undefined : Math.ceil(durationMs / MS_IN_S)}
+      />
+    );
+  };
+
+  return (
+    <Message>
+      <MessageContent>
+        <MessageStreamingProvider value={streaming}>
+          {/* Only the last message holds requests that are still answerable. */}
+          <ApprovalScope
+            pending={isLastMessage ? pendingApprovalIds(message) : []}
+            metadata={message.metadata?.approvalMetadata}
+          >
+            {layoutBlocks(message.parts, streaming).map((block) =>
+              block.kind === "steps" ? (
+                <Trace key={block.parts[0].index}>{block.parts.map(renderPart)}</Trace>
+              ) : (
+                renderPart(block)
+              ),
+            )}
+          </ApprovalScope>
+        </MessageStreamingProvider>
+        {footer}
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -56,7 +149,11 @@ interface MessageBubbleProps {
   onRegenerate: () => void;
 }
 
-export function MessageBubble({
+/**
+ * One turn: the user's text in a bubble with its images, or the agent's reply with its steps.
+ * Memoized, so a streamed chunk re-renders only the message it lands in.
+ */
+export const MessageBubble = memo(function MessageBubble({
   message,
   isLastMessage,
   status,
@@ -67,74 +164,73 @@ export function MessageBubble({
   onRegenerate,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
-  const isAssistant = message.role === "assistant";
-  const isUser = message.role === "user";
-  const isStreaming = isLastMessage && isChatBusy(status);
-  const canRetry = isAssistant && isLastMessage && status === "ready";
-  const canEdit = isUser && (status === "ready" || status === "error") && editingId !== message.id;
-  const parts = message.parts ?? [];
-  const toolData = indexToolData(parts);
+  const streaming = isLastMessage && isChatBusy(status);
+  const editing = editingId === message.id;
   const canCopy =
-    parts.some((part) => part.type === "text" && part.text !== "") &&
-    !isStreaming &&
-    editingId !== message.id;
-  let reasoningIndex = 0;
+    !streaming && !editing && message.parts.some((part) => part.type === "text" && part.text.trim());
+
+  if (message.role === "user") {
+    const text = joinTextParts(message.parts) ?? "";
+    const images = message.parts.flatMap((part) =>
+      part.type === "file" && part.mediaType.startsWith("image/") ? [part] : [],
+    );
+    const canEdit = (status === "ready" || status === "error") && !editing;
+
+    return (
+      <Message align="end">
+        <MessageContent>
+          {images.length > 0 && (
+            <AttachmentGroup className="flex-wrap justify-end">
+              {images.map((image, index) => (
+                <ImagePart key={index} url={image.url} filename={image.filename} />
+              ))}
+            </AttachmentGroup>
+          )}
+          {(text || editing) && (
+            <UserTextPart
+              text={text}
+              isEditing={editing}
+              onCancelEdit={onCancelEdit}
+              onSubmitEdit={(newText) => onSubmitEdit(message.id, newText)}
+            />
+          )}
+          {(canCopy || canEdit) && (
+            <MessageFooter>
+              {canCopy && <CopyAction getText={() => text} />}
+              {canEdit && (
+                <TooltipButton
+                  label={t(($) => $.common.actions.edit)}
+                  onClick={() => onSetEditing(message.id)}
+                >
+                  <PencilIcon />
+                </TooltipButton>
+              )}
+            </MessageFooter>
+          )}
+        </MessageContent>
+      </Message>
+    );
+  }
+
+  const canRetry = isLastMessage && status === "ready";
 
   return (
-    <Message align={isUser ? "end" : "start"}>
-      <MessageContent>
-        {/* Only the last message holds requests that are still answerable. */}
-        <ApprovalScope
-          pending={isAssistant && isLastMessage ? pendingApprovalIds(message) : []}
-          metadata={message.metadata?.approvalMetadata}
-        >
-          {parts.map((part, partIndex) => {
-            const reasoningDuration =
-              part.type === "reasoning"
-                ? reasoningDurationSeconds(message.metadata, reasoningIndex++)
-                : undefined;
-
-            return (
-              <MessagePart
-                key={partIndex}
-                toolData={toolData}
-                part={part}
-                reasoningDuration={reasoningDuration}
-                isUserMessage={isUser}
-                messageId={message.id}
-                isEditing={editingId === message.id}
-                onCancelEdit={onCancelEdit}
-                onSubmitEdit={onSubmitEdit}
-              />
-            );
-          })}
-        </ApprovalScope>
-        {(canCopy || canEdit || canRetry) && (
-          <MessageFooter>
-            {canCopy && (
-              <MessageAction
-                onClick={() => void navigator.clipboard.writeText(joinTextParts(parts) ?? "")}
-                label={t(($) => $.common.actions.copy)}
-              >
-                <CopyIcon />
-              </MessageAction>
-            )}
-            {canEdit && (
-              <MessageAction
-                onClick={() => onSetEditing(message.id)}
-                label={t(($) => $.common.actions.edit)}
-              >
-                <PencilIcon />
-              </MessageAction>
-            )}
+    <AssistantMessage
+      message={message}
+      isLastMessage={isLastMessage}
+      streaming={streaming}
+      footer={
+        (canCopy || canRetry) && (
+          <MessageFooter className="px-0">
+            {canCopy && <CopyAction getText={() => replyMarkdown(message)} />}
             {canRetry && (
-              <MessageAction onClick={onRegenerate} label={t(($) => $.common.actions.retry)}>
+              <TooltipButton label={t(($) => $.common.actions.retry)} onClick={onRegenerate}>
                 <RefreshCcwIcon />
-              </MessageAction>
+              </TooltipButton>
             )}
           </MessageFooter>
-        )}
-      </MessageContent>
-    </Message>
+        )
+      }
+    />
   );
-}
+});

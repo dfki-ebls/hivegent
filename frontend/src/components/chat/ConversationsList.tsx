@@ -1,60 +1,30 @@
-import { CheckIcon, MessageSquare, PencilIcon, SparklesIcon, TrashIcon, XIcon } from "lucide-react";
-import { type Ref, useEffect, useState } from "react";
+import { CheckIcon, MessagesSquareIcon, PencilIcon, SparklesIcon, TrashIcon, XIcon } from "lucide-react";
+import { type KeyboardEvent, type Ref, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { keyPrefix } from "@/i18n";
 import { buildAuxLlmConfig } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { useConversationsStore } from "@/stores/conversations-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { EmptyState } from "@/components/EmptyState";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { EmptyState, LoadingState } from "@/components/EmptyState";
+import { REVEAL_ON_HOVER } from "@/components/RowButtons";
 import { SearchInput } from "@/components/SearchInput";
+import { TooltipButton } from "@/components/TooltipButton";
+import { Button } from "@/components/ui/button";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item";
+import { Spinner } from "@/components/ui/spinner";
+import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { useFuzzySearch } from "@/hooks/use-fuzzy-search";
 import { formatRelativeTime } from "@/i18n/format";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.conversations);
-
-// --- State display components ---
-
-function LoadingState() {
-  const { t } = useTranslation();
-
-  return (
-    <div className="flex h-full items-center justify-center text-muted-foreground">
-      {t(($) => $.chat.conversations.loading)}
-    </div>
-  );
-}
-
-interface ErrorStateProps {
-  message: string;
-  onRetry: () => void;
-}
-
-function ErrorState({ message, onRetry }: ErrorStateProps) {
-  const { t } = useTranslation();
-
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-      <p className="text-sm text-destructive">{message}</p>
-      <Button variant="outline" size="sm" onClick={onRetry}>
-        {t(($) => $.common.actions.retry)}
-      </Button>
-    </div>
-  );
-}
-
-// --- Inline title editor ---
 
 interface TitleEditorProps {
   value: string;
@@ -65,102 +35,45 @@ interface TitleEditorProps {
 
 function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
   const { t } = useTranslation();
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter") onSave();
     else if (e.key === "Escape") onCancel();
   };
 
   return (
-    <div className="flex items-center gap-1">
-      <Input
+    <InputGroup>
+      <InputGroupInput
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
         aria-label={t(($) => $.chat.conversations.titleLabel)}
-        className="h-6 text-sm"
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- the field replaces the title the user asked to edit
+        autoFocus
       />
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={onSave}
-        title={t(($) => $.common.actions.save)}
-      >
-        <CheckIcon className="h-3 w-3" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={onCancel}
-        title={t(($) => $.common.actions.cancel)}
-      >
-        <XIcon className="h-3 w-3" />
-      </Button>
-    </div>
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton
+          size="icon-xs"
+          aria-label={t(($) => $.common.actions.save)}
+          onClick={onSave}
+        >
+          <CheckIcon />
+        </InputGroupButton>
+        <InputGroupButton
+          size="icon-xs"
+          aria-label={t(($) => $.common.actions.cancel)}
+          onClick={onCancel}
+        >
+          <XIcon />
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
   );
 }
-
-// --- Conversation action buttons ---
-
-interface ConversationActionsProps {
-  isGenerating: boolean;
-  onEdit: () => void;
-  onGenerate: () => void;
-  onDelete: () => void;
-}
-
-function ConversationActions({
-  isGenerating,
-  onEdit,
-  onGenerate,
-  onDelete,
-}: ConversationActionsProps) {
-  const { t } = useTranslation(undefined, T_OPTIONS);
-
-  return (
-    // Faded rather than the `hidden group-hover:inline-flex` the document and
-    // directory rows use, because `display: none` drops the buttons out of the
-    // tab order.  Pointer events are withheld to match, so a faded button
-    // cannot take a click meant for the row button beside it.
-    <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={onEdit}
-        title={t(($) => $.editTitle)}
-      >
-        <PencilIcon className="h-3 w-3" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        onClick={onGenerate}
-        disabled={isGenerating}
-        title={t(($) => $.generateTitle)}
-      >
-        <SparklesIcon className={`h-3 w-3 ${isGenerating ? "animate-pulse" : ""}`} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6 text-destructive hover:text-destructive"
-        onClick={onDelete}
-        title={t(($) => $.delete)}
-      >
-        <TrashIcon className="h-3 w-3" />
-      </Button>
-    </div>
-  );
-}
-
-// --- Conversation item ---
 
 // Centers the open conversation in its scrolling list once its row mounts.
-function centerInList(row: HTMLDivElement | null): void {
-  const list = row?.parentElement;
+function centerInList(button: HTMLButtonElement | null): void {
+  const row = button?.closest<HTMLElement>("[data-slot=item]");
+  const list = row?.parentElement?.parentElement;
   if (!row || !list) return;
 
   const offset = row.getBoundingClientRect().top - list.getBoundingClientRect().top;
@@ -168,7 +81,7 @@ function centerInList(row: HTMLDivElement | null): void {
 }
 
 interface ConversationItemProps {
-  ref?: Ref<HTMLDivElement>;
+  ref?: Ref<HTMLButtonElement>;
   title: string;
   updatedAt: string;
   isActive: boolean;
@@ -178,6 +91,11 @@ interface ConversationItemProps {
   onGenerateTitle: () => Promise<void>;
 }
 
+/**
+ * One conversation, whose title opens it across the whole row.
+ * The actions fade in on hover or focus rather than being hidden, which would drop them out of the tab order,
+ * and take no clicks while faded, so a click meant for the row is never theirs.
+ */
 function ConversationItem({
   ref,
   title,
@@ -188,7 +106,7 @@ function ConversationItem({
   onUpdateTitle,
   onGenerateTitle,
 }: ConversationItemProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(undefined, T_OPTIONS);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -197,16 +115,13 @@ function ConversationItem({
     if (editValue.trim() !== title) {
       onUpdateTitle(editValue.trim());
     }
-    setIsEditing(false);
-  };
 
-  const handleCancelEdit = () => {
-    setEditValue(title);
     setIsEditing(false);
   };
 
   const handleGenerateTitle = async () => {
     setIsGenerating(true);
+
     try {
       await onGenerateTitle();
     } finally {
@@ -214,66 +129,67 @@ function ConversationItem({
     }
   };
 
-  const handleStartEdit = () => {
-    setEditValue(title);
-    setIsEditing(true);
-  };
-
-  // Shared by both branches so the editor does not fork the row's chrome.
-  const icon = <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />;
-  const timestamp = (
-    <p className="mt-1 text-xs text-muted-foreground">{formatRelativeTime(updatedAt)}</p>
-  );
-
   return (
-    <div
-      ref={ref}
-      className={`group flex w-full items-start gap-2 rounded-lg border p-3 transition-colors ${
-        isActive
-          ? "border-primary bg-primary/5"
-          : "border-transparent hover:border-border hover:bg-muted/50"
-      }`}
+    <Item
+      render={<li />}
+      size="sm"
+      variant={isActive ? "muted" : "default"}
+      className="group/row relative hover:bg-muted/50"
     >
-      {isEditing ? (
-        // The editor's <Input> cannot sit inside the row button, so this branch
-        // drops the button rather than nesting an interactive element.
-        <>
-          {icon}
-          <div className="min-w-0 flex-1">
-            <TitleEditor
-              value={editValue}
-              onChange={setEditValue}
-              onSave={handleSaveEdit}
-              onCancel={handleCancelEdit}
-            />
-            {timestamp}
-          </div>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-start gap-2 text-left cursor-pointer"
-            aria-current={isActive ? "page" : undefined}
-            onClick={onSelect}
-          >
-            {icon}
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                {title || t(($) => $.chat.conversations.untitled)}
-              </p>
-              {timestamp}
-            </div>
-          </button>
-          <ConversationActions
-            isGenerating={isGenerating}
-            onEdit={handleStartEdit}
-            onGenerate={handleGenerateTitle}
-            onDelete={onDelete}
+      <ItemContent className="min-w-0">
+        {isEditing ? (
+          <TitleEditor
+            value={editValue}
+            onChange={setEditValue}
+            onSave={handleSaveEdit}
+            onCancel={() => setIsEditing(false)}
           />
-        </>
+        ) : (
+          <ItemTitle className="w-full">
+            <button
+              ref={ref}
+              type="button"
+              className="truncate text-left outline-none after:absolute after:inset-0 after:rounded-2xl focus-visible:after:ring-3 focus-visible:after:ring-ring/30"
+              aria-current={isActive ? "page" : undefined}
+              onClick={onSelect}
+            >
+              {title || t(($) => $.untitled)}
+            </button>
+          </ItemTitle>
+        )}
+        <ItemDescription className="text-xs">{formatRelativeTime(updatedAt)}</ItemDescription>
+      </ItemContent>
+      {!isEditing && (
+        <ItemActions className={cn("relative", REVEAL_ON_HOVER)}>
+          <TooltipButton
+            label={t(($) => $.editTitle)}
+            size="icon-xs"
+            onClick={() => {
+              setEditValue(title);
+              setIsEditing(true);
+            }}
+          >
+            <PencilIcon />
+          </TooltipButton>
+          <TooltipButton
+            label={t(($) => $.generateTitle)}
+            size="icon-xs"
+            disabled={isGenerating}
+            onClick={handleGenerateTitle}
+          >
+            {isGenerating ? <Spinner /> : <SparklesIcon />}
+          </TooltipButton>
+          <TooltipButton
+            label={t(($) => $.delete)}
+            size="icon-xs"
+            destructive
+            onClick={onDelete}
+          >
+            <TrashIcon />
+          </TooltipButton>
+        </ItemActions>
       )}
-    </div>
+    </Item>
   );
 }
 
@@ -289,19 +205,17 @@ export function ConversationsList({
   onActiveConversationDeleted,
 }: ConversationsListProps) {
   const { t } = useTranslation();
-  const {
-    conversations,
-    isLoading,
-    error,
-    fetchConversations,
-    deleteConversation,
-    updateTitle,
-    generateTitle,
-  } = useConversationsStore();
+  const conversations = useConversationsStore((state) => state.conversations);
+  const isLoading = useConversationsStore((state) => state.isLoading);
+  const error = useConversationsStore((state) => state.error);
+  const fetchConversations = useConversationsStore((state) => state.fetchConversations);
+  const deleteConversation = useConversationsStore((state) => state.deleteConversation);
+  const updateTitle = useConversationsStore((state) => state.updateTitle);
+  const generateTitle = useConversationsStore((state) => state.generateTitle);
+  const overrides = useSettingsStore((state) => state.overrides);
 
-  const { overrides } = useSettingsStore();
-
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
+  const deletion = useDialogTarget({ id: "", title: "" });
+  const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const matches = useFuzzySearch(conversations, searchQuery, "title");
 
@@ -310,13 +224,19 @@ export function ConversationsList({
   }, [fetchConversations]);
 
   const confirmDelete = async () => {
-    if (!pendingDelete) return;
     // Deleting the open conversation leaves the chat view bound to an id the
     // server no longer knows; start a fresh draft so its stale content and
     // dangling route don't linger.
-    const wasActive = pendingDelete.id === currentConversationId;
-    await deleteConversation(pendingDelete.id);
-    setPendingDelete(null);
+    const wasActive = deletion.target.id === currentConversationId;
+    setDeleting(true);
+
+    try {
+      await deleteConversation(deletion.target.id);
+    } finally {
+      setDeleting(false);
+      deletion.setOpen(false);
+    }
+
     if (wasActive) onActiveConversationDeleted();
   };
 
@@ -326,16 +246,29 @@ export function ConversationsList({
 
   // A refetch keeps the cached list on screen,
   // so it neither flickers nor loses its scroll position.
-  if (isLoading && conversations.length === 0) return <LoadingState />;
-  if (error) return <ErrorState message={error} onRetry={fetchConversations} />;
-  if (conversations.length === 0)
+  if (isLoading && conversations.length === 0) {
+    return <LoadingState className="h-full" />;
+  }
+
+  if (error) {
+    return (
+      <EmptyState title={t(($) => $.common.states.error)} description={error} destructive>
+        <Button variant="outline" size="sm" onClick={() => void fetchConversations()}>
+          {t(($) => $.common.actions.retry)}
+        </Button>
+      </EmptyState>
+    );
+  }
+
+  if (conversations.length === 0) {
     return (
       <EmptyState
-        icon={<MessageSquare className="h-8 w-8" />}
+        icon={<MessagesSquareIcon />}
         title={t(($) => $.chat.conversations.emptyTitle)}
         description={t(($) => $.chat.conversations.emptyDescription)}
       />
     );
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -347,51 +280,47 @@ export function ConversationsList({
         />
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {matches.length === 0 ? (
           <EmptyState
-            icon={<MessageSquare className="h-8 w-8" />}
+            icon={<MessagesSquareIcon />}
             title={t(($) => $.chat.conversations.noMatchesTitle)}
             description={t(($) => $.chat.conversations.noMatchesDescription)}
           />
         ) : (
-          matches.map((conversation) => (
-            <ConversationItem
-              key={conversation.id}
-              ref={conversation.id === currentConversationId ? centerInList : undefined}
-              title={conversation.title}
-              updatedAt={conversation.updated_at}
-              isActive={conversation.id === currentConversationId}
-              onSelect={() => onConversationSelect(conversation.id)}
-              onDelete={() => setPendingDelete({ id: conversation.id, title: conversation.title })}
-              onUpdateTitle={(title) => updateTitle(conversation.id, title)}
-              onGenerateTitle={() => handleGenerateTitle(conversation.id)}
-            />
-          ))
+          <ul className="flex flex-col gap-2.5">
+            {matches.map((conversation) => (
+              <ConversationItem
+                key={conversation.id}
+                ref={conversation.id === currentConversationId ? centerInList : undefined}
+                title={conversation.title}
+                updatedAt={conversation.updated_at}
+                isActive={conversation.id === currentConversationId}
+                onSelect={() => onConversationSelect(conversation.id)}
+                onDelete={() =>
+                  deletion.show({ id: conversation.id, title: conversation.title })
+                }
+                onUpdateTitle={(title) => updateTitle(conversation.id, title)}
+                onGenerateTitle={() => handleGenerateTitle(conversation.id)}
+              />
+            ))}
+          </ul>
         )}
       </div>
 
-      <AlertDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => !open && setPendingDelete(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t(($) => $.chat.conversations.deleteTitle)}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDelete?.title
-                ? t(($) => $.chat.conversations.deleteNamed, { title: pendingDelete.title })
-                : t(($) => $.chat.conversations.deleteUnnamed)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t(($) => $.common.actions.cancel)}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
-              {t(($) => $.common.actions.delete)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={deletion.open}
+        onOpenChange={deletion.setOpen}
+        title={t(($) => $.chat.conversations.deleteTitle)}
+        description={
+          deletion.target.title
+            ? t(($) => $.chat.conversations.deleteNamed, { title: deletion.target.title })
+            : t(($) => $.chat.conversations.deleteUnnamed)
+        }
+        confirmLabel={t(($) => $.common.actions.delete)}
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
+      />
     </div>
   );
 }

@@ -1,23 +1,28 @@
-import { BrainIcon, type LucideIcon, MessageSquareIcon, WrenchIcon } from "lucide-react";
-import { useState } from "react";
+import { BrainIcon, MessageSquareIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { TraceStep } from "@/components/chat/TraceStep";
-import { Trace } from "@/components/ui/trace";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
-import { ToolCard } from "@/components/chat/tools/ToolCard";
-import { ToolPre, ToolResult, ToolSection } from "@/components/ToolDisplay";
+import { TraceStep } from "@/components/chat/TraceStep";
+import { ToolCard, toolLineState } from "@/components/chat/tools/ToolCard";
+import { ToolCode } from "@/components/chat/tools/display";
+import { ToolIcon } from "@/components/chat/tools/icons";
+import { Trace } from "@/components/ui/trace";
+import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
 import type { SubagentStep } from "@/lib/chat/subagent";
 import { prettyPrint, type ToolPart, toolDisplayName } from "@/lib/chat/tool-part";
 
-function describeStep(t: TFunction, step: SubagentStep): { icon: LucideIcon; label: string } {
+function describeStep(t: TFunction, step: SubagentStep): { icon: ReactNode; label: string } {
   switch (step.kind) {
     case "reasoning":
-      return { icon: BrainIcon, label: t(($) => $.chat.tools.subagent.reasoning) };
+      return { icon: <BrainIcon />, label: t(($) => $.chat.tools.subagent.reasoning) };
     case "message":
-      return { icon: MessageSquareIcon, label: t(($) => $.chat.tools.subagent.response) };
+      return { icon: <MessageSquareIcon />, label: t(($) => $.chat.tools.subagent.response) };
     case "tool":
-      return { icon: WrenchIcon, label: toolDisplayName(t, step.tool_name ?? "tool") };
+      return {
+        icon: <ToolIcon name={step.tool_name ?? ""} />,
+        label: toolDisplayName(t, step.tool_name ?? "tool"),
+      };
   }
 }
 
@@ -29,65 +34,43 @@ interface SubagentToolProps {
 }
 
 /**
- * Generic renderer for any subagent tool, showing its delegated run as a coarse
- * timeline of reasoning, messages, and tool calls. Tool-name agnostic: routed by
- * `MessagePart` whenever a tool carries a subagent transcript.
+ * Any subagent tool, with its delegated run as a nested trace of reasoning, messages,
+ * and tool calls, and the run's result below it.
+ * The line opens while the subagent works and closes once it returns, unless the user toggled it.
  */
 export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
   const { t } = useTranslation();
-  const state: ToolPart["state"] = part.state ?? "output-available";
-  const isRunning = state === "input-available" || state === "input-streaming";
-
-  // Expand the card while the live run is working and collapse it once the
-  // subagent returns, so its progress is visible without a manual click. A
-  // loaded transcript mounts already completed, so it stays closed. Only a
-  // running <-> done transition resets it, so a manual toggle in between is
-  // preserved.
-  const [open, setOpen] = useState(isRunning);
-  const [wasRunning, setWasRunning] = useState(isRunning);
-
-  if (isRunning !== wasRunning) {
-    setWasRunning(isRunning);
-    setOpen(isRunning);
-  }
+  const running = toolLineState(part, useMessageStreaming()).status === "running";
 
   return (
-    <ToolCard toolName={toolName} part={part} open={open} onOpenChange={setOpen}>
-      {(steps.length > 0 || isRunning) && (
-        <ToolSection title={t(($) => $.chat.tools.sections.steps)}>
-          {steps.length > 0 ? (
-            <Trace>
-              {steps.map((step, index) => {
-                const { icon: Icon, label } = describeStep(t, step);
-                const active = isRunning && index === steps.length - 1;
+    <ToolCard toolName={toolName} part={part} autoOpen={running}>
+      {(steps.length > 0 || running) && (
+        <Trace>
+          {steps.map((step, index) => {
+            const { icon, label } = describeStep(t, step);
 
-                return (
-                  <TraceStep
-                    key={index}
-                    icon={<Icon />}
-                    title={label}
-                    status={active ? "running" : undefined}
-                  />
-                );
-              })}
-            </Trace>
-          ) : (
+            return (
+              <TraceStep
+                key={index}
+                icon={icon}
+                title={label}
+                status={running && index === steps.length - 1 ? "running" : undefined}
+              />
+            );
+          })}
+          {steps.length === 0 && (
             <TraceStep
-              icon={<WrenchIcon />}
+              icon={<BrainIcon />}
               title={t(($) => $.common.states.working)}
               status="running"
             />
           )}
-        </ToolSection>
+        </Trace>
       )}
-      {part.output !== undefined && (
-        <ToolResult>
-          {typeof part.output === "string" ? (
-            <MarkdownText>{part.output}</MarkdownText>
-          ) : (
-            <ToolPre>{prettyPrint(part.output)}</ToolPre>
-          )}
-        </ToolResult>
+      {typeof part.output === "string" ? (
+        <MarkdownText>{part.output}</MarkdownText>
+      ) : (
+        part.output !== undefined && <ToolCode code={prettyPrint(part.output)} language="json" />
       )}
     </ToolCard>
   );

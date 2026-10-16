@@ -1,11 +1,15 @@
-"use client";
-
 import { FileTextIcon } from "lucide-react";
-import type { HTMLAttributes } from "react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import type { ExtraProps } from "streamdown";
 import { DocumentDialog } from "@/components/DocumentDialog";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  CodeBlock,
+  CodeBlockContent,
+  CodeBlockHeader,
+  CodeBlockTitle,
+} from "@/components/ui/code-block";
 import {
   Dialog,
   DialogContent,
@@ -13,8 +17,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { keyPrefix } from "@/i18n";
 import {
   chunkOriginLabel,
@@ -25,22 +29,25 @@ import {
   type LinePosition,
   parseLinePositions,
 } from "@/lib/types";
+import { basename } from "@/lib/utils";
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.citation);
 
-interface CitationProps extends HTMLAttributes<HTMLElement> {
+/** The attributes of a `<cite>` tag in a reply, which Streamdown renders with this component. */
+interface CitationProps extends ExtraProps {
   src?: string;
   line?: string;
-  node?: unknown;
 }
 
 interface Evidence {
   chunk: FetchedChunk;
-  lines: { number: number; text: string }[];
+  startLine: number;
+  text: string;
 }
 
-type OpenTarget = "document" | number | null;
+/** The dialog a citation opens: the current document, or the evidence of one of its positions. */
+type DialogTarget = "document" | number;
 
 function evidenceFromChunk(chunk: FetchedChunk, position: LinePosition): Evidence | null {
   const contentLines = chunk.content.split("\n");
@@ -59,10 +66,7 @@ function evidenceFromChunk(chunk: FetchedChunk, position: LinePosition): Evidenc
   const selected = contentLines.slice(firstIndex, firstIndex + end - start + 1);
   if (selected.length !== end - start + 1) return null;
 
-  return {
-    chunk,
-    lines: selected.map((text, index) => ({ number: start + index, text })),
-  };
+  return { chunk, startLine: start, text: selected.join("\n") };
 }
 
 function evidenceForPosition(chunks: FetchedChunk[], position: LinePosition): Evidence[] {
@@ -72,54 +76,50 @@ function evidenceForPosition(chunks: FetchedChunk[], position: LinePosition): Ev
     if (chunk.origin === "preview") continue;
     const evidence = evidenceFromChunk(chunk, position);
     if (!evidence) continue;
-    const key = evidence.lines.map((line) => line.text).join("\n");
-    if (!unique.has(key)) unique.set(key, evidence);
+    if (!unique.has(evidence.text)) unique.set(evidence.text, evidence);
   }
 
   return [...unique.values()];
 }
 
 function EvidenceDialog({
+  open,
+  onOpenChange,
   filename,
   position,
   evidence,
-  onClose,
 }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   filename: string;
   position: LinePosition;
   evidence: Evidence[];
-  onClose: () => void;
 }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex max-h-[80vh] max-w-3xl flex-col">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{filename}</DialogTitle>
           <DialogDescription>
             {t(($) => $.evidenceDescription, { position: chunkPositionLabel(position) })}
           </DialogDescription>
         </DialogHeader>
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="space-y-4 pr-4">
-            {evidence.map(({ chunk, lines }) => (
-              <section key={chunk.id} className="overflow-hidden rounded-md border">
-                <div className="border-b bg-muted px-3 py-2 text-xs text-muted-foreground">
+        <div className="-mx-6 flex min-h-0 flex-col gap-4 overflow-y-auto px-6">
+          {evidence.map(({ chunk, startLine, text }) => (
+            <CodeBlock key={chunk.id} size="sm">
+              <CodeBlockHeader>
+                <CodeBlockTitle>
                   {t(($) => $.capturedBy, { source: chunkOriginLabel(chunk) })}
-                </div>
-                <pre className="overflow-x-auto p-3 text-sm">
-                  {lines.map(({ number, text }) => (
-                    <div key={number}>
-                      <span className="select-none text-muted-foreground">{number}: </span>
-                      {text}
-                    </div>
-                  ))}
-                </pre>
-              </section>
-            ))}
-          </div>
-        </ScrollArea>
+                </CodeBlockTitle>
+              </CodeBlockHeader>
+              <CodeBlockContent lineNumbers startLine={startLine} wrap>
+                {text}
+              </CodeBlockContent>
+            </CodeBlock>
+          ))}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -127,7 +127,7 @@ function EvidenceDialog({
 
 export function Citation({ src, line }: CitationProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const [open, setOpen] = useState<OpenTarget>(null);
+  const { target, open, show, setOpen } = useDialogTarget<DialogTarget>("document");
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   // Subscribe to this document's entry rather than the whole map: its identity
   // changes only when the document itself gains a chunk, so a tool output for
@@ -148,24 +148,17 @@ export function Citation({ src, line }: CitationProps) {
 
   if (!src) return null;
 
-  const displayName = src.split("/").pop() ?? src;
-
   return (
-    <Badge
-      variant="secondary"
-      className="inline-flex flex-wrap items-center gap-1 rounded-full align-middle text-xs font-normal"
-    >
+    <span className="inline-flex flex-wrap items-center gap-0.5 align-middle">
       <Tooltip>
         <TooltipTrigger
-          className="flex cursor-pointer items-center gap-1 rounded-full hover:text-accent-foreground"
-          onClick={() => setOpen("document")}
+          render={<Button variant="secondary" size="xs" onClick={() => show("document")} />}
         >
-          <FileTextIcon className="h-3 w-3 shrink-0" />
-          {displayName}
+          <FileTextIcon data-icon="inline-start" />
+          {basename(src)}
         </TooltipTrigger>
         <TooltipContent>{t(($) => $.openDocument)}</TooltipContent>
       </Tooltip>
-      {positions.length > 0 && <span aria-hidden className="h-3.5 w-px bg-border" />}
       {positions.map((position, index) => {
         const available = evidence[index].length > 0;
 
@@ -173,33 +166,38 @@ export function Citation({ src, line }: CitationProps) {
           <Tooltip key={index}>
             <TooltipTrigger
               render={
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="xs"
                   disabled={!available}
-                  className="rounded-full bg-background/60 px-1.5 enabled:cursor-pointer enabled:hover:bg-accent disabled:text-muted-foreground"
-                  onClick={() => setOpen(index)}
-                >
-                  {chunkPositionLabel(position)}
-                </button>
+                  focusableWhenDisabled
+                  className="aria-disabled:opacity-50"
+                  onClick={() => show(index)}
+                />
               }
-            />
+            >
+              {chunkPositionLabel(position)}
+            </TooltipTrigger>
             <TooltipContent>
               {available ? t(($) => $.openEvidence) : t(($) => $.noEvidence)}
             </TooltipContent>
           </Tooltip>
         );
       })}
-      {open === "document" && (
-        <DocumentDialog open onOpenChange={(next) => !next && setOpen(null)} filename={src} />
-      )}
-      {typeof open === "number" && (
+      <DocumentDialog
+        open={open && target === "document"}
+        onOpenChange={setOpen}
+        filename={src}
+      />
+      {typeof target === "number" && (
         <EvidenceDialog
+          open={open}
+          onOpenChange={setOpen}
           filename={src}
-          position={positions[open]}
-          evidence={evidence[open]}
-          onClose={() => setOpen(null)}
+          position={positions[target]}
+          evidence={evidence[target]}
         />
       )}
-    </Badge>
+    </span>
   );
 }

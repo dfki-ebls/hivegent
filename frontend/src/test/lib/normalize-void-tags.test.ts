@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeVoidTags } from "@/lib/normalize-void-tags";
+import { normalizeVoidTags, stripVoidTags } from "@/lib/normalize-void-tags";
 
 describe("normalizeVoidTags", () => {
   it("closes an unclosed cite so it stops swallowing prose", () => {
@@ -45,5 +45,13 @@ describe("normalizeVoidTags", () => {
 
   it("returns text without void tags unchanged", () => {
     expect(normalizeVoidTags("no tags here")).toBe("no tags here");
+  });
+});
+
+describe("stripVoidTags", () => {
+  it("drops citations and image references for the clipboard", () => {
+    expect(stripVoidTags('Revenue grew <cite src="a.md" line="3"/>.\n\n<imgref src="b.png">')).toBe(
+      "Revenue grew.\n\n",
+    );
   });
 });

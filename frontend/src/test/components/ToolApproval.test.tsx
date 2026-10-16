@@ -66,11 +66,9 @@ function renderMessage(
     }
   }
 
-  const cards = screen.getAllByRole("group", { name: "Send Mail" });
-
   return {
     decide,
-    card: (index: number) => within(cards[index]),
+    card: (index: number) => within(screen.getAllByRole("group", { name: "Send Mail" })[index]),
     rerender: (requests: string[]) => rerender(message(requests)),
   };
 }
@@ -175,8 +173,7 @@ describe("tool approval", () => {
     expect(
       card(0).getByText("Allow the assistant to apply this change to your workspace?"),
     ).toBeTruthy();
-    expect(card(0).getByText("Created")).toBeTruthy();
-    expect(card(0).getByText("~/out.md")).toBeTruthy();
+    expect(card(0).getByText("Created ~/out.md")).toBeTruthy();
   });
 
   it("keeps showing the changes once the call is resolved", () => {
@@ -187,15 +184,15 @@ describe("tool approval", () => {
       deletes: ["~/old.md"],
       mkdirs: [],
     };
-    const { card } = renderMessage(["call-1"], {
+    renderMessage(["call-1"], {
       approvalMetadata: { "call-1": summary },
       part: approved,
       open: true,
     });
 
-    expect(card(0).getByText("Approved")).toBeTruthy();
-    expect(card(0).getByText("~/old.md")).toBeTruthy();
-    expect(card(0).queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.getByText("Approved")).toBeTruthy();
+    expect(screen.getByText("Deleted ~/old.md")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
   // A decision made while the last chunks drain is never dispatched by the SDK.

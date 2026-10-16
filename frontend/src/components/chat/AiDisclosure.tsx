@@ -24,7 +24,7 @@ export function AiDisclosure({ className }: { className?: string }) {
         className,
       )}
     >
-      <BotIcon className="mt-px h-3 w-3 shrink-0" aria-hidden />
+      <BotIcon className="mt-px size-3 shrink-0" aria-hidden />
       <span>{t(($) => $.chat.disclosure.notice)}</span>
       {transparency?.enabled && (
         <AiTransparencyDialog

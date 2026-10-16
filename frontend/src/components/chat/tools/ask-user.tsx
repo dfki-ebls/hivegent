@@ -1,7 +1,9 @@
 import { MessageCircleQuestionIcon } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import type { FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { TraceStepTrigger } from "@/components/chat/TraceStep";
+import { TraceStepCollapsible } from "@/components/chat/TraceStep";
+import { PromptItem } from "@/components/chat/tools/approval";
+import { toolLineState } from "@/components/chat/tools/ToolCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +22,7 @@ import {
   QuestionnaireTitle,
 } from "@/components/ui/questionnaire";
 import { Textarea } from "@/components/ui/textarea";
-import { TraceCollapsible, TraceCollapsibleContent } from "@/components/ui/trace";
+import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
 import { useToolApproval } from "@/hooks/chat/use-tool-approval";
 import { keyPrefix } from "@/i18n";
 import {
@@ -34,13 +36,6 @@ import {
 import { type ToolPart, parseJson, toolDisplayName, toolInputAs } from "@/lib/chat/tool-part";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.ask);
-
-/** The status label of each state a question card shows its own way. */
-const STATUS: Partial<Record<ToolPart["state"], "pending" | "answered" | "dismissed">> = {
-  "input-available": "pending",
-  "output-available": "answered",
-  "output-error": "dismissed",
-};
 
 /** The form field of the question at *index*, and of its note. */
 const answerField = (index: number) => `question-${index}`;
@@ -79,15 +74,17 @@ function readAnswers(form: HTMLFormElement, questions: AskQuestion[]): AskAnswer
 function AskForm({ toolCallId, questions }: { toolCallId: string; questions: AskQuestion[] }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const { addToolOutput, blockedReason } = useToolApproval();
-  const call = { tool: ASK_USER_TOOL, toolCallId };
-  const blocked = blockedReason !== undefined;
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void addToolOutput({ ...call, output: readAnswers(event.currentTarget, questions) });
+    void addToolOutput({
+      tool: ASK_USER_TOOL,
+      toolCallId,
+      output: readAnswers(event.currentTarget, questions),
+    });
   };
 
   return (
-    <Questionnaire onSubmit={submit} className="gap-4">
+    <Questionnaire onSubmit={submit} className="basis-full gap-4">
       <QuestionnaireProgress
         render={(props, { current, total }) => (
           <div {...props}>
@@ -102,6 +99,7 @@ function AskForm({ toolCallId, questions }: { toolCallId: string; questions: Ask
           name={answerField(index)}
           required
           multiple={question.multi_select}
+          className="gap-3"
         >
           <QuestionnaireTitle>{question.question}</QuestionnaireTitle>
           <QuestionnaireChoices>
@@ -137,24 +135,49 @@ function AskForm({ toolCallId, questions }: { toolCallId: string; questions: Ask
       <QuestionnaireActions>
         <QuestionnairePrevious size="sm">{t(($) => $.previous)}</QuestionnairePrevious>
         <QuestionnaireNext size="sm">{t(($) => $.next)}</QuestionnaireNext>
-        <QuestionnaireSubmit size="sm" disabled={blocked}>
+        <QuestionnaireSubmit size="sm" disabled={blockedReason !== undefined}>
           {t(($) => $.submit)}
         </QuestionnaireSubmit>
       </QuestionnaireActions>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">{blockedReason}</span>
+    </Questionnaire>
+  );
+}
+
+/**
+ * Questions that wait for the user's answers.
+ * They ask rather than report, so they stand outside the trace until they are answered.
+ */
+function AskPrompt({ toolCallId, questions }: { toolCallId: string; questions: AskQuestion[] }) {
+  const { t } = useTranslation();
+  const { addToolOutput, blockedReason } = useToolApproval();
+  const title = toolDisplayName(t, ASK_USER_TOOL);
+
+  return (
+    <PromptItem
+      icon={<MessageCircleQuestionIcon />}
+      label={title}
+      title={title}
+      description={blockedReason}
+      actions={
         <Button
           variant="ghost"
           size="sm"
-          disabled={blocked}
+          disabled={blockedReason !== undefined}
           onClick={() =>
-            void addToolOutput({ ...call, state: "output-error", errorText: DISMISSED_ERROR })
+            void addToolOutput({
+              tool: ASK_USER_TOOL,
+              toolCallId,
+              state: "output-error",
+              errorText: DISMISSED_ERROR,
+            })
           }
         >
-          {t(($) => $.dismiss)}
+          {t(($) => $.chat.tools.ask.dismiss)}
         </Button>
-      </div>
-    </Questionnaire>
+      }
+    >
+      <AskForm toolCallId={toolCallId} questions={questions} />
+    </PromptItem>
   );
 }
 
@@ -163,15 +186,15 @@ function AskSummary({ questions, answers }: { questions: AskQuestion[]; answers:
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   return (
-    <dl className="space-y-3 text-sm">
+    <dl className="flex flex-col gap-3">
       {questions.map((question, index) => {
         const reply = answers[index];
 
         return (
-          <div key={index} className="space-y-0.5">
+          <div key={index} className="flex flex-col gap-0.5">
             <dt className="text-muted-foreground">{question.question}</dt>
             {reply && (
-              <dd className="font-medium">
+              <dd className="font-medium text-foreground">
                 {[...reply.selected, ...(reply.other ? [reply.other] : [])].join(", ")}
               </dd>
             )}
@@ -189,37 +212,40 @@ function AskSummary({ questions, answers }: { questions: AskQuestion[]; answers:
 }
 
 /**
- * The questions the assistant asks with `ask_user`, answered right in the card.
+ * The questions the assistant asks with `ask_user`, answered right in the prompt.
  * The answers are the call's output, so the run continues with them once sent.
  */
 export function AskUserTool({ part }: { part: ToolPart }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const streaming = useMessageStreaming();
   const questions = toolInputAs(part, AskInputSchema)?.questions;
+  const title = toolDisplayName(t, ASK_USER_TOOL);
+
+  if (part.state === "input-available" && questions && part.toolCallId) {
+    return <AskPrompt toolCallId={part.toolCallId} questions={questions} />;
+  }
+
   const answers =
     part.state === "output-available"
       ? AskAnswersSchema.safeParse(parseJson(part.output)).data
       : undefined;
-  const pending = part.state === "input-available";
-  const status = STATUS[part.state];
+
+  const { status, label } = toolLineState(part, streaming);
+  const description =
+    part.state === "output-error"
+      ? t(($) => $.chat.tools.ask.dismissed)
+      : answers
+        ? t(($) => $.chat.tools.ask.answered)
+        : label && t(($) => $.chat.tools.status[label]);
 
   return (
-    <TraceCollapsible open={open || pending} onOpenChange={setOpen}>
-      <TraceStepTrigger
-        icon={<MessageCircleQuestionIcon />}
-        title={toolDisplayName(t, ASK_USER_TOOL)}
-        status={part.state === "input-streaming" ? "pending" : undefined}
-        description={status && t(($) => $.chat.tools.ask.status[status])}
-      />
-      <TraceCollapsibleContent className="text-foreground">
-        {questions && pending && part.toolCallId && (
-          <AskForm toolCallId={part.toolCallId} questions={questions} />
-        )}
-        {questions && answers && <AskSummary questions={questions} answers={answers} />}
-        {part.state === "output-error" && (
-          <p className="text-sm text-muted-foreground">{t(($) => $.chat.tools.ask.dismissed)}</p>
-        )}
-      </TraceCollapsibleContent>
-    </TraceCollapsible>
+    <TraceStepCollapsible
+      icon={<MessageCircleQuestionIcon />}
+      title={title}
+      status={part.state === "output-error" ? undefined : status}
+      description={description}
+    >
+      {questions && answers && <AskSummary questions={questions} answers={answers} />}
+    </TraceStepCollapsible>
   );
 }

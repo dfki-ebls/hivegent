@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import type { FileUIPart } from "ai";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import { i18n } from "@/i18n";
 import { compactConversation } from "@/lib/api";
 import { type ChatMessage, type UserTurn, getLastUserMessage } from "@/lib/chat/chat-utils";
@@ -43,33 +43,31 @@ export function useCompaction({
     async (retryLastMessage = false) => {
       setIsCompacting(true);
       const toastId = `compaction:${id}`;
-      toast.loading(
-        i18n.t(($) => $.chat.compaction.compacting),
-        {
-          id: toastId,
-          description: i18n.t(($) => $.chat.compaction.compactingDescription),
-        },
-      );
+      toast.add({
+        id: toastId,
+        type: "loading",
+        title: i18n.t(($) => $.chat.compaction.compacting),
+        description: i18n.t(($) => $.chat.compaction.compactingDescription),
+      });
 
       try {
         const result = await compactConversation(id, buildRequestBody());
 
         if (activeIdRef.current !== id) {
-          toast.success(
-            i18n.t(($) => $.chat.compaction.compacted),
-            {
-              id: toastId,
-              description: i18n.t(($) => $.chat.compaction.compactedDescription),
-              action: {
-                label: i18n.t(($) => $.common.actions.open),
-                onClick: () =>
-                  void navigate({
-                    to: "/conversations/$id",
-                    params: { id: result.new_conversation_id },
-                  }),
-              },
+          toast.add({
+            id: toastId,
+            type: "success",
+            title: i18n.t(($) => $.chat.compaction.compacted),
+            description: i18n.t(($) => $.chat.compaction.compactedDescription),
+            actionProps: {
+              children: i18n.t(($) => $.common.actions.open),
+              onClick: () =>
+                void navigate({
+                  to: "/conversations/$id",
+                  params: { id: result.new_conversation_id },
+                }),
             },
-          );
+          });
 
           return;
         }
@@ -80,18 +78,19 @@ export function useCompaction({
           to: "/conversations/$id",
           params: { id: result.new_conversation_id },
         });
-        toast.success(
-          i18n.t(($) => $.chat.compaction.compacted),
-          { id: toastId },
-        );
+        toast.add({
+          id: toastId,
+          type: "success",
+          title: i18n.t(($) => $.chat.compaction.compacted),
+          description: undefined,
+        });
       } catch (error) {
-        toast.error(
-          i18n.t(($) => $.chat.compaction.failed),
-          {
-            id: toastId,
-            description: errorMessage(error),
-          },
-        );
+        toast.add({
+          id: toastId,
+          type: "error",
+          title: i18n.t(($) => $.chat.compaction.failed),
+          description: errorMessage(error),
+        });
       } finally {
         setIsCompacting(false);
       }

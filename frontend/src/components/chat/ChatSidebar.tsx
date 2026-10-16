@@ -2,7 +2,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 import { AiDisclosure } from "@/components/chat/AiDisclosure";
 import { ChatHeader, type ChatTab } from "@/components/chat/ChatHeader";
 import { Composer } from "@/components/chat/composer/Composer";
@@ -12,6 +11,7 @@ import { ChatSuggestions } from "@/components/chat/Suggestions";
 import { ConversationsList } from "@/components/chat/ConversationsList";
 import { StreamingNavGuard } from "@/components/chat/StreamingNavGuard";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { toast } from "@/components/ui/toast";
 import { i18n } from "@/i18n";
 import { useCompaction } from "@/hooks/chat/use-compaction";
 import { useBuildRequestBody } from "@/hooks/chat/use-build-request-body";
@@ -290,9 +290,9 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
         const summary = await importConversation(file);
         await fetchConversations();
         await handleConversationSelect(summary.id);
-        toast.success(i18n.t(($) => $.chat.sidebar.imported));
+        toast.add({ type: "success", title: i18n.t(($) => $.chat.sidebar.imported) });
       } catch (e) {
-        toast.error(errorMessage(e));
+        toast.add({ type: "error", title: errorMessage(e) });
       }
     },
     [fetchConversations, handleConversationSelect],
@@ -306,7 +306,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     try {
       return await transcribeAudio(audio);
     } catch (e) {
-      toast.error(errorMessage(e));
+      toast.add({ type: "error", title: errorMessage(e) });
       return "";
     }
   }, []);
@@ -365,7 +365,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
           </SubagentLiveProvider>
         </ConversationIdProvider>
 
-        <div className="border-t p-4 space-y-3">
+        <div className="flex flex-col gap-3 border-t p-4">
           {messages.length === 0 && <ChatSuggestions onSelect={handleSendMessage} />}
           <SteeringQueue queue={steeringQueue} />
           <Composer

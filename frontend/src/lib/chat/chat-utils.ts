@@ -184,6 +184,11 @@ function isPendingQuestion(part: ChatMessage["parts"][number]): part is PendingQ
   return part.type === ASK_USER_PART && "state" in part && part.state === "input-available";
 }
 
+/** Whether a part asks the user something, an approval or a question, that nobody has answered yet. */
+export function isOpenPrompt(part: ChatMessage["parts"][number]): boolean {
+  return isPendingApproval(part) || isPendingQuestion(part);
+}
+
 /** The same part as the denial or dismissal it has become, matching a reloaded one. */
 function closeCall(part: ChatMessage["parts"][number]): ChatMessage["parts"][number] {
   if (isPendingApproval(part)) {
@@ -219,7 +224,7 @@ function closeCall(part: ChatMessage["parts"][number]): ChatMessage["parts"][num
 export function closeAbandonedCalls(messages: ChatMessage[]): ChatMessage[] {
   const isAbandoned = (message: ChatMessage, index: number) =>
     index < messages.length - 1 &&
-    message.parts.some((part) => isPendingApproval(part) || isPendingQuestion(part));
+    message.parts.some(isOpenPrompt);
 
   if (!messages.some(isAbandoned)) return messages;
 

@@ -29,6 +29,14 @@ const FENCE_VOID_RE = new RegExp(
   "gi",
 );
 
+/** A void tag with the whitespace before it, so dropping a citation leaves no gap before the period. */
+const STRIPPED_VOID_TAG_RE = new RegExp(`[ \\t]*${VOID_TAG_RE.source}`, "gi");
+
+/** *text* without its void tags, as plain markdown for the clipboard. */
+export function stripVoidTags(text: string): string {
+  return text.replace(STRIPPED_VOID_TAG_RE, "");
+}
+
 export function normalizeVoidTags(text: string): string {
   return text
     .replace(FENCE_VOID_RE, "\n")

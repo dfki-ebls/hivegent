@@ -1,6 +1,7 @@
-import { AlertCircle, RefreshCcwIcon } from "lucide-react";
+import { RefreshCcwIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { ChatAlert } from "@/components/chat/ChatAlert";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import { Button } from "@/components/ui/button";
 
 interface ChatErrorProps {
   message: string;
@@ -12,14 +13,17 @@ export function ChatError({ message, onRetry, onDismiss }: ChatErrorProps) {
   const { t } = useTranslation();
 
   return (
-    <ChatAlert
-      icon={AlertCircle}
+    <ErrorAlert
       title={t(($) => $.common.states.error)}
-      message={message}
-      actionIcon={RefreshCcwIcon}
-      actionLabel={t(($) => $.common.actions.retry)}
-      onAction={onRetry}
       onDismiss={onDismiss}
-    />
+      action={
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCcwIcon data-icon="inline-start" />
+          {t(($) => $.common.actions.retry)}
+        </Button>
+      }
+    >
+      {message}
+    </ErrorAlert>
   );
 }

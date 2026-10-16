@@ -1,15 +1,24 @@
-import { FileImage, FileText, FileVideo, Paperclip, XCircleIcon } from "lucide-react";
+import { FileTextIcon, FileVideoIcon, ImageOffIcon } from "lucide-react";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { parseBatch } from "@/components/chat/tools/batch";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
+import {
+  Attachment,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment";
+import { Spinner } from "@/components/ui/spinner";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { keyPrefix } from "@/i18n";
 import { fetchDocumentAsset } from "@/lib/api";
 import type { SyncOutput, ToolPart } from "@/lib/chat/tool-part";
-import { fileStem } from "@/lib/utils";
+import { basename, fileStem } from "@/lib/utils";
 import { formatDecimal, formatFileSize, formatNumber } from "@/i18n/format";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.binary);
@@ -25,34 +34,25 @@ const BinaryReadResultSchema = z.object({
 });
 type BinaryReadResult = z.infer<typeof BinaryReadResultSchema>;
 
+/** The media type, size, and the pages, frames, or duration the model was given, in one line. */
 function BinaryMeta({ result }: { result: BinaryReadResult }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
+  const parts = [
+    result.media_type,
+    formatFileSize(result.size),
+    result.pages.length > 0 &&
+      t(($) => $.pages, {
+        count: result.pages.length,
+        pages: result.pages.map(formatNumber).join(", "),
+      }),
+    result.frames && t(($) => $.frames, { count: result.frames }),
+    result.duration && t(($) => $.duration, { duration: formatDecimal(result.duration) }),
+  ];
 
-  return (
-    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-      <span>{result.media_type}</span>
-      <span>{formatFileSize(result.size)}</span>
-      {result.pages.length > 0 && (
-        <span>
-          {t(($) => $.pages, {
-            count: result.pages.length,
-            pages: result.pages.map(formatNumber).join(", "),
-          })}
-        </span>
-      )}
-      {result.frames ? <span>{t(($) => $.frames, { count: result.frames })}</span> : null}
-      {result.duration ? (
-        <span>{t(($) => $.duration, { duration: formatDecimal(result.duration) })}</span>
-      ) : null}
-      <span className="flex items-center gap-1">
-        <Paperclip className="size-3" />
-        {t(($) => $.attached)}
-      </span>
-    </div>
-  );
+  return <AttachmentDescription>{parts.filter(Boolean).join(" · ")}</AttachmentDescription>;
 }
 
-/** Inline preview for image binaries, fetched lazily when the tool is expanded. */
+/** An image's pixels, fetched once the line opens since the content only mounts then. */
 function ImagePreview({ result }: { result: BinaryReadResult }) {
   const { t } = useTranslation();
   const conversationId = useConversationId();
@@ -62,26 +62,35 @@ function ImagePreview({ result }: { result: BinaryReadResult }) {
   );
   const { url, error } = useObjectUrl(fetch);
 
+  if (url) return <img src={url} alt={result.file_path} />;
+
+  return error ? (
+    <ImageOffIcon aria-label={t(($) => $.chat.tools.binary.previewUnavailable)} />
+  ) : (
+    <Spinner />
+  );
+}
+
+/** A file the call attached to the model, an image with its preview and any other file with its kind. */
+function BinaryAttachment({ result }: { result: BinaryReadResult }) {
+  const image = result.media_type.startsWith("image/");
+
   return (
-    <figure className="space-y-2 rounded-md border bg-muted/40 p-3">
-      {url && !error ? (
-        <img src={url} alt={result.file_path} className="max-h-96 w-auto max-w-full rounded" />
-      ) : (
-        <div
-          className={`flex h-40 items-center justify-center rounded text-xs text-muted-foreground ${error ? "" : "animate-pulse"}`}
-        >
-          {error
-            ? t(($) => $.chat.tools.binary.previewUnavailable)
-            : t(($) => $.common.states.loadingImage)}
-        </div>
-      )}
-      <figcaption className="space-y-1">
-        <div className="truncate text-sm font-medium" title={result.file_path}>
-          {result.file_path}
-        </div>
+    <Attachment orientation={image ? "vertical" : "horizontal"} title={result.file_path}>
+      <AttachmentMedia variant={image ? "image" : "icon"}>
+        {image ? (
+          <ImagePreview result={result} />
+        ) : result.media_type.startsWith("video/") ? (
+          <FileVideoIcon />
+        ) : (
+          <FileTextIcon />
+        )}
+      </AttachmentMedia>
+      <AttachmentContent>
+        <AttachmentTitle>{basename(result.file_path)}</AttachmentTitle>
         <BinaryMeta result={result} />
-      </figcaption>
-    </figure>
+      </AttachmentContent>
+    </Attachment>
   );
 }
 
@@ -116,47 +125,31 @@ interface ReadBinaryDocumentToolProps {
   metadata: unknown;
 }
 
-function BinaryResult({ result }: { result: BinaryReadResult }) {
-  if (result.media_type.startsWith("image/")) return <ImagePreview result={result} />;
-
-  const Icon =
-    result.media_type === "application/pdf"
-      ? FileText
-      : result.media_type.startsWith("video/")
-        ? FileVideo
-        : FileImage;
-
-  return (
-    <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
-      <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="truncate font-medium" title={result.file_path}>
-          {result.file_path}
-        </div>
-        <BinaryMeta result={result} />
-      </div>
-    </div>
-  );
-}
-
-/** One card per attached file, plus the files the call could not attach. */
+/** The files the call attached, plus the ones it could not attach and why. */
 export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToolProps) {
   const { results, failures } = parseBatch(metadata, BinaryReadResultSchema);
 
   return (
     <ToolCard toolName="read_binary_document" part={part}>
-      {results.map((result, index) => (
-        // A file read twice for different pages is listed twice.
-        <BinaryResult key={`${result.file_path}#${index}`} result={result} />
-      ))}
-      {failures.map((failure) => (
-        <div key={failure.item} className="flex items-start gap-2 text-xs text-muted-foreground">
-          <XCircleIcon className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-          <span className="min-w-0 break-words">
-            <span className="font-medium">{failure.item}</span>: {failure.reason}
-          </span>
-        </div>
-      ))}
+      {results.length + failures.length > 0 && (
+        <AttachmentGroup className="flex-wrap">
+          {results.map((result, index) => (
+            // A file read twice for different pages is listed twice.
+            <BinaryAttachment key={`${result.file_path}#${index}`} result={result} />
+          ))}
+          {failures.map((failure) => (
+            <Attachment key={failure.item} state="error" title={failure.item}>
+              <AttachmentMedia>
+                <FileTextIcon />
+              </AttachmentMedia>
+              <AttachmentContent>
+                <AttachmentTitle>{basename(failure.item)}</AttachmentTitle>
+                <AttachmentDescription>{failure.reason}</AttachmentDescription>
+              </AttachmentContent>
+            </Attachment>
+          ))}
+        </AttachmentGroup>
+      )}
     </ToolCard>
   );
 }

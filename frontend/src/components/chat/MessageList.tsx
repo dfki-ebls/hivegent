@@ -1,5 +1,5 @@
 import type { ChatStatus } from "ai";
-import { ArrowDownIcon } from "lucide-react";
+import { ArrowDownIcon, MessagesSquareIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   MessageScroller,
@@ -13,7 +13,14 @@ import { ChatError } from "@/components/chat/ChatError";
 import { CompactionBanner } from "@/components/chat/CompactionBanner";
 import { ContextLimitBanner } from "@/components/chat/ContextLimitBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Spinner } from "@/components/ui/spinner";
 import { keyPrefix } from "@/i18n";
 import {
@@ -78,7 +85,7 @@ export function MessageList({
     <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
       <MessageScroller className="min-h-0 flex-1">
         <MessageScrollerViewport>
-          <MessageScrollerContent aria-busy={isChatBusy(status)} className="gap-3 p-4">
+          <MessageScrollerContent aria-busy={isChatBusy(status)} className="gap-6 p-4">
             {compactedFrom && (
               <MessageScrollerItem>
                 <CompactionBanner
@@ -88,10 +95,13 @@ export function MessageList({
               </MessageScrollerItem>
             )}
             {messages.length === 0 && !chatError && (
-              <MessageScrollerItem className="flex min-h-[50vh]">
-                <Empty className="p-8">
-                  <EmptyHeader className="gap-1">
-                    <EmptyTitle className="text-sm">{t(($) => $.emptyTitle)}</EmptyTitle>
+              <MessageScrollerItem className="flex flex-1">
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <MessagesSquareIcon />
+                    </EmptyMedia>
+                    <EmptyTitle>{t(($) => $.emptyTitle)}</EmptyTitle>
                     <EmptyDescription>{t(($) => $.emptyDescription)}</EmptyDescription>
                   </EmptyHeader>
                 </Empty>
@@ -116,8 +126,13 @@ export function MessageList({
               </MessageScrollerItem>
             ))}
             {showThinkingLoader(messages, status) && (
-              <MessageScrollerItem className="flex justify-center">
-                <Spinner />
+              <MessageScrollerItem>
+                <Marker render={<output />}>
+                  <MarkerIcon>
+                    <Spinner />
+                  </MarkerIcon>
+                  <MarkerContent className="shimmer">{t(($) => $.thinking)}</MarkerContent>
+                </Marker>
               </MessageScrollerItem>
             )}
             {contextLimitReached && (

@@ -41,8 +41,6 @@ export interface ToolPartInfo {
    * or the data part hasn't streamed yet).
    */
   metadata: unknown;
-  /** LLM-facing text form (for display in the chat sidebar only). */
-  formatted: string | null;
 }
 
 export function getToolName(part: { type?: string; toolName?: string }): string | null {
@@ -157,7 +155,6 @@ export function getToolPartInfo(
     input: toolInput<Record<string, unknown>>(typed),
     text,
     metadata,
-    formatted: text,
   };
 }
 

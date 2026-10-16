@@ -54,7 +54,7 @@ describe("RunPythonTool", () => {
     expect(getDocumentContent).toHaveBeenCalledWith("/tmp/report.py", "c1");
   });
 
-  it("lists the changes a program staged, marking folders, and offers its stored source", () => {
+  it("lists the changes a program staged and offers its stored source", () => {
     renderResult({
       status: "pending",
       changeset_id: "abc",
@@ -68,9 +68,9 @@ describe("RunPythonTool", () => {
     });
 
     expect(screen.getByText(/Staged 3 changes/)).toBeTruthy();
-    expect(screen.getByText("~/archive")).toBeTruthy();
-    expect(screen.getByText("Folder")).toBeTruthy();
-    expect(screen.getByText("~/stale.md")).toBeTruthy();
+    expect(screen.getByText("Created ~/summary.md")).toBeTruthy();
+    expect(screen.getByText("Moved ~/inbox to ~/archive")).toBeTruthy();
+    expect(screen.getByText("Deleted ~/stale.md")).toBeTruthy();
     expect(screen.getByRole("button", { name: "View source" })).toBeTruthy();
   });
 
@@ -89,7 +89,8 @@ describe("RunPythonTool", () => {
 
     fireEvent.click(screen.getByText("2 function calls"));
 
-    expect(screen.getByText(/search\(query='a'\) → \[\]\s+complete\(prompt='b'\) → failed: RuntimeError: x/)).toBeTruthy();
+    expect(screen.getByText("search(query='a') → []")).toBeTruthy();
+    expect(screen.getByText("complete(prompt='b') → failed: RuntimeError: x")).toBeTruthy();
   });
 
   it.each([false, true])(
@@ -111,9 +112,7 @@ describe("RunPythonTool", () => {
       expect(screen.getByText("No Python code or script path was provided.")).toBeTruthy();
       expect(screen.getByText("The program is empty.")).toBeTruthy();
 
-      expect(screen.queryByRole("group", { name: "Run Python" })?.textContent ?? null).toBe(
-        approved ? "Approved" : null,
-      );
+      expect(screen.queryByText("Approved") !== null).toBe(approved);
     },
   );
 });

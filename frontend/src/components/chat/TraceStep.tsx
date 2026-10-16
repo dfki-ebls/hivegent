@@ -1,5 +1,7 @@
-import type { ComponentProps, ReactNode } from "react";
+import { type ComponentProps, type ReactNode, useState } from "react";
 import {
+  TraceCollapsible,
+  TraceCollapsibleContent,
   TraceCollapsibleTrigger,
   TraceDescription,
   TraceIcon,
@@ -27,11 +29,31 @@ export function TraceStep({ icon, title, status, description }: TraceStepProps) 
   );
 }
 
-/** A step that opens its `TraceCollapsible`. */
-export function TraceStepTrigger(props: TraceStepProps) {
+interface TraceStepCollapsibleProps extends TraceStepProps {
+  /** Whether the step is open until the user toggles it, such as while it runs. */
+  autoOpen?: boolean;
+  contentClassName?: string;
+  /** The detail the step opens to, a plain step without it. */
+  children?: ReactNode;
+}
+
+/** A step that opens to its detail, where the user's toggle wins over `autoOpen`. */
+export function TraceStepCollapsible({
+  autoOpen = false,
+  contentClassName,
+  children,
+  ...step
+}: TraceStepCollapsibleProps) {
+  const [open, setOpen] = useState<boolean>();
+
+  if (!children) return <TraceStep {...step} />;
+
   return (
-    <TraceCollapsibleTrigger>
-      <TraceStep {...props} />
-    </TraceCollapsibleTrigger>
+    <TraceCollapsible open={open ?? autoOpen} onOpenChange={setOpen}>
+      <TraceCollapsibleTrigger>
+        <TraceStep {...step} />
+      </TraceCollapsibleTrigger>
+      <TraceCollapsibleContent className={contentClassName}>{children}</TraceCollapsibleContent>
+    </TraceCollapsible>
   );
 }

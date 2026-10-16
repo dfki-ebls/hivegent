@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { InputGroupButton } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
+import { WithTooltip } from "@/components/TooltipButton";
 import { LANGUAGE } from "@/i18n";
 
 /** The part of the Web Speech API the DOM library does not declare yet. */
@@ -102,15 +103,16 @@ export function DictateButton({ disabled, onText, transcribe }: DictateButtonPro
   if (!Recognition && !(canRecord && transcribe)) return null;
 
   return (
-    <InputGroupButton
-      size="icon-sm"
-      variant={listening ? "destructive" : "ghost"}
-      aria-label={t(($) => $.chat.composer.dictate)}
-      aria-pressed={listening}
-      disabled={(disabled && !listening) || transcribing}
-      onClick={toggle}
-    >
-      {transcribing ? <Spinner /> : listening ? <SquareIcon /> : <MicIcon />}
-    </InputGroupButton>
+    <WithTooltip label={t(($) => $.chat.composer.dictate)}>
+      <InputGroupButton
+        size="icon-sm"
+        variant={listening ? "destructive" : "ghost"}
+        aria-pressed={listening}
+        disabled={(disabled && !listening) || transcribing}
+        onClick={toggle}
+      >
+        {transcribing ? <Spinner /> : listening ? <SquareIcon /> : <MicIcon />}
+      </InputGroupButton>
+    </WithTooltip>
   );
 }

@@ -5,16 +5,18 @@ import { REASONING_EFFORTS, type ReasoningEffort } from "@/lib/types";
 
 interface ReasoningEffortSelectorProps {
   value: ReasoningEffort;
+  className?: string;
   onChange: (value: ReasoningEffort) => void;
 }
 
-export function ReasoningEffortSelector({ value, onChange }: ReasoningEffortSelectorProps) {
+export function ReasoningEffortSelector({ value, onChange, className }: ReasoningEffortSelectorProps) {
   const { t } = useTranslation();
 
   return (
     <ComposerSelect
       value={value}
       onChange={onChange}
+      className={className}
       icon={BrainIcon}
       options={REASONING_EFFORTS.map((effort) => ({
         value: effort,

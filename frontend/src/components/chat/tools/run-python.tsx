@@ -1,17 +1,18 @@
-import { ChevronRightIcon, FileCodeIcon } from "lucide-react";
+import { FileCodeIcon, SquareFunctionIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { HighlightedCode } from "@/components/HighlightedCode";
+import { TraceStepCollapsible } from "@/components/chat/TraceStep";
 import {
   ChangesetSummarySchema,
   ChangesetView,
   changeCount,
 } from "@/components/chat/tools/changeset";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
-import { ToolOutputResult, ToolPre, ToolResult, ToolSection } from "@/components/ToolDisplay";
+import { ToolCode, ToolOutputResult } from "@/components/chat/tools/display";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -20,9 +21,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Item, ItemActions, ItemContent, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
-import { keyPrefix } from "@/i18n";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
+import { keyPrefix } from "@/i18n";
 import { getDocumentContent } from "@/lib/api";
 import { type ToolPart, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
 import { basename, errorMessage } from "@/lib/utils";
@@ -91,43 +93,60 @@ function ScriptSourceView({ path, conversationId }: { path: string; conversation
 
   if ("error" in source) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {source.error}
-      </p>
+      <Alert variant="destructive">
+        <AlertDescription>{source.error}</AlertDescription>
+      </Alert>
     );
   }
 
   return (
-    <HighlightedCode code={source.code} language="python" lineNumbers className="min-h-0 flex-1" />
+    <HighlightedCode
+      code={source.code}
+      language="python"
+      lineNumbers
+      copyable
+      className="min-h-0 flex-1"
+      contentClassName="scroll-fade-y"
+    />
   );
 }
 
-function ScriptSourceDialog({ path }: { path: string }) {
+/** The script a call ran by path, whose source opens in a dialog. */
+function ScriptFile({ path }: { path: string }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const conversationId = useConversationId();
 
   return (
-    <Dialog>
-      <DialogTrigger
-        render={
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={path.startsWith("/tmp/") && !conversationId}
-          />
-        }
-      >
-        <FileCodeIcon aria-hidden />
-        {t(($) => $.viewSource)}
-      </DialogTrigger>
-      <DialogContent className="flex h-[min(85vh,56rem)] flex-col sm:max-w-4xl">
-        <DialogHeader>
-          <DialogTitle className="font-mono">{path}</DialogTitle>
-          <DialogDescription>{t(($) => $.sourceDescription)}</DialogDescription>
-        </DialogHeader>
-        <ScriptSourceView path={path} conversationId={conversationId} />
-      </DialogContent>
-    </Dialog>
+    <Item variant="outline" size="xs">
+      <ItemMedia>
+        <FileCodeIcon />
+      </ItemMedia>
+      <ItemContent>
+        <ItemTitle className="font-mono">{path}</ItemTitle>
+      </ItemContent>
+      <ItemActions>
+        <Dialog>
+          <DialogTrigger
+            render={
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={path.startsWith("/tmp/") && !conversationId}
+              />
+            }
+          >
+            {t(($) => $.viewSource)}
+          </DialogTrigger>
+          <DialogContent className="flex h-[min(85vh,56rem)] flex-col sm:max-w-4xl">
+            <DialogHeader>
+              <DialogTitle className="font-mono">{path}</DialogTitle>
+              <DialogDescription>{t(($) => $.sourceDescription)}</DialogDescription>
+            </DialogHeader>
+            <ScriptSourceView path={path} conversationId={conversationId} />
+          </DialogContent>
+        </Dialog>
+      </ItemActions>
+    </Item>
   );
 }
 
@@ -135,23 +154,12 @@ function Program({ code, scriptPath }: { code?: string; scriptPath?: string }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   if (code) {
-    return (
-      <HighlightedCode code={code} language="python" title={t(($) => $.inlineProgram)} copyable />
-    );
+    return <ToolCode code={code} language="python" title={t(($) => $.inlineProgram)} copyable />;
   }
 
-  if (scriptPath) {
-    return (
-      <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 truncate font-mono text-xs" title={scriptPath}>
-          {scriptPath}
-        </span>
-        <ScriptSourceDialog path={scriptPath} />
-      </div>
-    );
-  }
+  if (scriptPath) return <ScriptFile path={scriptPath} />;
 
-  return <p className="text-muted-foreground">{t(($) => $.noProgram)}</p>;
+  return <p>{t(($) => $.noProgram)}</p>;
 }
 
 function ChangesetOutcomeView({ changeset }: { changeset: ChangesetOutcome }) {
@@ -159,21 +167,22 @@ function ChangesetOutcomeView({ changeset }: { changeset: ChangesetOutcome }) {
 
   if (changeset.status === "applied") {
     return (
-      <div className="space-y-2">
-        <p>{t(($) => $.applied, { count: changeset.reports.length })}</p>
-        <ToolPre boxed>{changeset.reports.join("\n")}</ToolPre>
-      </div>
+      <ToolCode
+        title={t(($) => $.applied, { count: changeset.reports.length })}
+        code={changeset.reports.join("\n")}
+      />
     );
   }
 
   return (
-    <div className="space-y-2">
+    <>
       <p>{t(($) => $.staged, { count: changeCount(changeset.summary) })}</p>
       <ChangesetView summary={changeset.summary} />
-    </div>
+    </>
   );
 }
 
+/** The functions the program called on the host, a nested line that opens to each call and its result. */
 function HostCalls({ calls }: { calls: HostCall[] }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const lines = calls.map(
@@ -184,18 +193,13 @@ function HostCalls({ calls }: { calls: HostCall[] }) {
   );
 
   return (
-    <Collapsible>
-      <CollapsibleTrigger className="group flex items-center gap-1 text-muted-foreground">
-        <ChevronRightIcon
-          aria-hidden
-          className="size-3.5 transition-transform group-aria-expanded:rotate-90"
-        />
-        {t(($) => $.hostCalls, { count: calls.length })}
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <ToolPre boxed className="mt-1">{lines.join("\n")}</ToolPre>
-      </CollapsibleContent>
-    </Collapsible>
+    <TraceStepCollapsible
+      icon={<SquareFunctionIcon />}
+      title={t(($) => $.hostCalls, { count: calls.length })}
+      status={calls.some((call) => call.error !== null) ? "error" : undefined}
+    >
+      <ToolCode code={lines.join("\n")} />
+    </TraceStepCollapsible>
   );
 }
 
@@ -203,20 +207,13 @@ function Output({ result }: { result: PythonResult }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
   return (
-    <ToolResult>
-      {result.stdout && <ToolPre boxed>{result.stdout}</ToolPre>}
-      {result.result !== null && (
-        <div>
-          <span className="text-muted-foreground">{t(($) => $.returned)}</span>
-          <ToolPre boxed className="mt-1">{result.result}</ToolPre>
-        </div>
-      )}
-      {!result.stdout && result.result === null && (
-        <p className="text-muted-foreground">{t(($) => $.noOutput)}</p>
-      )}
+    <>
+      {result.stdout && <ToolCode title={t(($) => $.printed)} code={result.stdout} language="ansi" />}
+      {result.result !== null && <ToolCode title={t(($) => $.returned)} code={result.result} />}
+      {!result.stdout && result.result === null && <p>{t(($) => $.noOutput)}</p>}
       {result.changeset && <ChangesetOutcomeView changeset={result.changeset} />}
       {result.calls.length > 0 && <HostCalls calls={result.calls} />}
-    </ToolResult>
+    </>
   );
 }
 
@@ -242,11 +239,7 @@ export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
           ? t(($) => $.chat.tools.runPython.titleWithScript, { tool, script: basename(scriptPath) })
           : tool
       }
-      parameters={
-        <ToolSection title={t(($) => $.chat.tools.sections.program)}>
-          <Program code={code} scriptPath={scriptPath} />
-        </ToolSection>
-      }
+      parameters={<Program code={code} scriptPath={scriptPath} />}
     >
       {result ? <Output result={result} /> : <ToolOutputResult part={part} />}
     </ToolCard>

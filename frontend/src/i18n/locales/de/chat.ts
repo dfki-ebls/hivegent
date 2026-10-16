@@ -25,15 +25,15 @@ export const chat = {
     emptyDescription:
       "Starte eine Konversation, um deine Dokumente zu durchsuchen und zu erkunden.",
     scrollToEnd: "Zum Ende scrollen",
-    dismiss: "Ausblenden",
     submitEdit: "Senden",
+    editLabel: "Nachricht bearbeiten",
     attachedImage: "Angehängtes Bild",
+    thinking: "Denkt nach …",
   },
   reasoning: {
     thinking: "Denkt nach …",
     thought: "Nachgedacht",
-    thoughtFor_one: "{{count}} Sekunde nachgedacht",
-    thoughtFor_other: "{{count}} Sekunden nachgedacht",
+    seconds: "{{count}} s",
   },
   contextLimit: {
     title: "Kontextlimit erreicht",
@@ -42,9 +42,7 @@ export const chat = {
     action: "Komprimieren und wiederholen",
   },
   compaction: {
-    bannerTitle: "Fortgesetzte Konversation",
-    bannerText:
-      "Diese Konversation wurde aus einem <previous>früheren Chat</previous> komprimiert.",
+    continued: "Fortgesetzt aus einer früheren Konversation",
     compacting: "Konversation wird komprimiert",
     compactingDescription:
       "Frühere Nachrichten werden zusammengefasst, damit sie ins Kontextfenster passen.",
@@ -60,8 +58,8 @@ export const chat = {
     leave: "Verlassen und stoppen",
   },
   steering: {
-    queued_one: "Nachricht in der Warteschlange",
-    queued_other: "Nachrichten in der Warteschlange",
+    queued_one: "{{count}} Nachricht in der Warteschlange",
+    queued_other: "{{count}} Nachrichten in der Warteschlange",
   },
   composer: {
     placeholder: "Frag zu deinen Dokumenten …",
@@ -69,7 +67,6 @@ export const chat = {
     submit: "Senden",
     stop: "Stoppen",
     dictate: "Diktieren",
-    attachImage: "Bild anhängen",
     attachImageHint: "Hänge ein Bild an, das sich der Assistent ansehen soll",
     removeAttachment: "{{name}} entfernen",
     removeImage: "Bild entfernen",
@@ -185,18 +182,16 @@ export const chat = {
       write_document: "Dokument schreiben",
     },
     status: {
-      "approval-requested": "Wartet auf Erlaubnis",
-      "approval-responded": "Beantwortet",
-      "input-available": "Läuft",
-      "input-streaming": "Ausstehend",
-      "output-denied": "Abgelehnt",
-      "output-error": "Fehler",
+      running: "Läuft",
+      stopped: "Gestoppt",
+      failed: "Fehlgeschlagen",
+      denied: "Abgelehnt",
+      approved: "Erlaubt",
+      awaitingApproval: "Wartet auf Erlaubnis",
     },
     sections: {
       parameters: "Parameter",
       result: "Ergebnis",
-      steps: "Schritte",
-      program: "Programm",
     },
     approval: {
       question: "Darf der Assistent <bold>{{tool}}</bold> ausführen?",
@@ -216,11 +211,7 @@ export const chat = {
       submit: "Entscheidungen senden",
     },
     ask: {
-      status: {
-        pending: "Wartet auf Antwort",
-        answered: "Beantwortet",
-        dismissed: "Verworfen",
-      },
+      answered: "Beantwortet",
       recommended: "Empfohlen",
       other: "Andere",
       otherPlaceholder: "Eigene Antwort eingeben",
@@ -233,11 +224,10 @@ export const chat = {
       next: "Weiter",
       dismiss: "Verwerfen",
       submit: "Antworten senden",
-      dismissed: "Du hast diese Fragen verworfen.",
+      dismissed: "Verworfen",
     },
     mutations: {
       titleWithPath: "{{tool}} · {{name}}",
-      changes: "Änderungen",
       modes: {
         replace: "Ersetzen",
         create: "Erstellen",
@@ -245,8 +235,6 @@ export const chat = {
         prepend: "Voranstellen",
       },
       emptyContent: "Das Dokument wird leer geschrieben.",
-      showAll: "Alle {{count}} Zeilen anzeigen",
-      showLess: "Weniger anzeigen",
     },
     subagent: {
       reasoning: "Denkprozess",
@@ -258,7 +246,6 @@ export const chat = {
       frames_one: "{{count}} Frame ausgewertet",
       frames_other: "{{count}} Frames ausgewertet",
       duration: "{{duration}} s",
-      attached: "An das Modell übergeben",
       previewUnavailable: "Vorschau nicht verfügbar",
     },
     runPython: {
@@ -268,7 +255,8 @@ export const chat = {
         "Das Skript in seiner aktuell gesicherten Form. Es wird bei jeder Ausführung neu gelesen, eine spätere Änderung kann also von der Version abweichen, die dieser Aufruf ausgeführt hat.",
       inlineProgram: "Inline-Programm",
       noProgram: "Es wurde weder Python-Code noch ein Skriptpfad angegeben.",
-      returned: "Rückgabewert:",
+      printed: "Ausgabe",
+      returned: "Rückgabewert",
       noOutput: "Das Programm hat nichts ausgegeben und keinen Wert zurückgegeben.",
       applied_one: "{{count}} Änderung am Arbeitsbereich angewendet.",
       applied_other: "{{count}} Änderungen am Arbeitsbereich angewendet.",
@@ -279,12 +267,11 @@ export const chat = {
       callFailed: "fehlgeschlagen: {{error}}",
     },
     changeset: {
-      folder: "Ordner",
-      moves: "Verschoben",
-      creates: "Erstellt",
-      updates: "Geändert",
-      deletes: "Gelöscht",
-      mkdirs: "Neue Ordner",
+      created: "{{path}} erstellt",
+      updated: "{{path}} geändert",
+      moved: "{{source}} nach {{destination}} verschoben",
+      deleted: "{{path}} gelöscht",
+      mkdir: "Ordner {{path}} erstellt",
       replaces: "ersetzt",
       question_one: "Darf der Assistent diese Änderung an deinem Arbeitsbereich anwenden?",
       question_other:

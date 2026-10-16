@@ -1,4 +1,4 @@
-import { PanelLeftOpen } from "lucide-react";
+import { PanelLeftOpenIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -39,36 +39,32 @@ export function ChatLayout({ id, draft = false, onNewDraft }: ChatLayoutProps) {
   return (
     <ConversationIdProvider value={draft ? null : id}>
       <div className="flex h-full overflow-hidden">
-        {/* Desktop: Always show DocumentCanvas */}
-        <div className="hidden md:block h-full w-1/2 overflow-hidden border-r">
+        <div className="hidden h-full w-1/2 overflow-hidden border-r md:block">
           <DocumentCanvas />
         </div>
 
-        {/* Mobile: Sheet for DocumentCanvas */}
         <Sheet open={mobileDocumentsOpen} onOpenChange={setMobileDocumentsOpen}>
-          <SheetContent side="left" className="w-full sm:max-w-lg p-0">
+          <SheetContent side="left" className="p-0 data-[side=left]:w-full data-[side=left]:sm:max-w-lg">
             <SheetHeader className="border-b">
               <SheetTitle>{t(($) => $.documents)}</SheetTitle>
               <SheetDescription className="sr-only">
                 {t(($) => $.documentsDescription)}
               </SheetDescription>
             </SheetHeader>
-            <div className="h-[calc(100%-60px)] overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden">
               <DocumentCanvas />
             </div>
           </SheetContent>
         </Sheet>
 
-        {/* Chat Sidebar */}
-        <div className="h-full w-full md:w-1/2 overflow-hidden flex flex-col">
-          {/* Mobile: Toggle button for documents */}
-          <div className="md:hidden border-b p-2">
+        <div className="flex h-full w-full flex-col overflow-hidden md:w-1/2">
+          <div className="border-b p-2 md:hidden">
             <Button variant="ghost" size="sm" onClick={() => setMobileDocumentsOpen(true)}>
-              <PanelLeftOpen className="h-4 w-4 mr-2" />
+              <PanelLeftOpenIcon data-icon="inline-start" />
               {t(($) => $.viewDocuments)}
             </Button>
           </div>
-          <div className="flex-1 overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-hidden">
             <ChatSidebar id={id} draft={draft} onNewDraft={onNewDraft} />
           </div>
         </div>

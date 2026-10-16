@@ -1,97 +1,73 @@
-import type { UIMessage } from "@ai-sdk/react";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
-import { ReasoningPart } from "@/components/chat/parts/ReasoningPart";
-import { UserTextPart } from "@/components/chat/parts/UserTextPart";
+import { isReasoningRunning, ReasoningPart } from "@/components/chat/parts/ReasoningPart";
 import { getToolHandler } from "@/components/chat/tools/registry";
 import { SubagentTool } from "@/components/chat/tools/subagent";
 import { ToolFallback } from "@/components/chat/tools/ToolFallback";
 import { useSubagentLive } from "@/hooks/chat/use-subagent-live";
+import { type ChatMessage, isOpenPrompt } from "@/lib/chat/chat-utils";
 import { isSubagentTranscript } from "@/lib/chat/subagent";
-import { getToolPartInfo, type ToolPart } from "@/lib/chat/tool-part";
+import { getToolName, getToolPartInfo, type ToolPart } from "@/lib/chat/tool-part";
+
+export type ChatPart = ChatMessage["parts"][number];
+
+/**
+ * Where a part of a reply goes: a step the agent took sits in a trace with its neighbors,
+ * content and anything asking the user stands on its own, and the rest renders nothing.
+ */
+export function partLayout(part: ChatPart, streaming: boolean): "step" | "block" | null {
+  switch (part.type) {
+    case "text":
+      return part.text.trim() ? "block" : null;
+    case "reasoning":
+      return part.text || isReasoningRunning(part, streaming) ? "step" : null;
+    case "file":
+      return part.mediaType.startsWith("image/") ? "block" : null;
+  }
+
+  if (!getToolName(part)) return null;
+
+  return isOpenPrompt(part) ? "block" : "step";
+}
 
 interface MessagePartProps {
+  part: ChatPart;
   toolData: ReadonlyMap<string, unknown>;
-  part: UIMessage["parts"][number];
   reasoningDuration?: number;
-  isUserMessage: boolean;
-  messageId: string;
-  isEditing: boolean;
-  onCancelEdit: () => void;
-  onSubmitEdit: (messageId: string, newText: string) => void;
 }
 
-export function MessagePart({
-  toolData,
-  part,
-  reasoningDuration,
-  isUserMessage,
-  messageId,
-  isEditing,
-  onCancelEdit,
-  onSubmitEdit,
-}: MessagePartProps) {
-  if (part.type === "text") {
-    return isUserMessage ? (
-      <UserTextPart
-        text={part.text}
-        messageId={messageId}
-        isEditing={isEditing}
-        onCancelEdit={onCancelEdit}
-        onSubmitEdit={onSubmitEdit}
-      />
-    ) : (
-      <MarkdownText>{part.text}</MarkdownText>
-    );
+/** One part of a reply that `partLayout` places. */
+export function MessagePart({ part, toolData, reasoningDuration }: MessagePartProps) {
+  switch (part.type) {
+    case "text":
+      return <MarkdownText>{part.text}</MarkdownText>;
+    case "reasoning":
+      return <ReasoningPart part={part} duration={reasoningDuration} />;
+    // A tool that returns binary content lands here too (pydantic-ai extracts it into a trailing user message).
+    case "file":
+      return <ImagePart url={part.url} filename={part.filename} />;
+    default:
+      return <ToolMessagePart part={part} toolData={toolData} />;
   }
-
-  if (part.type === "reasoning") {
-    return <ReasoningPart part={part} duration={reasoningDuration} />;
-  }
-
-  // A user attachment is always an image, but a tool that returns binary
-  // content lands here too (pydantic-ai extracts it into a trailing user
-  // message), so gate on the media type rather than the part kind.
-  if (part.type === "file" && part.mediaType.startsWith("image/")) {
-    return <ImagePart url={part.url} filename={part.filename} />;
-  }
-
-  if (part.type === "step-start") {
-    return null;
-  }
-
-  return <ToolMessagePart toolData={toolData} part={part} />;
 }
 
-interface ToolMessagePartProps {
-  toolData: ReadonlyMap<string, unknown>;
-  part: UIMessage["parts"][number];
-}
-
-// Tool parts only: the live-subagent context subscription lives here rather
-// than in MessagePart, so only tool parts depend on the live map (other part
-// types never subscribe to it).
-function ToolMessagePart({ toolData, part }: ToolMessagePartProps) {
-  const toolCallId = "toolCallId" in part ? (part.toolCallId as string) : undefined;
+// The live-subagent subscription lives here, so only tool parts depend on the live map.
+function ToolMessagePart({ part, toolData }: Omit<MessagePartProps, "reasoningDuration">) {
+  const toolCallId = "toolCallId" in part ? part.toolCallId : undefined;
   const liveSubagent = useSubagentLive(toolCallId);
-
   const info = getToolPartInfo(part, toolData);
+
   if (!info) return null;
 
-  // Any subagent tool (explore today, others later) renders its delegated run's
-  // transcript: the persisted one once it arrives and after reload, the live
-  // stream while it is still running.
+  const tool = part as ToolPart;
+  // Any subagent tool renders its delegated run: the persisted transcript once it arrives, the live one before.
   const subagentSteps = isSubagentTranscript(info.metadata) ? info.metadata.steps : liveSubagent;
-  if (subagentSteps) {
-    return <SubagentTool toolName={info.toolName} part={part as ToolPart} steps={subagentSteps} />;
-  }
+
+  if (subagentSteps) return <SubagentTool toolName={info.toolName} part={tool} steps={subagentSteps} />;
 
   const handler = getToolHandler(info.toolName);
-  if (handler?.render) {
-    return handler.render({ part: part as ToolPart, metadata: info.metadata });
-  }
 
-  return (
-    <ToolFallback toolName={info.toolName} part={part as ToolPart} formatted={info.formatted} />
-  );
+  if (handler?.render) return handler.render({ part: tool, metadata: info.metadata });
+
+  return <ToolFallback toolName={info.toolName} part={tool} />;
 }

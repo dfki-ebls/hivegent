@@ -18,10 +18,15 @@ Editing a message or regenerating a reply forks a sibling branch server-side and
 
 ## AI Elements are composed, not vendored
 
-The chat follows the shadcn/ui AI Elements patterns, composed in place from the generated components in `components/ui` (`Trace`, `Message`, `Bubble`, `CodeBlock`, `Questionnaire`, `InputGroup`, `Attachment`), rather than wrapping each pattern in a file of its own.
+The chat follows the shadcn/ui AI Elements patterns, composed in place from the generated components in `components/ui` (`MessageScroller`, `Message`, `Bubble`, `Trace`, `CodeBlock`, `Item`, `Questionnaire`, `InputGroup`, `Attachment`, `Marker`), rather than wrapping each pattern in a file of its own.
 Every generated component uses Base UI, so its triggers take a `render` element instead of `asChild`, and `npm run shadcnup` installs or refreshes every component of the registry.
 
-Replies render with Streamdown, but its fenced code goes to the same `CodeBlock` as the tool cards (`MarkdownCode` in `chat/markdown/MarkdownText.tsx`), highlighted by the Shiki core with the JavaScript regex engine and the languages listed in `lib/highlighter.tsx`.
+A reply is a `Message` whose parts `partLayout` (`chat/MessagePart.tsx`) sorts into steps and blocks.
+Each run of steps (reasoning and tool calls) between two blocks is one `Trace`, and every step is a trace line that expands to its detail, so tools, reasoning, subagents, changesets and the steering queue all look and behave the same.
+A step that asks the user something, an approval or an `ask_user` question, is a block instead: an outline `Item` outside the trace until it is answered, after which the call goes back to being a line.
+Whether a line still runs depends on whether the chat streams into its message (`useMessageStreaming`), so a call the user stopped reads as stopped instead of shimmering forever.
+
+Replies render with Streamdown, but its fenced code goes to the same `CodeBlock` as the tool lines (`MarkdownCode` in `chat/markdown/MarkdownText.tsx`), highlighted by the Shiki core with the JavaScript regex engine and the languages listed in `lib/highlighter.tsx`.
 That replaces `@streamdown/code`, whose full Shiki bundle emitted a chunk per language and the Oniguruma WASM.
 Mermaid fences and inline code keep Streamdown's own rendering, and the Mermaid plugin is imported on the first diagram, since Mermaid outweighs the rest of the chat.
 
@@ -43,20 +48,19 @@ The prompt itself is re-derived from stored history rather than stored as a deci
 An approval the user overtakes by sending another message is declined on both sides: `chat-utils.closeAbandonedCalls` derives the denial over the live transcript while the backend closes the dangling call on the next request.
 
 The protocol's approval request carries ids only, so the changeset summary the planner resolved for the prompt arrives as message metadata keyed by tool call id, live and after a reload alike.
-`MessageBubble` provides it per message and `ToolCard` reads its own call's entry with `useApprovalMetadata(part, schema)`, which validates it with zod.
-Every approval that changes the workspace (a mutation tool or `apply_changes`) asks with that summary, so one `ChangesetView` (`components/chat/tools/changeset.tsx`) shows the real diffs for every tool, and `run-python.tsx` reuses it to show what a program staged.
-A tool card reads a `/tmp` file through the same document route as a workspace one, passing the persisted conversation id that `ChatSidebar` provides through `useConversationId`, so a draft's `/tmp` script waits for its first turn to persist.
-Every gated card asks with the same approve and deny buttons and an optional note for the assistant, and a lone request is sent on click.
-Several requests of one response are the special case: the card buttons then only stage a choice (`aria-pressed`), and an `ApprovalBar` under the message adds a shared note, "Approve all" and "Deny all", and a submit that sends the staged choices once every call has one.
-The fine-grained choices need no extra collapsible, since the cards themselves are collapsible and open while a decision is pending.
-`MessageBubble` holds the staged state (`useApprovalRoundState`) keyed by request id, so a later round starts blank, and provides it to its cards.
+`ApprovalScope` provides it per message and `ToolCard` reads its own call's entry with `useApprovalMetadata(part, schema)`, which validates it with zod.
+Every approval that changes the workspace (a mutation tool or `apply_changes`) asks with that summary, so one `ChangesetView` (`components/chat/tools/changeset.tsx`) lists each change as a trace line that opens to its diff, and `run-python.tsx` reuses it to show what a program staged.
+A tool line reads a `/tmp` file through the same document route as a workspace one, passing the persisted conversation id that `ChatSidebar` provides through `useConversationId`, so a draft's `/tmp` script waits for its first turn to persist.
+Every gated call asks with the same `ApprovalPrompt` (`components/chat/tools/approval.tsx`): its input, the changeset, an optional note for the assistant, and approve and deny buttons, where a lone request is sent on click.
+Several requests of one response are the special case: the prompt buttons then only stage a choice (`aria-pressed`), and an `ApprovalBar` under the message adds a shared note, "Approve all" and "Deny all", and a submit that sends the staged choices once every call has one.
+`ApprovalScope` holds the staged state (`useApprovalRoundState`) keyed by request id, so a later round starts blank, and provides it to its prompts.
 The gate's `decide` takes the whole batch and records each decision in turn, and since the SDK continues only once the last one is in, that still sends a single continuation.
 
-A note travels as the decision's `reason`, which is the user's own text on both decisions: the backend words the refusal the model reads around it for a denial and appends it to the result of an approved call (see `../backend/README.md`), and records it so the resolved card shows it live and after a reload alike.
+A note travels as the decision's `reason`, which is the user's own text on both decisions: the backend words the refusal the model reads around it for a denial and appends it to the result of an approved call (see `../backend/README.md`), and records it so the resolved line shows it live and after a reload alike.
 
-## Questions are answered in their card
+## Questions are answered in their prompt
 
-`ask_user` is a tool without a server-side body, so the card (`components/chat/tools/ask-user.tsx`) answers it with `addToolOutput` through the same gate as approvals, which keeps the buttons disabled while the turn settles.
+`ask_user` is a tool without a server-side body, so its prompt (`components/chat/tools/ask-user.tsx`) answers it with `addToolOutput` through the same gate as approvals, which keeps the buttons disabled while the turn settles.
 It composes the shadcn/ui `Questionnaire`, one step per question with a free-text answer beside the options and a note field, and sends every answer at once from the last step.
 The checked options of a question's field are its picks, and its text input carries the typed answer.
 `chat-utils.shouldContinueRun` resumes the run once the last step holds an answered question and nothing unsettled, rather than the SDK's `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
