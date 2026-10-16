@@ -25,6 +25,9 @@ Replies render with Streamdown, but its fenced code goes to the same `CodeBlock`
 That replaces `@streamdown/code`, whose full Shiki bundle emitted a chunk per language and the Oniguruma WASM.
 Mermaid fences and inline code keep Streamdown's own rendering, and the Mermaid plugin is imported on the first diagram, since Mermaid outweighs the rest of the chat.
 
+Workspace documents render with markdown-to-jsx, since Streamdown is too slow for converted documents of hundreds of pages, into plain elements styled by shadcn/typeset, vendored unchanged as `src/typeset.css` from `ui.shadcn.com/typeset.css` since it ships as no package.
+Replies keep Streamdown's own styles: it has no unstyled mode and its root spaces blocks with a utility that overrides every typeset margin, so typeset would mean replacing each of its elements.
+
 ## Chat settings ride on every request
 
 `prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request, rather than each call site attaching a body.

@@ -5,6 +5,7 @@
     "frontend/src/hooks/use-highlighted-code.ts",
     "frontend/src/hooks/use-mobile.ts",
     "frontend/src/lib/highlighter.tsx",
+    "frontend/src/typeset.css",
     "frontend/src/**/*.gen.ts"
   ]
 }

@@ -1,10 +1,6 @@
-import type { ComponentProps } from "react";
 import { cjk } from "@streamdown/cjk";
 import { createMathPlugin } from "@streamdown/math";
-import type { MarkdownToJSX } from "markdown-to-jsx";
 import type { DiagramPlugin } from "streamdown";
-
-import { WorkspaceImage } from "@/components/WorkspaceImage";
 
 const math = createMathPlugin({ singleDollarTextMath: true });
 
@@ -25,20 +21,3 @@ const mermaid: DiagramPlugin = {
 
 /** Code fences render as a `CodeBlock` (see `MarkdownText`), so there is no code plugin. */
 export const STREAMDOWN_PLUGINS = { cjk, math, mermaid };
-
-export const MARKDOWN_BASE_OPTIONS = {
-  disableParsingRawHTML: true,
-} satisfies MarkdownToJSX.Options;
-
-export function workspaceMarkdownOptions(documentPath: string): MarkdownToJSX.Options {
-  return {
-    ...MARKDOWN_BASE_OPTIONS,
-    overrides: {
-      img: {
-        component: ({ src, alt, ...props }: ComponentProps<"img">) => (
-          <WorkspaceImage src={src} alt={alt ?? undefined} documentPath={documentPath} {...props} />
-        ),
-      },
-    },
-  };
-}
