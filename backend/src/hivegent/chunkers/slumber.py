@@ -6,7 +6,6 @@ from typing import Any
 
 from chonkie import SlumberChunker
 from chonkie.genie import BaseGenie
-from chonkie.genie.openai import OpenAIGenie
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
@@ -37,22 +36,51 @@ class SlumberChunkerConfig(BaseChonkieConfig):
     )
 
 
-class _LoopGenie(OpenAIGenie):
-    """``OpenAIGenie`` that runs its async calls on the loop owning *client*.
+class _LoopGenie(BaseGenie):
+    """Genie that sends its requests through *client* on the loop owning it.
 
-    The parent constructor is skipped since it builds its own HTTP clients,
-    which would bypass the shared trusted client and ``network.unix_sockets``.
-    The chunker calls the genie from a worker thread, so the sync methods hand
-    the retried async requests back to *loop*.
+    It uses the shared trusted client rather than building its own, which would
+    bypass ``network.unix_sockets``, and lets the client retry failed requests.
+    The chunker calls the genie from a worker thread, so each sync method hands
+    its request back to *loop*.
     """
 
     def __init__(
         self, client: AsyncOpenAI, model: str, loop: asyncio.AbstractEventLoop
     ) -> None:
-        BaseGenie.__init__(self)
-        self.async_client = client
-        self.model = model
+        super().__init__()
+        # As many attempts as chonkie's own genie makes, with the SDK's backoff.
+        self._client = client.with_options(max_retries=4)
+        self._model = model
         self._loop = loop
+
+    async def agenerate(self, prompt: str) -> str:
+        """Generate a plain text completion."""
+        response = await self._client.chat.completions.create(
+            model=self._model, messages=[{"role": "user", "content": prompt}]
+        )
+        content = response.choices[0].message.content
+
+        if content is None:
+            raise ValueError("The model returned no content")
+
+        return content
+
+    async def agenerate_json(
+        self, prompt: str, schema: type[BaseModel]
+    ) -> dict[str, Any]:
+        """Generate a completion parsed into *schema*."""
+        response = await self._client.chat.completions.parse(
+            model=self._model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format=schema,
+        )
+        parsed = response.choices[0].message.parsed
+
+        if parsed is None:
+            raise ValueError("The model returned no parsable content")
+
+        return parsed.model_dump()
 
     def generate(self, prompt: str) -> str:
         """Generate a plain text completion."""
@@ -60,7 +88,7 @@ class _LoopGenie(OpenAIGenie):
             self.agenerate(prompt), self._loop
         ).result()
 
-    def generate_json(self, prompt: str, schema: BaseModel) -> dict[str, Any]:
+    def generate_json(self, prompt: str, schema: type[BaseModel]) -> dict[str, Any]:
         """Generate a completion parsed into *schema*."""
         return asyncio.run_coroutine_threadsafe(
             self.agenerate_json(prompt, schema), self._loop
