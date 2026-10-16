@@ -1,31 +1,32 @@
-import { AlertCircle, CheckCircle2, Loader2, RotateCw, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, RotateCw, X } from "lucide-react";
 import type { TFunction } from "i18next";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ACTIVE_JOB_STATUSES, type JobView } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { onJobStarted, useJobsStore } from "@/stores/jobs-store";
 import { type UploadItem, onUploadAdded, useUploadQueue } from "@/stores/upload-queue-store";
+import { TooltipButton } from "@/components/TooltipButton";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Progress } from "@/components/ui/progress";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
+import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
+import { Progress, ProgressValue } from "@/components/ui/progress";
+import { Spinner } from "@/components/ui/spinner";
 
 // A row's visual tone, decoupled from whether it came from a job or an upload.
 type Tone = "active" | "success" | "error" | "muted";
 
-// Status-line color per tone; only failures deviate from muted.
-const TONE_TEXT_CLASS: Record<Tone, string> = {
-  active: "text-muted-foreground",
-  success: "text-muted-foreground",
-  error: "text-destructive",
-  muted: "text-muted-foreground",
-};
-
 interface TaskAction {
-  key: string;
-  label?: string; // a text button; an icon-only button when absent
-  icon?: ReactNode;
-  ariaLabel: string;
+  label: string;
   run: () => void;
 }
 
@@ -38,7 +39,9 @@ interface TaskRow {
   statusText: string;
   tone: Tone;
   progress: { current: number; total: number } | null;
-  actions: TaskAction[];
+  retry?: TaskAction;
+  /** The X button, cancelling active work or dismissing a failure. */
+  close?: TaskAction;
 }
 
 // Job stages and errors arrive localized from the backend,
@@ -58,16 +61,6 @@ function jobStatusLabel(job: JobView, t: TFunction): string {
   }
 }
 
-const closeIcon = <X className="h-4 w-4" />;
-
-// An icon-only X button, the shared shape of every cancel/dismiss action.
-const xAction = (key: string, ariaLabel: string, run: () => void): TaskAction => ({
-  key,
-  icon: closeIcon,
-  ariaLabel,
-  run,
-});
-
 interface JobActions {
   cancel: (id: string) => void;
   dismiss: (id: string) => void;
@@ -75,38 +68,20 @@ interface JobActions {
 
 function jobRow(job: JobView, { cancel, dismiss }: JobActions, t: TFunction): TaskRow {
   const active = ACTIVE_JOB_STATUSES.has(job.status);
-  const actions: TaskAction[] = active
-    ? [
-        xAction(
-          "cancel",
-          t(($) => $.documents.jobs.cancelTask),
-          () => cancel(job.id),
-        ),
-      ]
-    : job.status === "failed"
-      ? [
-          xAction(
-            "dismiss",
-            t(($) => $.documents.jobs.dismissTask),
-            () => dismiss(job.id),
-          ),
-        ]
-      : [];
+  const failed = job.status === "failed";
 
   return {
     id: job.id,
     order: job.created_at,
     title: job.title,
     statusText: jobStatusLabel(job, t),
-    tone: active
-      ? "active"
-      : job.status === "succeeded"
-        ? "success"
-        : job.status === "failed"
-          ? "error"
-          : "muted",
+    tone: active ? "active" : job.status === "succeeded" ? "success" : failed ? "error" : "muted",
     progress: active && job.progress && job.progress.total > 0 ? job.progress : null,
-    actions,
+    close: active
+      ? { label: t(($) => $.documents.jobs.cancelTask), run: () => cancel(job.id) }
+      : failed
+        ? { label: t(($) => $.documents.jobs.dismissTask), run: () => dismiss(job.id) }
+        : undefined,
   };
 }
 
@@ -118,29 +93,6 @@ interface UploadActions {
 
 function uploadRow(item: UploadItem, a: UploadActions, t: TFunction): TaskRow {
   const failed = item.status === "failed";
-  const retry: TaskAction = {
-    key: "retry",
-    label: t(($) => $.common.actions.retry),
-    icon: <RotateCw className="h-3.5 w-3.5 mr-1" />,
-    ariaLabel: t(($) => $.common.actions.retry),
-    run: () => a.retry(item.id),
-  };
-  const dismiss = xAction(
-    "dismiss",
-    t(($) => $.documents.jobs.dismissUpload),
-    () => a.dismiss(item.id),
-  );
-  const actions: TaskAction[] = failed
-    ? item.retryable
-      ? [retry, dismiss]
-      : [dismiss]
-    : [
-        xAction(
-          "cancel",
-          t(($) => $.documents.jobs.cancelUpload),
-          () => a.cancel(item.id),
-        ),
-      ];
 
   return {
     id: item.id,
@@ -149,76 +101,69 @@ function uploadRow(item: UploadItem, a: UploadActions, t: TFunction): TaskRow {
     statusText: item.error ?? t(($) => $.documents.jobs.status[item.status]),
     tone: failed ? "error" : "active",
     progress: null,
-    actions,
+    retry:
+      failed && item.retryable
+        ? { label: t(($) => $.common.actions.retry), run: () => a.retry(item.id) }
+        : undefined,
+    close: failed
+      ? { label: t(($) => $.documents.jobs.dismissUpload), run: () => a.dismiss(item.id) }
+      : { label: t(($) => $.documents.jobs.cancelUpload), run: () => a.cancel(item.id) },
   };
 }
 
-function ToneIcon({ tone }: { tone: Tone }) {
+function ToneIcon({ tone, ...props }: { tone: Tone; "data-icon"?: "inline-start" }) {
   switch (tone) {
     case "active":
-      return <Loader2 className="h-4 w-4 animate-spin text-primary" />;
+      return <Spinner aria-hidden className="text-primary" {...props} />;
     case "success":
-      return <CheckCircle2 className="h-4 w-4 text-green-600" />;
+      return <CheckCircle2 className="text-green-600" {...props} />;
     case "error":
-      return <AlertCircle className="h-4 w-4 text-destructive" />;
+      return <AlertCircle className="text-destructive" {...props} />;
     default:
-      return <X className="h-4 w-4 text-muted-foreground" />;
+      return <X className="text-muted-foreground" {...props} />;
   }
 }
 
 function TaskRowView({ row }: { row: TaskRow }) {
+  const { progress } = row;
+
   return (
-    <div className="flex items-start gap-2 px-3 py-2">
-      <span className="mt-0.5 shrink-0">
+    <Item size="xs" className="flex-nowrap px-0">
+      <ItemMedia variant="icon">
         <ToneIcon tone={row.tone} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{row.title}</p>
-        <p className={`whitespace-pre-line break-words text-xs ${TONE_TEXT_CLASS[row.tone]}`}>
-          {row.statusText}
-        </p>
-        {row.progress && (
-          <div className="mt-1 flex items-center gap-2">
-            <Progress
-              value={(row.progress.current / row.progress.total) * 100}
-              className="h-1 flex-1"
-            />
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {row.progress.current}/{row.progress.total}
-            </span>
-          </div>
-        )}
-      </div>
-      {row.actions.length > 0 && (
-        <div className="flex shrink-0 items-center gap-1">
-          {row.actions.map((action) =>
-            action.label ? (
-              <Button
-                key={action.key}
-                variant="outline"
-                size="sm"
-                onClick={action.run}
-                aria-label={action.ariaLabel}
-              >
-                {action.icon}
-                {action.label}
-              </Button>
-            ) : (
-              <Button
-                key={action.key}
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={action.run}
-                aria-label={action.ariaLabel}
-              >
-                {action.icon}
-              </Button>
-            ),
+      </ItemMedia>
+      <ItemContent className="min-w-0">
+        <ItemTitle className="max-w-full">{row.title}</ItemTitle>
+        <ItemDescription
+          className={cn(
+            "line-clamp-none text-xs whitespace-pre-line break-words",
+            row.tone === "error" && "text-destructive",
           )}
-        </div>
-      )}
-    </div>
+        >
+          {row.statusText}
+        </ItemDescription>
+        {progress && (
+          <Progress value={progress.current} max={progress.total} className="gap-1">
+            <ProgressValue className="text-xs">
+              {() => `${progress.current}/${progress.total}`}
+            </ProgressValue>
+          </Progress>
+        )}
+      </ItemContent>
+      <ItemActions className="gap-1">
+        {row.retry && (
+          <Button variant="outline" size="xs" onClick={row.retry.run}>
+            <RotateCw data-icon="inline-start" />
+            {row.retry.label}
+          </Button>
+        )}
+        {row.close && (
+          <TooltipButton size="icon-xs" label={row.close.label} onClick={row.close.run}>
+            <X />
+          </TooltipButton>
+        )}
+      </ItemActions>
+    </Item>
   );
 }
 
@@ -255,6 +200,7 @@ export function JobTray() {
     const reveal = () => setOpen(true);
     const offUpload = onUploadAdded(reveal);
     const offJob = onJobStarted(reveal);
+
     return () => {
       offUpload();
       offJob();
@@ -276,34 +222,31 @@ export function JobTray() {
 
   const activeCount = rows.filter((r) => r.tone === "active").length;
   const attentionCount = rows.filter((r) => r.tone === "error").length;
+  const summary: { tone: Tone; label: string } =
+    activeCount > 0
+      ? { tone: "active", label: t(($) => $.documents.jobs.processing, { count: activeCount }) }
+      : attentionCount > 0
+        ? {
+            tone: "error",
+            label: t(($) => $.documents.jobs.needAttention, { count: attentionCount }),
+          }
+        : { tone: "success", label: t(($) => $.documents.jobs.status.done) };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button variant="ghost" size="sm" className="gap-2" />}>
-        {activeCount > 0 ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : attentionCount > 0 ? (
-          <AlertCircle className="h-4 w-4 text-destructive" />
-        ) : (
-          <CheckCircle2 className="h-4 w-4 text-green-600" />
-        )}
-        <span className="hidden sm:inline">
-          {activeCount > 0
-            ? t(($) => $.documents.jobs.processing, { count: activeCount })
-            : attentionCount > 0
-              ? t(($) => $.documents.jobs.needAttention, { count: attentionCount })
-              : t(($) => $.documents.jobs.status.done)}
-        </span>
+      <PopoverTrigger render={<Button variant="ghost" size="sm" />}>
+        <ToneIcon tone={summary.tone} data-icon="inline-start" />
+        <span className="sr-only sm:not-sr-only">{summary.label}</span>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-0">
-        <div className="border-b px-3 py-2 text-sm font-medium">
-          {t(($) => $.documents.jobs.title)}
-        </div>
-        <div className="max-h-80 divide-y overflow-y-auto">
+      <PopoverContent align="end" className="w-80">
+        <PopoverHeader>
+          <PopoverTitle className="text-sm">{t(($) => $.documents.jobs.title)}</PopoverTitle>
+        </PopoverHeader>
+        <ItemGroup className="max-h-80 overflow-y-auto">
           {rows.map((row) => (
             <TaskRowView key={row.id} row={row} />
           ))}
-        </div>
+        </ItemGroup>
       </PopoverContent>
     </Popover>
   );

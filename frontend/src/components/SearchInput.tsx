@@ -18,6 +18,7 @@ export function SearchInput({ value, onChange, placeholder }: SearchInputProps) 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        aria-label={placeholder}
       />
     </InputGroup>
   );

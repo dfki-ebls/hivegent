@@ -18,8 +18,7 @@ import {
 import { usePipelineConfig } from "@/hooks/use-pipeline-config";
 import { PIPELINE_CONFIG_FIELDS, useSettingsStore } from "@/stores/settings-store";
 import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";
-import { Label } from "@/components/ui/label";
-import { OptionSelect } from "@/components/OptionSelect";
+import { LabeledOptionSelect } from "@/components/OptionSelect";
 
 interface PipelineValues {
   conversion: ConversionPipeline;
@@ -87,28 +86,21 @@ export function PipelineSelector<K extends PipelineKind>({
     value === registry.auto ? null : value,
     registry.fetchConfig,
   );
-  const Icon = registry.icon;
   const options = pipelines.map((pipeline) => ({ value: pipeline, ...registry.text(t, pipeline) }));
-  const id = `${kind}-pipeline-select`;
   // Widened from `K`, since the selector API cannot index a catalog by a type parameter.
   const stage: PipelineKind = kind;
 
   return (
-    <div className="flex items-center gap-2">
-      <Label htmlFor={id} className="text-sm text-muted-foreground flex items-center gap-1.5">
-        <Icon className="h-4 w-4" />
-        {t(($) => $.documents.pipelines[stage])}
-      </Label>
-      <OptionSelect
-        id={id}
-        className="w-[140px]"
-        size="sm"
-        value={value}
-        options={options}
-        onChange={onChange}
-        placeholder={t(($) => $.documents.pipelines.select[stage])}
-        disabled={disabled}
-      />
+    <LabeledOptionSelect
+      icon={registry.icon}
+      label={t(($) => $.documents.pipelines[stage])}
+      className="w-35"
+      value={value}
+      options={options}
+      onChange={onChange}
+      placeholder={t(($) => $.documents.pipelines.select[stage])}
+      disabled={disabled}
+    >
       {pipelines.includes(value) && pipelineConfig && (
         <PipelineConfigDialog
           pipelineLabel={registry.text(t, value).label}
@@ -121,6 +113,6 @@ export function PipelineSelector<K extends PipelineKind>({
           disabled={disabled}
         />
       )}
-    </div>
+    </LabeledOptionSelect>
   );
 }

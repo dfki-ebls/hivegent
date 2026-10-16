@@ -1,9 +1,9 @@
 import { createRouter, RouterProvider } from "@tanstack/react-router";
+import { ThemeProvider } from "next-themes";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 
 import { BootstrapGate } from "@/components/BootstrapGate";
-import { ThemeProvider } from "@/components/ThemeProvider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/i18n";
 import { OidcInitializationGate } from "@/oidc";
@@ -47,7 +47,7 @@ if (rootElement && !rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement);
   root.render(
     <StrictMode>
-      <ThemeProvider>
+      <ThemeProvider attribute="class" enableSystem disableTransitionOnChange>
         <TooltipProvider>
           <BootstrapGate>
             <OidcInitializationGate>

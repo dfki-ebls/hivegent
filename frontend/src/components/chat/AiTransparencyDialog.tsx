@@ -2,17 +2,19 @@ import { useState } from "react";
 import { DownloadIcon, ScanSearchIcon } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 
-import { FormSection } from "@/components/FormSection";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import { DialogBody, ScrollDialogContent } from "@/components/ScrollDialogContent";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { keyPrefix } from "@/i18n";
 import { formatNumber } from "@/i18n/format";
@@ -28,6 +30,7 @@ interface AiTransparencyDialogProps {
   minimumTokens: number;
 }
 
+// The theme has no success or warning token, so the outcomes keep their palette colors.
 const STATUS_STYLES = {
   detected: "text-green-700 dark:text-green-400",
   not_detected: "text-muted-foreground",
@@ -36,16 +39,13 @@ const STATUS_STYLES = {
 
 export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTransparencyDialogProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [result, setResult] = useState<TransparencyDetectionResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
-  function changeOpen(nextOpen: boolean): void {
-    setOpen(nextOpen);
-
-    if (!nextOpen) {
+  function changeOpen(open: boolean): void {
+    if (!open) {
       setText("");
       setResult(null);
       setError(null);
@@ -76,81 +76,76 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
   }
 
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogTrigger render={<Button variant="link" size="xs" className="h-auto px-1 text-xs" />}>
+    <Dialog onOpenChange={changeOpen}>
+      <DialogTrigger render={<Button variant="link" size="xs" className="h-auto px-1" />}>
         {t(($) => $.trigger)}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+      <ScrollDialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t(($) => $.title)}</DialogTitle>
           <DialogDescription>{t(($) => $.description)}</DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4 py-4">
-          <FormSection
-            label={t(($) => $.textLabel)}
-            htmlFor="verify-text"
-            description={t(($) => $.textDescription, { tokens: formatNumber(minimumTokens) })}
-          >
-            <Textarea
-              id="verify-text"
-              value={text}
-              onChange={(event) => {
-                setText(event.target.value);
-                setResult(null);
-                setError(null);
-              }}
-              placeholder={t(($) => $.placeholder)}
-              className="h-[40vh] min-h-[100px] resize-y overflow-y-auto field-sizing-fixed"
-            />
-          </FormSection>
-
-          {result && (
-            <FormSection
-              label={t(($) => $.resultLabel)}
-              description={t(($) => $.resultDescription)}
-            >
-              <output className={cn("text-sm font-medium", STATUS_STYLES[result.status])}>
-                {result.message}
-              </output>
-            </FormSection>
-          )}
-
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-
-          {contactEmail && (
-            <p className="text-xs text-muted-foreground">
-              <Trans
-                i18nKey={($) => $.chat.transparency.contact}
-                components={{
-                  email: (
-                    <a className="underline" href={`mailto:${contactEmail}`}>
-                      {contactEmail}
-                    </a>
-                  ),
+        <DialogBody>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="verify-text">{t(($) => $.textLabel)}</FieldLabel>
+              <Textarea
+                id="verify-text"
+                value={text}
+                onChange={(event) => {
+                  setText(event.target.value);
+                  setResult(null);
+                  setError(null);
                 }}
+                placeholder={t(($) => $.placeholder)}
+                className="h-[40vh] resize-y field-sizing-fixed"
               />
-            </p>
-          )}
-        </div>
+              <FieldDescription>
+                {t(($) => $.textDescription, { tokens: formatNumber(minimumTokens) })}
+              </FieldDescription>
+            </Field>
 
-        <DialogFooter className="flex-row">
+            {result && (
+              <Field>
+                <FieldTitle>{t(($) => $.resultLabel)}</FieldTitle>
+                <output className={cn("text-sm font-medium", STATUS_STYLES[result.status])}>
+                  {result.message}
+                </output>
+                <FieldDescription>{t(($) => $.resultDescription)}</FieldDescription>
+              </Field>
+            )}
+
+            {error && <ErrorAlert>{error}</ErrorAlert>}
+
+            {contactEmail && (
+              <FieldDescription>
+                <Trans
+                  i18nKey={($) => $.chat.transparency.contact}
+                  components={{ email: <a href={`mailto:${contactEmail}`}>{contactEmail}</a> }}
+                />
+              </FieldDescription>
+            )}
+          </FieldGroup>
+        </DialogBody>
+
+        <DialogFooter>
           {result && (
-            <Button variant="outline" size="sm" className="mr-auto" onClick={downloadReport}>
-              <DownloadIcon />
+            <Button variant="outline" size="sm" className="sm:mr-auto" onClick={downloadReport}>
+              <DownloadIcon data-icon="inline-start" />
               {t(($) => $.download)}
             </Button>
           )}
           <Button size="sm" onClick={detect} disabled={!text.trim() || checking}>
-            <ScanSearchIcon />
+            {checking ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <ScanSearchIcon data-icon="inline-start" />
+            )}
             {checking ? t(($) => $.verifying) : t(($) => $.verify)}
           </Button>
         </DialogFooter>
-      </DialogContent>
+      </ScrollDialogContent>
     </Dialog>
   );
 }

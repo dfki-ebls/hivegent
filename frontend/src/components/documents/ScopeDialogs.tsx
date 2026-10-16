@@ -1,19 +1,11 @@
-import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
+import { type Ref, useImperativeHandle } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { useDocumentsStore } from "@/stores/documents-store";
 import { basename, parentDir } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { NameInputDialog } from "@/components/documents/NameInputDialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 type DeleteTarget =
   | { kind: "file"; path: string }
@@ -32,6 +24,7 @@ export interface ScopeDialogsHandle {
 }
 
 interface ScopeDialogsProps {
+  ref?: Ref<ScopeDialogsHandle>;
   /** Workspace scope: `~` for personal, `@<group>` for a group. */
   scope: string;
   /** Run after a bulk delete starts (e.g. to clear the selection). */
@@ -42,105 +35,88 @@ interface ScopeDialogsProps {
  * The delete confirmation and rename dialogs for one scope. Owns their state and
  * runs the matching store mutations, so ScopeSection only has to call the
  * imperative openers from its tree and bulk actions. A rename is a same-directory
- * move, so it reuses the store's move action. Creating directories happens
- * through the document manager's toolbar; cross-directory moves happen through
- * native drag-and-drop.
+ * move, so it reuses the store's move action. Each target outlives its dialog's
+ * close, so the dialog keeps its text while it animates out.
  */
-export const ScopeDialogs = forwardRef<ScopeDialogsHandle, ScopeDialogsProps>(function ScopeDialogs(
-  { scope, onBulkDone },
-  ref,
-) {
+export function ScopeDialogs({ ref, scope, onBulkDone }: ScopeDialogsProps) {
   const { t } = useTranslation();
   const remove = useDocumentsStore((s) => s.remove);
   const move = useDocumentsStore((s) => s.move);
 
-  const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
-  const [pendingRename, setPendingRename] = useState<RenameTarget | null>(null);
+  const deleteDialog = useDialogTarget<DeleteTarget | null>(null);
+  const renameDialog = useDialogTarget<RenameTarget | null>(null);
+  const pendingDelete = deleteDialog.target;
+  const pendingRename = renameDialog.target;
+  const showDelete = deleteDialog.show;
+  const showRename = renameDialog.show;
 
   useImperativeHandle(
     ref,
     () => ({
-      deleteFile: (path) => setPendingDelete({ kind: "file", path }),
-      deleteDir: (path) => setPendingDelete({ kind: "directory", path }),
-      bulkDelete: (files) => setPendingDelete({ kind: "bulk", files }),
-      renameFile: (path) => setPendingRename({ kind: "file", path }),
-      renameDir: (path) => setPendingRename({ kind: "directory", path }),
+      deleteFile: (path) => showDelete({ kind: "file", path }),
+      deleteDir: (path) => showDelete({ kind: "directory", path }),
+      bulkDelete: (files) => showDelete({ kind: "bulk", files }),
+      renameFile: (path) => showRename({ kind: "file", path }),
+      renameDir: (path) => showRename({ kind: "directory", path }),
     }),
-    [],
+    [showDelete, showRename],
   );
 
-  const confirmDelete = useCallback(async () => {
+  const confirmDelete = () => {
     if (!pendingDelete) return;
-    setPendingDelete(null);
+
+    deleteDialog.setOpen(false);
 
     if (pendingDelete.kind === "bulk") {
       onBulkDone();
-      await remove(scope, pendingDelete.files, "entry");
+      void remove(scope, pendingDelete.files, "entry");
     } else {
-      await remove(scope, [pendingDelete.path], pendingDelete.kind === "directory" ? "dir" : "entry");
+      void remove(scope, [pendingDelete.path], pendingDelete.kind === "directory" ? "dir" : "entry");
     }
-  }, [pendingDelete, remove, onBulkDone, scope]);
+  };
 
   // A rename keeps the entry's parent directory and swaps its basename, which is
   // exactly a same-scope move to the rebuilt path.
-  const confirmRename = useCallback(
-    (name: string) => {
-      if (!pendingRename) return;
-      const { path } = pendingRename;
-      setPendingRename(null);
-      void move(scope, scope, [{ source: path, destination: parentDir(path) + name }]);
-    },
-    [pendingRename, move, scope],
-  );
+  const confirmRename = (name: string) => {
+    if (!pendingRename) return;
+
+    const { path } = pendingRename;
+    void move(scope, scope, [{ source: path, destination: parentDir(path) + name }]);
+  };
 
   return (
     <>
-      <AlertDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => !open && setPendingDelete(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {pendingDelete?.kind === "bulk"
-                ? t(($) => $.documents.confirm.deleteDocuments, {
-                    count: pendingDelete.files.length,
-                  })
-                : pendingDelete?.kind === "directory"
-                  ? t(($) => $.documents.confirm.deleteFolder)
-                  : t(($) => $.documents.confirm.deleteDocument)}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(($) => $.documents.confirm.deleteDescription)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t(($) => $.common.actions.cancel)}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void confirmDelete()}>
-              {t(($) => $.common.actions.delete)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onOpenChange={deleteDialog.setOpen}
+        title={
+          pendingDelete?.kind === "bulk"
+            ? t(($) => $.documents.confirm.deleteDocuments, { count: pendingDelete.files.length })
+            : pendingDelete?.kind === "directory"
+              ? t(($) => $.documents.confirm.deleteFolder)
+              : t(($) => $.documents.confirm.deleteDocument)
+        }
+        description={t(($) => $.documents.confirm.deleteDescription)}
+        confirmLabel={t(($) => $.common.actions.delete)}
+        onConfirm={confirmDelete}
+      />
 
-      {pendingRename && (
-        <NameInputDialog
-          open
-          onOpenChange={(open) => !open && setPendingRename(null)}
-          title={
-            pendingRename.kind === "directory"
-              ? t(($) => $.documents.confirm.renameFolder)
-              : t(($) => $.documents.confirm.renameDocument)
-          }
-          description={t(($) => $.documents.confirm.renameDescription, {
-            name: basename(pendingRename.path),
-          })}
-          label={t(($) => $.documents.confirm.name)}
-          initialValue={basename(pendingRename.path)}
-          submitLabel={t(($) => $.common.actions.rename)}
-          onSubmit={confirmRename}
-        />
-      )}
+      <NameInputDialog
+        open={renameDialog.open}
+        onOpenChange={renameDialog.setOpen}
+        title={
+          pendingRename?.kind === "directory"
+            ? t(($) => $.documents.confirm.renameFolder)
+            : t(($) => $.documents.confirm.renameDocument)
+        }
+        description={t(($) => $.documents.confirm.renameDescription, {
+          name: basename(pendingRename?.path ?? ""),
+        })}
+        label={t(($) => $.documents.confirm.name)}
+        initialValue={basename(pendingRename?.path ?? "")}
+        submitLabel={t(($) => $.common.actions.rename)}
+        onSubmit={confirmRename}
+      />
     </>
   );
-});
+}

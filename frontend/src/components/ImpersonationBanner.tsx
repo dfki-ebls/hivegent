@@ -1,6 +1,7 @@
 import { EyeIcon } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 
+import { Alert, AlertAction, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getImpersonation, stopImpersonation } from "@/lib/impersonation";
 
@@ -14,21 +15,25 @@ import { getImpersonation, stopImpersonation } from "@/lib/impersonation";
 export function ImpersonationBanner() {
   const { t } = useTranslation();
   const impersonation = getImpersonation();
+
   if (!impersonation) return null;
 
+  // Amber, since the theme has no warning token and the banner must stand out.
   return (
-    <div className="flex items-center justify-center gap-3 border-b border-amber-500/40 bg-amber-500/15 px-4 py-1.5 text-sm">
-      <EyeIcon className="h-4 w-4" />
-      <span>
+    <Alert className="rounded-none border-x-0 border-t-0 border-amber-500/40 bg-amber-500/15">
+      <EyeIcon />
+      <AlertTitle>
         <Trans
           i18nKey={($) => $.app.impersonation.viewingAs}
           values={{ user: impersonation }}
-          components={{ bold: <span className="font-medium" /> }}
+          components={{ bold: <span className="font-semibold" /> }}
         />
-      </span>
-      <Button variant="outline" size="sm" className="h-6 px-2" onClick={stopImpersonation}>
-        {t(($) => $.app.impersonation.exit)}
-      </Button>
-    </div>
+      </AlertTitle>
+      <AlertAction>
+        <Button variant="outline" size="xs" onClick={stopImpersonation}>
+          {t(($) => $.app.impersonation.exit)}
+        </Button>
+      </AlertAction>
+    </Alert>
   );
 }

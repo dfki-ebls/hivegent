@@ -1,57 +1,47 @@
-import { ChevronDown, ChevronRight, FolderOpen, Loader2, Users } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FolderOpen, Users } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { keyPrefix } from "@/i18n";
 import {
   PERSONAL_SCOPE,
   buildAuxLlmConfig,
   canonicalPath,
+  downloadOriginal,
   splitScopePath,
   writeDocument,
 } from "@/lib/api";
-import { DROP_CLASSES, registerTreeRow, type TreeDropState, type TreeItemDrag } from "@/lib/dnd";
+import type { TreeItemDrag } from "@/lib/dnd";
+import type { DocumentActionId } from "@/lib/document-actions";
 import type { PipelineSpec } from "@/lib/types";
 import { downloadBlob } from "@/lib/download";
-import { cn, collectFilePaths, commonParentDir } from "@/lib/utils";
+import { basename, collectFilePaths, commonParentDir, errorMessage } from "@/lib/utils";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "@/stores/documents-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { DirectoryTreeView } from "@/components/DirectoryTreeView";
+import { DirectoryTreeView, TreeRow, type TreeRowDnd } from "@/components/DirectoryTreeView";
 import { DocumentDialog } from "@/components/DocumentDialog";
+import { EmptyState, LoadingState } from "@/components/EmptyState";
+import { ErrorAlert } from "@/components/ErrorAlert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { ItemGroup } from "@/components/ui/item";
+import { toast } from "@/components/ui/toast";
 import { BulkActionBar } from "@/components/documents/BulkActionBar";
 import { DocumentListItem } from "@/components/documents/DocumentListItem";
-import { ErrorBanner } from "@/components/documents/ErrorBanner";
 import {
   FilterToggleButtons,
   type FilterEntryState,
 } from "@/components/documents/FilterToggleButtons";
+import { ExpandButton, NameButton } from "@/components/RowButtons";
 import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/ScopeDialogs";
 import { type FollowLocal, followSet, useFollowedState } from "@/hooks/use-followed-state";
 import { useFuzzySearch } from "@/hooks/use-fuzzy-search";
 
-const T_OPTIONS = keyPrefix(($) => $.documents.scope);
-
-/** Edit/view dialog target within a scope (local path). */
-interface ScopeDialogState {
-  path: string;
-  editable: boolean;
-}
-
-/** The open document where a workspace change moved it, closed once deleted or moved out of the scope. */
-function followDialog(
-  dialog: ScopeDialogState | null,
-  follow: FollowLocal,
-): ScopeDialogState | null {
-  if (!dialog) return dialog;
-
-  const path = follow(dialog.path);
-
-  return path === dialog.path ? dialog : path === null ? null : { ...dialog, path };
+/** Where a workspace change moved the open document, null once it was deleted or left the scope. */
+function followDialog(path: string | null, follow: FollowLocal): string | null {
+  return path === null ? null : follow(path);
 }
 
 interface ScopeSectionProps {
@@ -59,7 +49,7 @@ interface ScopeSectionProps {
   scope: string;
   label: string;
   canWrite: boolean;
-  /** Whether the section starts expanded (personal) and shows the upload-target hint. */
+  /** Whether the section starts expanded (personal). */
   defaultOpen: boolean;
   searchQuery: string;
   pipelineSpec: PipelineSpec;
@@ -88,7 +78,8 @@ export function ScopeSection({
   onArmTarget,
   onUploadInto,
 }: ScopeSectionProps) {
-  const { t } = useTranslation(undefined, T_OPTIONS);
+  const { t } = useTranslation();
+  const selectAllId = useId();
   const state = useDocumentsStore((s) => s.byScope[scope] ?? DEFAULT_SCOPE_STATE);
   const refresh = useDocumentsStore((s) => s.refresh);
   const storeRechunk = useDocumentsStore((s) => s.rechunk);
@@ -107,11 +98,9 @@ export function ScopeSection({
 
   const dialogs = useRef<ScopeDialogsHandle>(null);
   const [isOpen, setIsOpen] = useState(defaultOpen);
-  const [dialog, setDialog] = useFollowedState<ScopeDialogState | null>(
-    scope,
-    null,
-    followDialog,
-  );
+  // The target outlives a close, so the dialog keeps its content while it animates out.
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogPath, setDialogPath] = useFollowedState<string | null>(scope, null, followDialog);
   const [selectedFiles, setSelectedFiles] = useFollowedState(
     scope,
     new Set<string>(),
@@ -134,7 +123,11 @@ export function ScopeSection({
           : undefined,
     [included, excluded],
   );
-  const isGroup = scope !== PERSONAL_SCOPE;
+
+  const openDocument = (path: string) => {
+    setDialogPath(path);
+    setDialogOpen(true);
+  };
 
   const isSearching = searchQuery.trim().length > 0;
   const expanded = isOpen || isSearching;
@@ -142,66 +135,67 @@ export function ScopeSection({
   const docsByFilename = useMemo(() => new Map(documents.map((d) => [d.filename, d])), [documents]);
 
   const clearSelection = useCallback(() => setSelectedFiles(new Set()), [setSelectedFiles]);
-  const toggleFile = useCallback((path: string) => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, [setSelectedFiles]);
-  const toggleDirFiles = useCallback((paths: string[]) => {
-    setSelectedFiles((prev) => {
-      const all = paths.every((p) => prev.has(p));
-      const next = new Set(prev);
-      for (const p of paths) {
-        if (all) next.delete(p);
-        else next.add(p);
-      }
-      return next;
-    });
-  }, [setSelectedFiles]);
+  const toggleFile = useCallback(
+    (path: string) => {
+      setSelectedFiles((prev) => {
+        const next = new Set(prev);
+
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+
+        return next;
+      });
+    },
+    [setSelectedFiles],
+  );
+  const toggleDirFiles = useCallback(
+    (paths: string[]) => {
+      setSelectedFiles((prev) => {
+        const all = paths.every((p) => prev.has(p));
+        const next = new Set(prev);
+
+        for (const p of paths) {
+          if (all) next.delete(p);
+          else next.add(p);
+        }
+
+        return next;
+      });
+    },
+    [setSelectedFiles],
+  );
 
   const visibleFilePaths = useMemo(() => {
     if (isSearching) return filtered.map((d) => d.filename);
+
     if (directoryTree) return collectFilePaths(directoryTree.root);
+
     return documents.map((d) => d.filename);
   }, [isSearching, filtered, directoryTree, documents]);
 
-  const { allSelected, someSelected } = useMemo(() => {
-    let count = 0;
-    for (const p of visibleFilePaths) if (selectedFiles.has(p)) count++;
-    return {
-      allSelected: visibleFilePaths.length > 0 && count === visibleFilePaths.length,
-      someSelected: count > 0,
-    };
-  }, [visibleFilePaths, selectedFiles]);
+  const selectedVisible = visibleFilePaths.filter((p) => selectedFiles.has(p)).length;
+  const allSelected = visibleFilePaths.length > 0 && selectedVisible === visibleFilePaths.length;
 
-  const toggleSelectAll = useCallback(() => {
+  const toggleSelectAll = () => {
     if (allSelected) clearSelection();
     else setSelectedFiles(new Set(visibleFilePaths));
-  }, [allSelected, visibleFilePaths, clearSelection, setSelectedFiles]);
+  };
 
   const selectedReconvertable = useMemo(
     () => [...selectedFiles].filter((f) => docsByFilename.get(f)?.has_original === true),
     [selectedFiles, docsByFilename],
   );
 
-  const handleReconvert = useCallback(
-    (path: string) =>
-      void storeReconvert(scope, path, { spec: pipelineSpec, llm: buildAuxLlmConfig(overrides) }),
-    [storeReconvert, scope, pipelineSpec, overrides],
-  );
+  const handleReconvert = (path: string) =>
+    void storeReconvert(scope, path, { spec: pipelineSpec, llm: buildAuxLlmConfig(overrides) });
 
   const handleDownloadOriginal = useCallback(
     async (path: string) => {
       try {
-        const { downloadOriginal } = await import("@/lib/api");
         const blob = await downloadOriginal(toCanonical(path));
-        const filename = docsByFilename.get(path)?.original_path?.split("/").pop() ?? "original";
-        downloadBlob(blob, filename);
-      } catch {
-        // silently ignore download errors
+        downloadBlob(blob, basename(docsByFilename.get(path)?.original_path ?? "") || "original");
+      } catch (err) {
+        toast.add({ type: "error", title: errorMessage(err) });
       }
     },
     [docsByFilename, toCanonical],
@@ -215,37 +209,24 @@ export function ScopeSection({
     [pipelineSpec, scope, refresh],
   );
 
-  const bulkHandlers = useMemo<Record<string, () => void>>(
-    () => ({
-      rechunk: () => {
-        const files = [...selectedFiles];
-        clearSelection();
-        void storeBulkRechunk(scope, files, pipelineSpec);
-      },
-      reconvert: () => {
-        const files = [...selectedReconvertable];
-        clearSelection();
-        void storeBulkReconvert(scope, files, pipelineSpec, buildAuxLlmConfig(overrides));
-      },
-      download: () =>
-        void selectedReconvertable.reduce(
-          (chain, p) => chain.then(() => handleDownloadOriginal(p)),
-          Promise.resolve(),
-        ),
-      delete: () => dialogs.current?.bulkDelete([...selectedFiles]),
-    }),
-    [
-      selectedFiles,
-      selectedReconvertable,
-      clearSelection,
-      storeBulkRechunk,
-      storeBulkReconvert,
-      pipelineSpec,
-      overrides,
-      handleDownloadOriginal,
-      scope,
-    ],
-  );
+  const bulkHandlers: Record<DocumentActionId, () => void> = {
+    rechunk: () => {
+      const files = [...selectedFiles];
+      clearSelection();
+      void storeBulkRechunk(scope, files, pipelineSpec);
+    },
+    reconvert: () => {
+      const files = [...selectedReconvertable];
+      clearSelection();
+      void storeBulkReconvert(scope, files, pipelineSpec, buildAuxLlmConfig(overrides));
+    },
+    download: () =>
+      void selectedReconvertable.reduce(
+        (chain, p) => chain.then(() => handleDownloadOriginal(p)),
+        Promise.resolve(),
+      ),
+    delete: () => dialogs.current?.bulkDelete([...selectedFiles]),
+  };
 
   // Resolve a dragged row or selection into one store move. The drag originates
   // in `drag.scope` and lands in this section's `scope`, the same workspace for
@@ -265,54 +246,39 @@ export function ScopeSection({
         .filter(({ source, destination }) => !sameScope || destination !== source);
 
       if (drag.paths.length > 1) clearSelection();
+
       if (moves.length > 0) void storeMove(drag.scope, scope, moves);
     },
     [scope, storeMove, clearSelection],
-  );
-
-  const handleArm = useCallback(
-    (localDir: string) => onArmTarget(canonicalPath(scope, localDir)),
-    [onArmTarget, scope],
   );
 
   // Local dir armed within this scope, or null when the target is elsewhere.
   const armed = splitScopePath(armedTarget);
   const armedHere = armed.scope === scope ? armed.local : null;
 
-  // The section header is the scope-root drop target — a sibling of the tree,
-  // never an ancestor of its rows, so root and per-folder targets never nest.
-  const headerRef = useRef<HTMLDivElement>(null);
-  const [rootDropState, setRootDropState] = useState<TreeDropState>("none");
-
-  useEffect(() => {
-    const element = headerRef.current;
-    if (!element || !canWrite) return;
-
-    return registerTreeRow({
-      element,
-      drag: null,
-      drop: {
-        scope,
-        destDir: "",
-        onMove: (drag) => handleMoveInto(drag, ""),
-        onUpload: (items, files) => onUploadInto(scope, items, files),
-      },
-      onDropState: setRootDropState,
-    });
-  }, [scope, canWrite, handleMoveInto, onUploadInto]);
+  // The header is the scope-root drop target, a sibling of the tree and never
+  // an ancestor of its rows, so root and per-folder targets never nest.
+  const rootDnd: TreeRowDnd = {
+    scope,
+    resolveDrag: null,
+    destDir: canWrite ? "" : null,
+    onMove: (drag) => handleMoveInto(drag, ""),
+    onUpload: (items, files) => onUploadInto(scope, items, files),
+  };
 
   const treeView = () => {
     // Read off the rendered tree rather than the response totals, so an
     // optimistically grafted directory counts immediately.
     if (!directoryTree?.root.children?.length) {
-      return <p className="py-2 text-xs text-muted-foreground">{t(($) => $.empty)}</p>;
+      return <EmptyState description={t(($) => $.documents.scope.empty)} className="p-4" />;
     }
+
     return (
       <DirectoryTreeView
         entry={directoryTree.root}
         scope={scope}
         mutatingPaths={mutatingPaths}
-        onEditFile={(path) => setDialog({ path, editable: canWrite })}
+        onEditFile={openDocument}
         onInclude={(path) => toggleInclude(toCanonical(path))}
         onExclude={(path) => toggleExclude(toCanonical(path))}
         filterState={(path) => filterStateOf(toCanonical(path))}
@@ -324,7 +290,7 @@ export function ScopeSection({
         onToggleSelectFile={canWrite ? toggleFile : undefined}
         onToggleSelectDir={canWrite ? toggleDirFiles : undefined}
         armedDir={armedHere}
-        onArm={canWrite ? handleArm : undefined}
+        onArm={canWrite ? (localDir) => onArmTarget(canonicalPath(scope, localDir)) : undefined}
         onMoveInto={canWrite ? handleMoveInto : undefined}
         onUploadInto={
           canWrite
@@ -337,109 +303,75 @@ export function ScopeSection({
 
   const flatList = () => {
     if (filtered.length === 0) {
-      return <p className="py-2 text-xs text-muted-foreground">{t(($) => $.noMatches)}</p>;
+      return <EmptyState description={t(($) => $.documents.scope.noMatches)} className="p-4" />;
     }
+
     return (
-      <div className="space-y-2">
-        {filtered.map((doc) => {
-          const docMutating = mutatingPaths.has(doc.filename);
-          return (
-            <DocumentListItem
-              key={doc.filename}
-              doc={doc}
-              isMutating={docMutating}
-              onEdit={() => setDialog({ path: doc.filename, editable: canWrite })}
-              filterState={filterStateOf(toCanonical(doc.filename))}
-              onIncludeDocument={() => toggleInclude(toCanonical(doc.filename))}
-              onExcludeDocument={() => toggleExclude(toCanonical(doc.filename))}
-              onRemove={() => dialogs.current?.deleteFile(doc.filename)}
-              selected={canWrite ? selectedFiles.has(doc.filename) : undefined}
-              onToggleSelect={canWrite ? () => toggleFile(doc.filename) : undefined}
-            />
-          );
-        })}
-      </div>
+      <ItemGroup>
+        {filtered.map((doc) => (
+          <DocumentListItem
+            key={doc.filename}
+            doc={doc}
+            isMutating={mutatingPaths.has(doc.filename)}
+            onEdit={() => openDocument(doc.filename)}
+            filterState={filterStateOf(toCanonical(doc.filename))}
+            onIncludeDocument={() => toggleInclude(toCanonical(doc.filename))}
+            onExcludeDocument={() => toggleExclude(toCanonical(doc.filename))}
+            onRemove={canWrite ? () => dialogs.current?.deleteFile(doc.filename) : undefined}
+            selected={selectedFiles.has(doc.filename)}
+            onToggleSelect={canWrite ? () => toggleFile(doc.filename) : undefined}
+          />
+        ))}
+      </ItemGroup>
     );
   };
 
   const fileCount = directoryTree?.total_files ?? documents.length;
-  const showBulkBar = canWrite && selectedFiles.size > 0;
+  const ScopeIcon = scope === PERSONAL_SCOPE ? FolderOpen : Users;
 
-  // Root of this scope is armed when the target points here with no subpath.
-  const isRootArmed = armedHere === "";
-
-  // In a writable scope the header label arms the root (and opens the section);
-  // otherwise it is a plain collapse trigger. Same button either way.
-  const labelButton = (
-    <button
-      type="button"
-      className="min-w-0 flex-1 truncate text-left text-sm font-medium"
-      title={canWrite ? t(($) => $.setUploadTarget) : undefined}
-      onClick={
-        canWrite
-          ? () => {
-              onArmTarget(scope);
-              setIsOpen(true);
-            }
-          : undefined
-      }
+  // In a writable scope the label arms the root (and opens the section),
+  // otherwise it is a plain collapse trigger.
+  const labelButton = canWrite ? (
+    <NameButton
+      title={t(($) => $.documents.scope.setUploadTarget)}
+      onClick={() => {
+        onArmTarget(scope);
+        setIsOpen(true);
+      }}
     >
       {label}
-    </button>
+    </NameButton>
+  ) : (
+    <CollapsibleTrigger render={<NameButton />}>{label}</CollapsibleTrigger>
   );
 
-  // The document the dialog is open on, resolved once for its metadata badges
-  // and the write-action gates below.
-  const dialogDoc = dialog ? docsByFilename.get(dialog.path) : undefined;
+  // The document the dialog is open on, resolved once for the write-action gates below.
+  const dialogDoc = dialogPath === null ? undefined : docsByFilename.get(dialogPath);
 
   return (
-    <Collapsible open={expanded} onOpenChange={setIsOpen} className="mb-1">
-      <div
-        ref={headerRef}
-        className={cn(
-          "flex items-center gap-2 rounded-md px-1 py-1.5 hover:bg-muted/50 group",
-          isRootArmed && "bg-accent",
-          DROP_CLASSES[rootDropState],
-        )}
-      >
-        <CollapsibleTrigger
-          render={<Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" />}
-        >
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </CollapsibleTrigger>
-        {isGroup ? (
-          <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-        )}
-        {canWrite ? labelButton : <CollapsibleTrigger render={labelButton} />}
+    <Collapsible open={expanded} onOpenChange={setIsOpen}>
+      <TreeRow dnd={rootDnd} isArmed={armedHere === ""}>
+        <CollapsibleTrigger render={<ExpandButton expanded={expanded} />} />
+        <ScopeIcon className="size-4 shrink-0 text-muted-foreground" />
+        <div className="flex min-w-0 flex-1">{labelButton}</div>
         <div className="flex gap-0.5">
           <FilterToggleButtons
             state={filterStateOf(scope)}
             onInclude={() => toggleInclude(scope)}
             onExclude={() => toggleExclude(scope)}
-            compact
             revealOnHover
           />
         </div>
-        <Badge variant="secondary" className="shrink-0 text-xs">
-          {fileCount}
-        </Badge>
-      </div>
+        <Badge variant="secondary">{fileCount}</Badge>
+      </TreeRow>
 
-      <CollapsibleContent>
-        {error && (
-          <div className="my-2">
-            <ErrorBanner message={error} onDismiss={() => clearError(scope)} />
-          </div>
-        )}
+      <CollapsibleContent className="flex flex-col gap-1 py-1">
+        {error && <ErrorAlert onDismiss={() => clearError(scope)}>{error}</ErrorAlert>}
         {!hasFetched ? (
-          <div className="flex items-center justify-center py-6">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
+          <LoadingState className="p-6" />
         ) : (
           <>
-            {showBulkBar ? (
+            {canWrite && selectedFiles.size > 0 ? (
               <BulkActionBar
                 selectedCount={selectedFiles.size}
                 hasReconvertable={selectedReconvertable.length > 0}
@@ -450,14 +382,17 @@ export function ScopeSection({
               canWrite &&
               !isSearching &&
               fileCount > 0 && (
-                <div className="flex items-center gap-2 px-2 py-1">
+                <Field orientation="horizontal" className="min-h-9 px-2">
                   <Checkbox
+                    id={selectAllId}
                     checked={allSelected}
-                    indeterminate={someSelected && !allSelected}
+                    indeterminate={selectedVisible > 0 && !allSelected}
                     onCheckedChange={toggleSelectAll}
                   />
-                  <span className="text-xs text-muted-foreground">{t(($) => $.selectAll)}</span>
-                </div>
+                  <FieldLabel htmlFor={selectAllId} className="font-normal text-muted-foreground">
+                    {t(($) => $.documents.scope.selectAll)}
+                  </FieldLabel>
+                </Field>
               )
             )}
             {isSearching ? flatList() : treeView()}
@@ -466,29 +401,29 @@ export function ScopeSection({
       </CollapsibleContent>
 
       <DocumentDialog
-        open={dialog !== null}
-        onOpenChange={(open) => !open && setDialog(null)}
-        filename={dialog ? toCanonical(dialog.path) : ""}
+        open={dialogOpen && dialogPath !== null}
+        onOpenChange={setDialogOpen}
+        filename={dialogPath === null ? "" : toCanonical(dialogPath)}
         // Every workspace document opens in managed mode (metadata + markdown
         // download); only the write actions below are gated on `canWrite`.
-        showMetadata={dialog !== null}
-        editable={dialog?.editable ?? false}
+        showMetadata
+        editable={canWrite}
         onSave={handleSave}
         onRechunk={
-          dialog && dialog.editable
+          canWrite && dialogPath !== null
             ? async () => {
-                if (dialog) await storeRechunk(scope, dialog.path, pipelineSpec);
+                await storeRechunk(scope, dialogPath, pipelineSpec);
               }
             : undefined
         }
         onReconvert={
-          dialog && dialog.editable && dialogDoc?.has_original
-            ? () => handleReconvert(dialog.path)
+          canWrite && dialogPath !== null && dialogDoc?.has_original
+            ? () => handleReconvert(dialogPath)
             : undefined
         }
         onDownloadOriginal={
-          dialog && dialogDoc?.has_original
-            ? () => void handleDownloadOriginal(dialog.path)
+          dialogPath !== null && dialogDoc?.has_original
+            ? () => void handleDownloadOriginal(dialogPath)
             : undefined
         }
       />

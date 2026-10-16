@@ -1,18 +1,16 @@
 import {
   CheckIcon,
   EraserIcon,
-  LoaderIcon,
   LockIcon,
+  type LucideIcon,
   PlugIcon,
   PlusIcon,
   RotateCcwIcon,
   SettingsIcon,
   TrashIcon,
-  XIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 
 import { i18n, isCatalogKey, keyPrefix } from "@/i18n";
 import { settings } from "@/i18n/locales/en/settings";
@@ -23,87 +21,97 @@ import {
   type McpServerEntry,
   PersonalitySchema,
   type ToolInfo,
+  type UserOverrides,
 } from "@/lib/types";
-import { errorMessage } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { OptionSelect } from "@/components/OptionSelect";
+import { DialogBody, ScrollDialogContent } from "@/components/ScrollDialogContent";
+import { TooltipButton, WithTooltip } from "@/components/TooltipButton";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { OptionSelect } from "@/components/OptionSelect";
+import { InputGroupButton } from "@/components/ui/input-group";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
+import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { FormSection } from "@/components/FormSection";
+import { toast } from "@/components/ui/toast";
 
 const DIALOG_T = keyPrefix(($) => $.settings.dialog);
 const OPTIONS_T = keyPrefix(($) => $.options);
 
-// --- Footer confirm button ---
+/** The column classes by the count of the enabled columns, spelled out for Tailwind to see. */
+const GRID_COLS = ["lg:grid-cols-1", "lg:grid-cols-2", "lg:grid-cols-3"];
 
 interface ConfirmButtonProps {
-  icon: React.ReactNode;
+  icon: LucideIcon;
   label: string;
   title: string;
   description: string;
-  onConfirm: () => Promise<void> | void;
+  onConfirm: () => Promise<void>;
 }
 
 /**
  * Footer action that runs behind a confirmation dialog.
  *
- * Awaiting *onConfirm* here is what keeps a failed request from being reported
- * nowhere: every one of these goes through `requestJson`/`requestVoid`, which
- * throw on a failed response, so the toast belongs at the one seam that runs
- * all of them rather than in each action.
+ * Every action goes through `requestJson`/`requestVoid`, which throw on a
+ * failed response, so the error toast belongs at this one seam.
  */
-function ConfirmButton({ icon, label, title, description, onConfirm }: ConfirmButtonProps) {
+function ConfirmButton({ icon: Icon, label, title, description, onConfirm }: ConfirmButtonProps) {
   const { t } = useTranslation();
-  const run = async () => {
+  const [open, setOpen] = useState(false);
+
+  async function confirm() {
+    setOpen(false);
+
     try {
       await onConfirm();
     } catch (err) {
-      toast.error(errorMessage(err));
+      toast.add({ type: "error", title: errorMessage(err) });
     }
-  };
+  }
 
   return (
-    <AlertDialog>
-      <AlertDialogTrigger render={<Button variant="outline" size="sm" />}>
-        {icon}
+    <>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Icon data-icon="inline-start" />
         {label}
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>{t(($) => $.common.actions.cancel)}</AlertDialogCancel>
-          <AlertDialogAction onClick={() => void run()}>
-            {t(($) => $.settings.dialog.clear)}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={title}
+        description={description}
+        confirmLabel={t(($) => $.settings.dialog.clear)}
+        onConfirm={() => void confirm()}
+      />
+    </>
   );
 }
 
@@ -114,477 +122,450 @@ function ConfirmButton({ icon, label, title, description, onConfirm }: ConfirmBu
  */
 async function clearTmpFiles() {
   const { files_removed } = await clearTmp();
-  toast.success(i18n.t(($) => $.settings.dialog.clearTmp.done, { count: files_removed }));
+  toast.add({
+    type: "success",
+    title: i18n.t(($) => $.settings.dialog.clearTmp.done, { count: files_removed }),
+  });
 }
 
-// --- Auth mode types ---
-
-type AuthMode = "none" | "headers" | "oauth2";
-
-// --- Main component ---
-
-export function SettingsDialog() {
+/** The LLM provider overrides, which the backend defaults fill in when left empty. */
+function OverrideFields() {
   const { t } = useTranslation(undefined, DIALOG_T);
-  const { t: tOptions } = useTranslation(undefined, OPTIONS_T);
-  const {
-    overrides,
-    backendDefaults,
-    personality,
-    customSystemMessage,
-    toolsSpec,
-    setOverride,
-    setPersonality,
-    setCustomSystemMessage,
-    toggleTool,
-    addMcpServer,
-    removeMcpServer,
-    reset,
-  } = useSettingsStore();
+  const overrides = useSettingsStore((s) => s.overrides);
+  const backendDefaults = useSettingsStore((s) => s.backendDefaults);
+  const setOverride = useSettingsStore((s) => s.setOverride);
   const hasServerApiKey = backendDefaults?.has_api_key ?? false;
 
-  const [open, setOpen] = useState(false);
-  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const fields: {
+    key: keyof UserOverrides;
+    type?: "password" | "url";
+    label: string;
+    description: string;
+    placeholder: string;
+  }[] = [
+    {
+      key: "model",
+      label: t(($) => $.model.label),
+      description: t(($) => $.model.description),
+      placeholder: backendDefaults?.model || t(($) => $.model.placeholder),
+    },
+    {
+      key: "apiKey",
+      type: "password",
+      label: t(($) => $.apiKey.label),
+      description: hasServerApiKey
+        ? t(($) => $.apiKey.serverDescription)
+        : t(($) => $.apiKey.description),
+      placeholder: hasServerApiKey
+        ? t(($) => $.apiKey.serverPlaceholder)
+        : t(($) => $.apiKey.placeholder),
+    },
+    {
+      key: "baseUrl",
+      type: "url",
+      label: t(($) => $.baseUrl.label),
+      description: t(($) => $.baseUrl.description),
+      placeholder: backendDefaults?.base_url || t(($) => $.baseUrl.placeholder),
+    },
+    {
+      key: "auxModel",
+      label: t(($) => $.auxModel.label),
+      description: t(($) => $.auxModel.description),
+      placeholder: backendDefaults?.aux_model ?? t(($) => $.auxModel.placeholder),
+    },
+  ];
 
-  // New MCP server form state
-  const [newMcpUrl, setNewMcpUrl] = useState("");
-  const [newMcpPrefix, setNewMcpPrefix] = useState("");
-  const [authMode, setAuthMode] = useState<AuthMode>("none");
-  const [headers, setHeaders] = useState<{ key: string; value: string }[]>([]);
-  const [oauth2, setOAuth2] = useState<McpOAuth2Config>({
-    clientId: "",
-    clientSecret: "",
-  });
+  return (
+    <FieldGroup>
+      {fields.map(({ key, type, label, description, placeholder }) => (
+        <Field key={key}>
+          <FieldLabel htmlFor={`settings-${key}`}>{label}</FieldLabel>
+          <Input
+            id={`settings-${key}`}
+            type={type}
+            placeholder={placeholder}
+            value={overrides[key]}
+            onChange={(e) => setOverride({ [key]: e.target.value })}
+          />
+          <FieldDescription>{description}</FieldDescription>
+        </Field>
+      ))}
+    </FieldGroup>
+  );
+}
 
-  // Test connection state: index -> result
-  const [testResults, setTestResults] = useState<Record<number, McpTestResult | "loading">>({});
+function PersonalityFields() {
+  const { t } = useTranslation(undefined, DIALOG_T);
+  const { t: tOptions } = useTranslation(undefined, OPTIONS_T);
+  const personality = useSettingsStore((s) => s.personality);
+  const customSystemMessage = useSettingsStore((s) => s.customSystemMessage);
+  const setPersonality = useSettingsStore((s) => s.setPersonality);
+  const setCustomSystemMessage = useSettingsStore((s) => s.setCustomSystemMessage);
 
   const personalities = PersonalitySchema.options.map((value) => ({
     value,
     label: tOptions(($) => $.personality[value]),
   }));
+
+  return (
+    <FieldGroup>
+      <Field>
+        <FieldLabel htmlFor="settings-personality">{t(($) => $.personality.label)}</FieldLabel>
+        <OptionSelect
+          id="settings-personality"
+          value={personality}
+          options={personalities}
+          onChange={setPersonality}
+        />
+        <FieldDescription>{t(($) => $.personality.description)}</FieldDescription>
+      </Field>
+
+      {personality === "custom" && (
+        <Field>
+          <FieldLabel htmlFor="settings-system-message">
+            {t(($) => $.customSystemMessage.label)}
+          </FieldLabel>
+          <Textarea
+            id="settings-system-message"
+            placeholder={t(($) => $.customSystemMessage.placeholder)}
+            value={customSystemMessage}
+            onChange={(e) => setCustomSystemMessage(e.target.value)}
+            className="min-h-24"
+          />
+          <FieldDescription>{t(($) => $.customSystemMessage.description)}</FieldDescription>
+        </Field>
+      )}
+    </FieldGroup>
+  );
+}
+
+/** The built-in tools by group, each with a switch. Fetched whenever the dialog opens. */
+function ToolsFieldSet() {
+  const { t } = useTranslation(undefined, DIALOG_T);
+  const disabledTools = useSettingsStore((s) => s.toolsSpec.disabledTools);
+  const toggleTool = useSettingsStore((s) => s.toggleTool);
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+
+  useEffect(() => {
+    void listTools()
+      .then(setTools)
+      .catch(() => setTools([]));
+  }, []);
+
+  if (tools.length === 0) {
+    return null;
+  }
+
+  const groups = [...Map.groupBy(tools, (tool) => tool.group)];
+
+  return (
+    <FieldSet>
+      <FieldLegend>{t(($) => $.tools.label)}</FieldLegend>
+      <FieldDescription>{t(($) => $.tools.description)}</FieldDescription>
+      {groups.map(([group, groupTools]) => (
+        <FieldSet key={group} className="gap-3">
+          <FieldLegend variant="label" className="capitalize">
+            {isCatalogKey(settings.dialog.toolGroups, group) ? t(($) => $.toolGroups[group]) : group}
+          </FieldLegend>
+          {groupTools.map((tool) => (
+            <Field key={tool.name} orientation="horizontal">
+              <FieldLabel htmlFor={`tool-${tool.name}`} title={tool.description}>
+                {tool.name}
+              </FieldLabel>
+              <Switch
+                id={`tool-${tool.name}`}
+                size="sm"
+                checked={!disabledTools.includes(tool.name)}
+                onCheckedChange={() => toggleTool(tool.name)}
+              />
+            </Field>
+          ))}
+        </FieldSet>
+      ))}
+    </FieldSet>
+  );
+}
+
+type AuthMode = "none" | "headers" | "oauth2";
+
+interface McpDraft {
+  url: string;
+  prefix: string;
+  auth: AuthMode;
+  headers: { key: string; value: string }[];
+  oauth2: McpOAuth2Config;
+}
+
+const EMPTY_DRAFT: McpDraft = {
+  url: "",
+  prefix: "",
+  auth: "none",
+  headers: [],
+  oauth2: { clientId: "", clientSecret: "" },
+};
+
+/** The form adding an MCP server, with its URL, tool prefix, and authentication. */
+function McpServerForm() {
+  const { t } = useTranslation(undefined, DIALOG_T);
+  const addMcpServer = useSettingsStore((s) => s.addMcpServer);
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
+
+  const update = (patch: Partial<McpDraft>) => setDraft((prev) => ({ ...prev, ...patch }));
+  const updateHeader = (index: number, patch: Partial<McpDraft["headers"][number]>) =>
+    update({ headers: draft.headers.map((h, i) => (i === index ? { ...h, ...patch } : h)) });
+  const updateOAuth2 = (patch: Partial<McpOAuth2Config>) =>
+    update({ oauth2: { ...draft.oauth2, ...patch } });
+
   const authModes: { value: AuthMode; label: string }[] = [
     { value: "none", label: t(($) => $.mcp.authNone) },
     { value: "headers", label: t(($) => $.mcp.authHeaders) },
     { value: "oauth2", label: t(($) => $.mcp.authOAuth2) },
   ];
 
-  useEffect(() => {
-    if (!open || !featureFlags.toolsSpec) return;
-
-    void listTools()
-      .then(setTools)
-      .catch(() => setTools([]));
-  }, [open]);
-
-  const toolsByGroup = tools.reduce<Record<string, ToolInfo[]>>((acc, tool) => {
-    (acc[tool.group] ??= []).push(tool);
-    return acc;
-  }, {});
-
-  const gridColsClass = { 1: "lg:grid-cols-1", 2: "lg:grid-cols-2", 3: "lg:grid-cols-3" }[
-    Number(featureFlags.llmSpec) + 1 + Number(featureFlags.toolsSpec)
-  ];
-
-  function resetNewMcpForm() {
-    setNewMcpUrl("");
-    setNewMcpPrefix("");
-    setAuthMode("none");
-    setHeaders([]);
-    setOAuth2({ clientId: "", clientSecret: "" });
-  }
-
-  function handleAddMcpServer() {
-    const entry: McpServerEntry = {
-      url: newMcpUrl.trim(),
-      headers: {},
-      toolPrefix: newMcpPrefix.trim() || undefined,
-    };
-
-    if (authMode === "headers") {
-      for (const h of headers) {
-        if (h.key.trim()) {
-          entry.headers[h.key.trim()] = h.value;
-        }
-      }
-    } else if (authMode === "oauth2") {
-      entry.oauth2 = { ...oauth2 };
-    }
-
-    addMcpServer(entry);
-    resetNewMcpForm();
-  }
-
-  function handleTestConnection(index: number) {
-    const server = toolsSpec.mcpServers[index];
-    setTestResults((prev) => ({ ...prev, [index]: "loading" }));
-    void testMcpServer(server).then((result) => {
-      setTestResults((prev) => ({ ...prev, [index]: result }));
+  function add() {
+    addMcpServer({
+      url: draft.url.trim(),
+      toolPrefix: draft.prefix.trim() || undefined,
+      headers:
+        draft.auth === "headers"
+          ? Object.fromEntries(
+              draft.headers.filter((h) => h.key.trim()).map((h) => [h.key.trim(), h.value]),
+            )
+          : {},
+      oauth2: draft.auth === "oauth2" ? draft.oauth2 : undefined,
     });
-  }
-
-  /** Whether a server has any auth configured. */
-  function hasAuth(server: McpServerEntry): boolean {
-    return Object.keys(server.headers).length > 0 || server.oauth2 !== undefined;
+    setDraft(EMPTY_DRAFT);
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="ghost" size="icon" />}>
-        <SettingsIcon />
-        <span className="sr-only">{t(($) => $.title)}</span>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto">
+    <FieldGroup className="gap-4 rounded-2xl border p-4">
+      <Field orientation="horizontal">
+        <Input
+          aria-label={t(($) => $.mcp.url)}
+          placeholder="https://mcp-server.example.com/mcp"
+          value={draft.url}
+          onChange={(e) => update({ url: e.target.value })}
+        />
+        <Input
+          aria-label={t(($) => $.mcp.prefixPlaceholder)}
+          placeholder={t(($) => $.mcp.prefixPlaceholder)}
+          value={draft.prefix}
+          onChange={(e) => update({ prefix: e.target.value })}
+          className="w-28"
+        />
+      </Field>
+
+      <Field orientation="horizontal">
+        <FieldLabel htmlFor="mcp-auth">{t(($) => $.mcp.auth)}</FieldLabel>
+        <OptionSelect
+          id="mcp-auth"
+          size="sm"
+          value={draft.auth}
+          options={authModes}
+          onChange={(auth) => update({ auth })}
+        />
+      </Field>
+
+      {draft.auth === "headers" && (
+        <div className="flex flex-col gap-2">
+          {draft.headers.map((h, i) => (
+            <Field key={i} orientation="horizontal">
+              <Input
+                aria-label={t(($) => $.mcp.headerName)}
+                placeholder={t(($) => $.mcp.headerName)}
+                value={h.key}
+                onChange={(e) => updateHeader(i, { key: e.target.value })}
+              />
+              <Input
+                type="password"
+                aria-label={t(($) => $.mcp.headerValue)}
+                placeholder={t(($) => $.mcp.headerValue)}
+                value={h.value}
+                onChange={(e) => updateHeader(i, { value: e.target.value })}
+              />
+              <TooltipButton
+                label={t(($) => $.mcp.removeHeader)}
+                destructive
+                onClick={() => update({ headers: draft.headers.filter((_, ii) => ii !== i) })}
+              >
+                <TrashIcon />
+              </TooltipButton>
+            </Field>
+          ))}
+          <Button
+            variant="outline"
+            size="xs"
+            className="self-start"
+            onClick={() => update({ headers: [...draft.headers, { key: "", value: "" }] })}
+          >
+            <PlusIcon data-icon="inline-start" />
+            {t(($) => $.mcp.addHeader)}
+          </Button>
+        </div>
+      )}
+
+      {draft.auth === "oauth2" && (
+        <div className="flex flex-col gap-2">
+          <Input
+            aria-label={t(($) => $.mcp.clientId)}
+            placeholder={t(($) => $.mcp.clientId)}
+            value={draft.oauth2.clientId}
+            onChange={(e) => updateOAuth2({ clientId: e.target.value })}
+          />
+          <Input
+            type="password"
+            aria-label={t(($) => $.mcp.clientSecret)}
+            placeholder={t(($) => $.mcp.clientSecret)}
+            value={draft.oauth2.clientSecret}
+            onChange={(e) => updateOAuth2({ clientSecret: e.target.value })}
+          />
+          <Input
+            aria-label={t(($) => $.mcp.scopes)}
+            placeholder={t(($) => $.mcp.scopes)}
+            value={draft.oauth2.scopes ?? ""}
+            onChange={(e) => updateOAuth2({ scopes: e.target.value || undefined })}
+          />
+        </div>
+      )}
+
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start"
+        disabled={!draft.url.trim()}
+        onClick={add}
+      >
+        <PlusIcon data-icon="inline-start" />
+        {t(($) => $.mcp.addServer)}
+      </Button>
+    </FieldGroup>
+  );
+}
+
+/** The configured MCP servers, each testable and removable, above the form adding one. */
+function McpServersFieldSet() {
+  const { t } = useTranslation(undefined, DIALOG_T);
+  const { t: tRoot } = useTranslation();
+  const servers = useSettingsStore((s) => s.toolsSpec.mcpServers);
+  const removeMcpServer = useSettingsStore((s) => s.removeMcpServer);
+  // Keyed by entry so a removal never moves a result onto its neighbor, `null` while testing.
+  const [results, setResults] = useState(new Map<McpServerEntry, McpTestResult | null>());
+
+  const setResult = (server: McpServerEntry, result: McpTestResult | null) =>
+    setResults((prev) => new Map(prev).set(server, result));
+
+  function test(server: McpServerEntry) {
+    setResult(server, null);
+    void testMcpServer(server)
+      .catch((e: unknown): McpTestResult => ({ ok: false, tool_count: null, error: errorMessage(e) }))
+      .then((result) => setResult(server, result));
+  }
+
+  return (
+    <FieldSet>
+      <FieldLegend>{t(($) => $.mcp.label)}</FieldLegend>
+      <FieldDescription>{t(($) => $.mcp.description)}</FieldDescription>
+
+      {servers.length > 0 && (
+        <ItemGroup>
+          {servers.map((server, index) => {
+            const result = results.get(server);
+
+            return (
+              <Item key={index} variant="outline" size="xs">
+                {(Object.keys(server.headers).length > 0 || server.oauth2) && (
+                  <ItemMedia variant="icon">
+                    <LockIcon />
+                  </ItemMedia>
+                )}
+                <ItemContent className="min-w-0">
+                  <ItemTitle className="break-all">{server.url}</ItemTitle>
+                  {server.toolPrefix && (
+                    <ItemDescription>
+                      {t(($) => $.mcp.prefix, { prefix: server.toolPrefix })}
+                    </ItemDescription>
+                  )}
+                  {result?.ok === false && (
+                    <ItemDescription className="text-destructive">
+                      {result.error ?? t(($) => $.mcp.connectionFailed)}
+                    </ItemDescription>
+                  )}
+                </ItemContent>
+                <ItemActions>
+                  {result === null && <Spinner aria-label={tRoot(($) => $.common.states.loading)} />}
+                  {result?.ok && (
+                    <Badge variant="secondary">
+                      <CheckIcon data-icon="inline-start" />
+                      {t(($) => $.mcp.toolCount, { count: result.tool_count ?? 0 })}
+                    </Badge>
+                  )}
+                  <TooltipButton
+                    label={t(($) => $.mcp.testConnection)}
+                    disabled={result === null}
+                    onClick={() => test(server)}
+                  >
+                    <PlugIcon />
+                  </TooltipButton>
+                  <TooltipButton
+                    label={t(($) => $.mcp.removeServer)}
+                    destructive
+                    onClick={() => removeMcpServer(index)}
+                  >
+                    <TrashIcon />
+                  </TooltipButton>
+                </ItemActions>
+              </Item>
+            );
+          })}
+        </ItemGroup>
+      )}
+
+      <McpServerForm />
+    </FieldSet>
+  );
+}
+
+export function SettingsDialog() {
+  const { t } = useTranslation(undefined, DIALOG_T);
+  const label = t(($) => $.title);
+  const reset = useSettingsStore((s) => s.reset);
+  const columns = Number(featureFlags.llmSpec) + 1 + Number(featureFlags.toolsSpec);
+
+  return (
+    <Dialog>
+      <WithTooltip label={label}>
+        <DialogTrigger render={<InputGroupButton size="icon-sm" />}>
+          <SettingsIcon />
+        </DialogTrigger>
+      </WithTooltip>
+      <ScrollDialogContent className="sm:max-w-5xl">
         <DialogHeader>
-          <DialogTitle>{t(($) => $.title)}</DialogTitle>
+          <DialogTitle>{label}</DialogTitle>
           <DialogDescription>{t(($) => $.description)}</DialogDescription>
         </DialogHeader>
 
-        <div className={`grid ${gridColsClass} gap-6 py-4`}>
-          {/* Column 1: model configuration */}
-          {featureFlags.llmSpec && (
-            <div className="grid gap-4 content-start">
-              <FormSection
-                label={t(($) => $.model.label)}
-                htmlFor="model"
-                description={t(($) => $.model.description)}
-              >
-                <Input
-                  id="model"
-                  placeholder={backendDefaults?.model || t(($) => $.model.placeholder)}
-                  value={overrides.model}
-                  onChange={(e) => setOverride({ model: e.target.value })}
-                />
-              </FormSection>
-
-              <FormSection
-                label={t(($) => $.apiKey.label)}
-                htmlFor="api-key"
-                description={
-                  hasServerApiKey
-                    ? t(($) => $.apiKey.serverDescription)
-                    : t(($) => $.apiKey.description)
-                }
-              >
-                <Input
-                  id="api-key"
-                  type="password"
-                  placeholder={
-                    hasServerApiKey
-                      ? t(($) => $.apiKey.serverPlaceholder)
-                      : t(($) => $.apiKey.placeholder)
-                  }
-                  value={overrides.apiKey}
-                  onChange={(e) => setOverride({ apiKey: e.target.value })}
-                />
-              </FormSection>
-
-              <FormSection
-                label={t(($) => $.baseUrl.label)}
-                htmlFor="base-url"
-                description={t(($) => $.baseUrl.description)}
-              >
-                <Input
-                  id="base-url"
-                  type="url"
-                  placeholder={backendDefaults?.base_url || t(($) => $.baseUrl.placeholder)}
-                  value={overrides.baseUrl}
-                  onChange={(e) => setOverride({ baseUrl: e.target.value })}
-                />
-              </FormSection>
-
-              <FormSection
-                label={t(($) => $.auxModel.label)}
-                htmlFor="aux-model"
-                description={t(($) => $.auxModel.description)}
-              >
-                <Input
-                  id="aux-model"
-                  placeholder={backendDefaults?.aux_model ?? t(($) => $.auxModel.placeholder)}
-                  value={overrides.auxModel}
-                  onChange={(e) => setOverride({ auxModel: e.target.value })}
-                />
-              </FormSection>
-            </div>
-          )}
-
-          {/* Column 2: personality */}
-          <div className="grid gap-4 content-start">
-            <FormSection
-              label={t(($) => $.personality.label)}
-              description={t(($) => $.personality.description)}
-            >
-              <OptionSelect value={personality} options={personalities} onChange={setPersonality} />
-            </FormSection>
-
-            {personality === "custom" && (
-              <FormSection
-                label={t(($) => $.customSystemMessage.label)}
-                htmlFor="custom-system-message"
-                description={t(($) => $.customSystemMessage.description)}
-              >
-                <Textarea
-                  id="custom-system-message"
-                  placeholder={t(($) => $.customSystemMessage.placeholder)}
-                  value={customSystemMessage}
-                  onChange={(e) => setCustomSystemMessage(e.target.value)}
-                  className="min-h-[100px] resize-y"
-                />
-              </FormSection>
-            )}
-          </div>
-
-          {/* Column 3: tools and MCP servers */}
+        <DialogBody className={cn("grid content-start gap-8", GRID_COLS[columns - 1])}>
+          {featureFlags.llmSpec && <OverrideFields />}
+          <PersonalityFields />
           {featureFlags.toolsSpec && (
-            <div className="grid gap-4 content-start">
-              {tools.length > 0 && (
-                <FormSection
-                  label={t(($) => $.tools.label)}
-                  description={t(($) => $.tools.description)}
-                >
-                  <div className="grid gap-3">
-                    {Object.entries(toolsByGroup).map(([group, groupTools]) => (
-                      <div key={group}>
-                        <p className="text-xs font-medium text-muted-foreground capitalize mb-1.5">
-                          {isCatalogKey(settings.dialog.toolGroups, group)
-                            ? t(($) => $.toolGroups[group])
-                            : group}
-                        </p>
-                        <div className="grid gap-1.5">
-                          {groupTools.map((tool) => (
-                            <div
-                              key={tool.name}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <Label
-                                htmlFor={`tool-${tool.name}`}
-                                className="text-xs font-normal cursor-pointer"
-                                title={tool.description}
-                              >
-                                {tool.name}
-                              </Label>
-                              <Switch
-                                id={`tool-${tool.name}`}
-                                checked={!toolsSpec.disabledTools.includes(tool.name)}
-                                onCheckedChange={() => toggleTool(tool.name)}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </FormSection>
-              )}
-
-              <FormSection label={t(($) => $.mcp.label)} description={t(($) => $.mcp.description)}>
-                <div className="grid gap-2">
-                  {/* Existing servers */}
-                  {toolsSpec.mcpServers.map((server, index) => {
-                    const result = testResults[index];
-                    return (
-                      <div
-                        key={index}
-                        className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
-                      >
-                        {hasAuth(server) && (
-                          <LockIcon className="size-3 text-muted-foreground shrink-0" />
-                        )}
-                        <span className="truncate flex-1" title={server.url}>
-                          {server.url}
-                        </span>
-                        {server.toolPrefix && (
-                          <span className="text-muted-foreground shrink-0">
-                            {t(($) => $.mcp.prefix, { prefix: server.toolPrefix })}
-                          </span>
-                        )}
-                        {/* Test result indicator */}
-                        {result === "loading" && (
-                          <LoaderIcon className="size-3 animate-spin text-muted-foreground shrink-0" />
-                        )}
-                        {result !== undefined && result !== "loading" && result.ok && (
-                          <span className="flex items-center gap-0.5 text-green-600 shrink-0">
-                            <CheckIcon className="size-3" />
-                            {result.tool_count}
-                          </span>
-                        )}
-                        {result !== undefined && result !== "loading" && !result.ok && (
-                          <span
-                            className="flex items-center gap-0.5 text-red-600 shrink-0"
-                            title={result.error ?? t(($) => $.mcp.connectionFailed)}
-                          >
-                            <XIcon className="size-3" />
-                          </span>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          title={t(($) => $.mcp.testConnection)}
-                          aria-label={t(($) => $.mcp.testConnection)}
-                          disabled={result === "loading"}
-                          onClick={() => handleTestConnection(index)}
-                        >
-                          <PlugIcon />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          title={t(($) => $.mcp.removeServer)}
-                          aria-label={t(($) => $.mcp.removeServer)}
-                          onClick={() => removeMcpServer(index)}
-                        >
-                          <TrashIcon />
-                        </Button>
-                      </div>
-                    );
-                  })}
-
-                  {/* Add new server form */}
-                  <div className="grid gap-2 rounded-md border p-3">
-                    <div className="flex items-end gap-2">
-                      <div className="grid gap-1 flex-1">
-                        <Input
-                          placeholder="https://mcp-server.example.com/mcp"
-                          value={newMcpUrl}
-                          onChange={(e) => setNewMcpUrl(e.target.value)}
-                          className="text-xs"
-                        />
-                      </div>
-                      <div className="grid gap-1 w-28">
-                        <Input
-                          placeholder={t(($) => $.mcp.prefixPlaceholder)}
-                          value={newMcpPrefix}
-                          onChange={(e) => setNewMcpPrefix(e.target.value)}
-                          className="text-xs"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Auth mode selector */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">{t(($) => $.mcp.auth)}</span>
-                      <OptionSelect
-                        className="h-7 text-xs w-auto"
-                        value={authMode}
-                        options={authModes}
-                        onChange={setAuthMode}
-                      />
-                    </div>
-
-                    {/* Headers editor */}
-                    {authMode === "headers" && (
-                      <div className="grid gap-1.5">
-                        {headers.map((h, i) => (
-                          <div key={i} className="flex items-center gap-1.5">
-                            <Input
-                              placeholder={t(($) => $.mcp.headerName)}
-                              value={h.key}
-                              onChange={(e) =>
-                                setHeaders((prev) =>
-                                  prev.map((hh, ii) =>
-                                    ii === i ? { ...hh, key: e.target.value } : hh,
-                                  ),
-                                )
-                              }
-                              className="text-xs flex-1"
-                            />
-                            <Input
-                              type="password"
-                              placeholder={t(($) => $.mcp.headerValue)}
-                              value={h.value}
-                              onChange={(e) =>
-                                setHeaders((prev) =>
-                                  prev.map((hh, ii) =>
-                                    ii === i ? { ...hh, value: e.target.value } : hh,
-                                  ),
-                                )
-                              }
-                              className="text-xs flex-1"
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              title={t(($) => $.mcp.removeHeader)}
-                              aria-label={t(($) => $.mcp.removeHeader)}
-                              onClick={() => setHeaders((prev) => prev.filter((_, ii) => ii !== i))}
-                            >
-                              <TrashIcon />
-                            </Button>
-                          </div>
-                        ))}
-                        <Button
-                          variant="outline"
-                          size="xs"
-                          className="w-fit"
-                          onClick={() => setHeaders((prev) => [...prev, { key: "", value: "" }])}
-                        >
-                          <PlusIcon />
-                          {t(($) => $.mcp.addHeader)}
-                        </Button>
-                      </div>
-                    )}
-
-                    {/* OAuth2 Client Credentials form */}
-                    {authMode === "oauth2" && (
-                      <div className="grid gap-1.5">
-                        <Input
-                          placeholder={t(($) => $.mcp.clientId)}
-                          value={oauth2.clientId}
-                          onChange={(e) =>
-                            setOAuth2((prev) => ({ ...prev, clientId: e.target.value }))
-                          }
-                          className="text-xs"
-                        />
-                        <Input
-                          type="password"
-                          placeholder={t(($) => $.mcp.clientSecret)}
-                          value={oauth2.clientSecret}
-                          onChange={(e) =>
-                            setOAuth2((prev) => ({ ...prev, clientSecret: e.target.value }))
-                          }
-                          className="text-xs"
-                        />
-                        <Input
-                          placeholder={t(($) => $.mcp.scopes)}
-                          value={oauth2.scopes ?? ""}
-                          onChange={(e) =>
-                            setOAuth2((prev) => ({
-                              ...prev,
-                              scopes: e.target.value || undefined,
-                            }))
-                          }
-                          className="text-xs"
-                        />
-                      </div>
-                    )}
-
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      className="w-fit"
-                      disabled={!newMcpUrl.trim()}
-                      onClick={handleAddMcpServer}
-                    >
-                      <PlusIcon />
-                      {t(($) => $.mcp.addServer)}
-                    </Button>
-                  </div>
-                </div>
-              </FormSection>
-            </div>
+            <FieldGroup>
+              <ToolsFieldSet />
+              <McpServersFieldSet />
+            </FieldGroup>
           )}
-        </div>
+        </DialogBody>
 
-        <DialogFooter className="flex-row justify-between sm:justify-between">
-          <div className="flex gap-2">
+        <DialogFooter className="sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <ConfirmButton
-              icon={<TrashIcon />}
+              icon={TrashIcon}
               label={t(($) => $.clearMemory.label)}
               title={t(($) => $.clearMemory.title)}
               description={t(($) => $.clearMemory.description)}
               onConfirm={clearMemory}
             />
             <ConfirmButton
-              icon={<EraserIcon />}
+              icon={EraserIcon}
               label={t(($) => $.clearTmp.label)}
               title={t(($) => $.clearTmp.title)}
               description={t(($) => $.clearTmp.description)}
@@ -593,12 +574,12 @@ export function SettingsDialog() {
           </div>
           {featureFlags.llmSpec && (
             <Button variant="outline" size="sm" onClick={reset}>
-              <RotateCcwIcon />
+              <RotateCcwIcon data-icon="inline-start" />
               {t(($) => $.resetDefaults)}
             </Button>
           )}
         </DialogFooter>
-      </DialogContent>
+      </ScrollDialogContent>
     </Dialog>
   );
 }

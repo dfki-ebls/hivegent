@@ -32,11 +32,11 @@ export function DocumentCanvas() {
       onValueChange={(v) => setActiveTab(v as DocumentCanvasTab)}
       className="h-full gap-0"
     >
-      <div className="shrink-0 border-b px-4 flex items-center h-15">
+      <div className="flex h-15 shrink-0 items-center border-b px-4">
         <TabsList className="w-full sm:w-auto">
           {TABS.map(({ id, icon: Icon }) => (
-            <TabsTrigger key={id} value={id} className="flex-1 sm:flex-none gap-2">
-              <Icon className="h-4 w-4" />
+            <TabsTrigger key={id} value={id} className="sm:flex-none">
+              <Icon data-icon="inline-start" />
               {t(($) => $.documents.canvas[id])}
             </TabsTrigger>
           ))}

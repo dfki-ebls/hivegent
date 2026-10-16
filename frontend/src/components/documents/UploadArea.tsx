@@ -11,7 +11,10 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { PERSONAL_SCOPE, formatTarget } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { TooltipButton } from "@/components/TooltipButton";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,17 +61,17 @@ function ActionMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="secondary" size="sm" />}>
-        <Icon className="h-4 w-4 mr-1" />
+        <Icon data-icon="inline-start" />
         {label}
-        <ChevronDown className="h-3.5 w-3.5 ml-1 opacity-70" />
+        <ChevronDown data-icon="inline-end" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         <DropdownMenuItem onClick={onFile}>
-          <FileText className="h-4 w-4 mr-2" />
+          <FileText />
           {t(($) => $.documents.upload.file)}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onFolder}>
-          <FolderOpen className="h-4 w-4 mr-2" />
+          <FolderOpen />
           {t(($) => $.documents.upload.folder)}
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -96,16 +99,14 @@ export function UploadArea({
   onNewFolder,
 }: UploadAreaProps) {
   const { t } = useTranslation();
-  const atPersonalRoot = target === PERSONAL_SCOPE;
 
   return (
     <div className="border-b p-4">
       <div
-        className={`flex flex-col items-center gap-3 rounded-lg border-2 border-dashed p-4 transition-colors ${
-          isDragging
-            ? "border-primary bg-primary/10"
-            : "border-muted-foreground/25 bg-muted/25 hover:border-muted-foreground/50 hover:bg-muted/50"
-        }`}
+        className={cn(
+          "flex flex-col items-center gap-3 rounded-2xl border border-dashed p-4 transition-colors",
+          isDragging ? "border-primary bg-primary/10" : "bg-muted/25 hover:bg-muted/50",
+        )}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
@@ -127,14 +128,12 @@ export function UploadArea({
           aria-label={t(($) => $.documents.upload.uploadFolder)}
           onChange={onDirectoryInputChange}
         />
-        {/* A drop-zone icon (dashed frame + pointer) marks the dashed area as a
-            drop target — deliberately not the Upload icon used by the menu below. */}
-        <div className="flex max-w-full items-center gap-2">
-          <Inbox className="h-8 w-8 shrink-0 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">
-            {t(($) => $.documents.upload.dropHint)}
-          </span>
-        </div>
+        {/* A drop-zone icon marks the dashed area as a drop target, deliberately
+            not the Upload icon of the menu below. */}
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Inbox className="size-5 shrink-0" />
+          {t(($) => $.documents.upload.dropHint)}
+        </p>
         <div className="flex flex-wrap justify-center gap-2">
           {/* Upload > File accepts any files, including ZIP archives, which are
               extracted into a collection rather than stored as one document. */}
@@ -151,29 +150,28 @@ export function UploadArea({
             onFolder={onNewFolder}
           />
         </div>
-        {/* Where drops, uploads, and new files land — click a folder in the tree
-            to change it. */}
-        <div
-          className="flex max-w-full items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-sm"
-          title={t(($) => $.documents.upload.targetHint)}
-        >
-          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="shrink-0 text-muted-foreground">
-            {t(($) => $.documents.upload.workingIn)}
-          </span>
-          <span className="min-w-0 truncate font-medium">{formatTarget(target)}</span>
-          {!atPersonalRoot && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-4 w-4 shrink-0"
-              title={t(($) => $.documents.upload.resetTarget)}
+        {/* Where drops, uploads, and new files land, changed by clicking a folder in the tree. */}
+        <ButtonGroup className="max-w-full">
+          <ButtonGroupText
+            className="h-8 min-w-0 bg-background font-normal"
+            title={t(($) => $.documents.upload.targetHint)}
+          >
+            <FolderOpen className="text-muted-foreground" />
+            <span className="shrink-0 text-muted-foreground">
+              {t(($) => $.documents.upload.workingIn)}
+            </span>
+            <span className="min-w-0 truncate font-medium">{formatTarget(target)}</span>
+          </ButtonGroupText>
+          {target !== PERSONAL_SCOPE && (
+            <TooltipButton
+              variant="outline"
+              label={t(($) => $.documents.upload.resetTarget)}
               onClick={onResetTarget}
             >
-              <X className="h-3 w-3" />
-            </Button>
+              <X />
+            </TooltipButton>
           )}
-        </div>
+        </ButtonGroup>
       </div>
     </div>
   );

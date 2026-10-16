@@ -5,8 +5,7 @@ import { keyPrefix } from "@/i18n";
 import { featureFlags } from "@/lib/feature-flags";
 import { AssetProcessingMode, type ChunkingPipeline, type ConversionPipeline } from "@/lib/types";
 import { PipelineSelector } from "@/components/PipelineSelector";
-import { Label } from "@/components/ui/label";
-import { OptionSelect } from "@/components/OptionSelect";
+import { LabeledOptionSelect } from "@/components/OptionSelect";
 
 const T_OPTIONS = keyPrefix(($) => $.documents.pipelines);
 
@@ -56,24 +55,15 @@ export function PipelineSettingsBar({
         </>
       )}
       {featureFlags.assetSpec && (
-        <div className="flex items-center gap-2">
-          <Label
-            htmlFor="asset-mode-select"
-            className="text-sm text-muted-foreground flex items-center gap-1.5"
-          >
-            <Images className="h-4 w-4" />
-            {t(($) => $.assets)}
-          </Label>
-          <OptionSelect
-            id="asset-mode-select"
-            className="w-[120px]"
-            size="sm"
-            value={assetMode}
-            options={assetModes}
-            onChange={onAssetModeChange}
-            placeholder={t(($) => $.selectAssetMode)}
-          />
-        </div>
+        <LabeledOptionSelect
+          icon={Images}
+          label={t(($) => $.assets)}
+          className="w-30"
+          value={assetMode}
+          options={assetModes}
+          onChange={onAssetModeChange}
+          placeholder={t(($) => $.selectAssetMode)}
+        />
       )}
     </div>
   );

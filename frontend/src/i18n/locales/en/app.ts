@@ -51,10 +51,10 @@ export const app = {
       "Invoke any agent tool directly to exercise stateful behavior such as pgvector retrieval. Arguments and their types are inferred from each tool's schema.",
     adminRequired: "Admin access required",
     adminRequiredDescription: "The tool debugger is only available to admins.",
-    loadFailed: "Failed to load tools: {{error}}",
+    loadFailed: "Failed to load tools",
     selectTool: "Select a tool to debug",
     run: "Run tool",
-    requestFailed: "Request failed: {{error}}",
+    requestFailed: "Request failed",
     noResults: "No results yet",
     noResultsDescription:
       "Select a tool, fill in its arguments, and run it to see the output here.",

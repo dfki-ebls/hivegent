@@ -1,32 +1,28 @@
-import { BookOpen } from "lucide-react";
+import { BookOpenIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LANGUAGE } from "@/i18n";
-import { cn, DOCS_URL } from "@/lib/utils";
+import { DOCS_URL } from "@/lib/utils";
 
-/** Handbook link opening in a new tab, hidden when no handbook is configured.
- * Points at the handbook in the interface language, which is served under its
- * own path segment (`/en/`, `/de/`).
- * Styled by callers via `className`. Every other anchor prop is forwarded too,
- * so rendering this as a `DropdownMenuItem` still receives the ref and pointer
- * handlers Base UI needs to highlight the entry. */
-export function DocsLink({ className, ...props }: ComponentProps<"a">) {
+/** The handbook in the interface language, served under its own path segment (`/en/`, `/de/`). */
+const DOCS_HREF = DOCS_URL && `${DOCS_URL.replace(/\/?$/, "/")}${LANGUAGE}/`;
+
+/**
+ * Handbook link opening in a new tab, hidden when no handbook is configured.
+ * Meant as the `render` element of a `DropdownMenuItem` or `Button`, which lay
+ * out and size its icon, so every anchor prop is forwarded.
+ */
+export function DocsLink(props: ComponentProps<"a">) {
   const { t } = useTranslation();
 
-  if (!DOCS_URL) {
+  if (!DOCS_HREF) {
     return null;
   }
 
   return (
-    <a
-      href={`${DOCS_URL.replace(/\/?$/, "/")}${LANGUAGE}/`}
-      target="_blank"
-      rel="noreferrer"
-      {...props}
-      className={cn("flex items-center gap-2", className)}
-    >
-      <BookOpen className="h-4 w-4" />
+    <a href={DOCS_HREF} target="_blank" rel="noreferrer" {...props}>
+      <BookOpenIcon data-icon="inline-start" />
       {t(($) => $.app.userMenu.documentation)}
     </a>
   );

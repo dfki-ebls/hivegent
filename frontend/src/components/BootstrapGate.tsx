@@ -7,7 +7,7 @@ import { errorMessage } from "@/lib/utils";
 import { initOidc } from "@/oidc";
 
 import { ConnectingScreen } from "@/components/ConnectingScreen";
-import { FullScreenNotice } from "@/components/FullScreenNotice";
+import { EmptyState } from "@/components/EmptyState";
 
 type State = { status: "loading" } | { status: "ready" } | { status: "error"; message: string };
 
@@ -44,16 +44,17 @@ export function BootstrapGate({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  if (state.status === "ready") return <>{children}</>;
+  if (state.status === "ready") return children;
 
   if (state.status === "error") {
     return (
-      <FullScreenNotice
-        icon={<TriangleAlertIcon className="h-12 w-12 text-destructive" />}
+      <EmptyState
+        icon={<TriangleAlertIcon />}
         title={t(($) => $.app.startup.failed)}
-      >
-        {state.message}
-      </FullScreenNotice>
+        description={state.message}
+        destructive
+        className="h-dvh"
+      />
     );
   }
 

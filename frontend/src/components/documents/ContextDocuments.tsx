@@ -1,14 +1,22 @@
 import { Search } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { useDocumentLineCounts } from "@/hooks/use-document-line-counts";
 import type { FetchedChunk, FetchedDocument } from "@/lib/types";
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "@/components/DocumentDialog";
+import { EmptyState } from "@/components/EmptyState";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DocumentGroup } from "@/components/documents/DocumentGroup";
-import { EmptyState } from "@/components/EmptyState";
+
+/** The document the dialog opens on, anchored on a chunk when it has one. */
+interface DialogTarget {
+  filename: string;
+  chunk: FetchedChunk | null;
+  initialFullDoc: boolean;
+}
 
 export function ContextDocuments() {
   const { t } = useTranslation();
@@ -18,20 +26,15 @@ export function ContextDocuments() {
   // Lazily backfill line counts for search/grep docs so their map renders.
   useDocumentLineCounts();
 
-  // Dialog state
-  const [selectedChunk, setSelectedChunk] = useState<FetchedChunk | null>(null);
-  const [dialogFilename, setDialogFilename] = useState<string | undefined>(undefined);
-  const [initialFullDoc, setInitialFullDoc] = useState(false);
-  const dialogOpen = selectedChunk !== null || dialogFilename !== undefined;
+  const dialog = useDialogTarget<DialogTarget>({
+    filename: "",
+    chunk: null,
+    initialFullDoc: false,
+  });
 
   // The dialog's image is just the open document's image, so derive it rather
   // than tracking a parallel piece of state.
-  const dialogImage = documents.get(selectedChunk?.filename ?? dialogFilename ?? "")?.image ?? null;
-
-  const getChunksForDoc = useCallback(
-    (doc: FetchedDocument): FetchedChunk[] => chunksForDocument(doc, chunks),
-    [chunks],
-  );
+  const dialogImage = documents.get(dialog.target.filename)?.image ?? null;
 
   // Surface the most relevant documents first: most chunks wins, filename
   // breaks ties. `chunkIds` is the count itself, since the store only ever
@@ -45,50 +48,31 @@ export function ContextDocuments() {
     [documents],
   );
 
-  // Open the dialog on a specific chunk (in chunk-context mode)
-  const handleChunkClick = useCallback((chunk: FetchedChunk) => {
-    setInitialFullDoc(chunk.position.type === "full_document");
-    setDialogFilename(undefined);
-    setSelectedChunk(chunk);
-  }, []);
+  const handleChunkClick = (chunk: FetchedChunk) =>
+    dialog.show({
+      filename: chunk.filename,
+      chunk,
+      initialFullDoc: chunk.position.type === "full_document",
+    });
 
-  // Open the dialog for a document (in full-document mode)
-  const handleFilenameClick = useCallback(
-    (filename: string) => {
-      setInitialFullDoc(true);
-      // Try to pick the first chunk as anchor for the sidebar
-      const doc = documents.get(filename);
-      const first = doc && doc.chunkIds.length > 0 ? chunks.get(doc.chunkIds[0]) : null;
-      if (first) {
-        setDialogFilename(undefined);
-        setSelectedChunk(first);
-      } else {
-        // No chunks yet — use fallbackFilename
-        setSelectedChunk(null);
-        setDialogFilename(filename);
-      }
-    },
-    [documents, chunks],
-  );
+  // Opens on the first chunk so the sidebar has an anchor, or on the whole document without one.
+  const handleFilenameClick = (filename: string) => {
+    const doc = documents.get(filename);
+    const chunk = (doc && chunks.get(doc.chunkIds[0])) ?? null;
 
-  // Open the dialog showing an image full-size (thumbnail click in the grid)
-  const handleImageClick = useCallback((doc: FetchedDocument) => {
-    setInitialFullDoc(true);
-    setSelectedChunk(null);
-    setDialogFilename(doc.filename);
-  }, []);
+    dialog.show({ filename, chunk, initialFullDoc: true });
+  };
 
-  const closeDialog = useCallback(() => {
-    setSelectedChunk(null);
-    setDialogFilename(undefined);
-  }, []);
+  const handleImageClick = (doc: FetchedDocument) =>
+    dialog.show({ filename: doc.filename, chunk: null, initialFullDoc: true });
 
   if (sortedDocs.length === 0) {
     return (
       <EmptyState
-        icon={<Search className="h-12 w-12 opacity-50" />}
+        icon={<Search />}
         title={t(($) => $.documents.context.emptyTitle)}
         description={t(($) => $.documents.context.emptyDescription)}
+        className="h-full"
       />
     );
   }
@@ -96,12 +80,12 @@ export function ContextDocuments() {
   return (
     <>
       <ScrollArea className="h-full">
-        <div className="space-y-1 p-4">
+        <div className="flex flex-col gap-1 p-4">
           {sortedDocs.map((doc) => (
             <DocumentGroup
               key={doc.filename}
               doc={doc}
-              chunks={getChunksForDoc(doc)}
+              chunks={chunksForDocument(doc, chunks)}
               onChunkClick={handleChunkClick}
               onFilenameClick={handleFilenameClick}
               onImageClick={handleImageClick}
@@ -111,13 +95,12 @@ export function ContextDocuments() {
       </ScrollArea>
 
       <DocumentDialog
-        open={dialogOpen}
-        onOpenChange={(v) => !v && closeDialog()}
-        filename={selectedChunk?.filename ?? dialogFilename ?? ""}
-        chunk={selectedChunk}
-        fallbackFilename={dialogFilename}
+        open={dialog.open}
+        onOpenChange={dialog.setOpen}
+        filename={dialog.target.filename}
+        chunk={dialog.target.chunk}
         image={dialogImage}
-        initialFullDoc={initialFullDoc}
+        initialFullDoc={dialog.target.initialFullDoc}
       />
     </>
   );

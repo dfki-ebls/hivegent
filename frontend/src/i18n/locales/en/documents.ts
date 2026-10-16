@@ -33,7 +33,6 @@ export const documents = {
     personal: "~ (Personal)",
     searchPlaceholder: "Search documents …",
     droppedItems: "Dropped items",
-    dismissError: "Dismiss error",
   },
   upload: {
     dropHint: "Drop files here to upload",
@@ -68,7 +67,6 @@ export const documents = {
       chunking: "{{pipeline}} chunking settings",
     },
     description: "Configure options for the {{pipeline}} pipeline.",
-    noOptions: "No configuration options available for this pipeline.",
     showAdvanced: "Show advanced JSON",
     hideAdvanced: "Hide advanced JSON",
     invalidJson: "Invalid JSON",

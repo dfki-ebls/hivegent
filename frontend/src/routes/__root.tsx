@@ -8,7 +8,7 @@ import { Header } from "@/components/Header";
 import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { MaintenanceScreen } from "@/components/MaintenanceScreen";
 import { NotFound } from "@/components/NotFound";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@/components/ui/toast";
 import { useOidc } from "@/oidc";
 import { useSettingsStore } from "@/stores/settings-store";
 
@@ -29,8 +29,8 @@ function RootComponent() {
 
   return (
     <AppErrorBoundary>
-      <Toaster position="top-center" visibleToasts={5} />
-      <div className="flex h-screen flex-col">
+      <Toaster />
+      <div className="flex h-dvh flex-col">
         <ImpersonationBanner />
         <Header />
         <main className="flex-1 overflow-y-auto">

@@ -21,7 +21,7 @@ export function DocumentMap({ segments, className }: DocumentMapProps) {
       {segments.map((seg, i) => (
         <div
           key={i}
-          className="absolute inset-y-0 rounded-full bg-emerald-500"
+          className="absolute inset-y-0 rounded-full bg-primary"
           style={{
             left: `${seg.start * 100}%`,
             width: `${Math.max((seg.end - seg.start) * 100, 2)}%`,

@@ -5,6 +5,7 @@ import {
   PERSONAL_SCOPE,
   buildAuxLlmConfig,
   canonicalPath,
+  formatTarget,
   groupScope,
   splitScopePath,
   writeDocument,
@@ -25,9 +26,9 @@ import {
   selectHasPendingUploads,
   useUploadQueue,
 } from "@/stores/upload-queue-store";
-import { CreateDirectoryDialog } from "@/components/CreateDirectoryDialog";
 import { DocumentDialog } from "@/components/DocumentDialog";
 import { SearchInput } from "@/components/SearchInput";
+import { NameInputDialog } from "@/components/documents/NameInputDialog";
 import { PipelineSettingsBar } from "@/components/documents/PipelineSettingsBar";
 import { ScopeSection } from "@/components/documents/ScopeSection";
 import { UploadArea } from "@/components/documents/UploadArea";
@@ -113,9 +114,13 @@ export function DocumentManager() {
     e.preventDefault();
     setIsDragging(true);
   }, []);
+  // Moving onto a child of the drop zone also leaves the zone itself, which must not end the drag.
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
+
+    if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) {
+      setIsDragging(false);
+    }
   }, []);
 
   // Classify dropped OS entries and enqueue them into `target` (a canonical
@@ -255,7 +260,7 @@ export function DocumentManager() {
         </div>
       </div>
 
-      <div className="space-y-1 px-4 pb-4">
+      <div className="flex flex-col gap-1 px-4 pb-4">
         <ScopeSection
           scope={PERSONAL_SCOPE}
           label={t(($) => $.documents.manager.personal)}
@@ -285,7 +290,7 @@ export function DocumentManager() {
 
       <DocumentDialog
         open={newDocOpen}
-        onOpenChange={(open) => !open && setNewDocOpen(false)}
+        onOpenChange={setNewDocOpen}
         filename="new-document.md"
         editable
         isNew
@@ -293,11 +298,17 @@ export function DocumentManager() {
         onSave={handleSaveNew}
       />
 
-      <CreateDirectoryDialog
+      <NameInputDialog
         open={showCreateDir}
         onOpenChange={setShowCreateDir}
-        target={targetDir}
-        onCreate={(name) => {
+        title={t(($) => $.documents.confirm.createFolder)}
+        description={t(($) => $.documents.confirm.createFolderDescription, {
+          target: formatTarget(targetDir),
+        })}
+        label={t(($) => $.documents.confirm.folderName)}
+        placeholder={t(($) => $.documents.confirm.folderPlaceholder)}
+        submitLabel={t(($) => $.common.actions.create)}
+        onSubmit={(name) => {
           const { scope, local } = splitScopePath(canonicalPath(targetDir, name));
           void createDir(scope, local);
         }}

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LogIn } from "lucide-react";
+import { LogInIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -33,7 +33,7 @@ function IndexPage() {
           <h1 className="text-4xl font-bold">{PRODUCT_NAME}</h1>
           <VersionBadge className="self-start" />
         </div>
-        <p className="text-lg text-muted-foreground max-w-md">{t(($) => $.app.landing.tagline)}</p>
+        <p className="max-w-md text-lg text-muted-foreground">{t(($) => $.app.landing.tagline)}</p>
         <Button
           size="lg"
           disabled={isSigningIn}
@@ -42,10 +42,16 @@ function IndexPage() {
             login().catch(() => setIsSigningIn(false));
           }}
         >
-          {isSigningIn ? <Spinner className="mr-2 h-4 w-4" /> : <LogIn className="mr-2 h-4 w-4" />}
+          {isSigningIn ? <Spinner data-icon="inline-start" /> : <LogInIcon data-icon="inline-start" />}
           {t(($) => $.app.landing.signIn)}
         </Button>
-        <DocsLink className="text-sm text-muted-foreground hover:text-foreground transition-colors" />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+          nativeButton={false}
+          render={<DocsLink />}
+        />
       </div>
     </div>
   );

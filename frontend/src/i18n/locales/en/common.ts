@@ -5,6 +5,7 @@ export const common = {
     copy: "Copy",
     create: "Create",
     delete: "Delete",
+    dismiss: "Dismiss",
     edit: "Edit",
     open: "Open",
     remove: "Remove",
@@ -19,5 +20,6 @@ export const common = {
     working: "Working …",
     error: "Error",
     unknownError: "Something went wrong.",
+    copyFailed: "Couldn’t copy to the clipboard.",
   },
 } as const;

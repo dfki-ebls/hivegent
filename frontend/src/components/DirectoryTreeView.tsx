@@ -1,44 +1,38 @@
 import {
-  ChevronDown,
-  ChevronRight,
   FileText,
   Folder,
   FolderOpen,
   type LucideIcon,
   Pencil,
-  Scissors,
   Trash2,
 } from "lucide-react";
-import {
-  type CSSProperties,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { DROP_CLASSES, registerTreeRow, type TreeDropState, type TreeItemDrag } from "@/lib/dnd";
+import type { DirectoryEntry } from "@/lib/types";
+import { cn, collectFileEntries, collectFilePaths } from "@/lib/utils";
+import { useSettingsStore } from "@/stores/settings-store";
+import { TooltipButton } from "@/components/TooltipButton";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Spinner } from "@/components/ui/spinner";
 import {
   FilterToggleButtons,
   type FilterEntryState,
 } from "@/components/documents/FilterToggleButtons";
-import { DROP_CLASSES, registerTreeRow, type TreeDropState, type TreeItemDrag } from "@/lib/dnd";
-import type { DirectoryEntry } from "@/lib/types";
-import { cn, collectFilePaths } from "@/lib/utils";
-import { useSettingsStore } from "@/stores/settings-store";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Spinner } from "@/components/ui/spinner";
+import {
+  ChunkCountBadge,
+  ExpandButton,
+  NameButton,
+  REVEAL_ON_HOVER,
+} from "@/components/RowButtons";
 
 interface DirectoryTreeViewProps {
   entry: DirectoryEntry;
   /** Source workspace scope of this tree (`~` or `@<group>`), for drag identity. */
   scope: string;
-  mutatingPaths?: Set<string>;
+  mutatingPaths: Set<string>;
   onEditFile: (path: string) => void;
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;
@@ -62,7 +56,6 @@ interface DirectoryTreeViewProps {
   onMoveInto?: (drag: TreeItemDrag, destDir: string) => void;
   /** Upload dropped OS entries into a directory (local path, `""` for root). */
   onUploadInto?: (destDir: string, items: DataTransferItem[], files: File[]) => void;
-  depth?: number;
 }
 
 interface FlatRow {
@@ -78,15 +71,15 @@ interface FlatRow {
   fileCount?: number;
 }
 
-// Applied to the row content after the checkbox, so checkboxes stay in a fixed column
-// under the section header's chevron. 24px per level (icon 16px + gap 8px) lines a
-// child's icon up under its parent's folder icon.
-function indentStyle(depth: number): CSSProperties {
-  return { paddingLeft: `${depth * 24}px` };
+// Applied to the row content after the checkbox, so checkboxes stay in a fixed
+// column. 28px per level (chevron 24px + gap 4px) lines a child's icon up under
+// its parent's folder icon.
+function indentStyle(depth: number) {
+  return { paddingLeft: `${depth * 28}px` };
 }
 
 /** What one row can do in a drag: be a source, a destination, both, or neither. */
-interface TreeRowDnd {
+export interface TreeRowDnd {
   scope: string;
   resolveDrag: (() => TreeItemDrag) | null;
   destDir: string | null;
@@ -115,6 +108,7 @@ function useTreeRowDnd(config: TreeRowDnd) {
 
   useEffect(() => {
     const element = ref.current;
+
     if (!element) return;
 
     return registerTreeRow({
@@ -137,11 +131,14 @@ function useTreeRowDnd(config: TreeRowDnd) {
   return { ref, dragging, dropState };
 }
 
-// The row shell every entry shares: it owns the drag-and-drop wiring and the
-// drag/drop/armed visual state. A fixed min-height keeps the row from growing
-// when its hover buttons appear, and per-row flex (not a shared grid) means one
-// row revealing its buttons never truncates another row's name.
-function TreeRow({
+/**
+ * The row shell every entry shares, the scope header included: it owns the
+ * drag-and-drop wiring and the drag/drop/armed visual state. A fixed min-height
+ * keeps the row from growing when its hover buttons appear, and per-row flex
+ * (not a shared grid) means one row revealing its buttons never truncates
+ * another row's name.
+ */
+export function TreeRow({
   dnd,
   isArmed = false,
   children,
@@ -156,7 +153,7 @@ function TreeRow({
     <div
       ref={ref}
       className={cn(
-        "flex min-h-9 items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50 group",
+        "group/row flex min-h-9 items-center gap-2 rounded-xl px-2 hover:bg-muted/50",
         dragging && "opacity-50",
         isArmed && "bg-accent",
         DROP_CLASSES[dropState],
@@ -167,36 +164,8 @@ function TreeRow({
   );
 }
 
-// The name column: it grows to fill the row (so an idle row gives its full width
-// to the name and only the hovered row truncates), holding a checkbox slot, the
-// indented label, and a trailing mutating spinner.
-function RowMain({
-  checkbox,
-  isMutating,
-  children,
-}: {
-  checkbox: ReactNode;
-  isMutating: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
-      {checkbox}
-      {children}
-      {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
-    </div>
-  );
-}
-
-// The right-hand cluster shared by both row kinds: hover actions, then the
-// entry's metadata. `shrink-0` keeps it intact so the name is what truncates.
-function RowAside({ children }: { children: ReactNode }) {
-  return <div className="flex shrink-0 items-center gap-2">{children}</div>;
-}
-
-// A hover-revealed icon action (rechunk, delete, create-subdir, …), identical
-// across file and directory rows apart from its icon, label, and handler.
-function RowActionButton({
+/** A hover-revealed icon action (rename, delete), identical across file and directory rows. */
+function RowAction({
   icon: Icon,
   label,
   onClick,
@@ -206,26 +175,21 @@ function RowActionButton({
   icon: LucideIcon;
   label: string;
   onClick: () => void;
-  disabled?: boolean;
+  disabled: boolean;
   destructive?: boolean;
 }) {
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-6 w-6 hidden group-hover:inline-flex"
-      title={label}
+    <TooltipButton
+      size="icon-xs"
+      label={label}
+      destructive={destructive}
+      className={REVEAL_ON_HOVER}
       onClick={onClick}
       disabled={disabled}
     >
-      <Icon className={cn("h-3 w-3", destructive && "text-destructive")} />
-    </Button>
+      <Icon />
+    </TooltipButton>
   );
-}
-
-function countFiles(entry: DirectoryEntry): number {
-  if (entry.type === "file") return 1;
-  return (entry.children ?? []).reduce((sum, child) => sum + countFiles(child), 0);
 }
 
 /** Subdirectories before files, then by name. Ordering is settled here, at
@@ -237,7 +201,7 @@ const byKindThenName = (a: DirectoryEntry, b: DirectoryEntry) =>
 function flattenEntries(
   entry: DirectoryEntry,
   expandedDirs: Set<string>,
-  depth: number,
+  depth = 0,
   parentPath = "",
 ): FlatRow[] {
   if (entry.type === "file") {
@@ -249,7 +213,14 @@ function flattenEntries(
   // Skip the root directory row (rendered externally)
   if (entry.path) {
     const isExpanded = expandedDirs.has(entry.path);
-    rows.push({ entry, depth, dropDir: entry.path, isExpanded, fileCount: countFiles(entry) });
+    rows.push({
+      entry,
+      depth,
+      dropDir: entry.path,
+      isExpanded,
+      fileCount: collectFileEntries(entry).length,
+    });
+
     if (!isExpanded) return rows;
   }
 
@@ -258,6 +229,46 @@ function flattenEntries(
   }
 
   return rows;
+}
+
+/** The shared row layout: checkbox, the indented name cluster, its actions, then metadata. */
+function EntryRow({
+  dnd,
+  isArmed,
+  isMutating,
+  depth,
+  checkbox,
+  name,
+  actions,
+  meta,
+}: {
+  dnd: TreeRowDnd;
+  isArmed?: boolean;
+  isMutating: boolean;
+  depth: number;
+  checkbox: ReactNode;
+  name: ReactNode;
+  actions: ReactNode;
+  meta: ReactNode;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <TreeRow dnd={dnd} isArmed={isArmed}>
+      {checkbox}
+      <div className="flex min-w-0 flex-1 items-center gap-1" style={indentStyle(depth)}>
+        {name}
+        {isMutating && (
+          <Spinner
+            aria-label={t(($) => $.common.states.working)}
+            className="ml-1 shrink-0 text-muted-foreground"
+          />
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5">{actions}</div>
+      {meta}
+    </TreeRow>
+  );
 }
 
 function FileRow({
@@ -284,46 +295,39 @@ function FileRow({
   filterState: FilterEntryState;
   onDelete?: () => void;
   onRename?: () => void;
-  selected?: boolean;
+  selected: boolean;
   onToggleSelect?: () => void;
 }) {
   const { t } = useTranslation();
 
   return (
-    <TreeRow dnd={dnd}>
-      <RowMain
-        isMutating={isMutating}
-        checkbox={
-          onToggleSelect && (
-            <Checkbox
-              checked={selected ?? false}
-              onCheckedChange={() => onToggleSelect()}
-              className="shrink-0"
-            />
-          )
-        }
-      >
-        <button
-          type="button"
-          className="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer"
-          style={indentStyle(depth)}
-          onClick={onEdit}
-        >
-          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-sm">{entry.name}</span>
-        </button>
-      </RowMain>
-      <RowAside>
-        <div className="flex gap-0.5">
+    <EntryRow
+      dnd={dnd}
+      isMutating={isMutating}
+      depth={depth}
+      checkbox={
+        onToggleSelect && (
+          <Checkbox checked={selected} onCheckedChange={onToggleSelect} aria-label={entry.name} />
+        )
+      }
+      name={
+        <>
+          <FileText className="mr-1 size-4 shrink-0 text-muted-foreground" />
+          <NameButton className="font-normal" onClick={onEdit}>
+            {entry.name}
+          </NameButton>
+        </>
+      }
+      actions={
+        <>
           <FilterToggleButtons
             state={filterState}
             onInclude={onInclude}
             onExclude={onExclude}
-            compact
             revealOnHover
           />
           {onRename && (
-            <RowActionButton
+            <RowAction
               icon={Pencil}
               label={t(($) => $.common.actions.rename)}
               onClick={onRename}
@@ -331,7 +335,7 @@ function FileRow({
             />
           )}
           {onDelete && (
-            <RowActionButton
+            <RowAction
               icon={Trash2}
               label={t(($) => $.common.actions.delete)}
               onClick={onDelete}
@@ -339,15 +343,10 @@ function FileRow({
               destructive
             />
           )}
-        </div>
-        {entry.chunk_count != null && (
-          <Badge variant="outline" className="text-xs gap-1 whitespace-nowrap">
-            <Scissors className="h-3 w-3" />
-            {entry.chunk_count}
-          </Badge>
-        )}
-      </RowAside>
-    </TreeRow>
+        </>
+      }
+      meta={entry.chunk_count != null && <ChunkCountBadge count={entry.chunk_count} />}
+    />
   );
 }
 
@@ -388,59 +387,46 @@ function DirectoryRow({
 }) {
   const { t } = useTranslation();
   const FolderIcon = isExpanded ? FolderOpen : Folder;
-  const ChevronIcon = isExpanded ? ChevronDown : ChevronRight;
 
   return (
-    <TreeRow isArmed={isArmed} dnd={dnd}>
-      <RowMain
-        isMutating={isMutating}
-        checkbox={
-          onToggleSelect && (
-            <Checkbox
-              checked={selectionState === true}
-              indeterminate={selectionState === "indeterminate"}
-              onCheckedChange={() => onToggleSelect()}
-              className="shrink-0"
-            />
-          )
-        }
-      >
-        {/* Indent wraps chevron + name together so a child's folder icon lines
-            up under its parent's, while the two clicks stay separate: the
-            chevron expands, the name arms the directory as the upload target. */}
-        <div className="flex flex-1 items-center gap-2 min-w-0" style={indentStyle(depth)}>
-          <button
-            type="button"
-            className="shrink-0 cursor-pointer text-muted-foreground"
-            title={
-              isExpanded ? t(($) => $.documents.tree.collapse) : t(($) => $.documents.tree.expand)
-            }
-            onClick={onToggle}
-          >
-            <ChevronIcon className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer"
+    <EntryRow
+      dnd={dnd}
+      isArmed={isArmed}
+      isMutating={isMutating}
+      depth={depth}
+      checkbox={
+        onToggleSelect && (
+          <Checkbox
+            checked={selectionState === true}
+            indeterminate={selectionState === "indeterminate"}
+            onCheckedChange={onToggleSelect}
+            aria-label={entry.name}
+          />
+        )
+      }
+      // The chevron expands, while the name arms the directory as the upload target.
+      name={
+        <>
+          <ExpandButton expanded={isExpanded} onClick={onToggle} />
+          <FolderIcon className="mr-1 size-4 shrink-0 text-muted-foreground" />
+          <NameButton
             onClick={onSelect ?? onToggle}
             title={onSelect ? t(($) => $.documents.scope.setUploadTarget) : undefined}
           >
-            <FolderIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 truncate text-sm font-medium">{entry.name}</span>
-          </button>
-        </div>
-      </RowMain>
-      <RowAside>
-        <div className="flex gap-0.5">
+            {entry.name}
+          </NameButton>
+        </>
+      }
+      actions={
+        <>
           <FilterToggleButtons
             state={filterState}
             onInclude={onIncludeDir}
             onExclude={onExcludeDir}
-            compact
             revealOnHover
           />
           {onRenameDir && (
-            <RowActionButton
+            <RowAction
               icon={Pencil}
               label={t(($) => $.documents.confirm.renameFolder)}
               onClick={onRenameDir}
@@ -448,7 +434,7 @@ function DirectoryRow({
             />
           )}
           {onDeleteDir && (
-            <RowActionButton
+            <RowAction
               icon={Trash2}
               label={t(($) => $.documents.tree.deleteFolder)}
               onClick={onDeleteDir}
@@ -456,23 +442,17 @@ function DirectoryRow({
               destructive
             />
           )}
-        </div>
-        {fileCount > 0 && (
-          <Badge variant="secondary" className="text-xs whitespace-nowrap">
-            {fileCount}
-          </Badge>
-        )}
-      </RowAside>
-    </TreeRow>
+        </>
+      }
+      meta={fileCount > 0 && <Badge variant="secondary">{fileCount}</Badge>}
+    />
   );
 }
-
-const EMPTY_SET = new Set<string>();
 
 export function DirectoryTreeView({
   entry,
   scope,
-  mutatingPaths = EMPTY_SET,
+  mutatingPaths,
   onEditFile,
   onInclude,
   onExclude,
@@ -488,32 +468,23 @@ export function DirectoryTreeView({
   onArm,
   onMoveInto,
   onUploadInto,
-  depth = 0,
 }: DirectoryTreeViewProps) {
   const expandedDirsArray = useSettingsStore((state) => state.expandedDirs);
-  const toggleExpandedDir = useSettingsStore((state) => state.toggleExpandedDir);
+  const toggleDir = useSettingsStore((state) => state.toggleExpandedDir);
   const expandedDirs = useMemo(() => new Set(expandedDirsArray), [expandedDirsArray]);
 
-  const toggleDir = useCallback(
-    (path: string) => {
-      toggleExpandedDir(path);
-    },
-    [toggleExpandedDir],
-  );
-
-  const flatRows = useMemo(
-    () => flattenEntries(entry, expandedDirs, depth),
-    [entry, expandedDirs, depth],
-  );
+  const flatRows = useMemo(() => flattenEntries(entry, expandedDirs), [entry, expandedDirs]);
 
   // Pre-compute file paths per directory so we walk each subtree once.
   const dirFilePaths = useMemo(() => {
     const map = new Map<string, string[]>();
+
     for (const row of flatRows) {
       if (row.entry.type === "directory") {
         map.set(row.entry.path, collectFilePaths(row.entry));
       }
     }
+
     return map;
   }, [flatRows]);
 
@@ -540,68 +511,64 @@ export function DirectoryTreeView({
   });
 
   const renderRow = (row: FlatRow) => {
+    const { path } = row.entry;
+
     if (row.entry.type === "file") {
-      const fileMutating = mutatingPaths.has(row.entry.path);
       return (
         <FileRow
-          key={row.entry.path}
+          key={path}
           entry={row.entry}
           dnd={rowDnd(row)}
-          isMutating={fileMutating}
+          isMutating={mutatingPaths.has(path)}
           depth={row.depth}
-          onEdit={() => onEditFile(row.entry.path)}
-          onInclude={() => onInclude(row.entry.path)}
-          onExclude={() => onExclude(row.entry.path)}
-          filterState={filterState(row.entry.path)}
-          onDelete={onDeleteFile ? () => onDeleteFile(row.entry.path) : undefined}
-          onRename={onRenameFile ? () => onRenameFile(row.entry.path) : undefined}
-          selected={selectedFiles?.has(row.entry.path)}
-          onToggleSelect={onToggleSelectFile ? () => onToggleSelectFile(row.entry.path) : undefined}
+          onEdit={() => onEditFile(path)}
+          onInclude={() => onInclude(path)}
+          onExclude={() => onExclude(path)}
+          filterState={filterState(path)}
+          onDelete={onDeleteFile && (() => onDeleteFile(path))}
+          onRename={onRenameFile && (() => onRenameFile(path))}
+          selected={selectedFiles?.has(path) ?? false}
+          onToggleSelect={onToggleSelectFile && (() => onToggleSelectFile(path))}
         />
       );
     }
 
-    const dirPath = row.entry.path ? `${row.entry.path}/` : "";
-    const paths = dirFilePaths.get(row.entry.path) ?? [];
+    const dirPath = path ? `${path}/` : "";
+    const paths = dirFilePaths.get(path) ?? [];
+    const selectedCount = selectedFiles ? paths.filter((p) => selectedFiles.has(p)).length : 0;
+    const selectionState =
+      selectedCount === 0 ? false : selectedCount === paths.length ? true : "indeterminate";
 
-    let selectionState: boolean | "indeterminate" = false;
-    if (selectedFiles && paths.length > 0) {
-      let count = 0;
-      for (const p of paths) {
-        if (selectedFiles.has(p)) count++;
-      }
-      selectionState = count === 0 ? false : count === paths.length ? true : "indeterminate";
-    }
+    const armDir =
+      onArm &&
+      (() => {
+        onArm(path);
 
-    const armDir = onArm
-      ? () => {
-          onArm(row.entry.path);
-          if (!row.isExpanded) toggleDir(row.entry.path);
-        }
-      : undefined;
+        if (!row.isExpanded) toggleDir(path);
+      });
 
     return (
       <DirectoryRow
-        key={row.entry.path}
+        key={path}
         entry={row.entry}
         dnd={rowDnd(row)}
         isExpanded={row.isExpanded ?? false}
-        isMutating={mutatingPaths.has(row.entry.path)}
+        isMutating={mutatingPaths.has(path)}
         depth={row.depth}
         fileCount={row.fileCount ?? 0}
-        isArmed={armedDir === row.entry.path}
+        isArmed={armedDir === path}
         selectionState={selectionState}
-        onToggle={() => toggleDir(row.entry.path)}
+        onToggle={() => toggleDir(path)}
         onSelect={armDir}
         onIncludeDir={() => onInclude(dirPath)}
         onExcludeDir={() => onExclude(dirPath)}
         filterState={filterState(dirPath)}
-        onDeleteDir={onDeleteDir ? () => onDeleteDir(row.entry.path) : undefined}
-        onRenameDir={onRenameDir ? () => onRenameDir(row.entry.path) : undefined}
-        onToggleSelect={onToggleSelectDir ? () => onToggleSelectDir(paths) : undefined}
+        onDeleteDir={onDeleteDir && (() => onDeleteDir(path))}
+        onRenameDir={onRenameDir && (() => onRenameDir(path))}
+        onToggleSelect={onToggleSelectDir && (() => onToggleSelectDir(paths))}
       />
     );
   };
 
-  return <div className="flex flex-col gap-y-0.5">{flatRows.map(renderRow)}</div>;
+  return <div className="flex flex-col gap-0.5">{flatRows.map(renderRow)}</div>;
 }

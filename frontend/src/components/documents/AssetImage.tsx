@@ -1,11 +1,8 @@
-import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
-import { useInView } from "@/hooks/use-in-view";
-import { useConversationId } from "@/hooks/chat/use-conversation-id";
-import { useObjectUrl } from "@/hooks/use-object-url";
+import { useWorkspaceAsset } from "@/hooks/use-workspace-asset";
 import { cn } from "@/lib/utils";
-import { fetchDocumentAsset } from "@/lib/api";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface AssetImageProps {
   /** Canonical workspace path of the image. */
@@ -13,35 +10,30 @@ interface AssetImageProps {
   alt?: string;
   /** Classes for the <img> element (object-fit, sizing). */
   className?: string;
-  /** Classes for the ref'd wrapper that holds the loading skeleton. */
+  /** Classes for the observed wrapper, which also sizes the loading skeleton. */
   wrapperClassName?: string;
 }
 
 /** Lazily fetches a workspace asset and renders it once scrolled into view. */
 export function AssetImage({ filePath, alt, className, wrapperClassName }: AssetImageProps) {
   const { t } = useTranslation();
-  const conversationId = useConversationId();
-  const fetch = useCallback(
-    (signal: AbortSignal) => fetchDocumentAsset(filePath, signal, conversationId),
-    [filePath, conversationId],
-  );
-  const [ref, inView] = useInView();
-  const { url, error } = useObjectUrl(inView ? fetch : null);
+  const { ref, url, error } = useWorkspaceAsset(filePath);
 
   return (
     <span
       ref={ref}
       className={cn(
-        "flex items-center justify-center overflow-hidden bg-muted/40 text-[10px] text-muted-foreground",
-        !url && !error && "animate-pulse",
+        "relative flex items-center justify-center overflow-hidden text-xs text-muted-foreground",
         wrapperClassName,
       )}
     >
-      {url && !error ? (
-        <img src={url} alt={alt ?? filePath} className={cn("block", className)} />
-      ) : error ? (
+      {error ? (
         t(($) => $.documents.image.unavailable)
-      ) : null}
+      ) : url ? (
+        <img src={url} alt={alt ?? filePath} className={cn("block", className)} />
+      ) : (
+        <Skeleton className="absolute inset-0 rounded-[inherit]" />
+      )}
     </span>
   );
 }

@@ -9,13 +9,21 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { downloadBlob } from "@/lib/download";
-import { errorMessage, isWebUrl } from "@/lib/utils";
-import { formatDateTime, formatFileSize } from "@/i18n/format";
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { useConversationId } from "@/hooks/chat/use-conversation-id";
 
+import { useConversationId } from "@/hooks/chat/use-conversation-id";
+import { formatDateTime, formatFileSize } from "@/i18n/format";
+import { downloadBlob } from "@/lib/download";
+import { basename, errorMessage, isWebUrl } from "@/lib/utils";
 import {
   buildAuxLlmConfig,
   deleteAssetDescription,
@@ -28,6 +36,9 @@ import {
 } from "@/lib/api";
 import { useSettingsStore } from "@/stores/settings-store";
 import { AssetImage } from "@/components/documents/AssetImage";
+import { EmptyState, LoadingState } from "@/components/EmptyState";
+import { ItemButton } from "@/components/RowButtons";
+import { TooltipButton } from "@/components/TooltipButton";
 import { WorkspaceImage } from "@/components/WorkspaceImage";
 import { WorkspaceMarkdown } from "@/components/WorkspaceMarkdown";
 import {
@@ -45,6 +56,7 @@ import {
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CodeBlock, CodeBlockContent, CodeBlockHeader } from "@/components/ui/code-block";
 import {
   Dialog,
   DialogContent,
@@ -53,8 +65,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Field, FieldDescription, FieldError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -64,10 +80,8 @@ interface DocumentDialogProps {
   onOpenChange: (open: boolean) => void;
   filename: string;
 
-  /** Fetched mode: chunk to highlight, sidebar shows sibling chunks from store. */
+  /** Fetched mode: chunk of *filename* to highlight, sidebar shows sibling chunks from store. */
   chunk?: FetchedChunk | null;
-  /** Fallback filename when no chunk is available (opens in full-doc mode). */
-  fallbackFilename?: string;
   /** Image to show full-size in the full-document view (context-panel image docs). */
   image?: FetchedImage | null;
   /** When true the dialog opens directly into the full-document markdown view. */
@@ -91,7 +105,13 @@ interface DocumentDialogProps {
   onSave?: (filename: string, content: string) => Promise<void>;
 }
 
-type ViewMode = "full-doc" | "chunk" | "edit" | "asset";
+/** What the main pane shows. */
+type View =
+  | { mode: "full-doc" }
+  | { mode: "chunk"; id: string }
+  | { mode: "asset"; index: number }
+  | { mode: "edit" };
+type AssetAction = "save" | "generate" | "delete";
 type SidebarTab = "chunks" | "assets";
 
 interface ContentChunk {
@@ -121,7 +141,7 @@ function DescriptionBody({ markdown }: { markdown: string | null }) {
   return markdown ? (
     <WorkspaceMarkdown>{markdown}</WorkspaceMarkdown>
   ) : (
-    <p className="text-muted-foreground italic text-sm">
+    <p className="text-sm text-muted-foreground italic">
       {t(($) => $.documents.dialog.noDescription)}
     </p>
   );
@@ -138,20 +158,79 @@ function FileMetaBadges({
   sizeBytes?: number | null;
 }) {
   return (
-    <div className="flex flex-wrap gap-2 pt-2">
-      <Badge variant="outline" className="text-xs">
-        {name}
-      </Badge>
-      {mediaType && (
-        <Badge variant="outline" className="text-xs">
-          {mediaType}
-        </Badge>
-      )}
-      {sizeBytes != null && (
-        <Badge variant="outline" className="text-xs">
-          {formatFileSize(sizeBytes)}
-        </Badge>
-      )}
+    <div className="flex flex-wrap gap-2">
+      <Badge variant="outline">{name}</Badge>
+      {mediaType && <Badge variant="outline">{mediaType}</Badge>}
+      {sizeBytes != null && <Badge variant="outline">{formatFileSize(sizeBytes)}</Badge>}
+    </div>
+  );
+}
+
+/** The origin and position badges of a fetched chunk. */
+function ChunkBadges({ chunk }: { chunk: ContentChunk }) {
+  return (
+    <>
+      <Badge variant="outline">{chunk.originLabel}</Badge>
+      <Badge variant="secondary">{chunk.badge}</Badge>
+    </>
+  );
+}
+
+/** A scrolling pane with a centered image above its description. */
+function ImagePane({ image, children }: { image: ReactNode; children?: ReactNode }) {
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="flex flex-col gap-4 p-4">
+        <div className="flex justify-center">{image}</div>
+        {children}
+      </div>
+    </ScrollArea>
+  );
+}
+
+/** The document text as one wrapped, scrolling code block filling the pane. */
+function TextPane({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col p-4">
+      <CodeBlock className="min-h-0 flex-1">
+        <CodeBlockContent wrap>
+          <span>{children}</span>
+        </CodeBlockContent>
+      </CodeBlock>
+    </div>
+  );
+}
+
+/** A selectable sidebar entry, highlighted while its view is shown. */
+function SidebarItem({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <ItemButton
+      size="xs"
+      aria-current={active}
+      onClick={onClick}
+      className="aria-[current=true]:bg-muted"
+    >
+      {children}
+    </ItemButton>
+  );
+}
+
+/** Image views (an uploaded image, an extracted asset) title their description alike. */
+function DescriptionHeading({ actions }: { actions?: ReactNode }) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <h3 className="text-sm font-medium">{t(($) => $.documents.dialog.descriptionHeading)}</h3>
+      {actions}
     </div>
   );
 }
@@ -207,13 +286,11 @@ function fetchedContentChunk(chunk: FetchedChunk, content: string | null): Conte
 }
 
 export function DocumentDialog({ open, onOpenChange, ...props }: DocumentDialogProps) {
-  if (!props.isNew && !props.chunk && !props.fallbackFilename && !props.filename) return null;
-
   // The body mounts with the dialog content, so every opening (and every new
   // target) starts from fresh state instead of resetting it in an effect.
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[85vh] w-[90vw] max-w-5xl! flex flex-col overflow-hidden p-0">
+      <DialogContent className="flex h-[85dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
         <DocumentDialogBody
           key={props.chunk?.id ?? props.filename}
           onOpenChange={onOpenChange}
@@ -226,9 +303,8 @@ export function DocumentDialog({ open, onOpenChange, ...props }: DocumentDialogP
 
 function DocumentDialogBody({
   onOpenChange,
-  filename: filenameProp,
+  filename,
   chunk,
-  fallbackFilename,
   image,
   initialFullDoc = false,
   showMetadata = false,
@@ -246,18 +322,19 @@ function DocumentDialogBody({
   // In fetched mode the store is the source of truth (see `fullContent` below).
   const [localFullContent, setLocalFullContent] = useState<string | null>(null);
   const [contentSettled, setContentSettled] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    if (isNew) return "edit";
-    if (!chunk || initialFullDoc || chunk.position.type === "full_document") return "full-doc";
-    return "chunk";
+  const [view, setView] = useState<View>(() => {
+    if (isNew) return { mode: "edit" };
+    if (!chunk || initialFullDoc || chunk.position.type === "full_document") {
+      return { mode: "full-doc" };
+    }
+    return { mode: "chunk", id: chunk.id };
   });
-  const [activeChunkId, setActiveChunkId] = useState<string | null>(chunk?.id ?? null);
 
   const [managedData, setManagedData] = useState<ChunkedDocumentResponse | null>(null);
   const [managedError, setManagedError] = useState<string | null>(null);
   const [isRechunking, setIsRechunking] = useState(false);
 
-  const [editFilename, setEditFilename] = useState(filenameProp);
+  const [editFilename, setEditFilename] = useState(filename);
   const [editContent, setEditContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -265,12 +342,9 @@ function DocumentDialogBody({
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chunks");
   const [assetsData, setAssetsData] = useState<AssetListResponse | null>(null);
   const [assetsLoading, setAssetsLoading] = useState(false);
-  const [activeAssetIndex, setActiveAssetIndex] = useState<number | null>(null);
   const [assetDescriptionDraft, setAssetDescriptionDraft] = useState("");
   const [isEditingAssetDescription, setIsEditingAssetDescription] = useState(false);
-  const [isSavingAssetDescription, setIsSavingAssetDescription] = useState(false);
-  const [isGeneratingAssetDescription, setIsGeneratingAssetDescription] = useState(false);
-  const [isDeletingAssetDescription, setIsDeletingAssetDescription] = useState(false);
+  const [pendingAssetAction, setPendingAssetAction] = useState<AssetAction | null>(null);
 
   // When true, the next scroll-into-view uses "instant" instead of "smooth".
   const isInitialScrollRef = useRef(true);
@@ -282,7 +356,6 @@ function DocumentDialogBody({
   const overrides = useSettingsStore((state) => state.overrides);
 
   const isManagedMode = showMetadata || onRechunk != null;
-  const filename = chunk?.filename ?? fallbackFilename ?? filenameProp;
 
   // Subscribe to just this document's full content so unrelated store
   // updates (e.g., new search chunks streaming in) don't refire the fetch
@@ -354,7 +427,11 @@ function DocumentDialogBody({
   ]);
 
   const fullContent = contentModel.content;
-  const activeChunk = contentModel.chunks.find((item) => item.id === activeChunkId) ?? null;
+  const activeChunk =
+    view.mode === "chunk"
+      ? (contentModel.chunks.find((item) => item.id === view.id) ?? null)
+      : null;
+  const activeAsset = view.mode === "asset" ? (assetsData?.assets[view.index] ?? null) : null;
 
   // Only sets state once the request settles, so the mount effect can call it.
   const loadManagedChunks = useCallback(() => {
@@ -399,12 +476,12 @@ function DocumentDialogBody({
     if (!node) return;
     const behavior = isInitialScrollRef.current ? "instant" : "smooth";
     isInitialScrollRef.current = false;
-    // Single rAF to let the ScrollArea viewport settle.
+    // Single rAF to let the code block settle.
     requestAnimationFrame(() => {
       // Center chunks that fit, but anchor the start of chunks taller than
       // the viewport so their beginning stays visible instead of being
       // centered (which would push the start off the top).
-      const viewport = node.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      const viewport = node.closest<HTMLElement>('[data-slot="code-block-content"]');
       const overflows =
         viewport != null && node.getBoundingClientRect().height > viewport.clientHeight;
       node.scrollIntoView({ behavior, block: overflows ? "start" : "center" });
@@ -444,66 +521,31 @@ function DocumentDialogBody({
   // Download the markdown description shown in the dialog under its on-disk name.
   const handleDownloadMarkdown = useCallback(() => {
     if (fullContent == null) return;
-    const name = filename.slice(filename.lastIndexOf("/") + 1) || "document.md";
+    const name = basename(filename) || "document.md";
     downloadBlob(new Blob([fullContent], { type: "text/markdown" }), name);
   }, [fullContent, filename]);
 
-  const replaceActiveAsset = useCallback(
-    (updated: AssetEntry) => {
-      setAssetsData((prev) =>
-        prev
-          ? {
-              ...prev,
-              assets: prev.assets.map((a, i) => (i === activeAssetIndex ? updated : a)),
-            }
-          : prev,
+  // Run one request on the shown asset's description and swap in the updated entry.
+  const runAssetAction = async (
+    action: AssetAction,
+    request: (asset: AssetEntry) => Promise<AssetEntry>,
+  ) => {
+    if (view.mode !== "asset" || !activeAsset) return;
+
+    const { index } = view;
+    setPendingAssetAction(action);
+
+    try {
+      const updated = await request(activeAsset);
+      setAssetsData(
+        (prev) =>
+          prev && { ...prev, assets: prev.assets.map((a, i) => (i === index ? updated : a)) },
       );
-    },
-    [activeAssetIndex],
-  );
-
-  const handleSaveAssetDescription = useCallback(async () => {
-    if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
-    const asset = assetsData.assets[activeAssetIndex];
-    setIsSavingAssetDescription(true);
-    try {
-      const updated = await updateAssetDescription(filename, asset.name, assetDescriptionDraft);
-      replaceActiveAsset(updated);
       setIsEditingAssetDescription(false);
     } finally {
-      setIsSavingAssetDescription(false);
+      setPendingAssetAction(null);
     }
-  }, [activeAssetIndex, assetsData, assetDescriptionDraft, filename, replaceActiveAsset]);
-
-  const handleGenerateAssetDescription = useCallback(async () => {
-    if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
-    const asset = assetsData.assets[activeAssetIndex];
-    // Image alt-text uses the auxiliary model, matching the import-time describe pipeline.
-    const llm = buildAuxLlmConfig(overrides);
-    setIsGeneratingAssetDescription(true);
-    try {
-      const updated = await generateAssetDescription(filename, asset.name, llm);
-      replaceActiveAsset(updated);
-      setAssetDescriptionDraft(updated.description);
-      setIsEditingAssetDescription(false);
-    } finally {
-      setIsGeneratingAssetDescription(false);
-    }
-  }, [activeAssetIndex, assetsData, filename, overrides, replaceActiveAsset]);
-
-  const handleDeleteAssetDescription = useCallback(async () => {
-    if (activeAssetIndex == null || !assetsData?.assets[activeAssetIndex]) return;
-    const asset = assetsData.assets[activeAssetIndex];
-    setIsDeletingAssetDescription(true);
-    try {
-      const updated = await deleteAssetDescription(filename, asset.name);
-      replaceActiveAsset(updated);
-      setAssetDescriptionDraft("");
-      setIsEditingAssetDescription(false);
-    } finally {
-      setIsDeletingAssetDescription(false);
-    }
-  }, [activeAssetIndex, assetsData, filename, replaceActiveAsset]);
+  };
 
   const handleSave = async () => {
     if (!onSave || !editFilename.trim()) return;
@@ -531,165 +573,127 @@ function DocumentDialogBody({
         ? contentModel.loading || contentModel.chunks.length > 0 || hasAssets
         : true;
 
-  const renderChunkHighlight = (content: string, start: number, end: number) => (
-    <ScrollArea className="flex-1 min-h-0">
-      <pre className="whitespace-pre-wrap text-sm p-4 font-mono">
-        <span className="text-muted-foreground">{content.slice(0, start)}</span>
-        <span
-          key={activeChunkId}
-          ref={highlightRef}
-          className="bg-yellow-200/50 dark:bg-yellow-900/50 border-l-2 border-yellow-500 pl-1"
-        >
-          {content.slice(start, end)}
-        </span>
-        <span className="text-muted-foreground">{content.slice(end)}</span>
-      </pre>
-    </ScrollArea>
-  );
+  // Switch the main pane, leaving any asset description edit behind.
+  const showView = (next: View) => {
+    setIsEditingAssetDescription(false);
+    startTransition(() => setView(next));
+  };
 
   const renderMainContent = () => {
-    if (viewMode === "edit") {
+    if (view.mode === "edit") {
       return (
-        <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-          {isNew && (
-            <div className="px-4 pt-3 space-y-1.5">
-              <Input
-                value={editFilename}
-                onChange={(e) => setEditFilename(e.target.value)}
-                placeholder={t(($) => $.documents.dialog.filenamePlaceholder)}
-                className="text-lg font-semibold"
-              />
-              {target && (
-                <p className="text-sm text-muted-foreground">
-                  {t(($) => $.documents.dialog.creatingIn, { target: formatTarget(target) })}
-                </p>
-              )}
-            </div>
-          )}
-          <div className="flex-1 min-h-0 px-4 pt-2 pb-0">
+        <>
+          <div className="flex min-h-0 flex-1 flex-col gap-2 px-4 pt-2">
+            {isNew && (
+              <Field>
+                <Input
+                  value={editFilename}
+                  onChange={(e) => setEditFilename(e.target.value)}
+                  placeholder={t(($) => $.documents.dialog.filenamePlaceholder)}
+                  className="text-lg font-semibold"
+                />
+                {target && (
+                  <FieldDescription>
+                    {t(($) => $.documents.dialog.creatingIn, { target: formatTarget(target) })}
+                  </FieldDescription>
+                )}
+              </Field>
+            )}
             <Textarea
               value={editContent}
               onChange={(e) => setEditContent(e.target.value)}
               placeholder={t(($) => $.documents.dialog.contentPlaceholder)}
-              className="h-full resize-none font-mono text-sm"
+              className="min-h-0 flex-1 font-mono text-sm"
             />
           </div>
-          <DialogFooter className="px-4 py-4">
-            {saveError && (
-              <p className="mr-auto self-center text-sm text-destructive">{saveError}</p>
-            )}
+          <DialogFooter className="p-4">
+            {saveError && <FieldError className="mr-auto self-center">{saveError}</FieldError>}
             <Button
               variant="outline"
-              onClick={() => {
-                if (isNew) {
-                  onOpenChange(false);
-                } else {
-                  startTransition(() => setViewMode("full-doc"));
-                }
-              }}
+              onClick={() => (isNew ? onOpenChange(false) : showView({ mode: "full-doc" }))}
             >
               {t(($) => $.common.actions.cancel)}
             </Button>
             <Button onClick={handleSave} disabled={isSaving || !editFilename.trim()}>
-              {isSaving ? <Spinner /> : t(($) => $.common.actions.save)}
+              {isSaving && <Spinner aria-hidden data-icon="inline-start" />}
+              {t(($) => $.common.actions.save)}
             </Button>
           </DialogFooter>
-        </div>
+        </>
       );
     }
 
-    if (isLoading) {
-      return (
-        <div className="flex flex-1 items-center justify-center">
-          <Spinner className="size-8 text-muted-foreground" />
-        </div>
-      );
-    }
+    if (isLoading) return <LoadingState />;
 
     // Full-doc markdown view
-    if (viewMode === "full-doc") {
+    if (view.mode === "full-doc") {
       // Uploaded image entry: mirror the extracted-asset view — the image
       // itself, its generated caption, and file metadata badges.
-      if (imageEntry) {
-        const name = imageEntry.path.split("/").pop() ?? filename;
+      const imagePath = imageEntry?.path ?? image?.filePath;
+
+      if (imagePath) {
         return (
-          <ScrollArea className="flex-1 min-h-0">
-            <div className="p-4 space-y-4">
-              <div className="flex justify-center">
-                <AssetImage
-                  filePath={imageEntry.path}
-                  alt={filename}
-                  wrapperClassName="min-h-32 rounded-md border"
-                  className="max-h-[70vh] w-auto max-w-full object-contain"
-                />
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">
-                  {t(($) => $.documents.dialog.descriptionHeading)}
-                </h3>
+          <ImagePane
+            image={
+              <AssetImage
+                filePath={imagePath}
+                alt={filename}
+                wrapperClassName="min-h-32 min-w-32 rounded-xl border"
+                className="max-h-[70dvh] w-auto max-w-full object-contain"
+              />
+            }
+          >
+            {imageEntry ? (
+              <div className="flex flex-col gap-2">
+                <DescriptionHeading />
                 <DescriptionBody markdown={fullContent} />
-                <FileMetaBadges name={name} mediaType={imageEntry.mime} />
+                <FileMetaBadges name={basename(imageEntry.path)} mediaType={imageEntry.mime} />
               </div>
-            </div>
-          </ScrollArea>
-        );
-      }
-      // Image docs: show the full-size image, with its description below if read.
-      if (image) {
-        return (
-          <ScrollArea className="flex-1 min-h-0">
-            <div className="space-y-4 p-4">
-              <div className="flex justify-center">
-                <AssetImage
-                  filePath={image.filePath}
-                  alt={filename}
-                  wrapperClassName="min-h-32 rounded-md border"
-                  className="max-h-[70vh] w-auto max-w-full object-contain"
-                />
-              </div>
-              {fullContent && (
+            ) : (
+              // A fetched image doc shows its description below once read.
+              fullContent && (
                 <WorkspaceMarkdown documentPath={filename}>{fullContent}</WorkspaceMarkdown>
-              )}
-            </div>
-          </ScrollArea>
+              )
+            )}
+          </ImagePane>
         );
       }
+
       if (!fullContent) {
-        // No full content fetched — show the excerpts the model actually
+        // No full content fetched, so show the excerpts the model actually
         // read (search snippets, grep hits) instead of a dead end.
         if (contentModel.chunks.length > 0) {
           return (
-            <ScrollArea className="flex-1 min-h-0">
-              <div className="p-4 space-y-4">
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="flex flex-col gap-4 p-4">
                 {contentModel.chunks.map((item) => (
-                  <div key={item.id} className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs">
-                        {item.originLabel}
-                      </Badge>
-                      <Badge variant="secondary" className="text-xs">
-                        {item.badge}
-                      </Badge>
-                    </div>
-                    <pre className="whitespace-pre-wrap text-sm font-mono">{item.content}</pre>
-                  </div>
+                  <CodeBlock key={item.id} size="sm">
+                    <CodeBlockHeader>
+                      <ChunkBadges chunk={item} />
+                    </CodeBlockHeader>
+                    <CodeBlockContent wrap>{item.content}</CodeBlockContent>
+                  </CodeBlock>
                 ))}
               </div>
             </ScrollArea>
           );
         }
+
         return (
-          <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-            {isWeb
-              ? t(($) => $.documents.dialog.pageNotFetched)
-              : !filename.toLowerCase().endsWith(".md")
-                ? t(($) => $.documents.dialog.binaryFile)
-                : t(($) => $.documents.dialog.contentUnavailable)}
-          </div>
+          <EmptyState
+            description={
+              isWeb
+                ? t(($) => $.documents.dialog.pageNotFetched)
+                : !filename.toLowerCase().endsWith(".md")
+                  ? t(($) => $.documents.dialog.binaryFile)
+                  : t(($) => $.documents.dialog.contentUnavailable)
+            }
+          />
         );
       }
+
       return (
-        <ScrollArea className="flex-1 min-h-0">
+        <ScrollArea className="min-h-0 flex-1">
           <WorkspaceMarkdown className="p-4" documentPath={filename}>
             {fullContent}
           </WorkspaceMarkdown>
@@ -698,143 +702,157 @@ function DocumentDialogBody({
     }
 
     // Asset view
-    if (viewMode === "asset" && activeAssetIndex != null && assetsData?.assets[activeAssetIndex]) {
-      const asset = assetsData.assets[activeAssetIndex];
+    if (activeAsset) {
       // WorkspaceImage resolves src relative to the document's directory
-      const assetsBasename = assetsData.assets_dir.split("/").pop() ?? "";
-      const relativeSrc = `${assetsBasename}/${asset.name}`;
-      const assetActionPending = isGeneratingAssetDescription || isDeletingAssetDescription;
+      const relativeSrc = `${basename(assetsData?.assets_dir ?? "")}/${activeAsset.name}`;
+      const assetActionPending = pendingAssetAction !== null;
 
       return (
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-4 space-y-4">
-            <div className="flex justify-center">
-              <WorkspaceImage src={relativeSrc} alt={asset.description} documentPath={filename} />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">
-                  {t(($) => $.documents.dialog.descriptionHeading)}
-                </h3>
-                {editable && !isEditingAssetDescription && (
+        <ImagePane
+          image={
+            <WorkspaceImage
+              src={relativeSrc}
+              alt={activeAsset.description}
+              documentPath={filename}
+            />
+          }
+        >
+          <div className="flex flex-col gap-2">
+            <DescriptionHeading
+              actions={
+                editable &&
+                !isEditingAssetDescription && (
                   <div className="flex gap-1">
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="xs"
                       disabled={assetActionPending}
-                      onClick={handleGenerateAssetDescription}
+                      // Alt-text uses the auxiliary model, like the import-time describe pipeline.
+                      onClick={() =>
+                        runAssetAction("generate", ({ name }) =>
+                          generateAssetDescription(filename, name, buildAuxLlmConfig(overrides)),
+                        )
+                      }
                     >
-                      {isGeneratingAssetDescription ? (
-                        <Spinner className="h-3 w-3 mr-1" />
+                      {pendingAssetAction === "generate" ? (
+                        <Spinner aria-hidden data-icon="inline-start" />
                       ) : (
-                        <Sparkles className="h-3 w-3 mr-1" />
+                        <Sparkles data-icon="inline-start" />
                       )}
                       {t(($) => $.documents.dialog.generate)}
                     </Button>
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="xs"
                       disabled={assetActionPending}
                       onClick={() => {
-                        setAssetDescriptionDraft(asset.description);
+                        setAssetDescriptionDraft(activeAsset.description);
                         setIsEditingAssetDescription(true);
                       }}
                     >
-                      <Pencil className="h-3 w-3 mr-1" />
+                      <Pencil data-icon="inline-start" />
                       {t(($) => $.common.actions.edit)}
                     </Button>
-                    {asset.description && (
+                    {activeAsset.description && (
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="xs"
                         disabled={assetActionPending}
-                        onClick={handleDeleteAssetDescription}
+                        onClick={() =>
+                          runAssetAction("delete", ({ name }) =>
+                            deleteAssetDescription(filename, name),
+                          )
+                        }
                       >
-                        {isDeletingAssetDescription ? (
-                          <Spinner className="h-3 w-3 mr-1" />
+                        {pendingAssetAction === "delete" ? (
+                          <Spinner aria-hidden data-icon="inline-start" />
                         ) : (
-                          <Trash2 className="h-3 w-3 mr-1" />
+                          <Trash2 data-icon="inline-start" />
                         )}
                         {t(($) => $.common.actions.delete)}
                       </Button>
                     )}
                   </div>
-                )}
-              </div>
+                )
+              }
+            />
 
-              {isEditingAssetDescription ? (
-                <div className="space-y-2">
-                  <Textarea
-                    value={assetDescriptionDraft}
-                    onChange={(e) => setAssetDescriptionDraft(e.target.value)}
-                    className="text-sm font-mono"
-                    rows={6}
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setIsEditingAssetDescription(false)}
-                    >
-                      {t(($) => $.common.actions.cancel)}
-                    </Button>
-                    <Button
-                      size="sm"
-                      disabled={isSavingAssetDescription}
-                      onClick={handleSaveAssetDescription}
-                    >
-                      {isSavingAssetDescription ? <Spinner /> : t(($) => $.common.actions.save)}
-                    </Button>
-                  </div>
+            {isEditingAssetDescription ? (
+              <>
+                <Textarea
+                  value={assetDescriptionDraft}
+                  onChange={(e) => setAssetDescriptionDraft(e.target.value)}
+                  className="min-h-36 font-mono text-sm"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setIsEditingAssetDescription(false)}
+                  >
+                    {t(($) => $.common.actions.cancel)}
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={assetActionPending}
+                    onClick={() =>
+                      runAssetAction("save", ({ name }) =>
+                        updateAssetDescription(filename, name, assetDescriptionDraft),
+                      )
+                    }
+                  >
+                    {pendingAssetAction === "save" && (
+                      <Spinner aria-hidden data-icon="inline-start" />
+                    )}
+                    {t(($) => $.common.actions.save)}
+                  </Button>
                 </div>
-              ) : (
-                <DescriptionBody markdown={asset.description} />
-              )}
+              </>
+            ) : (
+              <DescriptionBody markdown={activeAsset.description} />
+            )}
 
-              <FileMetaBadges
-                name={asset.name}
-                mediaType={asset.media_type}
-                sizeBytes={asset.size_bytes}
-              />
-            </div>
+            <FileMetaBadges
+              name={activeAsset.name}
+              mediaType={activeAsset.media_type}
+              sizeBytes={activeAsset.size_bytes}
+            />
           </div>
-        </ScrollArea>
+        </ImagePane>
       );
     }
 
     if (!activeChunk) {
-      return (
-        <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-          {t(($) => $.documents.dialog.selectChunk)}
-        </div>
-      );
+      return <EmptyState description={t(($) => $.documents.dialog.selectChunk)} />;
     }
 
     if (!fullContent) {
-      if (activeChunk.content) {
-        return (
-          <ScrollArea className="flex-1 min-h-0">
-            <pre className="whitespace-pre-wrap text-sm p-4 font-mono">{activeChunk.content}</pre>
-          </ScrollArea>
-        );
-      }
-      return (
-        <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-          {t(($) => $.documents.dialog.contentUnavailable)}
-        </div>
+      return activeChunk.content ? (
+        <TextPane>{activeChunk.content}</TextPane>
+      ) : (
+        <EmptyState description={t(($) => $.documents.dialog.contentUnavailable)} />
       );
     }
 
     if (activeChunk.range) {
-      return renderChunkHighlight(fullContent, activeChunk.range.start, activeChunk.range.end);
+      const { start, end } = activeChunk.range;
+
+      return (
+        <TextPane>
+          <span className="text-muted-foreground">{fullContent.slice(0, start)}</span>
+          <mark
+            key={activeChunk.id}
+            ref={highlightRef}
+            className="rounded-sm bg-primary/15 box-decoration-clone text-foreground"
+          >
+            {fullContent.slice(start, end)}
+          </mark>
+          <span className="text-muted-foreground">{fullContent.slice(end)}</span>
+        </TextPane>
+      );
     }
 
-    return (
-      <ScrollArea className="flex-1 min-h-0">
-        <pre className="whitespace-pre-wrap text-sm p-4 font-mono">{fullContent}</pre>
-      </ScrollArea>
-    );
+    return <TextPane>{fullContent}</TextPane>;
   };
 
   const renderSidebar = () => {
@@ -842,154 +860,120 @@ function DocumentDialogBody({
 
     if (isManagedMode && managedLoading) {
       return (
-        <div className="w-56 shrink-0 border-r flex items-center justify-center">
-          <Spinner className="size-5 text-muted-foreground" />
-        </div>
+        <aside className="flex w-56 shrink-0 border-r">
+          <LoadingState />
+        </aside>
       );
     }
 
     if (contentModel.error) {
       return (
-        <div className="w-56 shrink-0 border-r flex items-center justify-center p-2">
-          <p className="text-xs text-muted-foreground">{contentModel.error}</p>
-        </div>
+        <aside className="flex w-56 shrink-0 border-r">
+          <EmptyState description={contentModel.error} />
+        </aside>
       );
     }
 
     if (isManagedMode && !contentModel.metadata && !hasAssets) return null;
 
     return (
-      <div className="w-56 shrink-0 border-r min-h-0 flex flex-col">
-        <div className="p-2 space-y-1 shrink-0">
-          <button
-            type="button"
-            className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors flex items-center gap-1.5 ${
-              viewMode === "full-doc" ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-            }`}
-            onClick={() => {
-              setActiveChunkId(null);
-              setActiveAssetIndex(null);
-              setIsEditingAssetDescription(false);
-              startTransition(() => setViewMode("full-doc"));
-            }}
-          >
-            <FileText className="h-3 w-3 shrink-0" />
-            <span className="font-medium">{t(($) => $.options.chunkPosition.fullDocument)}</span>
-          </button>
-        </div>
+      <aside className="flex min-h-0 w-56 shrink-0 flex-col gap-2 border-r p-2">
+        <SidebarItem
+          active={view.mode === "full-doc"}
+          onClick={() => showView({ mode: "full-doc" })}
+        >
+          <ItemMedia variant="icon">
+            <FileText />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>{t(($) => $.options.chunkPosition.fullDocument)}</ItemTitle>
+          </ItemContent>
+        </SidebarItem>
 
-        {hasAssets && (
-          <div className="px-2 shrink-0">
-            <Tabs
-              value={sidebarTab}
-              onValueChange={(value) => handleSidebarTabChange(value as SidebarTab)}
-            >
-              <TabsList className="w-full">
-                <TabsTrigger value="chunks" className="flex-1 text-xs">
-                  {t(($) => $.documents.dialog.chunksTab)}
-                </TabsTrigger>
-                <TabsTrigger value="assets" className="flex-1 text-xs">
-                  {t(($) => $.documents.dialog.assetsTab)}
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
+        {hasAssets ? (
+          <Tabs
+            value={sidebarTab}
+            onValueChange={(value) => handleSidebarTabChange(value as SidebarTab)}
+          >
+            <TabsList className="w-full">
+              <TabsTrigger value="chunks">{t(($) => $.documents.dialog.chunksTab)}</TabsTrigger>
+              <TabsTrigger value="assets">{t(($) => $.documents.dialog.assetsTab)}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        ) : (
+          contentModel.chunks.length > 0 && <Separator />
         )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">
-          {!hasAssets && contentModel.chunks.length > 0 && <div className="border-t my-1" />}
-
+        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
           {sidebarTab === "chunks" &&
             contentModel.chunks
               .filter((item) => !item.isFullDocument)
-              .map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
-                    viewMode === "chunk" && item.id === activeChunkId
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-muted"
-                  }`}
-                  onClick={() => {
-                    setActiveChunkId(item.id);
-                    setActiveAssetIndex(null);
-                    setIsEditingAssetDescription(false);
-                    setViewMode("chunk");
-                  }}
-                >
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <Badge
-                      variant={
-                        viewMode === "chunk" && item.id === activeChunkId ? "default" : "outline"
-                      }
-                      className="text-[10px] shrink-0"
-                    >
-                      {item.badge}
-                    </Badge>
-                    {item.detail && <span className="text-muted-foreground">{item.detail}</span>}
-                  </div>
-                  <p className="truncate text-muted-foreground mt-0.5">
-                    {item.content.slice(0, 60)}
-                    {item.content.length > 60 ? "…" : ""}
-                  </p>
-                </button>
-              ))}
+              .map((item) => {
+                const active = view.mode === "chunk" && item.id === view.id;
+
+                return (
+                  <SidebarItem
+                    key={item.id}
+                    active={active}
+                    onClick={() => showView({ mode: "chunk", id: item.id })}
+                  >
+                    <ItemContent className="min-w-0">
+                      <ItemTitle>
+                        <Badge variant={active ? "default" : "outline"}>{item.badge}</Badge>
+                        {item.detail && (
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {item.detail}
+                          </span>
+                        )}
+                      </ItemTitle>
+                      <ItemDescription className="line-clamp-1 text-xs">{item.content}</ItemDescription>
+                    </ItemContent>
+                  </SidebarItem>
+                );
+              })}
 
           {sidebarTab === "assets" &&
             (assetsLoading ? (
-              <div className="flex items-center justify-center py-4">
-                <Spinner className="size-4 text-muted-foreground" />
-              </div>
+              <Skeleton className="h-12" />
             ) : (
               assetsData?.assets.map((asset, index) => (
-                <button
+                <SidebarItem
                   key={asset.path}
-                  type="button"
-                  className={`w-full text-left rounded-md px-2 py-1.5 text-xs transition-colors ${
-                    viewMode === "asset" && activeAssetIndex === index
-                      ? "bg-accent text-accent-foreground"
-                      : "hover:bg-muted"
-                  }`}
-                  onClick={() => {
-                    setActiveAssetIndex(index);
-                    setActiveChunkId(null);
-                    setIsEditingAssetDescription(false);
-                    setViewMode("asset");
-                  }}
+                  active={view.mode === "asset" && view.index === index}
+                  onClick={() => showView({ mode: "asset", index })}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <ImageIcon className="h-3 w-3 shrink-0" />
-                    <span className="truncate font-medium">{asset.name}</span>
-                  </div>
-                  <p className="truncate text-muted-foreground mt-0.5">
-                    {asset.description
-                      ? asset.description.slice(0, 60) + (asset.description.length > 60 ? "…" : "")
-                      : t(($) => $.documents.dialog.noDescription)}
-                  </p>
-                </button>
+                  <ItemMedia variant="icon">
+                    <ImageIcon />
+                  </ItemMedia>
+                  <ItemContent className="min-w-0">
+                    <ItemTitle className="max-w-full">{asset.name}</ItemTitle>
+                    <ItemDescription className="line-clamp-1 text-xs">
+                      {asset.description || t(($) => $.documents.dialog.noDescription)}
+                    </ItemDescription>
+                  </ItemContent>
+                </SidebarItem>
               ))
             ))}
         </div>
-      </div>
+      </aside>
     );
   };
 
   return (
     <>
-      <DialogHeader className="px-6 pt-4 pb-1 space-y-1.5">
-        <DialogTitle className="truncate pr-8 flex items-center gap-2">
-          {filename}
+      <DialogHeader className="px-6 pt-6 pb-4">
+        <DialogTitle className="flex min-w-0 items-center gap-2 pr-8 leading-normal">
+          <span className="truncate">{filename}</span>
           {isWeb && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 shrink-0"
-              onClick={() => window.open(filename, "_blank", "noopener,noreferrer")}
-              title={t(($) => $.documents.dialog.openInBrowser)}
+            <TooltipButton
+              size="icon-xs"
+              label={t(($) => $.documents.dialog.openInBrowser)}
+              nativeButton={false}
+              // oxlint-disable-next-line jsx-a11y/control-has-associated-label -- the button renders its label into the link
+              render={<a href={filename} target="_blank" rel="noreferrer" />}
             >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </Button>
+              <ExternalLink />
+            </TooltipButton>
           )}
         </DialogTitle>
         <DialogDescription className="sr-only">
@@ -998,7 +982,7 @@ function DocumentDialogBody({
 
         {/* Metadata badges, then the document actions on their own line below. */}
         {(showMetadata || editable) && (
-          <div className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+          <div className="flex flex-col gap-2 pt-1">
             {showMetadata && contentModel.metadata && (
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="secondary">
@@ -1021,7 +1005,7 @@ function DocumentDialogBody({
                 </Badge>
               </div>
             )}
-            {viewMode !== "edit" && (
+            {view.mode !== "edit" && (
               <div className="flex flex-wrap items-center gap-2">
                 {editable && (
                   <Button
@@ -1031,10 +1015,10 @@ function DocumentDialogBody({
                       setEditContent(fullContent ?? "");
                       setEditFilename(filename);
                       setSaveError(null);
-                      setViewMode("edit");
+                      setView({ mode: "edit" });
                     }}
                   >
-                    <Pencil className="h-3 w-3 mr-1" />
+                    <Pencil data-icon="inline-start" />
                     {t(($) => $.common.actions.edit)}
                   </Button>
                 )}
@@ -1045,13 +1029,17 @@ function DocumentDialogBody({
                     onClick={handleRechunk}
                     disabled={isRechunking}
                   >
-                    <RefreshCw className={`h-3 w-3 mr-1 ${isRechunking ? "animate-spin" : ""}`} />
+                    {isRechunking ? (
+                      <Spinner aria-hidden data-icon="inline-start" />
+                    ) : (
+                      <RefreshCw data-icon="inline-start" />
+                    )}
                     {t(($) => $.documents.actions.rechunk)}
                   </Button>
                 )}
                 {onReconvert && (
                   <Button variant="outline" size="sm" onClick={onReconvert}>
-                    <RotateCcw className="h-3 w-3 mr-1" />
+                    <RotateCcw data-icon="inline-start" />
                     {t(($) => $.documents.actions.reconvert)}
                   </Button>
                 )}
@@ -1062,7 +1050,7 @@ function DocumentDialogBody({
                     onClick={onDownloadOriginal}
                     title={t(($) => $.documents.dialog.downloadOriginal)}
                   >
-                    <Download className="h-3 w-3 mr-1" />
+                    <Download data-icon="inline-start" />
                     {t(($) => $.documents.dialog.original)}
                   </Button>
                 )}
@@ -1074,7 +1062,7 @@ function DocumentDialogBody({
                     disabled={fullContent == null}
                     title={t(($) => $.documents.dialog.downloadMarkdown)}
                   >
-                    <Download className="h-3 w-3 mr-1" />
+                    <Download data-icon="inline-start" />
                     {t(($) => $.documents.dialog.markdown)}
                   </Button>
                 )}
@@ -1084,18 +1072,13 @@ function DocumentDialogBody({
         )}
       </DialogHeader>
 
-      <div className="flex flex-1 min-h-0">
+      <div className="flex min-h-0 flex-1 border-t">
         {renderSidebar()}
 
-        <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          {viewMode === "chunk" && activeChunk?.originLabel && (
-            <div className="flex items-center gap-2 px-4 py-2 border-b">
-              <Badge variant="outline" className="text-xs">
-                {activeChunk.originLabel}
-              </Badge>
-              <Badge variant="secondary" className="text-xs">
-                {activeChunk.badge}
-              </Badge>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {activeChunk?.originLabel && (
+            <div className="flex items-center gap-2 border-b px-4 py-2">
+              <ChunkBadges chunk={activeChunk} />
             </div>
           )}
           {renderMainContent()}

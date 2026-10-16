@@ -7,6 +7,7 @@ export const common = {
     copy: "Kopieren",
     create: "Erstellen",
     delete: "Löschen",
+    dismiss: "Ausblenden",
     edit: "Bearbeiten",
     open: "Öffnen",
     remove: "Entfernen",
@@ -21,5 +22,6 @@ export const common = {
     working: "Wird ausgeführt …",
     error: "Fehler",
     unknownError: "Etwas ist schiefgelaufen.",
+    copyFailed: "Kopieren in die Zwischenablage fehlgeschlagen.",
   },
 } as const satisfies Translation<typeof en>;

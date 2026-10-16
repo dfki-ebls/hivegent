@@ -1,16 +1,24 @@
-import { FileText, Scissors, Trash2 } from "lucide-react";
+import { FileText, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type { DocumentInfo } from "@/lib/types";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { formatFileSize, formatRelativeTime } from "@/i18n/format";
+import { TooltipButton } from "@/components/TooltipButton";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
 import {
   FilterToggleButtons,
   type FilterEntryState,
 } from "@/components/documents/FilterToggleButtons";
-import { formatFileSize, formatRelativeTime } from "@/i18n/format";
+import { ChunkCountBadge, NameButton } from "@/components/RowButtons";
 
 interface DocumentListItemProps {
   doc: DocumentInfo;
@@ -19,11 +27,13 @@ interface DocumentListItemProps {
   filterState: FilterEntryState;
   onIncludeDocument: () => void;
   onExcludeDocument: () => void;
-  onRemove: () => void;
+  /** Delete the document, omitted in a read-only scope. */
+  onRemove?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
 }
 
+/** A search result row: the document, its metadata, and its filter and delete actions. */
 export function DocumentListItem({
   doc,
   isMutating,
@@ -38,50 +48,50 @@ export function DocumentListItem({
   const { t } = useTranslation();
 
   return (
-    <div className="flex w-full items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50">
+    <Item variant="outline" size="sm" className="flex-nowrap">
       {onToggleSelect && (
         <Checkbox
           checked={selected ?? false}
-          onCheckedChange={() => onToggleSelect()}
-          className="shrink-0"
+          onCheckedChange={onToggleSelect}
+          aria-label={doc.display_name}
         />
       )}
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-center gap-3 text-left cursor-pointer"
-        onClick={onEdit}
-      >
-        <FileText className="h-8 w-8 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="truncate font-medium text-sm">{doc.display_name}</p>
-            {isMutating && <Spinner className="size-3 shrink-0 text-muted-foreground" />}
-            {doc.chunk_count != null && (
-              <Badge variant="outline" className="shrink-0 text-xs gap-1">
-                <Scissors className="h-3 w-3" />
-                {doc.chunk_count}
-              </Badge>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {formatFileSize(doc.size_bytes)} · {formatRelativeTime(doc.modified_at)}
-          </p>
-        </div>
-      </button>
-      <FilterToggleButtons
-        state={filterState}
-        onInclude={onIncludeDocument}
-        onExclude={onExcludeDocument}
-      />
-      <Button
-        variant="ghost"
-        size="icon"
-        title={t(($) => $.common.actions.remove)}
-        onClick={onRemove}
-        disabled={isMutating}
-      >
-        <Trash2 className="h-4 w-4 text-destructive" />
-      </Button>
-    </div>
+      <ItemMedia variant="icon">
+        <FileText className="text-muted-foreground" />
+      </ItemMedia>
+      <ItemContent className="min-w-0">
+        <ItemTitle className="max-w-full">
+          <NameButton onClick={onEdit}>{doc.display_name}</NameButton>
+          {isMutating && (
+            <Spinner
+              aria-label={t(($) => $.common.states.working)}
+              className="text-muted-foreground"
+            />
+          )}
+          {doc.chunk_count != null && <ChunkCountBadge count={doc.chunk_count} />}
+        </ItemTitle>
+        <ItemDescription>
+          {formatFileSize(doc.size_bytes)} · {formatRelativeTime(doc.modified_at)}
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions className="gap-0.5">
+        <FilterToggleButtons
+          state={filterState}
+          onInclude={onIncludeDocument}
+          onExclude={onExcludeDocument}
+        />
+        {onRemove && (
+          <TooltipButton
+            size="icon-xs"
+            destructive
+            label={t(($) => $.common.actions.remove)}
+            onClick={onRemove}
+            disabled={isMutating}
+          >
+            <Trash2 />
+          </TooltipButton>
+        )}
+      </ItemActions>
+    </Item>
   );
 }

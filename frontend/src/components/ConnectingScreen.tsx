@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/EmptyState";
 
 const STILL_WAITING_MS = 10_000;
 
@@ -21,13 +21,13 @@ export function ConnectingScreen() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-3 text-muted-foreground">
-      <Spinner className="h-8 w-8" />
-      <p className="text-sm">
-        {stillWaiting
+    <LoadingState
+      description={
+        stillWaiting
           ? t(($) => $.app.connecting.stillConnecting)
-          : t(($) => $.app.connecting.connecting)}
-      </p>
-    </div>
+          : t(($) => $.app.connecting.connecting)
+      }
+      className="h-dvh"
+    />
   );
 }

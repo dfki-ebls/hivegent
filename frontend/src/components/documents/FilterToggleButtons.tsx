@@ -1,9 +1,10 @@
 import { Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { Button } from "@/components/ui/button";
 import { keyPrefix } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { TooltipButton } from "@/components/TooltipButton";
+import { REVEAL_ON_HOVER } from "@/components/RowButtons";
 
 const T_OPTIONS = keyPrefix(($) => $.documents.filter);
 
@@ -14,9 +15,7 @@ interface FilterToggleButtonsProps {
   state: FilterEntryState;
   onInclude: () => void;
   onExclude: () => void;
-  /** Compact 6x6 buttons with 3x3 icons for tree rows. */
-  compact?: boolean;
-  /** Hide inactive buttons until a `group` ancestor is hovered. */
+  /** Fade inactive buttons in only while their `group/row` row is hovered or holds focus. */
   revealOnHover?: boolean;
 }
 
@@ -30,40 +29,33 @@ export function FilterToggleButtons({
   state,
   onInclude,
   onExclude,
-  compact = false,
   revealOnHover = false,
 }: FilterToggleButtonsProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const iconSize = compact ? "h-3 w-3" : "h-4 w-4";
-  // Collapse (not just fade) inactive buttons until the row is hovered, so an
-  // idle row gives its full width to the name instead of reserving button space.
-  const hidden = revealOnHover ? "hidden group-hover:inline-flex" : undefined;
+  const hidden = revealOnHover && REVEAL_ON_HOVER;
+  const included = state === "included";
+  const excluded = state === "excluded";
+
   return (
     <>
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn(compact && "h-6 w-6", state === "included" ? "text-primary" : hidden)}
-        title={state === "included" ? t(($) => $.stopIncluding) : t(($) => $.include)}
-        onClick={(e) => {
-          e.stopPropagation();
-          onInclude();
-        }}
+      <TooltipButton
+        size="icon-xs"
+        label={included ? t(($) => $.stopIncluding) : t(($) => $.include)}
+        aria-pressed={included}
+        className={cn(included ? "text-primary" : hidden)}
+        onClick={onInclude}
       >
-        <Eye className={iconSize} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn(compact && "h-6 w-6", state === "excluded" ? "text-destructive" : hidden)}
-        title={state === "excluded" ? t(($) => $.stopExcluding) : t(($) => $.exclude)}
-        onClick={(e) => {
-          e.stopPropagation();
-          onExclude();
-        }}
+        <Eye />
+      </TooltipButton>
+      <TooltipButton
+        size="icon-xs"
+        label={excluded ? t(($) => $.stopExcluding) : t(($) => $.exclude)}
+        aria-pressed={excluded}
+        className={cn(excluded ? "text-destructive" : hidden)}
+        onClick={onExclude}
       >
-        <EyeOff className={iconSize} />
-      </Button>
+        <EyeOff />
+      </TooltipButton>
     </>
   );
 }

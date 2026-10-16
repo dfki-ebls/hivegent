@@ -53,10 +53,10 @@ export const app = {
       "Rufe ein beliebiges Agent-Tool direkt auf, um zustandsbehaftetes Verhalten wie die pgvector-Suche zu testen. Argumente und ihre Typen werden aus dem Schema des jeweiligen Tools abgeleitet.",
     adminRequired: "Admin-Zugriff erforderlich",
     adminRequiredDescription: "Der Tool-Debugger ist nur für Admins verfügbar.",
-    loadFailed: "Tools konnten nicht geladen werden: {{error}}",
+    loadFailed: "Tools konnten nicht geladen werden",
     selectTool: "Wähle ein Tool zum Debuggen aus",
     run: "Tool ausführen",
-    requestFailed: "Anfrage fehlgeschlagen: {{error}}",
+    requestFailed: "Anfrage fehlgeschlagen",
     noResults: "Noch keine Ergebnisse",
     noResultsDescription:
       "Wähle ein Tool aus, fülle seine Argumente aus und führe es aus, um hier die Ausgabe zu sehen.",

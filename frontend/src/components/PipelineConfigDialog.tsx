@@ -9,6 +9,9 @@ import { RotateCcwIcon, SettingsIcon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { cn } from "@/lib/utils";
+import type { PipelineKind } from "@/lib/types";
+import { TooltipButton } from "@/components/TooltipButton";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -20,9 +23,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Field, FieldError } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
-import { isJsonSchema, SchemaForm } from "@/components/SchemaForm";
-import type { PipelineKind } from "@/lib/types";
+import { isJsonSchema, isRecord, SchemaForm } from "@/components/SchemaForm";
 
 interface PipelineConfigDialogProps {
   /** Pipeline display label (e.g. "Docling", "Token"). */
@@ -46,88 +49,26 @@ interface PipelineConfigDialogProps {
 export function PipelineConfigDialog({
   pipelineLabel,
   pipelineType,
-  configSchema,
-  configDefaults,
-  currentConfig,
-  onSave,
-  onReset,
   disabled,
+  ...form
 }: PipelineConfigDialogProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [values, setValues] = useState<Record<string, unknown>>({});
-  const [advancedJson, setAdvancedJson] = useState("");
-  const [jsonError, setJsonError] = useState<string | null>(null);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-
-  // Sync advanced JSON when form values change (and advanced is not focused)
-  const syncJsonFromValues = (newValues: Record<string, unknown>) => {
-    setValues(newValues);
-    setAdvancedJson(JSON.stringify(newValues, null, 2));
-    setJsonError(null);
-  };
-
-  // Load the current config into the form whenever the dialog opens
-  const handleOpenChange = (next: boolean) => {
-    if (next) {
-      syncJsonFromValues({ ...configDefaults, ...currentConfig });
-      setAdvancedOpen(false);
-    }
-    setOpen(next);
-  };
-
-  const handleAdvancedChange = (json: string) => {
-    setAdvancedJson(json);
-    try {
-      const parsed = JSON.parse(json) as Record<string, unknown>;
-      setValues(parsed);
-      setJsonError(null);
-    } catch {
-      setJsonError(t(($) => $.documents.pipelineConfig.invalidJson));
-    }
-  };
-
-  const handleSave = () => {
-    // Only save fields that differ from defaults
-    const diff: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(values)) {
-      if (JSON.stringify(val) !== JSON.stringify(configDefaults[key])) {
-        diff[key] = val;
-      }
-    }
-    onSave(diff);
-    setOpen(false);
-  };
-
-  const handleReset = () => {
-    onReset();
-    setOpen(false);
-  };
-
-  const hasConfig = Object.keys(currentConfig).length > 0;
-  const validSchema = isJsonSchema(configSchema) ? configSchema : undefined;
-  const hasSchema = Object.keys(validSchema?.properties ?? {}).length > 0;
-  const configureLabel = t(($) => $.documents.pipelineConfig.configure, {
-    pipeline: pipelineLabel,
-  });
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
+          <TooltipButton
+            label={t(($) => $.documents.pipelineConfig.configure, { pipeline: pipelineLabel })}
+            className={cn(Object.keys(form.currentConfig).length > 0 && "text-primary")}
             disabled={disabled}
-            title={configureLabel}
           />
         }
       >
-        <SettingsIcon className={`h-3.5 w-3.5 ${hasConfig ? "text-primary" : ""}`} />
-        <span className="sr-only">{configureLabel}</span>
+        <SettingsIcon />
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {t(($) => $.documents.pipelineConfig.title[pipelineType], { pipeline: pipelineLabel })}
@@ -136,52 +77,106 @@ export function PipelineConfigDialog({
             {t(($) => $.documents.pipelineConfig.description, { pipeline: pipelineLabel })}
           </DialogDescription>
         </DialogHeader>
-
-        <div className="py-4 grid gap-4">
-          {hasSchema ? (
-            <SchemaForm schema={validSchema!} values={values} onChange={syncJsonFromValues} />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {t(($) => $.documents.pipelineConfig.noOptions)}
-            </p>
-          )}
-
-          {/* Advanced JSON editor */}
-          {hasSchema && (
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger
-                render={
-                  <Button variant="ghost" size="sm" className="w-full justify-start text-xs" />
-                }
-              >
-                {advancedOpen
-                  ? t(($) => $.documents.pipelineConfig.hideAdvanced)
-                  : t(($) => $.documents.pipelineConfig.showAdvanced)}
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="grid gap-1.5 mt-2">
-                  <Textarea
-                    value={advancedJson}
-                    onChange={(e) => handleAdvancedChange(e.target.value)}
-                    className="font-mono text-xs min-h-[120px] resize-y"
-                  />
-                  {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-        </div>
-
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" size="sm" onClick={handleReset}>
-            <RotateCcwIcon className="h-3.5 w-3.5 mr-1.5" />
-            {t(($) => $.documents.pipelineConfig.resetDefaults)}
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={!!jsonError}>
-            {t(($) => $.common.actions.save)}
-          </Button>
-        </DialogFooter>
+        <PipelineConfigForm {...form} onDone={() => setOpen(false)} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Mounts with the dialog content, so every opening loads the current config.
+function PipelineConfigForm({
+  configSchema,
+  configDefaults,
+  currentConfig,
+  onSave,
+  onReset,
+  onDone,
+}: Omit<PipelineConfigDialogProps, "pipelineLabel" | "pipelineType" | "disabled"> & {
+  onDone: () => void;
+}) {
+  const { t } = useTranslation();
+  const [values, setValues] = useState(() => ({ ...configDefaults, ...currentConfig }));
+  const [advancedJson, setAdvancedJson] = useState(() => JSON.stringify(values, null, 2));
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const schema = isJsonSchema(configSchema) ? configSchema : {};
+  const hasSchema = Object.keys(schema.properties ?? {}).length > 0;
+
+  // Form edits rewrite the JSON, while JSON edits update the form once they parse.
+  const handleFormChange = (next: Record<string, unknown>) => {
+    setValues(next);
+    setAdvancedJson(JSON.stringify(next, null, 2));
+    setJsonError(null);
+  };
+
+  const handleAdvancedChange = (json: string) => {
+    setAdvancedJson(json);
+
+    try {
+      const parsed: unknown = JSON.parse(json);
+
+      if (!isRecord(parsed)) throw new TypeError("not an object");
+
+      setValues(parsed);
+      setJsonError(null);
+    } catch {
+      setJsonError(t(($) => $.documents.pipelineConfig.invalidJson));
+    }
+  };
+
+  // Only fields that differ from the defaults are saved.
+  const handleSave = () => {
+    onSave(
+      Object.fromEntries(
+        Object.entries(values).filter(
+          ([key, value]) => JSON.stringify(value) !== JSON.stringify(configDefaults[key]),
+        ),
+      ),
+    );
+    onDone();
+  };
+
+  return (
+    <>
+      <div className="flex flex-col gap-4">
+        <SchemaForm schema={schema} values={values} onChange={handleFormChange} />
+        {hasSchema && (
+          <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+            <CollapsibleTrigger render={<Button variant="ghost" size="sm" />}>
+              {advancedOpen
+                ? t(($) => $.documents.pipelineConfig.hideAdvanced)
+                : t(($) => $.documents.pipelineConfig.showAdvanced)}
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <Field data-invalid={jsonError !== null} className="mt-2">
+                <Textarea
+                  value={advancedJson}
+                  aria-invalid={jsonError !== null}
+                  onChange={(e) => handleAdvancedChange(e.target.value)}
+                  className="min-h-30 font-mono text-xs"
+                />
+                <FieldError>{jsonError}</FieldError>
+              </Field>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+      </div>
+      <DialogFooter>
+        <Button
+          variant="outline"
+          onClick={() => {
+            onReset();
+            onDone();
+          }}
+        >
+          <RotateCcwIcon data-icon="inline-start" />
+          {t(($) => $.documents.pipelineConfig.resetDefaults)}
+        </Button>
+        <Button onClick={handleSave} disabled={jsonError !== null}>
+          {t(($) => $.common.actions.save)}
+        </Button>
+      </DialogFooter>
+    </>
   );
 }

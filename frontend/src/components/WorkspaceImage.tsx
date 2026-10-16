@@ -1,10 +1,8 @@
-import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
-import { useInView } from "@/hooks/use-in-view";
-import { useConversationId } from "@/hooks/chat/use-conversation-id";
-import { useObjectUrl } from "@/hooks/use-object-url";
-import { fetchDocumentAsset } from "@/lib/api";
+import { useWorkspaceAsset } from "@/hooks/use-workspace-asset";
+import { parentDir } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 
 interface WorkspaceImageProps {
   /** Image src from markdown (relative path or external URL). */
@@ -40,40 +38,36 @@ function isWorkspaceRelative(src: string): boolean {
  */
 export function WorkspaceImage({ src, alt, documentPath }: WorkspaceImageProps) {
   const { t } = useTranslation();
-  const conversationId = useConversationId();
-  const fetch = useCallback(
-    (signal: AbortSignal) => {
-      // Resolve relative path against the document directory (prefix preserved).
-      const lastSlash = documentPath.lastIndexOf("/");
-      const docDir = lastSlash >= 0 ? documentPath.substring(0, lastSlash) : "";
-      return fetchDocumentAsset(docDir ? `${docDir}/${src}` : src!, signal, conversationId);
-    },
-    [src, documentPath, conversationId],
-  );
-
   const supported = !!src && isWorkspaceRelative(src);
-  const [ref, inView] = useInView();
-  const { url, error } = useObjectUrl(supported && inView ? fetch : null);
+  const { ref, url, error } = useWorkspaceAsset(supported ? parentDir(documentPath) + src : null);
 
   if (!supported || error) {
     return (
-      <span className="text-muted-foreground text-xs">
+      <span className="text-xs text-muted-foreground">
         [{alt || t(($) => $.documents.image.fallbackAlt)}]
       </span>
     );
   }
 
-  // The wrapper stays mounted across the loading transition so the observer
-  // keeps a stable target and the fetched object URL is not revoked early.
   return (
     <span ref={ref}>
       {url ? (
         <img src={url} alt={alt ?? ""} className="h-auto max-w-full overflow-hidden rounded-md" />
       ) : (
-        <span className="text-muted-foreground text-xs animate-pulse">
-          {t(($) => $.common.states.loadingImage)}
-        </span>
+        <ImageLoading />
       )}
+    </span>
+  );
+}
+
+/** The placeholder of a workspace image that is still loading. */
+export function ImageLoading() {
+  const { t } = useTranslation();
+
+  return (
+    <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+      <Spinner aria-hidden />
+      {t(($) => $.common.states.loadingImage)}
     </span>
   );
 }

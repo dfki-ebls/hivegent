@@ -13,19 +13,6 @@
    leaves room for content — used to disable sticky headers on short windows. */
 @custom-variant tall (@media (min-height: 640px));
 
-body {
-  @apply m-0;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell",
-    "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
-}
-
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -150,21 +137,8 @@ code {
   }
 }
 
-/* Streamdown renders markdown links as a `<button>` (its link-safety
-   confirmation is on by default), which loses the anchor's pointer cursor even
-   though the link still looks and behaves like one. */
-[data-streamdown="link"] {
-  cursor: pointer;
-}
-
-/* shadcn ships every menu row with `cursor-default`, mimicking a native menu.
-   These rows are clickable controls here, so restore the pointer once for all
-   of them via the stable `data-slot` contract rather than per call site. The
-   rule stays unlayered so it wins over the `cursor-default` utility. */
-[data-slot="dropdown-menu-item"],
-[data-slot="dropdown-menu-checkbox-item"],
-[data-slot="dropdown-menu-radio-item"],
-[data-slot="dropdown-menu-sub-trigger"],
-[data-slot="select-item"] {
+/* Tailwind v4 and shadcn/ui give controls the arrow cursor, while every one of them is clickable here.
+   It stays unlayered, so it wins over the `cursor-default` utility of the menu rows. */
+:is(button, [role="button"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], [role="tab"]):not(:disabled, [data-disabled]) {
   cursor: pointer;
 }

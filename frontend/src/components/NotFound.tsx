@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { Compass, MoveLeft } from "lucide-react";
+import { CompassIcon, MoveLeftIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { EmptyState } from "@/components/EmptyState";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -13,23 +14,16 @@ export function NotFound() {
   const { t } = useTranslation();
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-6 p-8 text-center">
-      <div className="relative flex items-center justify-center">
-        <span className="select-none text-9xl font-bold tracking-tight text-muted-foreground/10">
-          404
-        </span>
-        <Compass className="absolute h-14 w-14 text-muted-foreground" />
-      </div>
-      <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-semibold">{t(($) => $.app.notFound.title)}</h1>
-        <p className="max-w-md text-sm text-muted-foreground">
-          {t(($) => $.app.notFound.description)}
-        </p>
-      </div>
-      <Button render={<Link to="/" />}>
-        <MoveLeft className="mr-2 h-4 w-4" />
+    <EmptyState
+      icon={<CompassIcon />}
+      title={t(($) => $.app.notFound.title)}
+      description={t(($) => $.app.notFound.description)}
+      className="h-full"
+    >
+      <Button nativeButton={false} render={<Link to="/" />}>
+        <MoveLeftIcon data-icon="inline-start" />
         {t(($) => $.app.notFound.backHome)}
       </Button>
-    </div>
+    </EmptyState>
   );
 }

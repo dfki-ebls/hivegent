@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Bug, LogOut, User, UserCog } from "lucide-react";
+import { BugIcon, LogOutIcon, UserCogIcon, UserIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useOidc } from "@/oidc";
 import { DocsLink } from "@/components/DocsLink";
@@ -7,16 +7,18 @@ import { JobTray } from "@/components/JobTray";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
 import { selectIsAdmin, useSettingsStore } from "@/stores/settings-store";
-import { DOCS_URL, PRODUCT_NAME } from "@/lib/utils";
+import { PRODUCT_NAME } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Item, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item";
 
 function UserMenu() {
   const { t } = useTranslation();
@@ -40,40 +42,35 @@ function UserMenu() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<Button variant="ghost" size="sm" className="gap-2 cursor-pointer" />}
-      >
-        <User className="h-4 w-4" />
+      <DropdownMenuTrigger render={<Button variant="ghost" size="sm" aria-label={userName} />}>
+        <UserIcon data-icon="inline-start" />
         <span className="hidden sm:inline">{userName}</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {decodedIdToken.email && (
-          <>
-            <DropdownMenuLabel className="font-normal text-muted-foreground">
-              {decodedIdToken.email}
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        <DropdownMenuItem
-          render={<Link to="/settings/account" className="flex items-center gap-2" />}
-        >
-          <UserCog className="h-4 w-4" />
-          {t(($) => $.app.userMenu.account)}
-        </DropdownMenuItem>
-        {DOCS_URL && <DropdownMenuItem render={<DocsLink />} />}
-        {isAdmin && (
-          <DropdownMenuItem render={<Link to="/debug" className="flex items-center gap-2" />}>
-            <Bug className="h-4 w-4" />
-            {t(($) => $.app.userMenu.toolDebugger)}
+      <DropdownMenuContent align="end" className="w-auto">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>
+            <Item size="xs">
+              <ItemContent>
+                <ItemTitle>{userName}</ItemTitle>
+                {decodedIdToken.email && <ItemDescription>{decodedIdToken.email}</ItemDescription>}
+              </ItemContent>
+            </Item>
+          </DropdownMenuLabel>
+          <DropdownMenuItem render={<Link to="/settings/account" />}>
+            <UserCogIcon />
+            {t(($) => $.app.userMenu.account)}
           </DropdownMenuItem>
-        )}
+          <DropdownMenuItem render={<DocsLink />} />
+          {isAdmin && (
+            <DropdownMenuItem render={<Link to="/debug" />}>
+              <BugIcon />
+              {t(($) => $.app.userMenu.toolDebugger)}
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => logout({ redirectTo: "home" })}
-          className="flex items-center gap-2"
-        >
-          <LogOut className="h-4 w-4" />
+        <DropdownMenuItem onClick={() => logout({ redirectTo: "home" })}>
+          <LogOutIcon />
           {t(($) => $.app.userMenu.signOut)}
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -84,11 +81,8 @@ function UserMenu() {
 export function Header() {
   return (
     <header className="flex items-center justify-between border-b bg-background px-4 py-2">
-      <Link
-        to="/"
-        className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity"
-      >
-        <Logo className="h-10 w-10" />
+      <Link to="/" className="flex items-center gap-2 transition-opacity hover:opacity-80">
+        <Logo className="size-10" />
         <h1 className="text-xl font-semibold">{PRODUCT_NAME}</h1>
         <VersionBadge />
       </Link>

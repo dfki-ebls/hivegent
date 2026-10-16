@@ -1,14 +1,15 @@
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { DOCUMENT_ACTIONS } from "@/lib/document-actions";
+import { DOCUMENT_ACTIONS, type DocumentActionId } from "@/lib/document-actions";
+import { TooltipButton } from "@/components/TooltipButton";
 import { Button } from "@/components/ui/button";
 
 interface BulkActionBarProps {
   selectedCount: number;
   /** Whether any selected file has an original (gates the reconvert/download actions). */
   hasReconvertable: boolean;
-  handlers: Record<string, () => void>;
+  handlers: Record<DocumentActionId, () => void>;
   onClear: () => void;
 }
 
@@ -26,29 +27,25 @@ export function BulkActionBar({
   const { t } = useTranslation();
 
   return (
-    <div className="flex h-9 items-center gap-2 px-2 py-1">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7 -mx-1.5"
-        aria-label={t(($) => $.documents.scope.clearSelection)}
+    <div className="flex min-h-9 flex-wrap items-center gap-2 px-1">
+      <TooltipButton
+        size="icon-xs"
+        label={t(($) => $.documents.scope.clearSelection)}
         onClick={onClear}
       >
-        <X className="h-4 w-4" />
-      </Button>
+        <X />
+      </TooltipButton>
       <span className="text-sm font-medium">
         {t(($) => $.documents.scope.selected, { count: selectedCount })}
       </span>
-      {DOCUMENT_ACTIONS.map((action) => {
-        if (action.requiresOriginal && !hasReconvertable) return null;
-        const Icon = action.icon;
-        return (
-          <Button key={action.id} variant={action.variant} size="sm" onClick={handlers[action.id]}>
-            <Icon className="h-4 w-4 mr-1" />
-            {t(($) => $.documents.actions[action.id])}
+      {DOCUMENT_ACTIONS.filter((action) => hasReconvertable || !action.requiresOriginal).map(
+        ({ id, icon: Icon, variant }) => (
+          <Button key={id} variant={variant} size="sm" onClick={handlers[id]}>
+            <Icon data-icon="inline-start" />
+            {t(($) => $.documents.actions[id])}
           </Button>
-        );
-      })}
+        ),
+      )}
     </div>
   );
 }

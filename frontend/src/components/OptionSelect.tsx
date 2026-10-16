@@ -1,4 +1,6 @@
-import type { ComponentProps } from "react";
+import type { LucideIcon } from "lucide-react";
+import { type ComponentProps, type ReactNode, useId } from "react";
+import { Field, FieldLabel } from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -51,5 +53,36 @@ export function OptionSelect<T extends string>({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+interface LabeledOptionSelectProps<T extends string> extends Omit<
+  OptionSelectProps<T>,
+  "id" | "size"
+> {
+  icon: LucideIcon;
+  label: string;
+  /** Controls after the select, such as a configuration button. */
+  children?: ReactNode;
+}
+
+/** A small option select in a toolbar row, behind a muted label with an icon. */
+export function LabeledOptionSelect<T extends string>({
+  icon: Icon,
+  label,
+  children,
+  ...select
+}: LabeledOptionSelectProps<T>) {
+  const id = useId();
+
+  return (
+    <Field orientation="horizontal" className="w-auto">
+      <FieldLabel htmlFor={id} className="text-muted-foreground">
+        <Icon className="size-4" />
+        {label}
+      </FieldLabel>
+      <OptionSelect id={id} size="sm" {...select} />
+      {children}
+    </Field>
   );
 }
