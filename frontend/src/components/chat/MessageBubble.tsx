@@ -1,6 +1,6 @@
 import type { ChatStatus } from "ai";
 import { CheckIcon, CopyIcon, PencilIcon, RefreshCcwIcon } from "lucide-react";
-import { memo, type ReactNode, useEffect, useState } from "react";
+import { Fragment, memo, type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApprovalScope } from "@/components/chat/ApprovalScope";
 import { type ChatPart, MessagePart, partLayout } from "@/components/chat/MessagePart";
@@ -23,8 +23,8 @@ import { stripVoidTags } from "@/lib/normalize-void-tags";
 
 const MS_IN_S = 1000;
 
-/** Copies the text *getText* builds on click, and confirms it with a check for two seconds. */
-function CopyAction({ getText }: { getText: () => string }) {
+/** Copies *text* without its citation and image tags, and confirms it with a check for two seconds. */
+function CopyAction({ text }: { text: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -39,7 +39,7 @@ function CopyAction({ getText }: { getText: () => string }) {
   // Async, so a browser without the clipboard API outside a secure context rejects rather than throws.
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(getText());
+      await navigator.clipboard.writeText(stripVoidTags(text).trim());
       setCopied(true);
     } catch {
       toast.add({ type: "error", title: t(($) => $.common.states.copyFailed) });
@@ -51,13 +51,6 @@ function CopyAction({ getText }: { getText: () => string }) {
       {copied ? <CheckIcon /> : <CopyIcon />}
     </TooltipButton>
   );
-}
-
-/** A reply's text as markdown: its paragraphs between steps kept apart, its citation and image tags dropped. */
-function replyMarkdown(message: ChatMessage): string {
-  return message.parts
-    .flatMap((part) => (part.type === "text" && part.text.trim() ? [stripVoidTags(part.text).trim()] : []))
-    .join("\n\n");
 }
 
 interface IndexedPart {
@@ -91,10 +84,16 @@ interface AssistantMessageProps {
   message: ChatMessage;
   isLastMessage: boolean;
   streaming: boolean;
-  footer: ReactNode;
+  /** The action that runs the turn again once it is done, after the last text part. */
+  retry: ReactNode;
 }
 
-function AssistantMessage({ message, isLastMessage, streaming, footer }: AssistantMessageProps) {
+/** A reply, where each text part offers to copy it once the reply is done. */
+function AssistantMessage({ message, isLastMessage, streaming, retry }: AssistantMessageProps) {
+  const blocks = layoutBlocks(message.parts, streaming);
+  const lastText = blocks.findLastIndex(
+    (block) => block.kind === "block" && block.part.type === "text",
+  );
   const toolData = indexToolData(message.parts);
   // The backend times each reasoning part in order, and the parts render in order.
   let reasoningRank = 0;
@@ -123,16 +122,24 @@ function AssistantMessage({ message, isLastMessage, streaming, footer }: Assista
             pending={isLastMessage ? pendingApprovalIds(message) : []}
             metadata={message.metadata?.approvalMetadata}
           >
-            {layoutBlocks(message.parts, streaming).map((block) =>
+            {blocks.map((block, index) =>
               block.kind === "steps" ? (
                 <Trace key={block.parts[0].index}>{block.parts.map(renderPart)}</Trace>
               ) : (
-                renderPart(block)
+                <Fragment key={block.index}>
+                  {renderPart(block)}
+                  {block.part.type === "text" && !streaming && (
+                    <MessageFooter className="px-0">
+                      <CopyAction text={block.part.text} />
+                      {index === lastText && retry}
+                    </MessageFooter>
+                  )}
+                </Fragment>
               ),
             )}
           </ApprovalScope>
         </MessageStreamingProvider>
-        {footer}
+        {lastText === -1 && retry && <MessageFooter className="px-0">{retry}</MessageFooter>}
       </MessageContent>
     </Message>
   );
@@ -166,11 +173,9 @@ export const MessageBubble = memo(function MessageBubble({
   const { t } = useTranslation();
   const streaming = isLastMessage && isChatBusy(status);
   const editing = editingId === message.id;
-  const canCopy =
-    !streaming && !editing && message.parts.some((part) => part.type === "text" && part.text.trim());
-
   if (message.role === "user") {
     const text = joinTextParts(message.parts) ?? "";
+    const canCopy = text.trim() !== "" && !editing;
     const images = message.parts.flatMap((part) =>
       part.type === "file" && part.mediaType.startsWith("image/") ? [part] : [],
     );
@@ -196,7 +201,7 @@ export const MessageBubble = memo(function MessageBubble({
           )}
           {(canCopy || canEdit) && (
             <MessageFooter>
-              {canCopy && <CopyAction getText={() => text} />}
+              {canCopy && <CopyAction text={text} />}
               {canEdit && (
                 <TooltipButton
                   label={t(($) => $.common.actions.edit)}
@@ -212,23 +217,17 @@ export const MessageBubble = memo(function MessageBubble({
     );
   }
 
-  const canRetry = isLastMessage && status === "ready";
-
   return (
     <AssistantMessage
       message={message}
       isLastMessage={isLastMessage}
       streaming={streaming}
-      footer={
-        (canCopy || canRetry) && (
-          <MessageFooter className="px-0">
-            {canCopy && <CopyAction getText={() => replyMarkdown(message)} />}
-            {canRetry && (
-              <TooltipButton label={t(($) => $.common.actions.retry)} onClick={onRegenerate}>
-                <RefreshCcwIcon />
-              </TooltipButton>
-            )}
-          </MessageFooter>
+      retry={
+        isLastMessage &&
+        status === "ready" && (
+          <TooltipButton label={t(($) => $.common.actions.retry)} onClick={onRegenerate}>
+            <RefreshCcwIcon />
+          </TooltipButton>
         )
       }
     />
