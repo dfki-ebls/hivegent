@@ -3,6 +3,7 @@ import { CheckIcon, CopyIcon, PencilIcon, RefreshCcwIcon } from "lucide-react";
 import { Fragment, memo, type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApprovalScope } from "@/components/chat/ApprovalScope";
+import { ChainOfThought } from "@/components/chat/ChainOfThought";
 import { type ChatPart, MessagePart, partLayout } from "@/components/chat/MessagePart";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
 import { UserTextPart } from "@/components/chat/parts/UserTextPart";
@@ -10,7 +11,6 @@ import { TooltipButton } from "@/components/TooltipButton";
 import { AttachmentGroup } from "@/components/ui/attachment";
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
 import { toast } from "@/components/ui/toast";
-import { Trace } from "@/components/ui/trace";
 import { MessageStreamingProvider } from "@/hooks/chat/use-message-streaming";
 import {
   type ChatMessage,
@@ -58,9 +58,12 @@ interface IndexedPart {
   index: number;
 }
 
-type Block = { kind: "steps"; parts: IndexedPart[] } | ({ kind: "block" } & IndexedPart);
+type Block =
+  /** *running* while the agent still works on the run, which nothing follows yet. */
+  | { kind: "steps"; parts: IndexedPart[]; running: boolean }
+  | ({ kind: "block" } & IndexedPart);
 
-/** The parts of a reply, where each run of steps between two blocks forms one trace. */
+/** The parts of a reply, where each run of steps between two blocks forms one chain of thought. */
 function layoutBlocks(parts: ChatPart[], streaming: boolean): Block[] {
   const blocks: Block[] = [];
 
@@ -73,9 +76,13 @@ function layoutBlocks(parts: ChatPart[], streaming: boolean): Block[] {
     } else if (layout === "step" && last?.kind === "steps") {
       last.parts.push({ part, index });
     } else if (layout === "step") {
-      blocks.push({ kind: "steps", parts: [{ part, index }] });
+      blocks.push({ kind: "steps", parts: [{ part, index }], running: false });
     }
   });
+
+  const last = blocks.at(-1);
+
+  if (last?.kind === "steps") last.running = streaming;
 
   return blocks;
 }
@@ -124,7 +131,13 @@ function AssistantMessage({ message, isLastMessage, streaming, retry }: Assistan
           >
             {blocks.map((block, index) =>
               block.kind === "steps" ? (
-                <Trace key={block.parts[0].index}>{block.parts.map(renderPart)}</Trace>
+                <ChainOfThought
+                  key={block.parts[0].index}
+                  steps={block.parts.map(({ part }) => part)}
+                  running={block.running}
+                >
+                  {block.parts.map(renderPart)}
+                </ChainOfThought>
               ) : (
                 <Fragment key={block.index}>
                   {renderPart(block)}

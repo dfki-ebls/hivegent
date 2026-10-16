@@ -33,8 +33,8 @@ it("offers to copy each text part right after it, even when a tool call follows"
   );
 
   const copies = screen.getAllByRole("button", { name: "Copy" });
-  const tool = screen.getByRole("button", { name: /Save Memory/ });
+  const steps = screen.getByRole("button", { name: "Took 1 step" });
 
   expect(copies).toHaveLength(2);
-  expect(copies[1].compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(copies[1].compareDocumentPosition(steps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

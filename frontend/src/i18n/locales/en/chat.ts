@@ -32,6 +32,11 @@ export const chat = {
     thought: "Thought",
     seconds: "{{count}} s",
   },
+  steps: {
+    took_one: "Took {{count}} step",
+    took_other: "Took {{count}} steps",
+    failed: "{{count}} failed",
+  },
   contextLimit: {
     title: "Context limit reached",
     message: "Compact this conversation to summarize its history, then retry the last message.",

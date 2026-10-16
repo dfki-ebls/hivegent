@@ -22,7 +22,9 @@ The chat follows the shadcn/ui AI Elements patterns, composed in place from the 
 Every generated component uses Base UI, so its triggers take a `render` element instead of `asChild`, and `npm run shadcnup` installs or refreshes every component of the registry.
 
 A reply is a `Message` whose parts `partLayout` (`chat/MessagePart.tsx`) sorts into steps and blocks.
-Each run of steps (reasoning and tool calls) between two blocks is one `Trace`, and every step is a trace line that expands to its detail, so tools, reasoning, subagents, changesets and the steering queue all look and behave the same.
+Each run of steps (reasoning and tool calls) between two blocks is one Chain of Thought, a summary line that opens to the run's `Trace` while the agent works and closes once the reply moves on.
+Every step is a trace line that expands to its detail, so tools, reasoning, subagents, changesets and the steering queue all look and behave the same.
+A subagent follows the Subagent pattern, a line that opens to its task, its own nested trace and its report.
 A step that asks the user something, an approval or an `ask_user` question, is a block instead: an outline `Item` outside the trace until it is answered, after which the call goes back to being a line.
 Whether a line still runs depends on whether the chat streams into its message (`useMessageStreaming`), so a call the user stopped reads as stopped instead of shimmering forever.
 

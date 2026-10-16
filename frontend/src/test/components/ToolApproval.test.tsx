@@ -29,13 +29,11 @@ interface RenderOptions {
   blockedReason?: string;
   approvalMetadata?: Record<string, unknown>;
   part?: (id: string) => ChatMessage["parts"][number];
-  /** Expand every tool card, since a resolved one renders collapsed. */
-  open?: boolean;
 }
 
 function renderMessage(
   ids: string[],
-  { blockedReason, approvalMetadata, part = request, open = false }: RenderOptions = {},
+  { blockedReason, approvalMetadata, part = request }: RenderOptions = {},
 ) {
   const decide = vi.fn<ToolApprovalGate["decide"]>();
   const noop = () => {};
@@ -59,12 +57,6 @@ function renderMessage(
     </ToolApprovalProvider>
   );
   const { rerender } = render(message(ids));
-
-  if (open) {
-    for (const trigger of screen.getAllByRole("button", { expanded: false })) {
-      fireEvent.click(trigger);
-    }
-  }
 
   return {
     decide,
@@ -187,8 +179,10 @@ describe("tool approval", () => {
     renderMessage(["call-1"], {
       approvalMetadata: { "call-1": summary },
       part: approved,
-      open: true,
     });
+    // A resolved call renders collapsed, inside the steps that ran it.
+    fireEvent.click(screen.getByRole("button", { name: "Took 1 step" }));
+    fireEvent.click(screen.getByRole("button", { name: /Send Mail/ }));
 
     expect(screen.getByText("Approved")).toBeTruthy();
     expect(screen.getByText("Deleted ~/old.md")).toBeTruthy();

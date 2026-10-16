@@ -32,6 +32,8 @@ export function TraceStep({ icon, title, status, description }: TraceStepProps) 
 interface TraceStepCollapsibleProps extends TraceStepProps {
   /** Whether the step is open until the user toggles it, such as while it runs. */
   autoOpen?: boolean;
+  /** Whether the detail stays mounted while closed, so the steps nested in it keep their state. */
+  keepMounted?: boolean;
   contentClassName?: string;
   /** The detail the step opens to, a plain step without it. */
   children?: ReactNode;
@@ -40,6 +42,7 @@ interface TraceStepCollapsibleProps extends TraceStepProps {
 /** A step that opens to its detail, where the user's toggle wins over `autoOpen`. */
 export function TraceStepCollapsible({
   autoOpen = false,
+  keepMounted,
   contentClassName,
   children,
   ...step
@@ -53,7 +56,9 @@ export function TraceStepCollapsible({
       <TraceCollapsibleTrigger>
         <TraceStep {...step} />
       </TraceCollapsibleTrigger>
-      <TraceCollapsibleContent className={contentClassName}>{children}</TraceCollapsibleContent>
+      <TraceCollapsibleContent keepMounted={keepMounted} className={contentClassName}>
+        {children}
+      </TraceCollapsibleContent>
     </TraceCollapsible>
   );
 }
