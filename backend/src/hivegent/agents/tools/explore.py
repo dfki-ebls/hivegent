@@ -6,7 +6,6 @@ from ...chunkers.base import RetrievedChunk
 from ...config import settings
 from ...retrieval import build_search_tool
 from ...tools import (
-    GlobDocumentsTool,
     GrepTool,
     JqTool,
     ListDocumentsTool,
@@ -23,10 +22,6 @@ __all__ = ["EXPLORE_FACTORIES", "explore_toolset"]
 
 def _list_documents(deps: UserDeps) -> ListDocumentsTool:
     return ListDocumentsTool(paths=deps.search_paths())
-
-
-def _glob_documents(deps: UserDeps) -> GlobDocumentsTool:
-    return GlobDocumentsTool(paths=deps.search_paths())
 
 
 # A read resumes from an offset into the document rather than from a saved copy
@@ -77,7 +72,6 @@ explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 # holds the two conversation tools by default and none of these.
 EXPLORE_FACTORIES = (
     _list_documents,
-    _glob_documents,
     _read_document,
     _read_binary_document,
     _query_table,

@@ -57,7 +57,7 @@ describe("getToolPartInfo", () => {
 
 describe("toolDisplayName", () => {
   it("names built-in tools from the catalog and title-cases unknown ones", () => {
-    expect(toolDisplayName(i18n.t, "glob_documents")).toBe("Find Documents");
+    expect(toolDisplayName(i18n.t, "list_documents")).toBe("List Documents");
     expect(toolDisplayName(i18n.t, "mcp_list_issues")).toBe("Mcp List Issues");
   });
 });

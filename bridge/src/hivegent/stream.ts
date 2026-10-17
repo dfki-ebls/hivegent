@@ -10,7 +10,6 @@ export type StreamEvent =
 const TOOL_STATUS: Record<string, string> = {
   search: "Searching documents…",
   grep: "Searching documents…",
-  glob_documents: "Browsing documents…",
   list_documents: "Browsing documents…",
   read_document: "Reading documents…",
   read_binary_document: "Reading documents…",

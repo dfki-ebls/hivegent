@@ -20,8 +20,6 @@ from .documents import (
     DocumentRange,
     DocumentRead,
     DocumentSummary,
-    DocumentTreeNode,
-    GlobDocumentsTool,
     ListDocumentsTool,
     ReadDocumentTool,
 )
@@ -59,9 +57,7 @@ __all__ = [
     "DocumentRange",
     "DocumentRead",
     "DocumentSummary",
-    "DocumentTreeNode",
     "EditDocumentTool",
-    "GlobDocumentsTool",
     "GrepLine",
     "GrepMatch",
     "GrepTool",

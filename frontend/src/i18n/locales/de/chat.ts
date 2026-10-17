@@ -170,7 +170,6 @@ export const chat = {
       edit_document: "Dokument bearbeiten",
       explore: "Erkunden",
       get_conversation: "Konversation lesen",
-      glob_documents: "Dokumente finden",
       grep: "Text suchen",
       jq: "JSON abfragen",
       list_conversations: "Konversationen auflisten",

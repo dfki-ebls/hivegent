@@ -1,11 +1,11 @@
-"""Document listing, globbing, and reading tool callables."""
+"""Document listing and reading tool callables."""
 
 import asyncio
 import logging
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from fnmatch import fnmatch
+from itertools import chain
 from os import stat_result
 from pathlib import Path, PurePosixPath
 from stat import S_ISDIR, S_ISREG
@@ -15,7 +15,6 @@ from pydantic import ConfigDict, Field
 
 from ..config import content_hash, normalize_unicode
 from ..converters import vision_media_type
-from ..humanize import pluralize
 from .base import (
     WORKSPACE_SCOPE_HINT,
     AsyncPathTool,
@@ -44,20 +43,16 @@ from .formatting import cap_lines, hint_suffix, iter_annotated, omission_hints
 
 __all__ = [
     "DocumentFilePathArg",
-    "DocumentFlattenArg",
     "DocumentLimitArg",
     "DocumentMaxDepthArg",
     "DocumentMaxResultsArg",
     "DocumentOffsetArg",
     "DocumentPathArg",
+    "DocumentPatternsArg",
     "DocumentRange",
     "DocumentRead",
     "DocumentReadsArg",
     "DocumentSummary",
-    "DocumentTreeNode",
-    "GlobDocumentsTool",
-    "GlobMaxResultsArg",
-    "GlobPatternsArg",
     "ListDocumentsTool",
     "ReadDocumentTool",
 ]
@@ -113,15 +108,6 @@ DocumentPathArg = Annotated[
         description=(
             f"Optional subdirectory to scope the operation within. "
             f"{WORKSPACE_SCOPE_HINT} Omit to cover them all."
-        ),
-    ),
-]
-DocumentFlattenArg = Annotated[
-    bool,
-    Field(
-        description=(
-            "When true, return a flat list with sizes and dates. "
-            "When false, return a hierarchical directory tree."
         ),
     ),
 ]
@@ -190,18 +176,15 @@ DocumentReadsArg = Annotated[
     ),
 ]
 
-GlobPatternsArg = Annotated[
-    list[str],
+DocumentPatternsArg = Annotated[
+    list[str] | None,
     batch_field(
-        "Glob patterns matched against workspace-relative filenames (e.g. "
-        "`*.md`, `**/*.txt`), and a file matching any of them is returned once. "
+        "Optional glob patterns matched against workspace-relative filenames "
+        "at any depth (e.g. `*.md`, `reports/*.csv`), so only files matching "
+        "any of them are listed, each once, and `max_depth` does not apply. "
         "To restrict to one workspace, prefix the `path` argument rather than "
         "the patterns."
     ),
-]
-GlobMaxResultsArg = Annotated[
-    int,
-    Field(description="Maximum number of matching files to return.", ge=1, le=1000),
 ]
 
 
@@ -283,15 +266,16 @@ def _empty_message(noun: str, paths: tuple[SearchPath, ...], subdir: str | None)
 
 def _walk_entries(
     roots: tuple[tuple[SearchPath, Path], ...],
-    base_glob: str | None,
+    pattern: str | None,
     *,
     include_dirs: bool,
 ) -> Iterator[tuple[SearchPath, str, stat_result]]:
     """Walk pre-resolved roots yielding ``(sp, relative, stat)`` tuples.
 
-    Applies ``base_glob`` and the search path's own ``filter_func``.  Callers
-    handle capping and any additional filters (depth, fnmatch, and the
-    default exclusions, which they count rather than drop unseen).
+    Applies ``pattern`` with rglob semantics and the search path's own
+    ``filter_func``.  Callers handle capping and any additional filters
+    (depth and the default exclusions, which they count rather than drop
+    unseen).
 
     Roots arrive folded and containment-checked from :func:`_scoped_directory`,
     so a directory argument is resolved once for the whole call rather than
@@ -306,7 +290,7 @@ def _walk_entries(
     that stat and nothing about the entry can have moved in between.
     """
     for sp, root in roots:
-        for absolute in sorted(root.rglob(base_glob or "*")):
+        for absolute in sorted(root.rglob(pattern or "*")):
             st = entry_stat(absolute)
             if st is None:
                 continue
@@ -323,16 +307,37 @@ def _walk_entries(
 
 def _scan_entries(
     roots: tuple[tuple[SearchPath, Path], ...],
-    base_glob: str | None,
+    patterns: list[str] | None,
     subdir: str | None,
     max_depth: int | None,
     max_results: int,
     exclude_dirs: tuple[str, ...],
 ) -> tuple[list[DocumentSummary], list[str]]:
-    """Collect file and directory entries, with hints naming what was left out."""
-    results: list[DocumentSummary] = []
-    hidden = deeper = 0
-    for sp, rel, st in _walk_entries(roots, base_glob, include_dirs=True):
+    """Collect entries, with hints naming what was left out.
+
+    Without *patterns* this lists files and directories down to *max_depth*.
+    With them it lists the files any pattern matches at any depth.  Each
+    pattern is a path argument matched against canonically named entries, so
+    it is folded here: unlike a scoped subdirectory it reaches neither
+    :func:`resolve_search_path` nor :func:`scope_paths`.  One walk per pattern
+    keeps each pattern's own rglob semantics, and a file two of them match is
+    listed once.
+    """
+    if patterns:
+        unique = dict.fromkeys(map(normalize_unicode, patterns))
+        walk = chain.from_iterable(
+            _walk_entries(roots, pattern, include_dirs=False) for pattern in unique
+        )
+        max_depth = None
+    else:
+        walk = _walk_entries(roots, None, include_dirs=True)
+
+    results: dict[str, DocumentSummary] = {}
+    hidden: set[str] = set()
+    deeper = 0
+
+    for sp, rel, st in walk:
+        filename = sp.prefixed(rel)
         ignored = entry_ignored(rel, exclude_dirs)
 
         if max_depth is not None and _relative_depth(rel, subdir) > max_depth:
@@ -340,24 +345,22 @@ def _scan_entries(
             continue
 
         if ignored:
-            hidden += 1
+            hidden.add(filename)
             continue
 
         is_dir = S_ISDIR(st.st_mode)
-        results.append(
-            DocumentSummary(
-                filename=sp.prefixed(rel),
-                size=0 if is_dir else st.st_size,
-                modified_at=datetime.fromtimestamp(st.st_mtime, tz=UTC),
-                is_directory=is_dir,
-            )
+        results[filename] = DocumentSummary(
+            filename=filename,
+            size=0 if is_dir else st.st_size,
+            modified_at=datetime.fromtimestamp(st.st_mtime, tz=UTC),
+            is_directory=is_dir,
         )
 
         if len(results) >= max_results:
             break
 
-    return results, omission_hints(
-        hidden=hidden,
+    return list(results.values()), omission_hints(
+        hidden=len(hidden),
         deeper=deeper,
         max_depth=max_depth,
         max_results=max_results,
@@ -365,160 +368,45 @@ def _scan_entries(
     )
 
 
-def _glob_entries(
-    roots: tuple[tuple[SearchPath, Path], ...],
-    base_glob: str | None,
-    patterns: list[str],
-    max_results: int,
-    exclude_dirs: tuple[str, ...],
-) -> tuple[list[str], list[str]]:
-    """Find files matching any of *patterns*, with hints naming what was left out.
-
-    Each pattern is a path argument matched against canonically named entries,
-    so it is folded here rather than at the call sites: unlike a scoped
-    subdirectory or glob it reaches neither :func:`resolve_search_path` nor
-    :func:`scope_paths`.  One walk per pattern keeps each pattern's own rglob
-    semantics, and a file two of them match is listed once.
-    """
-    results: dict[str, None] = {}
-    hidden: set[str] = set()
-
-    for pattern in dict.fromkeys(map(normalize_unicode, patterns)):
-        # Without a base_glob, pass the user pattern straight to rglob and skip
-        # the per-entry fnmatch pass.
-        effective_glob = pattern if base_glob is None else base_glob
-        skip_fnmatch = base_glob is None
-
-        for sp, rel, _st in _walk_entries(roots, effective_glob, include_dirs=False):
-            if not (skip_fnmatch or fnmatch(rel, pattern)):
-                continue
-
-            if entry_ignored(rel, exclude_dirs):
-                hidden.add(sp.prefixed(rel))
-                continue
-
-            results[sp.prefixed(rel)] = None
-
-            if len(results) >= max_results:
-                break
-
-        if len(results) >= max_results:
-            break
-
-    return list(results), omission_hints(
-        hidden=len(hidden), max_results=max_results, shown=len(results)
-    )
-
-
 @dataclass(slots=True, frozen=True)
-class DocumentTreeNode:
-    """A file or directory node in a document tree."""
-
-    name: str
-    path: str
-    is_directory: bool = False
-    size: int = 0
-    children: tuple["DocumentTreeNode", ...] = ()
-
-
-@dataclass(slots=True)
-class _TreeBuildNode:
-    """Mutable intermediate node used while constructing the tree."""
-
-    entry: DocumentSummary | None = None
-    children: dict[str, "_TreeBuildNode"] = field(default_factory=dict)
-
-
-def _build_document_tree(entries: list[DocumentSummary]) -> DocumentTreeNode:
-    """Build a :class:`DocumentTreeNode` tree from a flat list of entries."""
-    root = _TreeBuildNode()
-    for entry in entries:
-        node = root
-        for part in entry.filename.split("/"):
-            if part not in node.children:
-                node.children[part] = _TreeBuildNode()
-            node = node.children[part]
-        node.entry = entry
-
-    def _convert(name: str, path: str, build: _TreeBuildNode) -> DocumentTreeNode:
-        children: list[DocumentTreeNode] = []
-        for key in sorted(build.children):
-            child_path = f"{path}/{key}" if path else key
-            children.append(_convert(key, child_path, build.children[key]))
-        entry = build.entry
-        return DocumentTreeNode(
-            name=name,
-            path=path,
-            is_directory=entry.is_directory if entry else bool(children),
-            size=entry.size if entry and not entry.is_directory else 0,
-            children=tuple(children),
-        )
-
-    return _convert(".", "", root)
-
-
-def _format_document_tree(
-    node: DocumentTreeNode,
-    prefix: str = "",
-    is_last: bool = True,
-) -> list[str]:
-    """Format a :class:`DocumentTreeNode` as ``tree(1)``-style text."""
-    lines: list[str] = []
-    if node.path:
-        connector = "└── " if is_last else "├── "
-        suffix = "/" if node.is_directory else ""
-        size_str = f" ({_humanize_size(node.size)})" if not node.is_directory else ""
-        lines.append(f"{prefix}{connector}{node.name}{suffix}{size_str}")
-    child_prefix = prefix + ("    " if is_last else "│   ") if node.path else ""
-    for i, child in enumerate(node.children):
-        lines.extend(
-            _format_document_tree(child, child_prefix, i == len(node.children) - 1)
-        )
-    return lines
-
-
-@dataclass(slots=True, frozen=True)
-class ListDocumentsTool(AsyncPathTool[list[DocumentSummary] | DocumentTreeNode]):
-    """List available documents as a flat list or hierarchical tree."""
-
-    glob: str | None = None
+class ListDocumentsTool(AsyncPathTool[list[DocumentSummary]]):
+    """List available documents with sizes and dates, optionally by pattern."""
 
     @override
     async def __call__(
         self,
         path: DocumentPathArg = None,
-        flatten: DocumentFlattenArg = True,
+        patterns: DocumentPatternsArg = None,
         max_depth: DocumentMaxDepthArg = 1,
         max_results: DocumentMaxResultsArg = 200,
         include_ignored: IncludeIgnoredArg = False,
-    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode]:
+    ) -> ToolOutput[list[DocumentSummary]]:
         """List available documents with sizes and dates.
 
-        Set ``flatten=False`` to show a hierarchical directory tree.
-        Use ``glob_documents`` for pattern-based file matching.  Common
-        build and vendor directories and the contents of ``.assets``
-        payload directories are skipped by default; pass
+        Pass ``patterns`` to list only the files whose names match, at any
+        depth.  Common build and vendor directories and the contents of
+        ``.assets`` payload directories are skipped by default, pass
         ``include_ignored=True`` to include them.
         """
         # The walk stats every entry, so it goes to a thread rather than the
         # event loop, which is where pydantic-ai ran it while it was sync.
         return await asyncio.to_thread(
-            self._list, path, flatten, max_depth, max_results, include_ignored
+            self._list, path, patterns, max_depth, max_results, include_ignored
         )
 
     def _list(
         self,
         path: str | None,
-        flatten: bool,
+        patterns: list[str] | None,
         max_depth: int | None,
         max_results: int,
         include_ignored: bool,
-    ) -> ToolOutput[list[DocumentSummary] | DocumentTreeNode]:
-        """Scan the workspace and render it flat or as a tree."""
+    ) -> ToolOutput[list[DocumentSummary]]:
+        """Scan the workspace and render one line per entry."""
         paths, roots, subdir = _scoped_directory(self.resolved_paths, path)
         entries, hints = _scan_entries(
             roots,
-            self.glob,
+            patterns,
             subdir,
             max_depth,
             max_results,
@@ -526,82 +414,21 @@ class ListDocumentsTool(AsyncPathTool[list[DocumentSummary] | DocumentTreeNode])
         )
         note = hint_suffix(hints)
 
-        if flatten:
-            if not entries:
-                return ToolOutput(
-                    data=entries,
-                    formatted=_empty_message("no documents", paths, subdir) + note,
-                )
-            lines: list[str] = []
-            for d in entries:
-                date = (
-                    d.modified_at.strftime("%Y-%m-%d %H:%M") if d.modified_at else "-"
-                )
-                kind = "d" if d.is_directory else "-"
-                lines.append(
-                    f"{kind} {date}  {_humanize_size(d.size):>6}  {d.filename}"
-                )
-            return ToolOutput(data=entries, formatted="\n".join(lines) + note)
+        if not entries:
+            noun = "no matches" if patterns else "no documents"
 
-        root = _build_document_tree(entries)
-        tree_lines = _format_document_tree(root)
-        if not tree_lines:
             return ToolOutput(
-                data=root,
-                formatted=_empty_message("empty tree", paths, subdir) + note,
+                data=entries, formatted=_empty_message(noun, paths, subdir) + note
             )
 
-        dir_count = sum(1 for e in entries if e.is_directory)
-        file_count = sum(1 for e in entries if not e.is_directory)
-        tree_lines.append("")
-        tree_lines.append(
-            f"{dir_count} {pluralize(dir_count, 'directory', 'directories')}, "
-            f"{file_count} {pluralize(file_count, 'file', 'files')}"
-        )
-        return ToolOutput(data=root, formatted="\n".join(tree_lines) + note)
+        lines: list[str] = []
 
+        for d in entries:
+            date = d.modified_at.strftime("%Y-%m-%d %H:%M") if d.modified_at else "-"
+            kind = "d" if d.is_directory else "-"
+            lines.append(f"{kind} {date}  {_humanize_size(d.size):>6}  {d.filename}")
 
-@dataclass(slots=True, frozen=True)
-class GlobDocumentsTool(AsyncPathTool[list[str]]):
-    """Find documents whose filenames match a glob pattern."""
-
-    glob: str | None = None
-
-    @override
-    async def __call__(
-        self,
-        patterns: GlobPatternsArg,
-        path: DocumentPathArg = None,
-        max_results: GlobMaxResultsArg = 1000,
-        include_ignored: IncludeIgnoredArg = False,
-    ) -> ToolOutput[list[str]]:
-        """Find document filenames matching any of the glob patterns.
-
-        Returns one flat list of relative filenames, each listed once.  Use
-        ``list_documents`` for directory listings with sizes, dates, or tree
-        output.  Common build and vendor directories and the contents of
-        ``.assets`` payload directories are skipped by default.  Pass
-        ``include_ignored=True`` to include them.
-        """
-        return await asyncio.to_thread(
-            self._glob, patterns, path, max_results, include_ignored
-        )
-
-    def _glob(
-        self,
-        patterns: list[str],
-        path: str | None,
-        max_results: int,
-        include_ignored: bool,
-    ) -> ToolOutput[list[str]]:
-        """Match filenames against *patterns*, reporting what was left out."""
-        paths, roots, subdir = _scoped_directory(self.resolved_paths, path)
-        results, hints = _glob_entries(
-            roots, self.glob, patterns, max_results, excluded_dirs(include_ignored)
-        )
-        body = "\n".join(results) or _empty_message("no matches", paths, subdir)
-
-        return ToolOutput(data=results, formatted=body + hint_suffix(hints))
+        return ToolOutput(data=entries, formatted="\n".join(lines) + note)
 
 
 @dataclass(slots=True, frozen=True)
