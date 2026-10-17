@@ -84,8 +84,6 @@ export function ScopeSection({
   const refresh = useDocumentsStore((s) => s.refresh);
   const storeRechunk = useDocumentsStore((s) => s.rechunk);
   const storeReconvert = useDocumentsStore((s) => s.reconvert);
-  const storeBulkRechunk = useDocumentsStore((s) => s.bulkRechunk);
-  const storeBulkReconvert = useDocumentsStore((s) => s.bulkReconvert);
   const storeMove = useDocumentsStore((s) => s.move);
   const clearError = useDocumentsStore((s) => s.clearError);
   const overrides = useSettingsStore((s) => s.overrides);
@@ -101,11 +99,7 @@ export function ScopeSection({
   // The target outlives a close, so the dialog keeps its content while it animates out.
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogPath, setDialogPath] = useFollowedState<string | null>(scope, null, followDialog);
-  const [selectedFiles, setSelectedFiles] = useFollowedState(
-    scope,
-    new Set<string>(),
-    followSet,
-  );
+  const [selectedFiles, setSelectedFiles] = useFollowedState(scope, new Set<string>(), followSet);
   const filtered = useFuzzySearch(documents, searchQuery, "display_name", "filename");
 
   // Refresh this scope's documents and tree once on mount.
@@ -186,8 +180,8 @@ export function ScopeSection({
     [selectedFiles, docsByFilename],
   );
 
-  const handleReconvert = (path: string) =>
-    void storeReconvert(scope, path, { spec: pipelineSpec, llm: buildAuxLlmConfig(overrides) });
+  const handleReconvert = (paths: string[]) =>
+    void storeReconvert(scope, paths, pipelineSpec, buildAuxLlmConfig(overrides));
 
   const handleDownloadOriginal = useCallback(
     async (path: string) => {
@@ -213,12 +207,12 @@ export function ScopeSection({
     rechunk: () => {
       const files = [...selectedFiles];
       clearSelection();
-      void storeBulkRechunk(scope, files, pipelineSpec);
+      void storeRechunk(scope, files, pipelineSpec);
     },
     reconvert: () => {
       const files = [...selectedReconvertable];
       clearSelection();
-      void storeBulkReconvert(scope, files, pipelineSpec, buildAuxLlmConfig(overrides));
+      handleReconvert(files);
     },
     download: () =>
       void selectedReconvertable.reduce(
@@ -411,14 +405,12 @@ export function ScopeSection({
         onSave={handleSave}
         onRechunk={
           canWrite && dialogPath !== null
-            ? async () => {
-                await storeRechunk(scope, dialogPath, pipelineSpec);
-              }
+            ? () => storeRechunk(scope, [dialogPath], pipelineSpec)
             : undefined
         }
         onReconvert={
           canWrite && dialogPath !== null && dialogDoc?.has_original
-            ? () => handleReconvert(dialogPath)
+            ? () => handleReconvert([dialogPath])
             : undefined
         }
         onDownloadOriginal={

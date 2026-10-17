@@ -3,7 +3,7 @@
 :func:`validate_collection_archive` enforces every size, count, and safety
 limit up front, synchronously in the request path, so a violation is reported
 to the caller immediately; :func:`process_collection` then trusts the archive
-and feeds each file through the phased :func:`upload`.  The whole import holds a
+and feeds each file through :func:`upload`.  The whole import holds a
 store claim so a concurrent store-wide delete or directory move cannot
 interleave between files and strip entries the collection already committed.
 """
@@ -313,8 +313,8 @@ class _CollectionPlan:
     """Every archive member sorted into uploads or recorded failures.
 
     Uploads own independent stems and can commit concurrently.  A markdown and
-    its companion original share one upload so they reserve, land, and index as
-    one logical entry.  Each markdown upload carries its preprocessed bytes so
+    its companion original share one upload so they land and index as one
+    logical entry.  Each markdown upload carries its preprocessed bytes so
     commit never re-reads it.
     """
 
@@ -411,10 +411,10 @@ async def process_collection(
     Re-validates the archive against the limits before extracting — the same
     cheap central-directory scan the request path runs up front — so extraction
     is never reached for an unsafe archive, even when called directly.  Each
-    file then flows through the phased :func:`upload`, which holds the casebase
-    lock only for its brief reserve and commit — so the rest of the workspace
+    file then flows through :func:`upload`, which converts it without the
+    casebase lock and holds it only to commit, so the rest of the workspace
     stays responsive while a large collection processes, and a cancel mid-run
-    rolls back only the in-flight file while earlier files survive.  The whole
+    drops only the file being converted while earlier files survive.  The whole
     import holds a store claim (:func:`_store_claim`) so a concurrent store-wide
     delete or directory move cannot interleave between files and strip entries
     the collection already committed.
@@ -465,7 +465,7 @@ async def process_collection(
             planned: _PlannedUpload,
         ) -> tuple[_PlannedUpload, BaseException | None]:
             # Failures are returned, not raised, so one bad file never aborts the
-            # batch; a cancel still propagates so the phased upload rolls back.
+            # batch, while a cancel still propagates and drops the upload.
             try:
                 p = planned.entry
                 content_bytes = planned.content
@@ -473,9 +473,12 @@ async def process_collection(
                     content_bytes = await asyncio.to_thread(
                         (extract_root / p.relative_path).read_bytes
                     )
-                original_content = (
-                    await asyncio.to_thread(
-                        (extract_root / planned.original.relative_path).read_bytes
+                companion = (
+                    (
+                        planned.original.safe,
+                        await asyncio.to_thread(
+                            (extract_root / planned.original.relative_path).read_bytes
+                        ),
                     )
                     if planned.original is not None
                     else None
@@ -487,10 +490,7 @@ async def process_collection(
                     spec=spec,
                     llm=llm,
                     origin="collection",
-                    original_path=(
-                        planned.original.safe if planned.original is not None else None
-                    ),
-                    original_content=original_content,
+                    companion=companion,
                 )
             except Exception as exc:  # noqa: BLE001
                 return planned, exc

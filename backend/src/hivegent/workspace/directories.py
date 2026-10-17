@@ -3,7 +3,7 @@
 Creating, moving, and deleting a directory are changeset items
 (:mod:`~hivegent.workspace.changeset`), so they commit atomically with whatever
 else a change does.  The store-wide wipe takes the lock with ``whole_store`` so
-it cannot race a phased upload or a bulk import.
+it cannot race an entry still indexing or a bulk import.
 """
 
 import asyncio

@@ -16,25 +16,27 @@ or reconverted explicitly: neither belongs in a sweep that blocks the server
 from accepting traffic.
 
 The same hand-drop is the one route by which a path can still enter the system
-without passing a canonicalizing boundary, so each store's paths and stems are
-folded to Unicode NFC (:mod:`hivegent.workspace.normalize`) before the ingest
-reads them.
+without passing a canonicalizing boundary, so each store's file names are
+folded to Unicode NFC before the ingest copies them into ``stem_path``.
+Every other path is canonicalized at its boundary, so after that pass every
+stem is NFC by construction.
 
 Reconciliation never deletes workspace files: they are the authoritative
 content.  It renames them only to canonicalize a spelling.
 
-The ingest pass runs through :func:`hivegent.workspace.sync_entries_from_disk`,
+Both passes run through :func:`hivegent.workspace.sync_entries_from_disk`,
 the same idempotent fold-back primitive a future read-write shell tool will
-call after a session.
+call after a session: it ingests every entry on disk and drops every SQL row
+whose description is gone.
 """
 
 import asyncio
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from pathlib import Path
 
-from .chunks import delete_documents as _delete_chunked_documents
-from .config import settings
+from .config import normalize_unicode, settings
 from .db import documents as db_documents
 from .entries import (
     description_path_for_stem,
@@ -42,12 +44,9 @@ from .entries import (
     is_projectable_original,
     stem_path_from_reference,
 )
+from .files import is_blocked_by_other
 from .store import Casebase
-from .workspace import (
-    NormalizeReport,
-    normalize_workspace_paths,
-    sync_entries_from_disk,
-)
+from .workspace import sync_entries_from_disk
 from .workspace.locks import root_lock
 
 __all__ = [
@@ -63,28 +62,47 @@ logger = logging.getLogger(__name__)
 class ReconcileReport:
     """Per-casebase summary of work done during reconciliation."""
 
-    normalized: NormalizeReport = field(default_factory=NormalizeReport)
-    entries_ingested: int = 0
-    sql_orphans_removed: int = 0
+    files_renamed: int = 0
+    entries_synced: int = 0
 
 
-async def _sweep_sql_orphans(store: Casebase, sql_paths: Mapping[str, int]) -> int:
-    """Drop SQL documents whose description file is missing on disk."""
-    workspace = store.workspace_path(settings.data_dir)
-    missing = [path for path in sql_paths if not (workspace / path).exists()]
-    if not missing:
-        return 0
-    try:
-        removed = await _delete_chunked_documents(store, missing)
-    except Exception:
-        logger.warning(
-            "Failed to remove SQL orphans for %s", store.store_key, exc_info=True
-        )
-        return 0
-    return removed
+def _normalize_disk_paths(workspace: Path) -> int:
+    """Rename every non-NFC file and directory under *workspace* to NFC.
+
+    Deepest first, rewriting only the final component, so an ancestor still
+    carries the name the walk recorded when its children are renamed and its
+    own rename afterwards carries them along.  Collecting the candidates up
+    front is therefore safe: every path stays valid until its own turn.
+
+    Returns:
+        The number of paths renamed.
+    """
+    candidates = [
+        path
+        for path in workspace.rglob("*")
+        if normalize_unicode(path.name) != path.name
+    ]
+    candidates.sort(key=lambda p: len(p.parts), reverse=True)
+    renamed = 0
+
+    for path in candidates:
+        target = path.with_name(normalize_unicode(path.name))
+
+        if is_blocked_by_other(target, path):
+            logger.warning(
+                "Skipping NFC rename of %s: %s already exists as another file",
+                path,
+                target,
+            )
+            continue
+
+        path.rename(target)
+        renamed += 1
+
+    return renamed
 
 
-def _disk_entry_references(store: Casebase) -> list[str]:
+def _disk_entry_references(workspace: Path) -> set[str]:
     """Return the description path of every logical entry the ingest must see.
 
     A stem qualifies through any markdown description on disk, or through a file
@@ -93,43 +111,40 @@ def _disk_entry_references(store: Casebase) -> list[str]:
     walked) leaves the sync as the only side that decides which sibling is the
     entry's original.
     """
-    workspace = store.workspace_path(settings.data_dir)
-    if not workspace.exists():
-        return []
     stems: set[str] = set()
 
     for dir_path, _dir_names, file_names in workspace.walk():
         for name in file_names:
             rel = str((dir_path / name).relative_to(workspace).as_posix())
+
             if is_description_file(rel) or is_projectable_original(rel):
                 stems.add(stem_path_from_reference(rel))
 
-    return [description_path_for_stem(stem) for stem in sorted(stems)]
+    return {description_path_for_stem(stem) for stem in stems}
 
 
 async def reconcile_store(store: Casebase) -> ReconcileReport:
     """Bring *store*'s SQL index back into agreement with its disk content.
 
-    The filesystem is the source of truth: paths are canonicalized first,
-    then every on-disk description is folded into SQL, then SQL rows whose
-    description vanished are dropped.  Chunks cascade with documents and need
-    no separate sweep, and workspace files are never deleted here.
-
-    Normalization has to lead the ingest, which copies the on-disk spelling
-    into ``stem_path`` verbatim; see :mod:`hivegent.workspace.normalize`.
+    The filesystem is the source of truth: file names are canonicalized
+    first, then every entry on disk or in SQL is synced, which ingests the
+    former and drops a row whose description vanished.  One query reads every
+    row's state, which the sync compares each entry against.  Chunks cascade with
+    documents and need no separate sweep, and workspace files are never
+    deleted here.
     """
-    normalized = await normalize_workspace_paths(store)
-    references = await asyncio.to_thread(_disk_entry_references, store)
-    ingested = await sync_entries_from_disk(store, references)
-    async with root_lock(store):
-        sql_paths = await db_documents.list_document_paths(store)
-        sql_removed = await _sweep_sql_orphans(store, sql_paths)
+    workspace = store.workspace_path(settings.data_dir)
 
-    return ReconcileReport(
-        normalized=normalized,
-        entries_ingested=ingested,
-        sql_orphans_removed=sql_removed,
+    async with root_lock(store):
+        renamed = await asyncio.to_thread(_normalize_disk_paths, workspace)
+
+    references = await asyncio.to_thread(_disk_entry_references, workspace)
+    states = await db_documents.get_entry_states(store)
+    synced = await sync_entries_from_disk(
+        store, sorted(references | states.keys()), states
     )
+
+    return ReconcileReport(files_renamed=renamed, entries_synced=synced)
 
 
 def _disk_known_stores() -> set[Casebase]:

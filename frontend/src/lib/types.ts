@@ -136,46 +136,32 @@ export type TmpClearedResponse = z.infer<typeof TmpClearedResponseSchema>;
 // Admin response schemas
 // ============================================================
 
-export const AdminResetResponseSchema = z.object({
-  action: z.string(),
-  message: z.string(),
-});
-export type AdminResetResponse = z.infer<typeof AdminResetResponseSchema>;
-
 export const AdminReindexResponseSchema = z.object({
-  stores_reconciled: z.number(),
   message: z.string(),
 });
 export type AdminReindexResponse = z.infer<typeof AdminReindexResponseSchema>;
-
-export const AdminFactoryResetResponseSchema = z.object({
-  actions: z.array(z.string()),
-  message: z.string(),
-});
-export type AdminFactoryResetResponse = z.infer<typeof AdminFactoryResetResponseSchema>;
 
 export const AdminUserInfoSchema = z.object({
   id: z.string(),
   document_count: z.number(),
   conversation_count: z.number(),
-  has_workspace: z.boolean(),
 });
 export type AdminUserInfo = z.infer<typeof AdminUserInfoSchema>;
-
-export const AdminListUsersResponseSchema = z.object({
-  users: z.array(AdminUserInfoSchema),
-});
 
 export const AdminGroupInfoSchema = z.object({
   id: z.string(),
   document_count: z.number(),
-  has_workspace: z.boolean(),
 });
 export type AdminGroupInfo = z.infer<typeof AdminGroupInfoSchema>;
 
-export const AdminListGroupsResponseSchema = z.object({
+export const AdminOverviewSchema = z.object({
+  users: z.array(AdminUserInfoSchema),
   groups: z.array(AdminGroupInfoSchema),
 });
+export type AdminOverview = z.infer<typeof AdminOverviewSchema>;
+
+/** What an admin reset wipes, `factory` being workspace and database together. */
+export type AdminResetTarget = "workspace" | "database" | "factory";
 
 /** State of the server's global maintenance flag. */
 export const AdminMaintenanceStateSchema = z.object({
@@ -259,6 +245,17 @@ export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 /** The two pipeline stages a document passes through. */
 export type PipelineKind = "conversion" | "chunking";
 
+/** The pipelines each stage offers. */
+export interface PipelineByKind {
+  conversion: ConversionPipeline;
+  chunking: ChunkingPipeline;
+}
+
+export const PipelineByKindSchemas: { [K in PipelineKind]: z.ZodType<PipelineByKind[K]> } = {
+  conversion: ConversionPipelineSchema,
+  chunking: ChunkingPipelineSchema,
+};
+
 /** Configuration metadata loaded only for the selected pipeline. */
 export const PipelineConfigInfoSchema = z.object({
   schema: z.record(z.string(), z.unknown()),
@@ -289,7 +286,6 @@ export const ChunkedDocumentResponseSchema = z.object({
   origin: EntryOriginSchema.optional(),
   generated_by: EntryGeneratedBySchema.optional(),
   mime: z.string().nullable().optional(),
-  files: z.array(z.string()).optional().default([]),
 });
 export type ChunkedDocumentResponse = z.infer<typeof ChunkedDocumentResponseSchema>;
 
@@ -309,18 +305,17 @@ export const AssetListResponseSchema = z.object({
 });
 export type AssetListResponse = z.infer<typeof AssetListResponseSchema>;
 
-export const DocumentInfoSchema = z.object({
-  filename: z.string(),
-  display_name: z.string(),
-  size_bytes: z.number(),
-  modified_at: z.string(),
-  chunk_count: z.number().nullable().optional(),
-  has_original: z.boolean(),
-  original_path: z.string().nullable().optional(),
-  assets_dir: z.string().nullable().optional(),
-  kind: z.enum(["document", "asset"]).optional().default("document"),
-});
-export type DocumentInfo = z.infer<typeof DocumentInfoSchema>;
+/** A flat view of a file entry of the directory tree, see `treeDocuments`. */
+export interface DocumentInfo {
+  filename: string;
+  display_name: string;
+  size_bytes: number;
+  modified_at: string;
+  chunk_count?: number | null;
+  has_original: boolean;
+  original_path?: string | null;
+  assets_dir?: string | null;
+}
 
 export const DocumentStatsSchema = z.object({
   line_count: z.number(),
@@ -378,13 +373,10 @@ export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;
 /** Response for listing conversations. */
 export const ConversationListResponseSchema = z.object({
   conversations: z.array(ConversationSummarySchema),
-  total_count: z.number(),
 });
 /** Response for conversation compaction. */
 export const CompactConversationResponseSchema = z.object({
   new_conversation_id: z.string(),
-  summary: z.string(),
-  message: z.string(),
 });
 export type CompactConversationResponse = z.infer<typeof CompactConversationResponseSchema>;
 

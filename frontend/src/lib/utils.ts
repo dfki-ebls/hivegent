@@ -106,7 +106,6 @@ export function treeDocuments(root: DirectoryEntry): DocumentInfo[] {
     has_original: file.has_original ?? false,
     original_path: file.original_path,
     assets_dir: file.assets_dir,
-    kind: "document" as const,
   }));
 }
 

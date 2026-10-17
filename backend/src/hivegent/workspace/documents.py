@@ -14,7 +14,6 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from ..changes import Basis, TextEdit, WriteMode
-from ..chunkers.base import DocumentMetadata
 from ..concurrency import shield_to_completion
 from ..config import content_hash, settings
 from ..converters import BINARY_WRITE_REASON, vision_media_type
@@ -26,6 +25,7 @@ from ..text import DecodedText, read_text_file
 from ..types import PipelineSpec
 from .indexing import chunk_and_index_document
 from .locks import _locked_for
+from .metadata import current_entry_metadata
 from .paths import _shown, document_not_found, not_text
 
 __all__ = ["TextMutation", "derive_text", "edit_mutation", "rechunk", "write_mutation"]
@@ -402,7 +402,7 @@ async def rechunk(
     safe: str,
     *,
     spec: PipelineSpec | None = None,
-) -> DocumentMetadata:
+) -> None:
     """Re-chunk an existing markdown document.
 
     The chunk + embed + SQL upsert runs to completion even on a cancel
@@ -410,21 +410,26 @@ async def rechunk(
     tear the workspace markdown out of sync with SQL.
     """
     spec = spec or PipelineSpec()
+
     async with _locked_for(store, safe):
         workspace_dir = store.workspace_dir(settings.data_dir)
         file_path = workspace_dir / safe
         shown = _shown(store, safe)
         decoded = _editable_text(file_path, shown)
+
         if decoded is None:
             raise HTTPException(
                 status_code=404, detail=document_not_found(shown).current
             )
-        return await shield_to_completion(
+
+        metadata = await current_entry_metadata(store, safe)
+        await shield_to_completion(
             chunk_and_index_document(
                 store,
                 safe,
                 decoded.text,
                 spec.chunking,
                 stat=ContentStat.from_path(file_path),
+                entry_metadata=metadata,
             )
         )

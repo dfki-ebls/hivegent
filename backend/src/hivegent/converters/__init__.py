@@ -60,12 +60,12 @@ __all__ = [
 
 
 class ConversionPipeline(StrEnum):
-    """A conversion pipeline, or a recovery fallback's provenance label.
+    """A conversion pipeline, or the name of a recovery fallback.
 
     Most members are selectable pipelines that map to a converter in the
     registry.  A few (LibreOffice, poppler) are recovery *fallbacks*: not
     selectable or routable, so they have no registry entry and exist only to
-    label ``conversion_pipeline_used`` on recovered entries (see
+    name the fallback that recovered a conversion (see
     :mod:`hivegent.converters.fallbacks`).
     """
 
@@ -73,11 +73,11 @@ class ConversionPipeline(StrEnum):
     LLM = "llm"
     MARKER = "marker"
     DOCLING = "docling"
-    # Recorded on entries recovered by the LibreOffice text fallback; not a
+    # Names the LibreOffice text fallback when it recovers a conversion, not a
     # selectable pipeline (see converters.fallbacks), so it has no registry entry.
     LIBREOFFICE = "libreoffice"
-    # Recorded on PDFs whose garbled glyph-name text was recovered via poppler;
-    # a fallback too, likewise not a selectable pipeline.
+    # Names the poppler fallback that recovers garbled glyph-name PDF text,
+    # likewise not a selectable pipeline.
     POPPLER = "poppler"
     MINERU = "mineru"
     PANDOC = "pandoc"

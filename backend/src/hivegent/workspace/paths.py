@@ -1,27 +1,23 @@
 """Path semantics, on-disk guards, and the raw filesystem work of a mutation.
 
 No async and no SQL: this module is the path arithmetic, the HTTP-level
-validation every mutation shares (case-insensitive inode aliasing,
-parent-chain checks, the upload size limit), and the blocking filesystem
-primitives the mutations build from, including the rename journal
+validation every mutation shares (the upload size limit), and the blocking
+filesystem primitives the mutations build from, including the rename journal
 (:class:`_Journal`) every change is installed and rolled back through.
 """
 
 import logging
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
-from tempfile import TemporaryDirectory
+from pathlib import Path
 
 from fastapi import HTTPException
 
 from ..config import settings
-from ..entries import ContentStat, is_reserved_path
+from ..entries import ContentStat
 from ..files import remove_path, rmdir_if_empty
 from ..humanize import format_bytes
 from ..l10n import Localized
-from ..store import Casebase
 from ..text import NOT_TEXT_REASON
 from .operations import Root
 
@@ -70,12 +66,6 @@ def _parent_is_file(path: str) -> Localized[str]:
         en=f"Destination parent '{path}' is a file",
         de=f"Der übergeordnete Pfad „{path}“ des Ziels ist eine Datei",
     )
-
-
-_ASSETS_RESERVED = Localized(
-    en="'.assets' directories are managed through their owning document",
-    de="„.assets“-Ordner werden über ihr zugehöriges Dokument verwaltet",
-)
 
 
 def file_too_large(limit: int) -> Localized[str]:
@@ -158,7 +148,9 @@ class _Journal:
 
     def mkdir(self, directory: Path) -> None:
         """Create *directory* and its missing parents, each undone while still empty."""
-        missing = [path for path in (directory, *directory.parents) if not path.exists()]
+        missing = [
+            path for path in (directory, *directory.parents) if not path.exists()
+        ]
         directory.mkdir(parents=True, exist_ok=True)
 
         for path in reversed(missing):
@@ -211,80 +203,6 @@ class _Journal:
                 self._undo.pop()()
             except OSError:
                 logger.exception("Rolling back a workspace change failed")
-
-
-@contextmanager
-def _journaled() -> Generator[tuple[Path, _Journal]]:
-    """Yield a staging directory and a journal for one change.
-
-    Every recorded step is rolled back if the block raises.  Both live in a
-    temporary directory in the workspace root, so every rename into or out of
-    any casebase stays on one filesystem, and the parked backups go with it
-    once the change has settled.
-    """
-    root = Casebase.workspace_root(settings.data_dir)
-    root.mkdir(parents=True, exist_ok=True)
-
-    with TemporaryDirectory(prefix=_STAGE_PREFIX, dir=root) as tmp:
-        journal = _Journal(Path(tmp) / "backup")
-
-        try:
-            yield Path(tmp) / "new", journal
-        except BaseException:
-            journal.rollback()
-            raise
-
-
-def _is_same_file(a: Path, b: Path) -> bool:
-    """Whether *a* and *b* are the same inode.
-
-    True for a case-aliased path on a case-insensitive filesystem (macOS,
-    Windows), where ``exists()`` alone cannot distinguish "occupied by another
-    file" from "the source under its other spelling".  Missing paths are never
-    the same file.
-    """
-    try:
-        return a.samefile(b)
-    except OSError:
-        return False
-
-
-def _is_blocked_by_other(target: Path, source: Path) -> bool:
-    """Whether *target* exists as a node distinct from *source*.
-
-    A target that aliases *source* (a case-only rename on a case-insensitive
-    filesystem) is not a blocker, since a plain rename handles it.
-    """
-    return target.exists() and not _is_same_file(target, source)
-
-
-def _check_destination_parents(store: Casebase, target: str) -> None:
-    """Reject a destination path whose parent chain is blocked by an existing file.
-
-    Takes the store rather than its directory because the blocker has to be
-    named back in the caller's own grammar, and the directory alone cannot say
-    which workspace it is.
-    """
-    workspace_dir = store.workspace_path(settings.data_dir)
-    blocker = next(
-        (
-            parent
-            for parent in PurePosixPath(target).parents
-            if (workspace_dir / parent).is_file()
-        ),
-        None,
-    )
-    if blocker is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=_parent_is_file(_shown(store, str(blocker))).current,
-        )
-
-
-def _check_not_reserved_path(path: str) -> None:
-    """Reject paths reaching into a layer the workspace manages for itself."""
-    if is_reserved_path(path):
-        raise HTTPException(status_code=400, detail=_ASSETS_RESERVED.current)
 
 
 def _enforce_file_size(content: bytes) -> None:

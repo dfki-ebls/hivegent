@@ -20,7 +20,6 @@ def _entry_metadata() -> EntryMetadata:
         mime="text/markdown",
         origin="upload",
         generated_by="user",
-        files=["doc.md"],
     )
 
 

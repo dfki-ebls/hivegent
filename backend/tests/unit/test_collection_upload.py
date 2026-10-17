@@ -109,11 +109,11 @@ async def test_companion_original_written_when_owning_markdown_succeeds(
         **kwargs: object,
     ) -> None:
         (workspace_dir / safe).write_bytes(content)
-        original_path = kwargs.get("original_path")
-        original_content = kwargs.get("original_content")
-        assert isinstance(original_path, str)
-        assert isinstance(original_content, bytes)
-        (workspace_dir / original_path).write_bytes(original_content)
+        match kwargs.get("companion"):
+            case (str(path), bytes(data)):
+                (workspace_dir / path).write_bytes(data)
+            case other:
+                raise AssertionError(other)
 
     monkeypatch.setattr(collections, "upload", ok_upload)
 
@@ -152,10 +152,11 @@ async def test_markdown_adopts_one_original_and_rejects_the_rest(
     async def ok_upload(
         _store: Casebase, _safe: str, _content: bytes, **kwargs: object
     ) -> None:
-        original_path = kwargs.get("original_path")
-        original_content = kwargs.get("original_content")
-        if isinstance(original_path, str) and isinstance(original_content, bytes):
-            (workspace_dir / original_path).write_bytes(original_content)
+        match kwargs.get("companion"):
+            case (str(path), bytes(data)):
+                (workspace_dir / path).write_bytes(data)
+            case _:
+                pass
 
     monkeypatch.setattr(collections, "upload", ok_upload)
 
@@ -180,11 +181,11 @@ async def test_markdown_owns_stem_when_original_sorts_before_md(
     async def ok_upload(
         _store: Casebase, _safe: str, _content: bytes, **kwargs: object
     ) -> None:
-        original_path = kwargs.get("original_path")
-        original_content = kwargs.get("original_content")
-        assert isinstance(original_path, str)
-        assert isinstance(original_content, bytes)
-        (workspace_dir / original_path).write_bytes(original_content)
+        match kwargs.get("companion"):
+            case (str(path), bytes(data)):
+                (workspace_dir / path).write_bytes(data)
+            case other:
+                raise AssertionError(other)
 
     monkeypatch.setattr(collections, "upload", ok_upload)
 

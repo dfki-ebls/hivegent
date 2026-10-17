@@ -9,7 +9,6 @@ from hivegent.db import documents as db_documents
 from hivegent.server.common import resolve_workspace_path
 from hivegent.store import AccessDenied, Casebase, User
 from hivegent.workspace import locks
-from hivegent.workspace.paths import _check_not_reserved_path
 
 _USER = User(
     id="alice",
@@ -61,19 +60,6 @@ def test_non_member_group_is_forbidden() -> None:
     with pytest.raises(HTTPException) as exc:
         resolve_workspace_path(_USER, "@secret/x.md")
     assert exc.value.status_code == 403
-
-
-def test_assets_are_closed_to_the_generic_api() -> None:
-    """An `.assets` payload would be disowned by its entry, so the API refuses it."""
-    with pytest.raises(HTTPException) as exc_info:
-        _check_not_reserved_path("notes/report.assets/fig1.png")
-
-    assert exc_info.value.status_code == 400
-
-
-def test_ordinary_paths_pass_the_reserved_check() -> None:
-    _check_not_reserved_path("notes/report.md")
-    _check_not_reserved_path("notes/tmp/report.md")
 
 
 def test_group_stores_carry_the_token_grant() -> None:

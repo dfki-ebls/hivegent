@@ -142,7 +142,7 @@ async def test_auto_plain_text_uses_plain_text_pipeline(
         ctx=None,
     )
 
-    assert prepared.conversion_pipeline_used == ConversionPipeline.PLAIN_TEXT.value
+    assert prepared.main.entry_metadata.entry_kind == "convertible"
     assert "plain text" in prepared.main.markdown
 
 
@@ -154,16 +154,14 @@ async def test_plain_text_rejects_binary(tmp_path: Path) -> None:
         await PlainTextConverter()(doc)
 
 
-def test_auto_fallback_records_plain_text_provenance() -> None:
-    # The fallback applies the same decode-and-fence projection as the pipeline
-    # it names, so the recorded provenance describes what actually happened.
+def test_auto_fallback_decodes_legacy_text() -> None:
+    # The fallback applies the same decode-and-fence projection as the pipeline.
     prepared = prepare._prepare_plain_text_or_stub(
         "settings.ini", "Benutzer = Jörg\n".encode("cp1252"), origin="upload"
     )
 
-    assert prepared.conversion_pipeline_used == ConversionPipeline.PLAIN_TEXT.value
+    assert prepared.main.entry_metadata.entry_kind == "convertible"
     assert "Jörg" in prepared.main.markdown
-    assert "decoded from" in prepared.message
 
 
 def test_auto_fallback_stubs_real_binaries() -> None:
@@ -171,7 +169,6 @@ def test_auto_fallback_stubs_real_binaries() -> None:
         "logo.bin", b"\x89PNG\r\n\x1a\n", origin="upload"
     )
 
-    assert prepared.conversion_pipeline_used is None
     assert prepared.main.entry_metadata.entry_kind == "binary_stub"
 
 

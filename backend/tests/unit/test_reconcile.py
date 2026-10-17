@@ -12,9 +12,27 @@ from pathlib import Path
 import pytest
 
 from hivegent import reconcile, workspace
+from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import settings
 from hivegent.db import documents as db_documents
+from hivegent.db.documents import EntryState
 from hivegent.store import Casebase
+
+
+def _state(stem: str) -> EntryState:
+    """A row whose content was never indexed, so its description is."""
+    metadata = EntryMetadata(
+        entry_kind="user_markdown",
+        stem_path=stem,
+        description_path=f"{stem}.md",
+        original_path=None,
+        assets_dir=None,
+        mime="text/markdown",
+        origin="upload",
+        generated_by="user",
+    )
+
+    return EntryState(content_digest=None, content_stat=None, metadata=metadata)
 
 
 @pytest.fixture()
@@ -34,11 +52,7 @@ def workspace_dir(user_store: Casebase, monkeypatch: pytest.MonkeyPatch) -> Path
     async def delete_chunked_document(store: Casebase, reference: str) -> bool:
         return False
 
-    async def list_stem_paths(store: Casebase) -> list[str]:
-        return []
-
     monkeypatch.setattr(db_documents, "get_entry_state", get_entry_state)
-    monkeypatch.setattr(db_documents, "list_stem_paths", list_stem_paths)
     monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", chunk_and_index)
     monkeypatch.setattr(
         workspace.indexing, "delete_chunked_document", delete_chunked_document
@@ -56,16 +70,14 @@ async def test_reconcile_ingests_markdown_and_keeps_stray_files(
     (workspace_dir / "gone.assets").mkdir()
     (workspace_dir / "gone.assets/fig.png").write_bytes(b"\x89PNG")
 
-    async def list_document_paths(store: Casebase) -> dict[str, int]:
-        return {"doc.md": 1}
+    async def get_entry_states(store: Casebase) -> dict[str, EntryState]:
+        return {"doc.md": _state("doc")}
 
-    monkeypatch.setattr(
-        reconcile.db_documents, "list_document_paths", list_document_paths
-    )
+    monkeypatch.setattr(reconcile.db_documents, "get_entry_states", get_entry_states)
 
     report = await reconcile.reconcile_store(user_store)
 
-    assert report.entries_ingested == 1
+    assert report.entries_synced == 1
     # Files the SQL index does not vouch for stay untouched: disk is truth.
     assert (workspace_dir / "loose.bin").exists()
     assert (workspace_dir / "gone.assets/fig.png").exists()
@@ -86,17 +98,15 @@ async def test_reconcile_canonicalizes_paths_before_ingesting(
     # clear reason rather than turning the assertion below into a tautology.
     assert [path.name for path in workspace_dir.iterdir()] == [nfd]
 
-    async def list_document_paths(store: Casebase) -> dict[str, int]:
+    async def get_entry_states(store: Casebase) -> dict[str, EntryState]:
         return {}
 
-    monkeypatch.setattr(
-        reconcile.db_documents, "list_document_paths", list_document_paths
-    )
+    monkeypatch.setattr(reconcile.db_documents, "get_entry_states", get_entry_states)
 
     report = await reconcile.reconcile_store(user_store)
 
-    assert report.normalized.files_renamed == 1
-    assert report.entries_ingested == 1
+    assert report.files_renamed == 1
+    assert report.entries_synced == 1
     assert [path.name for path in workspace_dir.iterdir()] == [nfc]
 
 
@@ -108,16 +118,14 @@ async def test_reconcile_derives_descriptions_for_hand_dropped_text_files(
     (workspace_dir / "table.csv").write_text("a,b\n1,2\n")
     (workspace_dir / "loose.bin").write_bytes(b"\x00")
 
-    async def list_document_paths(store: Casebase) -> dict[str, int]:
+    async def get_entry_states(store: Casebase) -> dict[str, EntryState]:
         return {}
 
-    monkeypatch.setattr(
-        reconcile.db_documents, "list_document_paths", list_document_paths
-    )
+    monkeypatch.setattr(reconcile.db_documents, "get_entry_states", get_entry_states)
 
     report = await reconcile.reconcile_store(user_store)
 
-    assert report.entries_ingested == 1
+    assert report.entries_synced == 1
     assert "host = local" in (workspace_dir / "settings.md").read_text()
     # A converter run has no place in a sweep that blocks the server's boot.
     assert not (workspace_dir / "table.md").exists()
@@ -136,38 +144,36 @@ async def test_reconcile_skips_a_failing_entry_and_ingests_the_rest(
         if filename == "bad.md":
             raise RuntimeError("chunker exploded")
 
-    async def list_document_paths(store: Casebase) -> dict[str, int]:
+    async def get_entry_states(store: Casebase) -> dict[str, EntryState]:
         return {}
 
     monkeypatch.setattr(workspace.indexing, "chunk_and_index_document", chunk_and_index)
-    monkeypatch.setattr(
-        reconcile.db_documents, "list_document_paths", list_document_paths
-    )
+    monkeypatch.setattr(reconcile.db_documents, "get_entry_states", get_entry_states)
 
     # One poison file must not abort the batch: the healthy entry still ingests.
     report = await reconcile.reconcile_store(user_store)
 
-    assert report.entries_ingested == 1
+    assert report.entries_synced == 1
 
 
 async def test_reconcile_drops_rows_whose_description_vanished(
     user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def list_document_paths(store: Casebase) -> dict[str, int]:
-        return {"ghost.md": 2}
+    async def get_entry_states(store: Casebase) -> dict[str, EntryState]:
+        return {"ghost.md": _state("ghost")}
 
     dropped: list[str] = []
 
-    async def delete_documents(store: Casebase, paths: list[str]) -> int:
-        dropped.extend(paths)
-        return len(paths)
+    async def delete_chunked_document(store: Casebase, reference: str) -> bool:
+        dropped.append(reference)
+        return True
 
+    monkeypatch.setattr(reconcile.db_documents, "get_entry_states", get_entry_states)
     monkeypatch.setattr(
-        reconcile.db_documents, "list_document_paths", list_document_paths
+        workspace.indexing, "delete_chunked_document", delete_chunked_document
     )
-    monkeypatch.setattr(reconcile, "_delete_chunked_documents", delete_documents)
 
     report = await reconcile.reconcile_store(user_store)
 
     assert dropped == ["ghost.md"]
-    assert report.sql_orphans_removed == 1
+    assert report.entries_synced == 1

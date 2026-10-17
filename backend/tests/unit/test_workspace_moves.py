@@ -69,7 +69,7 @@ def _move(
 
 
 async def _apply(*operations: Operation[Location]) -> workspace.AppliedChangeset:
-    return await workspace.apply_changeset(Changeset(operations))
+    return await workspace.apply_changeset(operations)
 
 
 async def _move_one(
@@ -93,7 +93,6 @@ def _doc(stem: str, original_suffix: str | None = None) -> DocumentMetadata:
         mime=None,
         origin="upload",
         generated_by="converter",
-        files=[f"{stem}.md"] + ([original] if original else []),
         id="doc-id",
         pipeline="recursive",
         created_at=datetime.now(UTC),
@@ -121,7 +120,9 @@ class FakeRepository:
         """
         parked: dict[str, tuple[str, str]] = {}
         moves: list[tuple[str, ...]] = []
-        for name, src, dst, src_store, dst_store in (c for c in self.calls if len(c) == 5):
+        for name, src, dst, src_store, dst_store in (
+            c for c in self.calls if len(c) == 5
+        ):
             if dst.startswith(".changeset-park/"):
                 parked[dst] = (src, src_store)
             else:
@@ -150,7 +151,9 @@ class FakeRepository:
         self, references: Iterable[tuple[Casebase, str]]
     ) -> dict[tuple[Casebase, str], DocumentMetadata]:
         stems = {(store, stem_path_from_reference(ref)) for store, ref in references}
-        return {(store, stem): self.docs[stem] for store, stem in stems if stem in self.docs}
+        return {
+            (store, stem): self.docs[stem] for store, stem in stems if stem in self.docs
+        }
 
     async def move_document(
         self,
@@ -164,7 +167,9 @@ class FakeRepository:
         assert s is not None
         if src == self.failing_stem:
             raise RuntimeError("simulated row failure")
-        self.calls.append(("move_document", src, dst, src_store.store_key, dst_store.store_key))
+        self.calls.append(
+            ("move_document", src, dst, src_store.store_key, dst_store.store_key)
+        )
         return True
 
     async def move_subtree(
@@ -177,7 +182,9 @@ class FakeRepository:
         s: object = None,
     ) -> None:
         assert s is not None
-        self.calls.append(("move_subtree", src, dst, src_store.store_key, dst_store.store_key))
+        self.calls.append(
+            ("move_subtree", src, dst, src_store.store_key, dst_store.store_key)
+        )
 
     async def delete_subtree(
         self, store: Casebase, prefix: str, *, s: object = None
@@ -227,7 +234,11 @@ def layout(workspace_dir: Path, repo: FakeRepository) -> Path:
 class TestMoveDocument:
     @pytest.mark.parametrize("companion", ["b.pdf", "b.assets"])
     async def test_rejects_an_original_or_assets_without_a_description(
-        self, user_store: Casebase, workspace_dir: Path, repo: FakeRepository, companion: str
+        self,
+        user_store: Casebase,
+        workspace_dir: Path,
+        repo: FakeRepository,
+        companion: str,
     ) -> None:
         (workspace_dir / "a.md").write_text("a")
         target = workspace_dir / companion
@@ -257,9 +268,7 @@ class TestMoveDocument:
         (workspace_dir / "notes/inner.md").write_text("inner")
         repo.docs["notes"] = _doc("notes", original_suffix=".pdf")
 
-        await _move_one(
-            user_store, user_store, "notes.md", "archive/notes.md"
-        )
+        await _move_one(user_store, user_store, "notes.md", "archive/notes.md")
 
         assert (workspace_dir / "archive/notes.md").is_file()
         assert (workspace_dir / "archive/notes.pdf").is_file()
@@ -291,9 +300,7 @@ class TestMoveDocument:
         repo.docs["data"] = _doc("data", original_suffix="")
 
         with pytest.raises(HTTPException) as exc:
-            await _move_one(
-                user_store, user_store, "data.md", "blocked/data.md"
-            )
+            await _move_one(user_store, user_store, "data.md", "blocked/data.md")
 
         assert exc.value.status_code == 409
         assert (workspace_dir / "data.md").is_file()
@@ -309,9 +316,7 @@ class TestMoveDocument:
         (workspace_dir / "a.tar.gz").write_bytes(b"x")
         repo.docs["a.tar"] = _doc("a.tar", original_suffix=".gz")
 
-        await _move_one(
-            user_store, user_store, "a.tar.md", "dir/a.tar.md"
-        )
+        await _move_one(user_store, user_store, "a.tar.md", "dir/a.tar.md")
 
         assert (workspace_dir / "dir/a.tar.md").is_file()
         assert (workspace_dir / "dir/a.tar.gz").is_file()
@@ -330,9 +335,7 @@ class TestMoveDocument:
         workspace_locks._add_inflight(user_store, "archive/report.md")
 
         with pytest.raises(HTTPException) as exc:
-            await _move_one(
-                user_store, user_store, "report.md", "archive/report.md"
-            )
+            await _move_one(user_store, user_store, "report.md", "archive/report.md")
 
         assert exc.value.status_code == 409
         assert (workspace_dir / "report.md").is_file()
@@ -358,9 +361,7 @@ class TestMoveDirectory:
         (workspace_dir / "images").mkdir()
 
         with pytest.raises(HTTPException) as exc:
-            await _move_one(
-                user_store, user_store, "images", "images/sub"
-            )
+            await _move_one(user_store, user_store, "images", "images/sub")
 
         assert exc.value.status_code == 400
         assert (workspace_dir / "images").is_dir()
@@ -377,9 +378,7 @@ class TestMoveDirectory:
         workspace_locks._add_inflight(user_store, "archive/images/pending.md")
 
         with pytest.raises(HTTPException) as exc:
-            await _move_one(
-                user_store, user_store, "images", "archive/images"
-            )
+            await _move_one(user_store, user_store, "images", "archive/images")
 
         assert exc.value.status_code == 409
         assert (workspace_dir / "images").is_dir()
@@ -442,9 +441,7 @@ class TestCrossStoreMove:
         repo.docs["notes"] = _doc("notes")
 
         with pytest.raises(HTTPException) as exc:
-            await _move_one(
-                user_store, group_store, "notes.md", "notes.md"
-            )
+            await _move_one(user_store, group_store, "notes.md", "notes.md")
 
         assert exc.value.status_code == 409
         assert (workspace_dir / "notes.md").read_text() == "mine"
@@ -516,9 +513,7 @@ class TestNativeSemanticGuards:
         with pytest.raises(HTTPException) as create_exc:
             await _apply(CreateDir(Location(user_store, "x.assets")))
         with pytest.raises(HTTPException) as move_exc:
-            await _move_one(
-                user_store, user_store, "report.assets", "elsewhere"
-            )
+            await _move_one(user_store, user_store, "report.assets", "elsewhere")
 
         assert create_exc.value.status_code == 400
         assert move_exc.value.status_code == 400
@@ -620,24 +615,37 @@ class TestChangesets:
         with pytest.raises(HTTPException, match="already exists"):
             await plan(Write(Location(user_store, "b.txt"), "x"))
         _ = await plan(
-            Delete(Location(user_store, "b.md")), Write(Location(user_store, "b.txt"), "x")
+            Delete(Location(user_store, "b.md")),
+            Write(Location(user_store, "b.txt"), "x"),
         )
 
     @pytest.mark.parametrize(
         ("pairs", "deletes", "expected"),
         [
             # A swap and a rotation, which no order of single moves can make.
-            ([("a.md", "b.md"), ("b.md", "a.md")], [], {"a.md": "b", "b.md": "a", "dir/c.md": "dir/c"}),
+            (
+                [("a.md", "b.md"), ("b.md", "a.md")],
+                [],
+                {"a.md": "b", "b.md": "a", "dir/c.md": "dir/c"},
+            ),
             (
                 [("a.md", "b.md"), ("b.md", "dir/c.md"), ("dir/c.md", "a.md")],
                 [],
                 {"a.md": "dir/c", "b.md": "a", "dir/c.md": "b"},
             ),
             # A chain, and a move onto a path the same call deletes.
-            ([("a.md", "b.md"), ("b.md", "x.md")], [], {"b.md": "a", "x.md": "b", "dir/c.md": "dir/c"}),
+            (
+                [("a.md", "b.md"), ("b.md", "x.md")],
+                [],
+                {"b.md": "a", "x.md": "b", "dir/c.md": "dir/c"},
+            ),
             ([("a.md", "b.md")], ["b.md"], {"b.md": "a", "dir/c.md": "dir/c"}),
             # Moves and deletes inside a directory another move takes.
-            ([("dir", "moved"), ("dir/c.md", "c.md")], [], {"a.md": "a", "b.md": "b", "c.md": "dir/c"}),
+            (
+                [("dir", "moved"), ("dir/c.md", "c.md")],
+                [],
+                {"a.md": "a", "b.md": "b", "c.md": "dir/c"},
+            ),
             ([("dir", "moved")], ["dir/c.md"], {"a.md": "a", "b.md": "b"}),
             (
                 [("a.md", "dir/a.md"), ("dir", "moved")],
@@ -675,7 +683,10 @@ class TestChangesets:
             _move(user_store, user_store, "b.md", "a.md"),
         )
 
-        assert repo.moved() == [("move_document", "a", "b"), ("move_document", "b", "a")]
+        assert repo.moved() == [
+            ("move_document", "a", "b"),
+            ("move_document", "b", "a"),
+        ]
 
     async def test_a_case_only_rename_renames(
         self, user_store: Casebase, layout: Path, repo: FakeRepository
@@ -742,7 +753,9 @@ class TestChangesets:
         change: Literal["add", "edit", "replace"],
     ) -> None:
         root = SearchPath(path=layout, scope=user_store.scope)
-        mount = WorkspaceOS(paths=(root,), writable=(root,), inner=OSAccess([]), limits=LIMITS)
+        mount = WorkspaceOS(
+            paths=(root,), writable=(root,), inner=OSAccess([]), limits=LIMITS
+        )
         directory = WORKSPACE_MOUNT / "~/dir"
 
         if operation == "delete":
@@ -780,7 +793,9 @@ class TestChangesets:
             Changeset((_move(user_store, user_store, "a.md", "dir"),))
         )
 
-        assert planned.changeset.operations == (_move(user_store, user_store, "a.md", "dir/a.md"),)
+        assert planned.changeset.operations == (
+            _move(user_store, user_store, "a.md", "dir/a.md"),
+        )
 
     async def test_plan_summarizes_what_a_person_approves(
         self, user_store: Casebase, layout: Path
@@ -801,7 +816,11 @@ class TestChangesets:
         )
 
         assert planned.summary == ChangesetSummary(
-            creates=(FileDiff("~/new.md", "--- /dev/null\n+++ ~/new.md\n@@ -0,0 +1 @@\n+x\n"),),
+            creates=(
+                FileDiff(
+                    "~/new.md", "--- /dev/null\n+++ ~/new.md\n@@ -0,0 +1 @@\n+x\n"
+                ),
+            ),
             updates=(
                 FileDiff(
                     "~/moved/c.md",
@@ -831,11 +850,15 @@ class TestChangesets:
 
         async with aclosing(feed.subscribe("testuser", "chat-tab")) as events:
             assert isinstance(await anext(events), FeedReady)
-            applied = await agent.apply(Changeset((Move("~/a.md", "~/dir"), Delete("~/b.md"))))
+            applied = await agent.apply(
+                Changeset((Move("~/a.md", "~/dir"), Delete("~/b.md")))
+            )
             event = await asyncio.wait_for(anext(events), 1.0)
 
         assert applied.changed == WorkspaceChanged(
-            scopes=("~",), moves=(PathMove("~/a.md", "~/dir/a.md"),), deletes=("~/b.md",)
+            scopes=("~",),
+            moves=(PathMove("~/a.md", "~/dir/a.md"),),
+            deletes=("~/b.md",),
         )
         assert event == applied.changed
 
@@ -959,7 +982,9 @@ class TestChangesRoute:
         self, layout: Path, repo: FakeRepository
     ) -> None:
         """Each shortcut is one operation of ``POST /changes``, kind checks included."""
-        await documents_routes.move_document("~/a.md", MoveDestination(destination="~/x.md"), _USER)
+        await documents_routes.move_document(
+            "~/a.md", MoveDestination(destination="~/x.md"), _USER
+        )
 
         with pytest.raises(HTTPException) as exc:
             await documents_routes.delete_document("~/dir", _USER)

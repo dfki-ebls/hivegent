@@ -1,15 +1,13 @@
-"""Phased upload: progress and durable state never disagree.
+"""Uploads commit through the changeset gateway: converted first, landed whole.
 
-The reserve/prepare/commit split must keep the invariant the product cares
-about: whenever the UI is told an image description is being generated, the
-markdown sidecar is actually stored — and if anything fails, the partial
-entry is rolled back wholesale rather than left as an orphan.
+The conversion runs before any lock and writes nothing, so a failure there or
+in the file swap leaves a prior entry as it was, and a change made to what an
+upload replaces while it converts refuses the commit.
 """
 
 from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import ClassVar
 
 import pytest
 from fastapi import HTTPException
@@ -22,7 +20,7 @@ from hivegent.db import documents as db_documents
 from hivegent.db import engine as db_engine
 from hivegent.llm_config import LlmConfig
 from hivegent.store import Casebase
-from hivegent.workspace import commit, prepare
+from hivegent.workspace import changeset, prepare
 from tests.helpers import png_bytes
 
 
@@ -39,11 +37,6 @@ class _Recorder:
         pass
 
 
-class _Chunked:
-    chunks: ClassVar[tuple[()]] = ()
-    pipeline: ClassVar[str] = "none"
-
-
 def _png_with_metadata() -> bytes:
     """A PNG carrying an ancillary tEXt chunk that sanitisation would strip."""
     info = PngInfo()
@@ -52,148 +45,118 @@ def _png_with_metadata() -> bytes:
     return png_bytes(info)
 
 
-async def test_image_upload_reports_stage_and_stores_sidecar(
-    monkeypatch: pytest.MonkeyPatch, user_store: Casebase
-) -> None:
-    async def fake_describe(
-        filepath: str,
-        content: bytes,
-        media_type: str,
-        contexts: list[str],
-        llm: object,
-    ) -> str:
-        return "A vivid blue rectangle.\n"
+@pytest.fixture()
+def workspace_dir(user_store: Casebase, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The workspace of *user_store*, with captioning, indexing, and SQL stubbed."""
 
-    async def fake_chunk(*_args: object, **_kwargs: object) -> _Chunked:
-        return _Chunked()
+    async def describe(*_args: object, **_kwargs: object) -> str:
+        return "caption\n"
 
-    monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
-
-    recorder = _Recorder()
-    await workspace.upload(user_store, "photo.png", png_bytes(), ctx=recorder)
-
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
-    assert "Generating image description" in recorder.stages
-    assert (workspace_dir / "photo.png").exists()
-    assert (workspace_dir / "photo.md").read_text() == "A vivid blue rectangle.\n"
-
-
-async def test_failed_commit_leaves_no_orphan(
-    monkeypatch: pytest.MonkeyPatch, user_store: Casebase
-) -> None:
-    async def fake_describe(*_args: object, **_kwargs: object) -> str:
-        return "ignored\n"
-
-    async def boom(*_args: object, **_kwargs: object) -> _Chunked:
-        raise RuntimeError("indexing failed")
-
-    async def no_metadata(*_args: object, **_kwargs: object) -> None:
+    async def nothing(*_args: object, **_kwargs: object) -> None:
         return None
 
-    async def noop_delete(*_args: object, **_kwargs: object) -> bool:
-        return False
+    async def no_rows(*_args: object, **_kwargs: object) -> dict[object, object]:
+        return {}
+
+    async def removed(*_args: object, **_kwargs: object) -> int:
+        return 0
 
     @asynccontextmanager
     async def no_transaction() -> AsyncGenerator[object]:
         yield object()
 
-    monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(commit, "chunk_and_index_document", boom)
-    # The rollback resolves the entry from disk and drops its index rows; stub
-    # the SQL touches so the test stays off any live database.
-    monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
+    monkeypatch.setattr(prepare, "_build_image_description", describe)
+    monkeypatch.setattr(changeset, "chunk_and_index_document", nothing)
+    monkeypatch.setattr(db_documents, "get_entry_metadata", nothing)
+    monkeypatch.setattr(db_documents, "get_entries_metadata", no_rows)
+    monkeypatch.setattr(db_documents, "delete_document", removed)
+    monkeypatch.setattr(db_documents, "delete_subtree", removed)
     monkeypatch.setattr(db_engine, "session", no_transaction)
-    monkeypatch.setattr(db_documents, "delete_document", noop_delete)
+
+    return user_store.workspace_dir(settings.data_dir)
+
+
+async def test_image_upload_reports_stage_and_stores_sidecar(
+    user_store: Casebase, workspace_dir: Path
+) -> None:
+    recorder = _Recorder()
+    await workspace.upload(user_store, "photo.png", png_bytes(), ctx=recorder)
+
+    assert "Generating image description" in recorder.stages
+    assert (workspace_dir / "photo.png").exists()
+    assert (workspace_dir / "photo.md").read_text() == "caption\n"
+
+
+async def test_failed_index_leaves_files_for_reconcile(
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("indexing failed")
+
+    monkeypatch.setattr(changeset, "chunk_and_index_document", boom)
 
     with pytest.raises(RuntimeError):
         await workspace.upload(user_store, "photo.png", png_bytes())
 
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
-    assert not (workspace_dir / "photo.png").exists()
-    assert not (workspace_dir / "photo.md").exists()
+    assert (workspace_dir / "photo.png").exists()
+    assert (workspace_dir / "photo.md").exists()
 
 
 async def test_image_upload_stores_original_verbatim(
-    monkeypatch: pytest.MonkeyPatch, user_store: Casebase
+    user_store: Casebase, workspace_dir: Path
 ) -> None:
     """The stored original keeps its ancillary chunks; sanitising is the model's job."""
-
-    async def fake_describe(*_args: object, **_kwargs: object) -> str:
-        return "caption\n"
-
-    async def fake_chunk(*_args: object, **_kwargs: object) -> _Chunked:
-        return _Chunked()
-
-    monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
-
     raw = _png_with_metadata()
     await workspace.upload(user_store, "photo.png", raw)
 
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
     assert (workspace_dir / "photo.png").read_bytes() == raw
 
 
 async def test_markdown_and_companion_original_land_as_one_entry(
-    monkeypatch: pytest.MonkeyPatch, user_store: Casebase
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     indexed_originals: list[str | None] = []
 
-    async def fake_chunk(*_args: object, **kwargs: object) -> _Chunked:
+    async def fake_chunk(*_args: object, **kwargs: object) -> None:
         metadata = kwargs["entry_metadata"]
         assert isinstance(metadata, EntryMetadata)
         indexed_originals.append(metadata.original_path)
-        return _Chunked()
 
-    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
+    monkeypatch.setattr(changeset, "chunk_and_index_document", fake_chunk)
 
     await workspace.upload(
-        user_store,
-        "report.md",
-        b"# Report\n",
-        original_path="report.pdf",
-        original_content=b"%PDF",
+        user_store, "report.md", b"# Report\n", companion=("report.pdf", b"%PDF")
     )
 
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
     assert (workspace_dir / "report.md").read_text() == "# Report\n"
     assert (workspace_dir / "report.pdf").read_bytes() == b"%PDF"
     assert indexed_originals == ["report.pdf"]
 
 
-async def test_replace_restores_entry_when_staged_install_fails(
-    monkeypatch: pytest.MonkeyPatch, user_store: Casebase
+async def test_upload_into_assets_is_refused(
+    user_store: Casebase, workspace_dir: Path
 ) -> None:
-    async def fake_describe(*_args: object, **_kwargs: object) -> str:
-        return "old caption\n"
+    """An `.assets` payload would be disowned by its entry, so no upload lands there."""
+    with pytest.raises(HTTPException) as exc:
+        await workspace.upload(user_store, "notes/report.assets/fig1.md", b"x")
 
-    async def fake_chunk(*_args: object, **_kwargs: object) -> _Chunked:
-        return _Chunked()
+    assert exc.value.status_code == 400
+    assert not (workspace_dir / "notes").exists()
 
-    async def no_metadata(*_args: object, **_kwargs: object) -> None:
-        return None
 
-    async def noop_delete_subtree(*_args: object, **_kwargs: object) -> int:
-        return 0
-
-    monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
+async def test_replace_restores_entry_when_staged_install_fails(
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     await workspace.upload(user_store, "photo.png", b"old image")
-
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
     assets = workspace_dir / "photo.assets"
     assets.mkdir()
     (assets / "old.png").write_bytes(b"old asset")
-    monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
-    monkeypatch.setattr(db_documents, "delete_subtree", noop_delete_subtree)
-
     real_replace = Path.replace
     failed = False
 
     def fail_new_original(self: Path, target: Path) -> Path:
         nonlocal failed
-        if not failed and self.name == "photo.png" and self.parent.name == "new":
+        if not failed and self.name == "photo.png" and self.parent.parent.name == "new":
             failed = True
             raise OSError("simulated replacement failure")
         return real_replace(self, target)
@@ -206,8 +169,42 @@ async def test_replace_restores_entry_when_staged_install_fails(
         )
 
     assert (workspace_dir / "photo.png").read_bytes() == b"old image"
-    assert (workspace_dir / "photo.md").read_text() == "old caption\n"
+    assert (workspace_dir / "photo.md").read_text() == "caption\n"
     assert (assets / "old.png").read_bytes() == b"old asset"
+
+
+async def test_replace_with_another_suffix_supersedes_the_original(
+    user_store: Casebase, workspace_dir: Path
+) -> None:
+    await workspace.upload(user_store, "photo.png", png_bytes())
+
+    await workspace.replace_original(
+        user_store, "photo.md", b"new image", new_filename="Photo.JPG"
+    )
+
+    assert not (workspace_dir / "photo.png").exists()
+    assert (workspace_dir / "photo.jpg").read_bytes() == b"new image"
+    assert (workspace_dir / "photo.md").read_text() == "caption\n"
+
+
+async def test_reconvert_refuses_an_original_changed_meanwhile(
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a row, the original is found on disk, and a change during the conversion wins."""
+    await workspace.upload(user_store, "photo.png", png_bytes())
+
+    async def edited_meanwhile(*_args: object, **_kwargs: object) -> str:
+        (workspace_dir / "photo.png").write_bytes(b"edited meanwhile")
+        return "new caption\n"
+
+    monkeypatch.setattr(prepare, "_build_image_description", edited_meanwhile)
+
+    with pytest.raises(HTTPException) as exc:
+        await workspace.reconvert(user_store, "photo.md")
+
+    assert exc.value.status_code == 409
+    assert (workspace_dir / "photo.png").read_bytes() == b"edited meanwhile"
+    assert (workspace_dir / "photo.md").read_text() == "caption\n"
 
 
 async def test_upload_rejects_stem_already_in_flight(
@@ -226,11 +223,11 @@ async def test_upload_rejects_stem_already_in_flight(
 async def test_destructive_ops_reject_while_stem_in_flight(
     monkeypatch: pytest.MonkeyPatch, user_store: Casebase
 ) -> None:
-    """Every stem-touching mutation refuses to race a live phased upload.
+    """Every stem-touching mutation refuses to race an entry still being indexed.
 
     Covers the destructive ops and the in-place edits (rechunk/write/edit) that
     all route through the same locked-mutation gateway, so none can mutate or
-    strip an entry whose upload has reserved but not committed it.
+    strip an entry whose commit has not indexed it yet.
     """
     monkeypatch.setattr(workspace.locks, "_states", {})
     workspace.locks._add_inflight(user_store, "docs/note.md")
@@ -238,6 +235,7 @@ async def test_destructive_ops_reject_while_stem_in_flight(
     (workspace_dir / "docs/note.assets").mkdir(parents=True)
     (workspace_dir / "docs/note.md").write_text("a")
     (workspace_dir / "docs/note.assets/img1.md").write_text("a")
+    (workspace_dir / "docs/note.assets/img1.png").write_bytes(b"png")
 
     async def no_metadata(*_args: object, **_kwargs: object) -> None:
         return None
@@ -250,7 +248,7 @@ async def test_destructive_ops_reject_while_stem_in_flight(
     def apply(
         *operations: changes.Operation[workspace.Location],
     ) -> Awaitable[workspace.AppliedChangeset]:
-        return workspace.apply_changeset(changes.Changeset(operations))
+        return workspace.apply_changeset(operations)
 
     for op in (
         apply(changes.Delete(at("docs/note.md"))),
@@ -262,6 +260,7 @@ async def test_destructive_ops_reject_while_stem_in_flight(
         apply(changes.Write(at("docs/note.md"), "x")),
         apply(changes.Edit(at("docs/note.md"), (changes.TextEdit("a", "b"),))),
         apply(changes.CreateDir(at("docs/note.md"))),
+        workspace.upload(user_store, "docs/note.md", b"x", overwrite=True),
         workspace.sync_entries_from_disk(user_store, ["docs/note.md"]),
         workspace.update_asset_description(
             user_store, "docs/note.md", "img1.png", "caption"
@@ -278,38 +277,21 @@ async def test_destructive_ops_reject_while_stem_in_flight(
 
 
 async def test_reprocess_failure_preserves_existing_entry(
-    monkeypatch: pytest.MonkeyPatch, user_store: Casebase
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failed reconversion leaves the prior entry intact, never destroyed.
 
-    The reserve/prepare/commit split keeps every workspace write in the final
-    commit, so a failure (or cancel) during the lock-free prepare cannot strip
-    the original or its description — the headline guarantee that makes a
-    cancellable reconvert/replace safe.
+    Every workspace write happens at commit, so a failure (or cancel) during
+    the lock-free conversion cannot strip the original or its description,
+    the guarantee that makes a cancellable reconvert or replace safe.
     """
-
-    async def fake_describe(*_args: object, **_kwargs: object) -> str:
-        return "caption\n"
-
-    async def fake_chunk(*_args: object, **_kwargs: object) -> _Chunked:
-        return _Chunked()
-
-    monkeypatch.setattr(prepare, "_build_image_description", fake_describe)
-    monkeypatch.setattr(commit, "chunk_and_index_document", fake_chunk)
     await workspace.upload(user_store, "photo.png", png_bytes())
-
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
     original = (workspace_dir / "photo.png").read_bytes()
-
-    # No SQL row in this stateless test; reserve falls back to the on-disk entry.
-    async def no_metadata(*_args: object, **_kwargs: object) -> None:
-        return None
 
     async def boom_prepare(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("conversion failed")
 
-    monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
-    monkeypatch.setattr(commit, "_prepare_upload", boom_prepare)
+    monkeypatch.setattr(changeset, "_prepare_upload", boom_prepare)
 
     with pytest.raises(RuntimeError):
         await workspace.replace_original(

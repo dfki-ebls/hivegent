@@ -13,8 +13,8 @@ Each :class:`Fallback` declares the suffixes it handles, a ``trigger`` predicate
 over the primary converter's outcome (a :class:`ConversionResult` on success or
 the :class:`Exception` it raised), and an async ``recover`` that returns markdown
 or ``None``.  :func:`recover_conversion` consults the registry in order and
-returns the first successful recovery, tagged with the pipeline to record as
-provenance.  Extending to a new format is one appended entry — the consumer code
+returns the first successful recovery, tagged with the fallback that produced
+it.  Extending to a new format is one appended entry — the consumer code
 (``workspace.prepare``) never changes.
 """
 
@@ -41,7 +41,7 @@ class Fallback:
     """A recovery path for documents the primary AUTO converter mishandles."""
 
     pipeline: ConversionPipeline
-    """Provenance recorded in ``conversion_pipeline_used`` for this fallback's recoveries."""
+    """The name of this fallback, logged with its recoveries."""
 
     suffixes: frozenset[str]
     """Lowercase file extensions (``.pdf``, ``.docx``, ...) this fallback handles."""
@@ -55,7 +55,7 @@ class Fallback:
 
 @dataclass(frozen=True, slots=True)
 class Recovery:
-    """A fallback's recovered markdown and the pipeline to record for it."""
+    """A fallback's recovered markdown and the pipeline that recovered it."""
 
     markdown: str
     pipeline: ConversionPipeline
@@ -97,7 +97,7 @@ async def recover_conversion(
 
     Consults *registry* (the module registry by default) in order for a fallback
     that handles *suffix* and whose trigger fires on *outcome*.  Returns the
-    recovered markdown tagged with its provenance pipeline, or ``None`` when none
+    recovered markdown tagged with its fallback's pipeline, or ``None`` when none
     applies or recovery is impossible (the caller then keeps a degraded result,
     or re-raises a failure to drop to the plain-text/stub path).
     """

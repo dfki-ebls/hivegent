@@ -28,13 +28,10 @@ __all__ = [
     "MAX_DETECTION_CHARS",
     "MODE_VALUES",
     "MUTATING_MODES",
-    "AdminFactoryResetResponse",
     "AdminGroupInfo",
-    "AdminListGroupsResponse",
-    "AdminListUsersResponse",
     "AdminMaintenanceState",
+    "AdminOverviewResponse",
     "AdminReindexResponse",
-    "AdminResetResponse",
     "AdminUserInfo",
     "AgentRunConfig",
     "AssetProcessingMode",
@@ -49,7 +46,6 @@ __all__ = [
     "DirectoryEntry",
     "DirectoryTreeResponse",
     "DocumentFilter",
-    "DocumentInfo",
     "DocumentLineCountsResponse",
     "FailedFile",
     "FrontendConfigResponse",
@@ -78,8 +74,6 @@ __all__ = [
     "TransparencyJwk",
     "TransparencyJwks",
     "UpdateTitleRequest",
-    "UploadCompleteEvent",
-    "UploadDocumentResponse",
     "UserResponse",
     "WriteDocumentRequest",
 ]
@@ -140,7 +134,10 @@ class DocumentFilter:
 
     def hides_within(self, path: str) -> bool:
         """Whether the filter hides *path* or anything below it, asked of its entries alone."""
-        return any(is_below(entry, path) or self._selects(entry, path) for entry in self.excluded)
+        return any(
+            is_below(entry, path) or self._selects(entry, path)
+            for entry in self.excluded
+        )
 
 
 class AssetProcessingMode(str, Enum):
@@ -320,35 +317,6 @@ class ChatRequestConfig(AgentRunConfig):
     )
 
 
-class DocumentInfo(BaseModel):
-    """Metadata about a logical workspace entry."""
-
-    filename: str = Field(description="The filename of the document")
-    display_name: str = Field(description="User-facing basename of the logical entry")
-    size_bytes: int = Field(description="File size in bytes")
-    modified_at: datetime = Field(description="Last modification timestamp")
-    chunk_count: int | None = Field(
-        default=None,
-        description="Number of chunks, if chunked",
-    )
-    has_original: bool = Field(
-        default=False,
-        description="Whether an original binary file exists for reconversion",
-    )
-    original_path: str | None = Field(
-        default=None,
-        description="Workspace-relative original file path when present",
-    )
-    assets_dir: str | None = Field(
-        default=None,
-        description="Workspace-relative child-assets directory when present",
-    )
-    kind: Literal["document", "asset"] = Field(
-        default="document",
-        description="Whether this is a logical document entry or raw asset row",
-    )
-
-
 class AssetEntry(BaseModel):
     """Information about a single file in a document's assets directory."""
 
@@ -390,30 +358,6 @@ class GenerateAssetDescriptionRequest(BaseModel):
     llm: LlmConfig = Field(default_factory=LlmConfig)
 
 
-class UploadDocumentResponse(BaseModel):
-    """Response for document upload."""
-
-    filename: str = Field(description="The uploaded filename")
-    converted_filename: str | None = Field(
-        default=None,
-        description="The converted markdown filename (for binary files)",
-    )
-    size_bytes: int = Field(description="File size in bytes")
-    conversion_pipeline_used: str | None = Field(
-        default=None,
-        description="The conversion pipeline used (for binary files)",
-    )
-    chunk_count: int | None = Field(
-        default=None,
-        description="Number of chunks created",
-    )
-    chunking_pipeline_used: str | None = Field(
-        default=None,
-        description="The chunking pipeline used",
-    )
-    message: str = Field(description="Status message")
-
-
 class DocumentLineCountsResponse(BaseModel):
     """Batch document line counts, keyed by the requested workspace path."""
 
@@ -442,7 +386,6 @@ class ConversationListResponse(BaseModel):
     conversations: list[ConversationSummary] = Field(
         description="List of conversation summaries",
     )
-    total_count: int = Field(description="Total number of conversations")
 
 
 class InstructionsSnapshot(BaseModel):
@@ -518,8 +461,6 @@ class CompactConversationResponse(BaseModel):
     new_conversation_id: str = Field(
         description="ID of the new compacted conversation",
     )
-    summary: str = Field(description="Summary of the original conversation")
-    message: str = Field(description="Status message")
 
 
 class UpdateTitleRequest(BaseModel):
@@ -791,12 +732,6 @@ class CollectionCompleteEvent(BaseModel):
     message: str = Field(description="Status message")
 
 
-class UploadCompleteEvent(UploadDocumentResponse):
-    """Completion payload for upload, reconvert, and replace operations."""
-
-    type: Literal["complete"] = "complete"
-
-
 class McpTestResponse(BaseModel):
     """Response from testing an MCP server connection."""
 
@@ -820,24 +755,9 @@ class TmpClearedResponse(BaseModel):
 # ─── Admin responses ───────────────────────────────────────────────────
 
 
-class AdminResetResponse(BaseModel):
-    """Generic response for a single admin reset action."""
-
-    action: str = Field(description="The action that was performed")
-    message: str = Field(description="Human-readable status message")
-
-
 class AdminReindexResponse(BaseModel):
     """Response for the global reindex action."""
 
-    stores_reconciled: int = Field(description="Number of casebases reconciled")
-    message: str = Field(description="Human-readable status message")
-
-
-class AdminFactoryResetResponse(BaseModel):
-    """Response for the composite factory-reset action."""
-
-    actions: list[str] = Field(description="Reset steps that were executed")
     message: str = Field(description="Human-readable status message")
 
 
@@ -863,15 +783,6 @@ class AdminUserInfo(BaseModel):
     id: str = Field(description="User identifier")
     document_count: int = Field(description="Number of documents owned by the user")
     conversation_count: int = Field(description="Number of conversations owned")
-    has_workspace: bool = Field(
-        description="Whether a workspace directory exists on disk",
-    )
-
-
-class AdminListUsersResponse(BaseModel):
-    """Response for the admin list-users endpoint."""
-
-    users: list[AdminUserInfo] = Field(description="Users with local data")
 
 
 class AdminGroupInfo(BaseModel):
@@ -879,12 +790,10 @@ class AdminGroupInfo(BaseModel):
 
     id: str = Field(description="Group identifier")
     document_count: int = Field(description="Number of documents owned by the group")
-    has_workspace: bool = Field(
-        description="Whether a workspace directory exists on disk",
-    )
 
 
-class AdminListGroupsResponse(BaseModel):
-    """Response for the admin list-groups endpoint."""
+class AdminOverviewResponse(BaseModel):
+    """Response for the admin overview endpoint."""
 
+    users: list[AdminUserInfo] = Field(description="Users with local data")
     groups: list[AdminGroupInfo] = Field(description="All groups known to the system")

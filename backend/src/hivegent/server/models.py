@@ -11,8 +11,6 @@ from ..types import PipelineSpec
 
 __all__ = [
     "MAX_CHANGE_OPERATIONS",
-    "BulkRechunkRequest",
-    "BulkReconvertRequest",
     "ChangeOperation",
     "ChangesRequest",
     "CreateDirOperation",
@@ -21,6 +19,7 @@ __all__ = [
     "MoveDestination",
     "MoveOperation",
     "MovePaths",
+    "RechunkRequest",
     "ReconvertRequest",
     "WorkspacePath",
 ]
@@ -29,25 +28,18 @@ MAX_CHANGE_OPERATIONS = 10_000
 """Most operations one change request carries, as many as a collection may import."""
 
 
-class ReconvertRequest(BaseModel):
-    """Request to reconvert a document from its original binary file."""
+class RechunkRequest(BaseModel):
+    """Request to rechunk documents with new settings."""
 
-    pipeline: PipelineSpec = Field(default_factory=PipelineSpec)
-    llm: LlmConfig = Field(default_factory=LlmConfig)
-
-
-class BulkRechunkRequest(BaseModel):
-    """Request to bulk rechunk multiple documents."""
-
-    files: list[str] = Field(description="List of file paths to rechunk")
+    files: list[str] = Field(
+        min_length=1, description="Workspace paths of the documents, all in one scope"
+    )
     pipeline: PipelineSpec = Field(default_factory=PipelineSpec)
 
 
-class BulkReconvertRequest(BaseModel):
-    """Request to bulk reconvert multiple documents from originals."""
+class ReconvertRequest(RechunkRequest):
+    """Request to reconvert documents from their originals."""
 
-    files: list[str] = Field(description="List of file paths to reconvert")
-    pipeline: PipelineSpec = Field(default_factory=PipelineSpec)
     llm: LlmConfig = Field(default_factory=LlmConfig)
 
 

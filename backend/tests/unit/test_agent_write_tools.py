@@ -6,7 +6,7 @@ it: a workspace's through the changeset gateway and its approval, ``/tmp``'s
 straight into the conversation's folder.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
@@ -58,6 +58,7 @@ from hivegent.tools.mutations import DocumentMove
 from hivegent.types import DocumentFilter
 from hivegent.workspace import Location, PlannedChangeset
 from hivegent.workspace import changeset as gateway
+from hivegent.workspace.operations import Item, locations
 from tests.helpers import owned, run_context
 
 
@@ -65,7 +66,9 @@ from tests.helpers import owned, run_context
 def deps(data_dir: Path) -> UserDeps:
     """Deps with one writable and one read-only group."""
     _ = data_dir
-    user = User("u", read_groups=frozenset({"archive"}), write_groups=frozenset({"team"}))
+    user = User(
+        "u", read_groups=frozenset({"archive"}), write_groups=frozenset({"team"})
+    )
 
     return UserDeps(user=user, mode="interactive", conversation=owned("c1", user))
 
@@ -80,19 +83,19 @@ def routed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     apply = gateway.apply_changeset
 
     async def _apply(
-        changeset: Changeset[Location],
+        items: Sequence[Item],
         *,
         owner: str | None = None,
         filters: Mapping[str, PathFilter] = MappingProxyType({}),
         host: bool = False,
     ) -> gateway.AppliedChangeset:
-        if any(loc.root.store is None for loc in changeset.locations):
-            return await apply(changeset, owner=owner, filters=filters, host=host)
+        if any(loc.root.store is None for loc in locations(items)):
+            return await apply(items, owner=owner, filters=filters, host=host)
 
-        calls.extend((loc.root.store_key, loc.path) for loc in changeset.locations)
+        calls.extend((loc.root.store_key, loc.path) for loc in locations(items))
 
         return gateway.AppliedChangeset(
-            tuple("written" for _ in changeset.operations), WorkspaceChanged(("~",))
+            tuple("written" for _ in items), WorkspaceChanged(("~",))
         )
 
     monkeypatch.setattr(gateway, "apply_changeset", _apply)
@@ -133,7 +136,9 @@ async def test_tmp_is_written_directly_and_a_program_there_is_pointed_at_run_pyt
     )
 
     # Moves and deletes reach `/tmp` too, and land at once.
-    _ = await _move_documents(deps)([DocumentMove("/tmp/rows.json", "/tmp/old/rows.json")])
+    _ = await _move_documents(deps)(
+        [DocumentMove("/tmp/rows.json", "/tmp/old/rows.json")]
+    )
     assert (folder / "old" / "rows.json").read_text() == "[]"
     _ = await _delete_documents(deps)(["/tmp/old/rows.json"])
     assert not (folder / "old" / "rows.json").exists()
@@ -165,7 +170,9 @@ async def test_unprefixed_path_is_refused_with_the_roots_named(
     """Nothing is implied by context, so the refusal says what to write instead."""
     tool = _write_document(deps)
 
-    with pytest.raises(ToolRetry, match=r"addresses ~, @team, /tmp; give the full path"):
+    with pytest.raises(
+        ToolRetry, match=r"addresses ~, @team, /tmp; give the full path"
+    ):
         await tool("notes/a.md", "hi")
 
     assert routed == []
@@ -302,9 +309,7 @@ async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
     with pytest.raises(ApprovalRequired) as exc:
         await write("interactive", "@team/tmp/run.py")
 
-    assert [create["path"] for create in _asked(exc)["creates"]] == [
-        "@team/tmp/run.py"
-    ]
+    assert [create["path"] for create in _asked(exc)["creates"]] == ["@team/tmp/run.py"]
 
     # A traversal reaches neither another conversation's folder nor a document.
     with pytest.raises(ModelRetry, match="not accessible"):
@@ -342,7 +347,9 @@ async def test_an_edit_that_cannot_apply_is_refused_before_the_approval(
 
     # Approved, or in a mode that asks nothing, the commit is what refuses.
     await validate_document_edit(
-        _context(deps, "interactive", approved=True), file_path="~/notes.md", edits=edits
+        _context(deps, "interactive", approved=True),
+        file_path="~/notes.md",
+        edits=edits,
     )
 
 
@@ -396,7 +403,9 @@ async def test_a_batch_of_moves_is_one_approval_of_the_planner_s_summary(
     with pytest.raises(ApprovalRequired) as exc:
         await validate_document_moves(_context(deps, "interactive"), moves=moves)
 
-    def move(source: str, destination: str, *, is_dir: bool = False) -> dict[str, object]:
+    def move(
+        source: str, destination: str, *, is_dir: bool = False
+    ) -> dict[str, object]:
         return {
             "source": source,
             "destination": destination,
@@ -449,7 +458,9 @@ def planned(monkeypatch: pytest.MonkeyPatch) -> list[Changeset[Location]]:
     """Plan every changeset as valid with :data:`_SUMMARY`, recording each."""
     calls: list[Changeset[Location]] = []
 
-    async def _plan(changeset: Changeset[Location], **_options: object) -> PlannedChangeset:
+    async def _plan(
+        changeset: Changeset[Location], **_options: object
+    ) -> PlannedChangeset:
         calls.append(changeset)
 
         return PlannedChangeset(changeset, _SUMMARY)
@@ -472,8 +483,13 @@ async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
 
     assert isinstance(staged, PendingChanges)
     assert staged.summary == _SUMMARY
-    assert await staging.load_staged(owned("c1", deps.user), staged.changeset_id) == _STAGED
-    assert await staging.load_staged(owned("c2", deps.user), staged.changeset_id) is None
+    assert (
+        await staging.load_staged(owned("c1", deps.user), staged.changeset_id)
+        == _STAGED
+    )
+    assert (
+        await staging.load_staged(owned("c2", deps.user), staged.changeset_id) is None
+    )
     assert (folder / "state.json").read_text() == "{}"
     assert applied == AppliedChanges(("written", "written"))
     assert len(planned) == 1
@@ -522,7 +538,11 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
 
     assert result.data == "written\nwritten"
     assert len(planned) == 1
-    assert routed == [("user:u", "a.md"), ("user:u", "notes/a.md"), ("user:u", "notes/a.md")]
+    assert routed == [
+        ("user:u", "a.md"),
+        ("user:u", "notes/a.md"),
+        ("user:u", "notes/a.md"),
+    ]
 
     with pytest.raises(ToolRetry, match="No staged changeset"):
         await _apply_changes(deps)(changeset_id)
@@ -531,7 +551,9 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
 async def test_a_stale_changeset_asks_for_a_new_run(
     deps: UserDeps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _stale(_changeset: Changeset[Location], **_options: object) -> PlannedChangeset:
+    async def _stale(
+        _changeset: Changeset[Location], **_options: object
+    ) -> PlannedChangeset:
         raise HTTPException(status_code=409, detail="'~/a.md' changed")
 
     monkeypatch.setattr(gateway, "plan_changeset", _stale)

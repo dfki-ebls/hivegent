@@ -9,17 +9,12 @@ import type {
   ToolsSpec,
 } from "@/lib/types";
 import {
-  type AdminFactoryResetResponse,
-  AdminFactoryResetResponseSchema,
-  type AdminGroupInfo,
-  AdminListGroupsResponseSchema,
-  AdminListUsersResponseSchema,
   AdminMaintenanceStateSchema,
+  type AdminOverview,
+  AdminOverviewSchema,
   type AdminReindexResponse,
   AdminReindexResponseSchema,
-  type AdminResetResponse,
-  AdminResetResponseSchema,
-  type AdminUserInfo,
+  type AdminResetTarget,
   type AssetEntry,
   AssetEntrySchema,
   type AssetListResponse,
@@ -28,8 +23,6 @@ import {
   BackendSettingsSchema,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
-  type ChunkingPipeline,
-  ChunkingPipelineSchema,
   type CompactConversationResponse,
   CompactConversationResponseSchema,
   ConversationListResponseSchema,
@@ -38,8 +31,6 @@ import {
   type ConversationArchive,
   ConversationSummarySchema,
   type ServerConversation,
-  type ConversionPipeline,
-  ConversionPipelineSchema,
   type DirectoryTreeResponse,
   DirectoryTreeResponseSchema,
   type GenerateTitleResponse,
@@ -48,8 +39,11 @@ import {
   type JobView,
   JobViewSchema,
   type LlmConfig,
+  type PipelineByKind,
+  PipelineByKindSchemas,
   type PipelineConfigInfo,
   PipelineConfigInfoSchema,
+  type PipelineKind,
   type TmpClearedResponse,
   TmpClearedResponseSchema,
   type ToolInfo,
@@ -780,42 +774,27 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   });
 }
 
-// Conversion pipeline API functions
+// Pipeline API functions
 
-export async function listConversionPipelines(): Promise<ConversionPipeline[]> {
+/** List the installed pipelines of one processing stage. */
+export async function listPipelines<K extends PipelineKind>(
+  stage: K,
+): Promise<PipelineByKind[K][]> {
   return requestJson(
-    `${API_BASE_URL}/api/pipelines/conversion`,
-    "fetchConversionPipelines",
-    z.array(ConversionPipelineSchema),
+    `${API_BASE_URL}/api/pipelines/${stage}`,
+    "fetchPipelines",
+    z.array(PipelineByKindSchemas[stage]),
   );
 }
 
-export async function getConversionPipelineConfig(
-  pipeline: ConversionPipeline,
+/** Get configuration metadata for one pipeline of a processing stage. */
+export async function getPipelineConfig(
+  stage: PipelineKind,
+  pipeline: string,
 ): Promise<PipelineConfigInfo> {
   return requestJson(
-    `${API_BASE_URL}/api/pipelines/conversion/${encodeURIComponent(pipeline)}/config`,
-    "fetchConversionPipelineConfig",
-    PipelineConfigInfoSchema,
-  );
-}
-
-// Chunking pipeline API functions
-
-export async function listChunkingPipelines(): Promise<ChunkingPipeline[]> {
-  return requestJson(
-    `${API_BASE_URL}/api/pipelines/chunking`,
-    "fetchChunkingPipelines",
-    z.array(ChunkingPipelineSchema),
-  );
-}
-
-export async function getChunkingPipelineConfig(
-  pipeline: ChunkingPipeline,
-): Promise<PipelineConfigInfo> {
-  return requestJson(
-    `${API_BASE_URL}/api/pipelines/chunking/${encodeURIComponent(pipeline)}/config`,
-    "fetchChunkingPipelineConfig",
+    `${API_BASE_URL}/api/pipelines/${stage}/${encodeURIComponent(pipeline)}/config`,
+    "fetchPipelineConfig",
     PipelineConfigInfoSchema,
   );
 }
@@ -894,45 +873,6 @@ export async function deleteAssetDescription(
   );
 }
 
-/** Options for document reconversion. */
-export interface ReconvertDocumentOptions {
-  spec?: PipelineSpec;
-  llm?: LlmConfig;
-}
-
-/**
- * Rechunk a document with new settings as a background job; resolves with the
- * job's initial snapshot. Progress arrives via the `/jobs` feed.
- */
-export async function rechunkDocument(filename: string, spec?: PipelineSpec): Promise<JobView> {
-  return postJob(
-    `${API_BASE_URL}/api/documents/rechunk/${encodeFilePath(filename)}`,
-    spec ?? {},
-    "rechunk",
-  );
-}
-
-/**
- * Reconvert a document from its original and start its background job.
- * Resolves with the job's initial snapshot; progress arrives via the feed.
- */
-export async function reconvertDocument(
-  filename: string,
-  options?: ReconvertDocumentOptions & { signal?: AbortSignal },
-): Promise<JobView> {
-  return requestJson(
-    `${API_BASE_URL}/api/documents/reconvert/${encodeFilePath(filename)}`,
-    "reconvert",
-    JobViewSchema,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pipeline: options?.spec ?? {}, llm: options?.llm ?? {} }),
-      signal: options?.signal,
-    },
-  );
-}
-
 // --- Background jobs (generic) ---
 
 /** List the caller's known background jobs. */
@@ -976,31 +916,31 @@ export async function subscribeJobs(
   });
 }
 
-// --- Bulk operation API functions ---
+// --- Rechunk and reconvert ---
 //
-// Bulk rechunk and reconvert run as one background job each: the POST resolves
-// with the job's initial snapshot and per-file progress then arrives through the
-// `/jobs` feed. Moves, deletes, and new directories go through `applyChanges`.
+// Each runs as one background job over its files: the POST resolves with the
+// job's initial snapshot and progress then arrives through the `/jobs` feed.
+// Moves, deletes, and new directories go through `applyChanges`.
 
-/** Bulk rechunk multiple documents as a background job. */
-export function bulkRechunk(files: string[], spec?: PipelineSpec): Promise<JobView> {
+/** Rechunk documents with new settings as a background job. */
+export function rechunkDocuments(files: string[], spec?: PipelineSpec): Promise<JobView> {
   return postJob(
-    `${API_BASE_URL}/api/documents/rechunk/bulk`,
+    `${API_BASE_URL}/api/documents/rechunk`,
     { files, pipeline: spec ?? {} },
-    "bulkRechunk",
+    "rechunk",
   );
 }
 
-/** Bulk reconvert multiple documents as a background job. */
-export function bulkReconvert(
+/** Reconvert documents from their originals as a background job. */
+export function reconvertDocuments(
   files: string[],
   spec?: PipelineSpec,
   llm?: LlmConfig,
 ): Promise<JobView> {
   return postJob(
-    `${API_BASE_URL}/api/documents/reconvert/bulk`,
+    `${API_BASE_URL}/api/documents/reconvert`,
     { files, pipeline: spec ?? {}, llm: llm ?? {} },
-    "bulkReconvert",
+    "reconvert",
   );
 }
 
@@ -1086,55 +1026,34 @@ export async function deleteAllUserData(): Promise<void> {
 
 // ============================================================
 // Admin API functions (require user.is_admin)
-//
-// All admin endpoints share the same response shapes: a generic
-// `{action, message}` for single resets, a counter for reindex, and a
-// list of actions for the composite factory reset.  Helpers stay thin
-// so the UI can render confirmation dialogs and toast the message
-// directly.
 // ============================================================
 
-/** POST helper that validates an admin reset response, raising on HTTP errors. */
-async function adminPost<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  return requestJson(`${API_BASE_URL}${path}`, "adminAction", schema, { method: "POST" });
+/** Wipe the workspace (files and documents), the database (identities and conversations), or both. */
+export function adminReset(target: AdminResetTarget): Promise<void> {
+  return requestVoid(`${API_BASE_URL}/api/admin/reset/${target}`, "adminAction", {
+    method: "POST",
+  });
 }
 
-/** Wipe the workspace tree on disk and the matching SQL document rows. */
-export function adminResetWorkspace(): Promise<AdminResetResponse> {
-  return adminPost("/api/admin/reset/workspace", AdminResetResponseSchema);
-}
-
-/** Wipe every user, group, and the rows that cascade from them. */
-export function adminResetDatabase(): Promise<AdminResetResponse> {
-  return adminPost("/api/admin/reset/database", AdminResetResponseSchema);
-}
-
-/** Reconcile every casebase: prune workspace and SQL orphans. */
+/** Reconcile every casebase: re-derive the document index from the files on disk. */
 export function adminReindex(): Promise<AdminReindexResponse> {
-  return adminPost("/api/admin/reindex", AdminReindexResponseSchema);
+  return requestJson(
+    `${API_BASE_URL}/api/admin/reindex`,
+    "adminAction",
+    AdminReindexResponseSchema,
+    {
+      method: "POST",
+    },
+  );
 }
 
-/** Composite factory reset: workspace + database. */
-export function adminFactoryReset(): Promise<AdminFactoryResetResponse> {
-  return adminPost("/api/admin/reset/factory", AdminFactoryResetResponseSchema);
-}
-
-/** List every user known to the local database (footprint-bearing only). */
-export async function adminListUsers(): Promise<AdminUserInfo[]> {
-  return (
-    await requestJson(`${API_BASE_URL}/api/admin/users`, "listUsers", AdminListUsersResponseSchema)
-  ).users;
-}
-
-/** List every group known to the local database. */
-export async function adminListGroups(): Promise<AdminGroupInfo[]> {
-  return (
-    await requestJson(
-      `${API_BASE_URL}/api/admin/groups`,
-      "listGroups",
-      AdminListGroupsResponseSchema,
-    )
-  ).groups;
+/** The users with a footprint in the local database, and every group. */
+export function adminOverview(): Promise<AdminOverview> {
+  return requestJson(
+    `${API_BASE_URL}/api/admin/overview`,
+    "readAdminOverview",
+    AdminOverviewSchema,
+  );
 }
 
 /** Read the server's global maintenance flag. */

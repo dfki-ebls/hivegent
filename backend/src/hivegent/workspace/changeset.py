@@ -1,4 +1,4 @@
-"""The one gateway every write, edit, move, delete, and new directory commits through.
+"""The one gateway every write, edit, move, delete, new directory, and upload commits through.
 
 A :class:`~hivegent.changes.Changeset` routed to
 :class:`~hivegent.workspace.operations.Location`\\ s, a root and the path
@@ -13,6 +13,16 @@ local to it, is a batch of operations (:mod:`hivegent.changes`):
 * ``Delete`` removes an entry or a directory, refusing the other kind when
   it states which it ``expect``\\ s.
 * ``CreateDir`` creates an empty directory.
+* :class:`~hivegent.workspace.operations.Upload` lands a file's bytes as an
+  entry, converted the way every upload is.  Only the host builds one, so it
+  is never planned for an approval nor stored.  An ``overwrite`` replaces the
+  entry at its stem, keeping its origin: in place when the upload consists of
+  its files, and deleting it first when the entry has others, such as an
+  original of another suffix.
+
+An asset's description in an ``.assets`` payload, which only the host
+changes, is a unit of its own: written and deleted without its asset, which
+it needs, so a change leaving the description without its asset is refused.
 
 A :class:`~hivegent.workspace.operations.Root` answers for its own rules, so
 both kinds go through the one planner and executor below: a casebase's
@@ -58,15 +68,15 @@ workspace change is put to a person.
 
 :func:`apply_changeset` commits a changeset all or nothing:
 
-1. Resolve every item and convert the text originals whose markdown projection
-   has to be regenerated, concurrently and without any lock, which is skipped
-   when no item writes text in a workspace.
+1. Resolve every item and convert the uploads and the text originals whose
+   markdown projection has to be regenerated, concurrently and without any
+   lock, which is skipped when no item uploads or writes a workspace original.
 2. Take the locks of every root involved, in ``store_key`` order, so the tasks
    writing one folder (a tool, a program, a spilled result) check and write it
    one at a time.
 3. Resolve again, so every text item is derived and every basis, path, filter,
-   and quota checked under the locks, and refuse with a 409 when an original
-   converted in step 1 changed meanwhile.
+   and quota checked under the locks, and refuse with a 409 when what an item
+   converted in step 1 replaces changed meanwhile.
 4. Install every file change through one rename journal in a worker thread,
    staged beside every root it changes so each step stays a rename, and apply
    every row change in one SQL transaction, so a failure in either restores
@@ -121,14 +131,13 @@ from ..changes import (
     Edit,
     FileDiff,
     Move,
-    Operation,
     PathMove,
     WorkspaceChanged,
     Write,
     capped_diff,
 )
 from ..chunkers import ChunkingSpec
-from ..chunkers.base import EntryMetadata
+from ..chunkers.base import EntryMetadata, EntryOrigin
 from ..concurrency import bounded_gather, shield_to_completion
 from ..config import sanitize_document_path, settings
 from ..converters import writes_as_text
@@ -140,9 +149,12 @@ from ..entries import (
     Listdir,
     assets_dir_for_stem,
     description_path_for_stem,
+    entry_exists,
+    find_original_for_stem,
     folds_case,
     is_below,
     is_description_file,
+    is_inside_assets_dir,
     list_names,
     path_key,
     rebase,
@@ -158,15 +170,6 @@ from ..store import Casebase
 from ..tools.base import PathFilter
 from ..types import PipelineSpec
 from ..workspace_events import announce_workspace_changed
-from .commit import (
-    _DOCUMENT_EXISTS,
-    _entry_paths,
-    _is_existing_directory,
-    _remove_entry_files,
-    _remove_entry_rows,
-    _stage_prepared,
-    _written_entries,
-)
 from .documents import (
     _already_exists,
     _binary_write,
@@ -185,7 +188,8 @@ from .locks import (
     _reject_if_inflight,
     _reject_if_scope_inflight,
 )
-from .operations import Location, Root, changed_root, route
+from .metadata import _entry_paths, _merge_entry_paths, current_entry_metadata
+from .operations import Item, Location, Root, Upload, changed_root, locations, route
 from .paths import (
     _STAGE_PREFIX,
     DIRECTORY_PATH_REQUIRED,
@@ -193,11 +197,13 @@ from .paths import (
     _Journal,
     _parent_is_file,
     _shown,
+    _WorkspaceChange,
+    _write_markdown_file,
     _write_workspace_file,
     directory_not_found,
     document_not_found,
 )
-from .prepare import _prepare_upload, _PreparedUpload, _Reserved
+from .prepare import _prepare_upload, _PreparedUpload
 
 __all__ = [
     "AppliedChangeset",
@@ -232,6 +238,22 @@ def _deleted(path: str) -> Localized[str]:
 
 def _created_directory(path: str) -> Localized[str]:
     return Localized(en=f"Created '{path}'.", de=f"„{path}“ erstellt.")
+
+
+def _uploaded(path: str) -> Localized[str]:
+    return Localized(en=f"Uploaded '{path}'.", de=f"„{path}“ hochgeladen.")
+
+
+def _is_existing_directory(path: str) -> Localized[str]:
+    return Localized(
+        en=f"'{path}' is an existing directory",
+        de=f"„{path}“ ist ein vorhandener Ordner",
+    )
+
+
+_DOCUMENT_EXISTS = Localized(
+    en="Document already exists", de="Das Dokument existiert bereits"
+)
 
 
 def _destination_exists_at(path: str) -> Localized[str]:
@@ -307,6 +329,13 @@ def _carries_hidden(path: str) -> Localized[str]:
     )
 
 
+def _describes_nothing(path: str) -> Localized[str]:
+    return Localized(
+        en=f"'{path}' describes no asset beside it",
+        de=f"„{path}“ beschreibt kein Asset daneben",
+    )
+
+
 def _into_itself(path: str) -> Localized[str]:
     return Localized(
         en=f"Cannot move a directory into itself: {path}",
@@ -379,10 +408,14 @@ class _Plan:
     """The files text items write, which exist nowhere yet for the disk to show."""
     originals: list[_Unit] = field(default_factory=list)
     """The new originals, each claiming a stem once every item is resolved."""
+    overwrites: list[_Unit] = field(default_factory=list)
+    """The entries uploads replace, each claiming a stem but for its own files."""
     guards: list[Callable[[], None]] = field(default_factory=list)
     """In-flight checks, run on the event loop that changes what they read."""
     evicted: list[_Unit] = field(default_factory=list)
     """The files a root's quota evicts to fit the changeset."""
+    described: list[tuple[Location, str | None]] = field(default_factory=list)
+    """The asset descriptions the changeset keeps, each with the asset it needs."""
     folded: dict[str, bool] = field(default_factory=dict)
     listdir: Listdir = field(default_factory=lambda: cache(list_names))
 
@@ -404,7 +437,9 @@ class _Plan:
     def check_reserved(self, root: Root, path: str) -> None:
         """Refuse a path *root* keeps from ordinary changes, which the host may make."""
         if not self.host and root.policy.reserves(root.path, path):
-            raise HTTPException(status_code=400, detail=_kept(_shown(root, path)).current)
+            raise HTTPException(
+                status_code=400, detail=_kept(_shown(root, path)).current
+            )
 
     def check_inflight(self) -> None:
         """Run and clear the in-flight checks collected so far."""
@@ -430,7 +465,9 @@ class _Plan:
         self.check_reserved(root, str(path))
 
         if keep_name:
-            spelled = PurePosixPath(respell(directory, str(path.parent), self.listdir), path.name)
+            spelled = PurePosixPath(
+                respell(directory, str(path.parent), self.listdir), path.name
+            )
 
             return Location(root, str(spelled))
 
@@ -443,7 +480,9 @@ class _Plan:
         pure = PurePosixPath(path)
 
         for candidate in (pure, *pure.parents):
-            hit = claims.get(self.key(root, str(candidate))) if candidate.parts else None
+            hit = (
+                claims.get(self.key(root, str(candidate))) if candidate.parts else None
+            )
 
             if hit is not None and hit[0] != skip:
                 return hit
@@ -468,10 +507,42 @@ class _Plan:
 
             if key in claims and claims[key][0] != index:
                 raise HTTPException(
-                    status_code=400, detail=_claimed_twice(_shown(unit.root, path)).current
+                    status_code=400,
+                    detail=_claimed_twice(_shown(unit.root, path)).current,
                 )
 
             claims[key] = (index, unit)
+
+    def description(self, location: Location) -> _Unit | None:
+        """The unit of an asset's description, the description alone, ``None`` for any other path.
+
+        The asset is the original it describes, which :meth:`check_described`
+        then requires once the changeset applied.
+        """
+        root, path = location.root, location.path
+
+        if (
+            root.store is None
+            or not is_inside_assets_dir(path)
+            or not is_description_file(path)
+        ):
+            return None
+
+        stem = stem_path_from_reference(path)
+        self.described.append(
+            (location, find_original_for_stem(root.path, stem, self.listdir))
+        )
+
+        return _Unit(root, stem, EntryPaths(stem, path, None, None))
+
+    def check_described(self) -> None:
+        """Refuse an asset's description whose asset is gone once the changeset applied."""
+        for location, asset in self.described:
+            if asset is None or self.occupied(location.root, asset) is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=_describes_nothing(location.canonical).current,
+                )
 
     def fill(self, index: int, target: Location) -> None:
         key = self.key(target.root, target.path)
@@ -495,9 +566,7 @@ class _Plan:
             self.fill(index, target)
             self.written[self.key(root, path)] = target
 
-    def origin(
-        self, root: Root, path: str, skip: int | None = None
-    ) -> Location | None:
+    def origin(self, root: Root, path: str, skip: int | None = None) -> Location | None:
         """The current path whose content lies at *path* once the changeset applied.
 
         ``None`` when nothing of the current workspace ends up there.  *skip*
@@ -515,7 +584,9 @@ class _Plan:
 
             owner = self.holder(self.vacated, source.root, initial)
 
-            return Location(source.root, initial) if owner and owner[0] == index else None
+            return (
+                Location(source.root, initial) if owner and owner[0] == index else None
+            )
 
         return None if self.holder(self.vacated, root, path) else Location(root, path)
 
@@ -551,7 +622,8 @@ class _Plan:
 
                 if target is not None:
                     raise HTTPException(
-                        status_code=409, detail=_parent_is_file(target.canonical).current
+                        status_code=409,
+                        detail=_parent_is_file(target.canonical).current,
                     )
 
     def _final_names(self, root: Root, directory: str) -> set[str]:
@@ -581,19 +653,21 @@ class _Plan:
             ),
         }
 
-    def check_slot(self, unit: _Unit) -> None:
+    def check_slot(self, unit: _Unit, *, overwrite: bool = False) -> None:
         """Refuse a new original whose stem holds another entry once the changeset applied.
 
         An upload's slot check, asked of the final state like every other check
         here: a stem the changeset vacates is free, and one it moves an entry
-        onto, or writes another part of, is not.
+        onto, or writes another part of, is not.  An *overwrite* may replace
+        the files the unit consists of and its ``.assets`` directory, and
+        nothing else at the stem.
         """
         root, stem = unit.root, PurePosixPath(unit.path)
 
         for path in unit.files:
             occupant = self.occupied(root, path)
 
-            if occupant is not None:
+            if occupant is not None and (occupant.is_dir() or not overwrite):
                 detail = (
                     _is_existing_directory(_shown(root, path))
                     if occupant.is_dir()
@@ -602,6 +676,9 @@ class _Plan:
                 raise HTTPException(status_code=409, detail=detail.current)
 
         own = {self.key(root, path) for path in unit.files}
+
+        if overwrite:
+            own.add(self.key(root, assets_dir_for_stem(unit.path)))
         name = self.key(root, stem.name)
 
         for sibling_name in self._final_names(root, str(stem.parent)):
@@ -639,6 +716,24 @@ class _TextEffect:
 
 
 @dataclass(slots=True, frozen=True)
+class _UploadEffect:
+    """An upload's bytes landing as an entry at *target*."""
+
+    upload: Upload
+    target: Location
+    original: tuple[str, bytes] | None
+    """The original it writes, the target itself or a markdown's companion."""
+    origin: EntryOrigin
+    """How the entry came to be, the one it overwrites kept."""
+    present: tuple[ContentStat | None, ...]
+    """What lies at its files before the changeset, so a change made meanwhile shows."""
+    replacing: bool
+    """Whether it replaces an entry in place, whose stale asset rows then go."""
+    superseded: _Unit | None
+    """The entry it overwrites by deleting it first, since that has files the upload has not."""
+
+
+@dataclass(slots=True, frozen=True)
 class _Vacate:
     """A unit that leaves its place, landing at *destination* or deleted."""
 
@@ -651,14 +746,25 @@ class _MakeDir:
     target: Location
 
 
-type _Effect = _TextEffect | _Vacate | _MakeDir
+type _Effect = _TextEffect | _UploadEffect | _Vacate | _MakeDir
+
+
+def _vacate_of(effect: _Effect) -> _Vacate | None:
+    """What an item vacates: a move's or a delete's unit, or the entry an upload supersedes."""
+    match effect:
+        case _Vacate():
+            return effect
+        case _UploadEffect(superseded=_Unit() as unit):
+            return _Vacate(unit, None)
+        case _:
+            return None
 
 
 @dataclass(slots=True, frozen=True)
 class _Resolved:
     """One validated item: its resolved form, what it does, and its report."""
 
-    operation: Operation[Location]
+    operation: Item
     effect: _Effect
     report: str
 
@@ -712,8 +818,8 @@ def _source(
     return location, is_dir
 
 
-def _locate_sources(plan: _Plan, operations: list[Operation[Location]]) -> _Sources:
-    """Spell every move's and delete's source as the disk does, in place."""
+def _locate_sources(plan: _Plan, operations: list[Item]) -> _Sources:
+    """Spell every move's and delete's source, and every upload's target, as the disk does, in place."""
     sources: _Sources = {}
 
     for index, op in enumerate(operations):
@@ -731,13 +837,20 @@ def _locate_sources(plan: _Plan, operations: list[Operation[Location]]) -> _Sour
 
                 sources[index] = _source(plan, target, basis, expect, moving=False)
                 operations[index] = replace(op, target=sources[index][0])
+            case Upload(target=target):
+                # Guarded here too, so an upload in flight is refused before its row is read.
+                located = plan.sanitized(target)
+                plan.guard(located.root, located.path)
+                operations[index] = replace(op, target=located)
             case _:
                 pass
 
     return sources
 
 
-def _landing(operation: Move[Location], index: int, source: _Unit, plan: _Plan) -> Move[Location]:
+def _landing(
+    operation: Move[Location], index: int, source: _Unit, plan: _Plan
+) -> Move[Location]:
     """Resolve where a move lands, and claim it."""
     destination = operation.destination
 
@@ -751,7 +864,9 @@ def _landing(operation: Move[Location], index: int, source: _Unit, plan: _Plan) 
     if not same_root and None in (root.store, source.root.store):
         raise HTTPException(
             status_code=400,
-            detail=_crosses_roots(operation.source.canonical, destination.canonical).current,
+            detail=_crosses_roots(
+                operation.source.canonical, destination.canonical
+            ).current,
         )
 
     named = source.entry.description_path if source.entry else source.path
@@ -763,9 +878,12 @@ def _landing(operation: Move[Location], index: int, source: _Unit, plan: _Plan) 
         path = str(PurePosixPath(directory, PurePosixPath(named).name))
 
     if source.entry is None:
-        if same_root and is_below(plan.key(root, path)[1], plan.key(root, source.path)[1]):
+        if same_root and is_below(
+            plan.key(root, path)[1], plan.key(root, source.path)[1]
+        ):
             raise HTTPException(
-                status_code=400, detail=_into_itself(_shown(source.root, source.path)).current
+                status_code=400,
+                detail=_into_itself(_shown(source.root, source.path)).current,
             )
 
         plan.check_reserved(root, path)
@@ -796,9 +914,9 @@ def _check_landing(index: int, destination: _Unit, plan: _Plan) -> None:
 
     if destination.entry is not None and origin is not None:
         paths.update(
-            resolve_entry_paths(
-                origin.root.path, origin.path, plan.listdir
-            ).at(destination.path).files
+            resolve_entry_paths(origin.root.path, origin.path, plan.listdir)
+            .at(destination.path)
+            .files
         )
 
     for path in sorted(paths):
@@ -811,7 +929,9 @@ def _check_landing(index: int, destination: _Unit, plan: _Plan) -> None:
         plan.check_parents(destination.root, path)
 
 
-def _resolve_text(operation: Write[Location] | Edit[Location], index: int, plan: _Plan) -> _Resolved:
+def _resolve_text(
+    operation: Write[Location] | Edit[Location], index: int, plan: _Plan
+) -> _Resolved:
     target = plan.sanitized(operation.target)
     root, path = target.root, target.path
     shown = _shown(root, path)
@@ -837,14 +957,18 @@ def _resolve_text(operation: Write[Location] | Edit[Location], index: int, plan:
 
     _enforce_file_size(content.encode("utf-8"))
     stem = stem_path_from_reference(path)
-    unit = _Unit(root, stem, EntryPaths(stem, path, None, None))
+    unit = plan.description(target) or _Unit(
+        root, stem, EntryPaths(stem, path, None, None)
+    )
 
     if effect.is_original:
         if current is None and not writes_as_text(path):
             raise HTTPException(status_code=400, detail=_binary_write(shown).current)
 
         # An original's write regenerates its projection, so the item fills both.
-        unit = _Unit(root, stem, EntryPaths(stem, description_path_for_stem(stem), path, None))
+        unit = _Unit(
+            root, stem, EntryPaths(stem, description_path_for_stem(stem), path, None)
+        )
 
         # Creating an original claims the whole stem: requiring a free one keeps
         # the write from superseding another entry's description or original.
@@ -858,7 +982,9 @@ def _resolve_text(operation: Write[Location] | Edit[Location], index: int, plan:
     return _Resolved(resolved, effect, report)
 
 
-def _resolve_directory(operation: CreateDir[Location], index: int, plan: _Plan) -> _Resolved:
+def _resolve_directory(
+    operation: CreateDir[Location], index: int, plan: _Plan
+) -> _Resolved:
     if not operation.target.path:
         raise HTTPException(status_code=400, detail=DIRECTORY_PATH_REQUIRED.current)
 
@@ -881,9 +1007,61 @@ def _resolve_directory(operation: CreateDir[Location], index: int, plan: _Plan) 
     )
 
 
+def _resolve_upload(
+    operation: Upload,
+    index: int,
+    plan: _Plan,
+    rows: Mapping[tuple[Casebase, str], EntryMetadata],
+) -> _Resolved:
+    """Resolve an upload from its located target, and the row of the entry it overwrites."""
+    target = operation.target
+    root, path = target.root, target.path
+
+    if (store := root.store) is None:
+        raise ValueError("An upload lands in a workspace")
+
+    _check_basis(target.canonical, target.full_path, operation.basis)
+    _enforce_file_size(operation.content)
+    stem = stem_path_from_reference(path)
+    markdown = is_description_file(path)
+    original = None if markdown else (path, operation.content)
+
+    if operation.companion is not None:
+        companion, data = operation.companion
+        _enforce_file_size(data)
+        original = plan.sanitized(Location(root, companion)).path, data
+
+    description = path if markdown else description_path_for_stem(stem)
+    original_path = None if original is None else original[0]
+    unit = _Unit(root, stem, EntryPaths(stem, description, original_path, None))
+    row = rows.get((store, stem)) if operation.overwrite else None
+    overwrite, superseded = operation.overwrite, None
+
+    if overwrite:
+        existing = _merge_entry_paths(
+            resolve_entry_paths(root.path, path, plan.listdir), row
+        )
+
+        if set(existing.files) - {*unit.files, existing.assets_dir}:
+            superseded = _Unit(root, existing.stem_path, existing)
+            plan.claim(plan.vacated, index, superseded)
+            overwrite = False
+
+    plan.claim_write(index, unit)
+    (plan.overwrites if overwrite else plan.originals).append(unit)
+    present = tuple(ContentStat.from_path(root.path / file) for file in unit.files)
+    replacing = overwrite and entry_exists(root.path, path)
+    origin = operation.origin if row is None else row.origin
+    effect = _UploadEffect(
+        operation, target, original, origin, present, replacing, superseded
+    )
+
+    return _Resolved(operation, effect, _uploaded(target.canonical).current)
+
+
 def _settle(
     plan: _Plan,
-    operations: list[Operation[Location]],
+    operations: list[Item],
     sources: _Sources,
     rows: Mapping[tuple[Casebase, str], EntryMetadata],
     scopes: tuple[str, ...],
@@ -898,8 +1076,13 @@ def _settle(
 
     for index, (location, is_dir) in sources.items():
         root, path = location.root, location.path
+        # A move addresses an asset's entry by its description, as any other entry's.
+        moving = isinstance(operations[index], Move)
+        described = None if is_dir or moving else plan.description(location)
 
-        if (store := root.store) is not None and not is_dir:
+        if described is not None:
+            units[index] = described
+        elif (store := root.store) is not None and not is_dir:
             row = rows.get((store, stem_path_from_reference(path)))
             entry = _entry_paths(store, path, row)
             units[index] = _Unit(root, entry.stem_path, entry)
@@ -926,21 +1109,33 @@ def _settle(
                 resolved.append(_Resolved(op, effect, report))
             case Delete(target=target):
                 effect = _Vacate(units[index], None)
-                resolved.append(_Resolved(op, effect, _deleted(target.canonical).current))
+                resolved.append(
+                    _Resolved(op, effect, _deleted(target.canonical).current)
+                )
             case Write() | Edit():
                 resolved.append(_resolve_text(op, index, plan))
             case CreateDir():
                 resolved.append(_resolve_directory(op, index, plan))
+            case Upload():
+                resolved.append(_resolve_upload(op, index, plan, rows))
 
     plan.check_written_parents()
+    plan.check_described()
 
     for unit in plan.originals:
         plan.check_slot(unit)
 
+    for unit in plan.overwrites:
+        plan.check_slot(unit, overwrite=True)
+
     _admit(plan, resolved)
     indexed = any(item.indexed for item in resolved)
 
-    changed = _workspace_changed(resolved, plan, scopes) if indexed else WorkspaceChanged(scopes)
+    changed = (
+        _workspace_changed(resolved, plan, scopes)
+        if indexed
+        else WorkspaceChanged(scopes)
+    )
 
     return resolved, changed
 
@@ -969,11 +1164,14 @@ def _admit(plan: _Plan, resolved: Sequence[_Resolved]) -> None:
                 replaced = 0 if origin is None else disk_size(origin.full_path)
                 growth[root] += len(content.encode("utf-8")) - replaced
                 keep.add(target.full_path)
-            case _Vacate(unit=unit, destination=destination) if unit.root.quota is not None:
+            case _Vacate(unit=unit, destination=destination) if (
+                unit.root.quota is not None
+            ):
                 root, full = unit.root, unit.root.path / unit.path
                 keep.add(full)
                 counted = destination is None and not any(
-                    other.root == root and is_below(unit.path, other.path) for other in removed
+                    other.root == root and is_below(unit.path, other.path)
+                    for other in removed
                 )
                 growth[root] -= disk_size(full) if counted else 0
             case _:
@@ -981,14 +1179,16 @@ def _admit(plan: _Plan, resolved: Sequence[_Resolved]) -> None:
 
     for root, delta in growth.items():
         if (quota := root.quota) is not None:
-            evicted = quota.admit(root.path, root.scope.render(""), delta, keep, evict=plan.host)
+            evicted = quota.admit(
+                root.path, root.scope.render(""), delta, keep, evict=plan.host
+            )
             plan.evicted.extend(
                 _Unit(root, path.relative_to(root.path).as_posix()) for path in evicted
             )
 
 
 async def _resolve_all(
-    changeset: Changeset[Location], filters: Mapping[str, PathFilter], *, host: bool
+    items: Sequence[Item], filters: Mapping[str, PathFilter], *, host: bool
 ) -> tuple[list[_Resolved], _Plan, WorkspaceChanged]:
     """Resolve every item: the disk in worker threads, the rows in between in one query."""
     plan = _Plan(filters=filters, host=host)
@@ -996,18 +1196,24 @@ async def _resolve_all(
         sorted(
             {
                 store.scope.prefix
-                for location in changeset.locations
+                for location in locations(items)
                 if (store := location.root.store) is not None
             }
         )
     )
-    operations = list(changeset.operations)
+    operations = list(items)
     sources = await asyncio.to_thread(_locate_sources, plan, operations)
     plan.check_inflight()
+    overwritten = (
+        op.target for op in operations if isinstance(op, Upload) and op.overwrite
+    )
     rows = await db_documents.get_entries_metadata(
         (store, location.path)
-        for location, is_dir in sources.values()
-        if (store := location.root.store) is not None and not is_dir
+        for location in chain(
+            (location for location, is_dir in sources.values() if not is_dir),
+            overwritten,
+        )
+        if (store := location.root.store) is not None
     )
     resolved, changed = await asyncio.to_thread(
         _settle, plan, operations, sources, rows, scopes
@@ -1048,17 +1254,17 @@ def _workspace_changed(
     def replaces(root: Root, path: str) -> bool:
         """Whether a file there now goes, deleted by another item."""
         hit = plan.holder(plan.vacated, root, path)
-        effect = None if hit is None else resolved[hit[0]].effect
+        vacate = None if hit is None else _vacate_of(resolved[hit[0]].effect)
 
         return (
-            isinstance(effect, _Vacate)
-            and effect.destination is None
+            vacate is not None
+            and vacate.destination is None
             and Location(root, path).full_path.exists()
         )
 
     for item in resolved:
-        match item.effect:
-            case _ if not item.indexed:
+        match _vacate_of(item.effect) if item.indexed else None:
+            case None:
                 pass
             case _Vacate(unit=unit, destination=None):
                 deletes.extend(_shown(unit.root, path) for path in _shown_files(unit))
@@ -1073,13 +1279,13 @@ def _workspace_changed(
                     )
                     for path in _shown_files(unit)
                 )
-            case _:
-                pass
 
     return WorkspaceChanged(scopes, tuple(moves), tuple(deletes))
 
 
-def _summarize(resolved: Sequence[_Resolved], changed: WorkspaceChanged) -> ChangesetSummary:
+def _summarize(
+    resolved: Sequence[_Resolved], changed: WorkspaceChanged
+) -> ChangesetSummary:
     """What *resolved* does as a person approving it reads it, moving and deleting as *changed* says.
 
     Only a workspace change is put to a person, so only one is shown.
@@ -1163,25 +1369,37 @@ async def plan_changeset(
             directory carrying hidden entries) or claims a path another item
             claims.
     """
-    resolved, _plan, changed = await _resolve_all(changeset, filters, host=host)
+    resolved, _plan, changed = await _resolve_all(
+        changeset.operations, filters, host=host
+    )
+    operations = tuple(
+        op for item in resolved if not isinstance(op := item.operation, Upload)
+    )
 
     return PlannedChangeset(
-        Changeset(tuple(item.operation for item in resolved)),
-        await asyncio.to_thread(_summarize, resolved, changed),
+        Changeset(operations), await asyncio.to_thread(_summarize, resolved, changed)
     )
 
 
 # ─── Application ──────────────────────────────────────────────────────
 
 
+type _Converting = _TextEffect | _UploadEffect
+"""An item whose projection is converted ahead of the locks."""
+
+
 @dataclass(slots=True, frozen=True)
-class _PreparedOriginal:
-    """A text original's regenerated projection, converted ahead of the lock from *effect*."""
+class _Converted:
+    """An item's projection, converted ahead of the locks from *effect*."""
 
     store: Casebase
-    effect: _TextEffect
-    reserved: _Reserved
-    upload: _PreparedUpload
+    effect: _Converting
+    prepared: _PreparedUpload
+    original: tuple[str, bytes] | None
+    """The original written beside the projection, if any."""
+    replacing: bool
+    """Whether it replaces an entry, whose stale asset rows then go."""
+    chunking: ChunkingSpec | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -1194,16 +1412,35 @@ class _Indexing:
     chunking: ChunkingSpec | None
     stat: ContentStat | None
     entry_metadata: EntryMetadata | None = None
+    """``None`` for a text write, whose row, else its files, supply it at index time."""
 
 
-async def _prepare_original(original: tuple[Casebase, _TextEffect]) -> _PreparedOriginal:
-    """Run a text original's new bytes through the upload conversion.
+async def _convert(item: tuple[Casebase, _Converting]) -> _Converted:
+    """Run an upload's bytes, or a text original's new ones, through the upload conversion.
 
-    The same pipeline as an upload of the edited file, so the projection left
-    behind is byte for byte the one uploading it would produce, and a failed
-    conversion leaves the previous entry untouched.
+    A text original goes through the same pipeline as an upload of the edited
+    file, so the projection left behind is byte for byte the one uploading it
+    would produce, and a failed conversion leaves the previous entry untouched.
     """
-    store, effect = original
+    store, effect = item
+
+    if isinstance(effect, _UploadEffect):
+        upload, original = effect.upload, effect.original
+        prepared = await _prepare_upload(
+            store,
+            effect.target.path,
+            upload.content,
+            upload.spec,
+            upload.llm,
+            origin=effect.origin,
+            original_path=None if original is None else original[0],
+            ctx=upload.progress,
+        )
+
+        return _Converted(
+            store, effect, prepared, original, effect.replacing, upload.spec.chunking
+        )
+
     path = effect.target.path
     data = effect.content.encode("utf-8")
     # A carried original keeps the rows it has until the move lands them here.
@@ -1213,65 +1450,103 @@ async def _prepare_original(original: tuple[Casebase, _TextEffect]) -> _Prepared
         if origin is not None and (holder := origin.root.store) is not None
         else None
     )
-    reserved = _Reserved(
-        reference=path,
-        content=data,
-        origin=metadata.origin if metadata else "imported",
-        original_path=path,
-        original_content=data,
-        preserve=effect.current is not None,
-    )
-    upload = await _prepare_upload(
+    prepared = await _prepare_upload(
         store,
         path,
         data,
         PipelineSpec(chunking=effect.chunking) if effect.chunking else PipelineSpec(),
         LlmConfig(),
-        origin=reserved.origin,
+        origin=metadata.origin if metadata else "imported",
         original_path=path,
         ctx=None,
-        clearing_assets=reserved.preserve,
     )
 
-    return _PreparedOriginal(store, effect, reserved, upload)
+    return _Converted(
+        store,
+        effect,
+        prepared,
+        (path, data),
+        effect.current is not None,
+        effect.chunking,
+    )
 
 
 type _RowChange = Callable[[AsyncSession], Awaitable[object]]
 """One row write, run inside the changeset's single transaction."""
 
 
-def _install_text(
-    effect: _TextEffect,
-    journal: _Journal,
-    staging: Path,
-    prepared: _PreparedOriginal | None,
-) -> list[_Indexing]:
-    """Install a text item's files, returning one entry's projections in index order.
+def _stage_converted(staging: Path, converted: _Converted) -> list[_WorkspaceChange]:
+    """Write a converted entry's files under *staging*, returning the swap to make.
 
-    A plain file is installed as it is and indexed nowhere.
+    Nothing live is touched: the returned changes name each workspace path the
+    entry replaces, its ``.assets`` directory always among them, by the new
+    one or by nothing, so a reconversion never keeps a stale asset.
     """
-    if prepared is not None:
-        workspace = prepared.store.path
+    prepared = converted.prepared
+    main = prepared.main
+    assets_dir = assets_dir_for_stem(main.entry_metadata.stem_path)
+    changes = [_WorkspaceChange(main.description_path, staging / main.description_path)]
 
-        for change in _stage_prepared(staging, prepared.upload, prepared.reserved):
-            journal.apply(workspace, change)
+    for asset in prepared.assets:
+        _write_workspace_file(staging, asset.path, asset.data)
 
-        return [
-            _Indexing(
-                prepared.store,
-                written.entry.description_path,
-                written.entry.markdown,
-                effect.chunking,
-                written.stat,
-                written.entry.entry_metadata,
-            )
-            for written in _written_entries(workspace, prepared.upload)
-        ]
+    for entry in (*prepared.asset_entries, main):
+        _write_markdown_file(staging, entry.description_path, entry.markdown)
 
+    has_assets = bool(prepared.assets or prepared.asset_entries)
+    changes.append(
+        _WorkspaceChange(assets_dir, staging / assets_dir if has_assets else None)
+    )
+
+    if converted.original is not None:
+        path, data = converted.original
+        changes.append(
+            _WorkspaceChange(path, _write_workspace_file(staging, path, data))
+        )
+
+    return changes
+
+
+def _install_converted(
+    converted: _Converted, journal: _Journal, staging: Path
+) -> list[_Indexing]:
+    """Install a converted entry's files, returning its projections in index order.
+
+    Assets come first and the entry last, so the markdown that references the
+    assets is only indexed once their own entries are.
+    """
+    workspace = converted.store.path
+
+    for change in _stage_converted(staging, converted):
+        journal.apply(workspace, change)
+
+    prepared = converted.prepared
+
+    return [
+        _Indexing(
+            converted.store,
+            entry.description_path,
+            entry.markdown,
+            converted.chunking,
+            ContentStat.from_path(workspace / entry.description_path),
+            entry.entry_metadata,
+        )
+        for entry in (*prepared.asset_entries, prepared.main)
+    ]
+
+
+def _install_text(
+    effect: _TextEffect, journal: _Journal, staging: Path
+) -> list[_Indexing]:
+    """Install a text item's file as it is, returning its projection to index.
+
+    A plain file is indexed nowhere.
+    """
     target, store = effect.target, effect.store
     live = target.full_path
     journal.install(
-        _write_workspace_file(staging, target.path, effect.content.encode("utf-8")), live
+        _write_workspace_file(staging, target.path, effect.content.encode("utf-8")),
+        live,
     )
 
     if store is None:
@@ -1282,13 +1557,13 @@ def _install_text(
     return [_Indexing(store, target.path, effect.content, effect.chunking, stat)]
 
 
-def _text_rows(effect: _TextEffect, prepared: _PreparedOriginal | None) -> list[_RowChange]:
-    """Drop the asset rows of a rewritten original, whose new projection supersedes them."""
-    if prepared is None or not prepared.reserved.preserve:
+def _converted_rows(converted: _Converted) -> list[_RowChange]:
+    """Drop the asset rows of a replaced entry, whose new projection supersedes them."""
+    if not converted.replacing:
         return []
 
-    store = prepared.store
-    assets = assets_dir_for_stem(stem_path_from_reference(effect.target.path))
+    store = converted.store
+    assets = assets_dir_for_stem(converted.prepared.main.entry_metadata.stem_path)
 
     return [lambda s: db_documents.delete_subtree(store, assets, s=s)]
 
@@ -1323,6 +1598,22 @@ def _move_rows(source: _Unit, destination: _Unit) -> list[_RowChange]:
         )
 
     return changes
+
+
+def _remove_entry_files(journal: _Journal, workspace: Path, entry: EntryPaths) -> None:
+    """Park an entry's description, original, and assets in *journal*."""
+    for path in entry.files:
+        journal.remove(workspace / path)
+
+
+async def _remove_entry_rows(
+    s: AsyncSession, store: Casebase, entry: EntryPaths
+) -> None:
+    """Drop an entry's row and its asset rows inside the caller's transaction."""
+    await db_documents.delete_document(store, entry.description_path, s=s)
+
+    if entry.assets_dir:
+        await db_documents.delete_subtree(store, entry.assets_dir, s=s)
 
 
 type _Park = tuple[Path, _Unit]
@@ -1402,7 +1693,7 @@ def _land(
 def _install_files(
     resolved: Sequence[_Resolved],
     evicted: Iterable[_Unit],
-    prepared: Mapping[int, _PreparedOriginal],
+    converted: Mapping[int, _Converted],
     staging: Path,
     journal: _Journal,
 ) -> tuple[list[list[_Indexing]], list[_RowChange]]:
@@ -1413,9 +1704,9 @@ def _install_files(
     """
     vacates = (
         *(
-            (index, item.effect)
+            (index, vacate)
             for index, item in enumerate(resolved)
-            if isinstance(item.effect, _Vacate)
+            if (vacate := _vacate_of(item.effect)) is not None
         ),
         *((len(resolved) + n, _Vacate(unit, None)) for n, unit in enumerate(evicted)),
     )
@@ -1436,7 +1727,10 @@ def _install_files(
 
     for index, effect in vacating:
         unit = effect.unit
-        parks[index] = staging / "park" / str(index), unit.at(unit.root, f"{token}/{index}")
+        parks[index] = (
+            staging / "park" / str(index),
+            unit.at(unit.root, f"{token}/{index}"),
+        )
         rows += _leave(effect, journal, parks[index])
 
     for index, unit, destination in moving:
@@ -1444,11 +1738,13 @@ def _install_files(
 
     for index, item in enumerate(resolved):
         match item.effect:
-            case _TextEffect() as effect:
+            case _TextEffect() | _UploadEffect() if index in converted:
                 pending.append(
-                    _install_text(effect, journal, staging / str(index), prepared.get(index))
+                    _install_converted(converted[index], journal, staging / str(index))
                 )
-                rows += _text_rows(effect, prepared.get(index))
+                rows += _converted_rows(converted[index])
+            case _TextEffect() as effect:
+                pending.append(_install_text(effect, journal, staging / str(index)))
             case _MakeDir(target=target):
                 journal.mkdir(target.full_path)
             case _Vacate():
@@ -1477,13 +1773,16 @@ async def _index_entry(projections: Sequence[_Indexing]) -> Exception | None:
 
     for item in projections:
         try:
+            metadata = item.entry_metadata or await current_entry_metadata(
+                item.store, item.description_path
+            )
             await chunk_and_index_document(
                 item.store,
                 item.description_path,
                 item.markdown,
                 item.chunking,
                 stat=item.stat,
-                entry_metadata=item.entry_metadata,
+                entry_metadata=metadata,
             )
         except Exception as exc:
             logger.warning(
@@ -1513,32 +1812,37 @@ async def _index_all(pending: Sequence[Sequence[_Indexing]]) -> None:
 
 
 async def _commit(
-    changeset: Changeset[Location],
-    prepared: Mapping[int, _PreparedOriginal],
+    items: Sequence[Item],
+    converted: Mapping[int, _Converted],
     owner: str | None,
     exclude_client: str | None,
     filters: Mapping[str, PathFilter],
     host: bool,
 ) -> AppliedChangeset:
-    roots = [location.root for location in changeset.locations]
+    roots = [location.root for location in locations(items)]
     staging = _staging_root(roots)
     journal = _Journal(staging / "backup")
 
     with ExitStack() as claims:
         try:
             async with _locked(*roots):
-                resolved, plan, changed = await _resolve_all(changeset, filters, host=host)
+                resolved, plan, changed = await _resolve_all(items, filters, host=host)
 
-                for index, original in prepared.items():
-                    if resolved[index].effect != original.effect:
-                        shown = original.effect.target.canonical
+                for index, done in converted.items():
+                    if resolved[index].effect != done.effect:
+                        shown = done.effect.target.canonical
                         raise HTTPException(
                             status_code=409, detail=_changed_meanwhile(shown).current
                         )
 
                 try:
                     pending, rows = await asyncio.to_thread(
-                        _install_files, resolved, plan.evicted, prepared, staging / "new", journal
+                        _install_files,
+                        resolved,
+                        plan.evicted,
+                        converted,
+                        staging / "new",
+                        journal,
                     )
 
                     if rows:
@@ -1553,7 +1857,9 @@ async def _commit(
                 # Until its chunks land, a written entry stays hidden from
                 # inventory reads and refuses every other mutation.
                 for item in chain.from_iterable(pending):
-                    claims.callback(_discard_inflight, item.store, item.description_path)
+                    claims.callback(
+                        _discard_inflight, item.store, item.description_path
+                    )
                     _add_inflight(item.store, item.description_path)
 
         finally:
@@ -1563,23 +1869,26 @@ async def _commit(
             await _index_all(pending)
         finally:
             if owner is not None:
-                announce_workspace_changed(owner, changed, exclude_client=exclude_client)
+                announce_workspace_changed(
+                    owner, changed, exclude_client=exclude_client
+                )
 
     return AppliedChangeset(tuple(item.report for item in resolved), changed)
 
 
 async def apply_changeset(
-    changeset: Changeset[Location],
+    items: Sequence[Item],
     *,
     owner: str | None = None,
     exclude_client: str | None = None,
     filters: Mapping[str, PathFilter] = _NO_FILTERS,
     host: bool = False,
 ) -> AppliedChangeset:
-    """Commit *changeset* all or nothing, see the module docstring for the phases.
+    """Commit *items* all or nothing, see the module docstring for the phases.
 
     Args:
-        changeset: The operations to apply, planned or as a caller spelled them.
+        items: The operations to apply, planned or as a caller spelled them,
+            and the uploads among them.
         owner: The user whose clients hear about the change, or nobody when
             ``None``.  A group workspace's casebase names the group, not the
             user to tell, which is why the caller says.
@@ -1594,37 +1903,42 @@ async def apply_changeset(
 
     Raises:
         HTTPException: When the changeset is invalid (see
-            :func:`plan_changeset`), or a text original's file changed while
-            it was being prepared.
+            :func:`plan_changeset`), or what an upload or a text original
+            replaces changed while it was being converted.
     """
-    if not changeset.operations:
+    if not items:
         return AppliedChangeset((), WorkspaceChanged(()))
 
-    prepared: dict[int, _PreparedOriginal] = {}
+    converted: dict[int, _Converted] = {}
 
-    # Only a text written in a workspace may be an original to convert ahead of the locks.
-    if any(
-        isinstance(op, Write | Edit) and op.target.root.store is not None
-        for op in changeset.operations
-    ):
-        planned, _plan, _changed = await _resolve_all(changeset, _NO_FILTERS, host=host)
-        originals = {
+    if any(_converts(op) for op in items):
+        planned, _plan, _changed = await _resolve_all(items, _NO_FILTERS, host=host)
+        converting = {
             index: (store, effect)
             for index, item in enumerate(planned)
-            if isinstance(effect := item.effect, _TextEffect)
-            and effect.is_original
-            and (store := effect.store) is not None
+            if isinstance(effect := item.effect, _TextEffect | _UploadEffect)
+            and (isinstance(effect, _UploadEffect) or effect.is_original)
+            and (store := effect.target.root.store) is not None
         }
-        converted = await bounded_gather(
-            originals.values(), _prepare_original, limit=settings.jobs.collection_concurrency
+        done = await bounded_gather(
+            converting.values(), _convert, limit=settings.jobs.collection_concurrency
         )
-        prepared = dict(zip(originals, converted, strict=True))
+        converted = dict(zip(converting, done, strict=True))
 
     # Shielded as one unit even though it releases the locks partway through,
     # so a cancel can never settle between the file swap and the index and
     # leave new markdown wearing its predecessor's rows.
     return await shield_to_completion(
-        _commit(changeset, prepared, owner, exclude_client, filters, host)
+        _commit(items, converted, owner, exclude_client, filters, host)
+    )
+
+
+def _converts(op: Item) -> bool:
+    """Whether *op* converts ahead of the locks: an upload, or text written to a workspace original."""
+    return isinstance(op, Upload) or (
+        isinstance(op, Write | Edit)
+        and op.target.root.store is not None
+        and not is_description_file(op.target.path)
     )
 
 
@@ -1681,7 +1995,10 @@ class Gateway:
             HTTPException: When the gateway refuses the changeset.
         """
         return await apply_changeset(
-            route(changeset, self.roots), owner=self.owner, filters=self.filters, host=self.host
+            route(changeset, self.roots).operations,
+            owner=self.owner,
+            filters=self.filters,
+            host=self.host,
         )
 
     async def commit(self, changeset: Changeset[str]) -> str:

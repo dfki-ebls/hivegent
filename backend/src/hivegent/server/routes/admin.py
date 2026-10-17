@@ -17,12 +17,12 @@ leaves the deployment in the same state as a clean checkout.
 """
 
 import asyncio
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ... import workspace
 from ...auth import require_admin
-from ...config import settings
 from ...conversation_files import reset_conversation_files
 from ...db.application_settings import write_maintenance_enabled
 from ...db.documents import delete_all_documents
@@ -33,13 +33,10 @@ from ...l10n import Localized
 from ...reconcile import reconcile_all
 from ...store import Casebase, User
 from ...types import (
-    AdminFactoryResetResponse,
     AdminGroupInfo,
-    AdminListGroupsResponse,
-    AdminListUsersResponse,
     AdminMaintenanceState,
+    AdminOverviewResponse,
     AdminReindexResponse,
-    AdminResetResponse,
     AdminUserInfo,
 )
 from ..common import delete_user_data
@@ -50,25 +47,17 @@ __all__ = ["router"]
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 
-def _reindexed(
-    stores: int, ingested: int, renamed: int, collisions: int
-) -> Localized[str]:
+def _reindexed(stores: int, synced: int, renamed: int) -> Localized[str]:
     return Localized(
         en=(
             f"Reconciled {stores} {pluralize(stores, 'casebase')}: "
-            f"{ingested} {pluralize(ingested, 'entry', 'entries')} ingested, "
+            f"{synced} {pluralize(synced, 'entry', 'entries')} synced, "
             f"{renamed} {pluralize(renamed, 'path')} renamed"
-            + (f", {collisions} skipped (both spellings exist)" if collisions else "")
         ),
         de=(
             f"{stores} {pluralize(stores, 'Arbeitsbereich', 'Arbeitsbereiche')} "
-            f"abgeglichen: {ingested} {pluralize(ingested, 'Eintrag', 'Einträge')} "
-            f"aufgenommen, {renamed} {pluralize(renamed, 'Pfad', 'Pfade')} umbenannt"
-            + (
-                f", {collisions} übersprungen (beide Schreibweisen vorhanden)"
-                if collisions
-                else ""
-            )
+            f"abgeglichen: {synced} {pluralize(synced, 'Eintrag', 'Einträge')} "
+            f"aktualisiert, {renamed} {pluralize(renamed, 'Pfad', 'Pfade')} umbenannt"
         ),
     )
 
@@ -76,49 +65,22 @@ def _reindexed(
 # ─── Overviews ────────────────────────────────────────────────────────
 
 
-def _workspace_children() -> set[str]:
-    """Return the set of casebase ``store_key`` names present on disk."""
-    workspace_root = Casebase.workspace_root(settings.data_dir)
-    if not workspace_root.exists():
-        return set()
-    return {child.name for child in workspace_root.iterdir() if child.is_dir()}
-
-
-@router.get("/users")
-async def list_users() -> AdminListUsersResponse:
-    """List users that have left a footprint in the local database."""
-    rows, on_disk = await asyncio.gather(
-        list_users_with_counts(),
-        asyncio.to_thread(_workspace_children),
+@router.get("/overview")
+async def get_overview() -> AdminOverviewResponse:
+    """List the users that left a footprint in the local database, and every group."""
+    users, groups = await asyncio.gather(
+        list_users_with_counts(), list_groups_with_counts()
     )
-    users = [
-        AdminUserInfo(
-            id=user_id,
-            document_count=docs,
-            conversation_count=convs,
-            has_workspace=Casebase.for_user(user_id).store_key in on_disk,
-        )
-        for user_id, docs, convs in rows
-    ]
-    return AdminListUsersResponse(users=users)
-
-
-@router.get("/groups")
-async def list_groups() -> AdminListGroupsResponse:
-    """List every group materialised in the local database."""
-    rows, on_disk = await asyncio.gather(
-        list_groups_with_counts(),
-        asyncio.to_thread(_workspace_children),
+    return AdminOverviewResponse(
+        users=[
+            AdminUserInfo(id=user_id, document_count=docs, conversation_count=convs)
+            for user_id, docs, convs in users
+        ],
+        groups=[
+            AdminGroupInfo(id=group_id, document_count=docs)
+            for group_id, docs in groups
+        ],
     )
-    groups = [
-        AdminGroupInfo(
-            id=group_id,
-            document_count=docs,
-            has_workspace=Casebase.for_group(group_id).store_key in on_disk,
-        )
-        for group_id, docs in rows
-    ]
-    return AdminListGroupsResponse(groups=groups)
 
 
 # ─── Maintenance mode ─────────────────────────────────────────────────
@@ -150,38 +112,36 @@ async def set_maintenance(
 # ─── System-wide resets ───────────────────────────────────────────────
 
 
-@router.post("/reset/workspace")
-async def admin_reset_workspace() -> AdminResetResponse:
-    """Wipe every workspace file and document row.
+@router.post("/reset/{target}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_reset(target: Literal["workspace", "database", "factory"]) -> None:
+    """Wipe the workspace, the database, or both (``factory``).
 
-    Chunks (text + vector) cascade with the document rows.
-    Conversations, memory, users, and groups are kept.
-    """
-    await workspace.delete_workspace_root()
-    await delete_all_documents()
-    return AdminResetResponse(
-        action="reset_workspace",
-        message="Workspace files and document rows cleared",
-    )
+    ``workspace`` drops every workspace file and document row, chunks
+    (text + vector) cascade with the rows, while conversations, memory,
+    users, and groups are kept.
 
-
-@router.post("/reset/database")
-async def admin_reset_database() -> AdminResetResponse:
-    """Drop every user, group, and the rows that cascade from them.
-
+    ``database`` drops every user and group in one transaction
+    (:func:`delete_all_identities`) and the conversations' folders.
     Cascade chain (see ``backend/src/hivegent/db/models.py``):
-    users → memory, conversations (→ messages), documents (→ chunks);
-    groups → group documents.  The conversations' folders go with them,
-    while the workspace tree on disk is not touched.
+    users → memory, conversations (→ messages), documents (→ chunks),
+    groups → group documents.  The workspace tree on disk is not touched.
 
-    Both deletes run in one transaction (:func:`delete_all_identities`).
+    ``factory`` drops the workspace tree, the conversations' folders, and
+    every identity, leaving the deployment in the shape of a fresh checkout.
+    Idempotent, re-running on a clean tree is a no-op.
     """
-    await delete_all_identities()
-    await reset_conversation_files()
-    return AdminResetResponse(
-        action="reset_database",
-        message="All users, groups, and dependent rows removed",
-    )
+    match target:
+        case "workspace":
+            await workspace.delete_workspace_root()
+            await delete_all_documents()
+        case "database":
+            await delete_all_identities()
+            await reset_conversation_files()
+        case "factory":
+            await asyncio.gather(
+                workspace.delete_workspace_root(), reset_conversation_files()
+            )
+            await delete_all_identities()
 
 
 @router.post("/reindex")
@@ -193,27 +153,10 @@ async def admin_reindex() -> AdminReindexResponse:
     files copied into ``data/workspace/`` by hand without a restart.
     """
     reports = (await reconcile_all()).values()
-    ingested = sum(r.entries_ingested for r in reports)
-    renamed = sum(r.normalized.files_renamed for r in reports)
-    collisions = sum(r.normalized.collisions for r in reports)
+    synced = sum(r.entries_synced for r in reports)
+    renamed = sum(r.files_renamed for r in reports)
     return AdminReindexResponse(
-        stores_reconciled=len(reports),
-        message=_reindexed(len(reports), ingested, renamed, collisions).current,
-    )
-
-
-@router.post("/reset/factory")
-async def admin_factory_reset() -> AdminFactoryResetResponse:
-    """Composite full reset: workspace, conversation folders, and SQL.
-
-    Idempotent — re-running on a clean tree is a no-op.  Leaves the
-    deployment in the same shape as a fresh checkout.
-    """
-    await asyncio.gather(workspace.delete_workspace_root(), reset_conversation_files())
-    await delete_all_identities()
-    return AdminFactoryResetResponse(
-        actions=["reset_workspace", "reset_database"],
-        message="Factory reset complete",
+        message=_reindexed(len(reports), synced, renamed).current
     )
 
 

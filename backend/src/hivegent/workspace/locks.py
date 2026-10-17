@@ -1,9 +1,9 @@
 """Serialisation and in-flight conflict tracking for casebase mutations.
 
 Every workspace mutation acquires the per-store async lock through
-:func:`_locked_for`, which also rejects an op that would race a phased
-upload or a bulk import still in flight.  The in-flight state is consulted
-by lock-free inventory reads to hide half-written entries.
+:func:`_locked_for`, which also rejects an op that would race an entry still
+indexing or a bulk import still in flight.  The in-flight state is consulted
+by lock-free inventory reads to hide entries whose chunks have not landed.
 """
 
 import asyncio
@@ -48,11 +48,10 @@ class _StoreState:
     entry, so they can never drift apart.
     """
 
-    # Stems with an upload currently in flight.  Inventory reads walk the
-    # workspace without the lock, so they consult this set to hide half-written
-    # entries — both during processing and during the rollback after a failed or
-    # cancelled upload — instead of surfacing them as ghost documents.  It also
-    # rejects a second op on a stem a phased upload already holds.
+    # Stems a changeset installed but has not indexed yet.  Inventory reads walk
+    # the workspace without the lock, so they consult this set to hide those
+    # entries instead of surfacing them as ghost documents.  It also rejects a
+    # second op on such a stem until its chunks land.
     stems: set[str] = field(default_factory=set)
 
     # Store-wide claims held by bulk imports (collections) in flight, by
@@ -114,7 +113,7 @@ def root_lock(root: Root) -> asyncio.Lock:
 
 
 def inflight_stems(store: Casebase) -> frozenset[str]:
-    """Stems with an upload in flight, to be hidden from lock-free reads."""
+    """Stems written but not yet indexed, to be hidden from lock-free reads."""
     return frozenset(_state_for(store).stems)
 
 
@@ -144,14 +143,12 @@ def _store_claim(store: Casebase) -> Generator[None]:
 
 
 def _reject_if_inflight(store: Casebase, reference: str) -> None:
-    """Reject a mutation whose stem another phased upload already has in flight.
+    """Reject a mutation whose stem another changeset is still indexing.
 
-    A phased upload marks its stem the moment it claims the entry, so a second
-    op on that stem — or on one of the asset entries it owns, which are
+    A changeset marks every stem it installed until its chunks land, so a second
+    op on that stem, or on one of the asset entries it owns, which are
     addressable by their own stems and would otherwise slip past an equality
-    check — 409s instead of racing the pending commit and index.  A markdown
-    upload writes nothing to disk during reserve, so the in-flight set is the
-    only thing that closes the window for it.
+    check, 409s instead of racing the pending index.
     """
     stem = stem_path_from_reference(reference)
     if any(entry_owns(inflight, stem) for inflight in _state_for(store).stems):
@@ -165,11 +162,11 @@ def _reject_if_scope_inflight(store: Casebase, prefix: str | None) -> None:
     """Reject a directory- or store-wide mutation while work inside it runs.
 
     *prefix* is the directory whose contents the op removes or moves, or
-    ``None`` for the whole store (delete-all).  A phased upload prepares and
-    indexes lock-free around its brief locked write, and a bulk import commits
-    its files one at a time; tearing down an enclosing directory in any of those
-    windows would strip files out from under the pending work (orphaning an
-    entry, or resurrecting one after a wipe).  The 409 defers the op until the
+    ``None`` for the whole store (delete-all).  A changeset indexes lock-free
+    after its brief locked install, and a bulk import commits its files one at a
+    time, so tearing down an enclosing directory in either window would strip
+    files out from under the pending work (orphaning an entry, or resurrecting
+    one after a wipe).  The 409 defers the op until the
     in-flight work settles.
 
     A prefix is blocked both when it *contains* an in-flight entry and when it
@@ -216,9 +213,9 @@ async def _locked_for(
     Routing every single-store mutation's lock acquisition through here makes
     the in-flight check impossible to forget: pass the entry references a
     single-document op touches, ``scope`` for a directory subtree it removes,
-    or ``whole_store`` for a store-wide wipe.  A conflicting phased upload (or
-    a bulk import claiming the store) is rejected with 409 so the op can never
-    strip files out from under a pending commit.  A change spanning several
+    or ``whole_store`` for a store-wide wipe.  An entry still indexing (or a
+    bulk import claiming the store) rejects the op with 409, so it can never
+    strip files out from under pending work.  A change spanning several
     casebases takes :func:`_locked` and checks each item itself.
     """
     async with _locked(store):

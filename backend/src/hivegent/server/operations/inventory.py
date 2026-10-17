@@ -13,11 +13,7 @@ from ...converters.base import DOCUMENT_EXTENSION
 from ...db.documents import list_document_paths
 from ...entries import assets_dir_for_stem, is_assets_dir
 from ...store import Casebase
-from ...types import (
-    DirectoryEntry,
-    DirectoryTreeResponse,
-    DocumentInfo,
-)
+from ...types import DirectoryEntry, DirectoryTreeResponse
 
 __all__ = ["build_tree_response"]
 
@@ -65,8 +61,8 @@ def _entries_from_files(
     chunk_counts: dict[str, int],
     hidden_stems: frozenset[str],
     subdir_names: frozenset[str],
-) -> list[DocumentInfo]:
-    """Group already-stat'd sibling files into logical stem entries.
+) -> list[DirectoryEntry]:
+    """Group already-stat'd sibling files into logical file entries.
 
     *subdir_names* is the sibling directory listing the caller already holds, so
     an entry's ``.assets`` payload is detected in memory rather than costing one
@@ -78,7 +74,7 @@ def _entries_from_files(
         stem_path = str((relative.parent / item.stem).as_posix())
         grouped.setdefault(stem_path, []).append(item)
 
-    entries: list[DocumentInfo] = []
+    entries: list[DirectoryEntry] = []
     for stem_path, files in sorted(grouped.items()):
         display_name = PurePosixPath(stem_path).name
         # An upload in flight (or its rollback) may have written some of the
@@ -99,9 +95,10 @@ def _entries_from_files(
         modified_at = max(file_stats[file].st_mtime for file in files)
         size_bytes = file_stats[primary].st_size
         entries.append(
-            DocumentInfo(
-                filename=entry_path,
-                display_name=display_name,
+            DirectoryEntry(
+                type="file",
+                name=display_name,
+                path=entry_path,
                 size_bytes=size_bytes,
                 modified_at=datetime.fromtimestamp(modified_at, tz=UTC),
                 chunk_count=chunk_counts.get(entry_path),
@@ -140,26 +137,15 @@ def _build_directory_tree(
                 _build_directory_tree(item, root_path, chunk_counts, hidden_stems)
             )
 
-    for file_entry in _entries_from_files(
-        file_stats,
-        root_path,
-        chunk_counts,
-        hidden_stems,
-        frozenset(item.name for item in subdirs),
-    ):
-        children.append(
-            DirectoryEntry(
-                type="file",
-                name=file_entry.display_name,
-                path=file_entry.filename,
-                size_bytes=file_entry.size_bytes,
-                modified_at=file_entry.modified_at,
-                chunk_count=file_entry.chunk_count,
-                has_original=file_entry.has_original,
-                original_path=file_entry.original_path,
-                assets_dir=file_entry.assets_dir,
-            )
+    children.extend(
+        _entries_from_files(
+            file_stats,
+            root_path,
+            chunk_counts,
+            hidden_stems,
+            frozenset(item.name for item in subdirs),
         )
+    )
 
     return DirectoryEntry(
         type="directory",

@@ -1,9 +1,9 @@
 """Shared helpers for the document routes' background jobs.
 
-Single uploads, reconvert, collections, and the bulk rechunk and reconvert
-all run as background jobs (see :mod:`hivegent.jobs`); this module holds the
-upload size guard those routes share and the per-file bulk runner that
-reports its progress to a job context.
+Uploads, collections, rechunk, and reconvert all run as background jobs
+(see :mod:`hivegent.jobs`). This module holds the upload size guard those
+routes share and the per-file bulk runner that reports its progress to a job
+context.
 """
 
 import logging
@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
+from ...concurrency import bounded_as_completed
 from ...config import settings
 from ...l10n import Localized
 from ...types import FailedFile, ProgressReporter
@@ -104,34 +105,45 @@ def cleanup_spool_dir() -> None:
 
 async def run_bulk_document_job(
     files: list[str],
-    process_one: Callable[[str], Awaitable[None]],
+    process_one: Callable[[str, ProgressReporter], Awaitable[None]],
     *,
     verb: Localized[str],
     ctx: ProgressReporter,
 ) -> None:
-    """Run a per-file mutation over many documents, reporting progress to *ctx*.
+    """Run a per-file mutation over documents, reporting progress to *ctx*.
 
     Each ``process_one`` call is a workspace mutation that maintains its own
-    index entries; this helper only drives the loop. A failed file (including an
-    unauthorized path, whose access check raises) is logged and the batch keeps
-    going, so the files that can be processed are. If any file failed, the job is
-    raised as failed with the count and names, so a partial or total failure
-    surfaces in the tray instead of settling as a misleading success.
+    index entries and reports its stages to *ctx*, so this helper only drives
+    the batch, up to ``collection_concurrency`` files at once. A failed file
+    (including an unauthorized path, whose access check raises) is logged and
+    the batch keeps going. If any file failed, the job is raised as failed with
+    the count and names, so a partial or total failure surfaces in the tray
+    instead of settling as a misleading success.
     """
     total = len(files)
+    done = 0
     failed: list[str] = []
     ctx.set_progress(0, total)
 
-    for index, filepath in enumerate(files):
+    async def run(filepath: str) -> tuple[str, Exception | None]:
         try:
-            await process_one(filepath)
+            await process_one(filepath, ctx)
         except Exception as exc:  # noqa: BLE001
-            # One file's failure must not abort the batch; it is collected and
-            # reported as a partial result once every file has been attempted.
-            logger.warning("Bulk %s failed for %s: %s", verb.en.lower(), filepath, exc)
+            return filepath, exc
+
+        return filepath, None
+
+    async for filepath, error in bounded_as_completed(
+        files, run, limit=settings.jobs.collection_concurrency
+    ):
+        if error is not None:
+            logger.warning(
+                "Bulk %s failed for %s: %s", verb.en.lower(), filepath, error
+            )
             failed.append(filepath)
 
-        ctx.set_progress(index + 1, total)
+        done += 1
+        ctx.set_progress(done, total)
 
     if failed:
         raise RuntimeError(

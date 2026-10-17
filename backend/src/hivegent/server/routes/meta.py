@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
-from collections.abc import Sequence
-from typing import Annotated
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -40,6 +42,30 @@ __all__ = ["router"]
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+type PipelineStage = Literal["conversion", "chunking"]
+
+
+@dataclass(frozen=True, slots=True)
+class _Stage[P: StrEnum]:
+    """How one processing stage lists its pipelines and describes their config."""
+
+    pipelines: Callable[[], list[P]]
+    parse: Callable[[str], P]
+    describe: Callable[[P], PipelineConfigInfo]
+
+    def config(self, pipeline: str) -> PipelineConfigInfo:
+        return self.describe(self.parse(pipeline))
+
+
+_STAGES: dict[PipelineStage, _Stage[ConversionPipeline] | _Stage[ChunkingPipeline]] = {
+    "conversion": _Stage(
+        get_conversion_pipelines, ConversionPipeline, get_conversion_pipeline_config
+    ),
+    "chunking": _Stage(
+        get_chunking_pipelines, ChunkingPipeline, get_chunking_pipeline_config
+    ),
+}
 
 
 @router.get("/settings")
@@ -110,42 +136,23 @@ async def test_mcp_server(
         return McpTestResponse(ok=False, error=str(exc) or type(exc).__name__)
 
 
-@router.get("/pipelines/conversion")
-async def list_conversion_pipelines() -> list[ConversionPipeline]:
-    """Get the installed conversion pipelines."""
-    return get_conversion_pipelines()
+@router.get("/pipelines/{stage}")
+async def list_pipelines(
+    stage: PipelineStage,
+) -> list[ConversionPipeline] | list[ChunkingPipeline]:
+    """Get the installed pipelines of one processing stage."""
+    return _STAGES[stage].pipelines()
 
 
-@router.get("/pipelines/conversion/{pipeline}/config")
-def get_conversion_config(
-    pipeline: ConversionPipeline,
-) -> PipelineConfigInfo:
-    """Get configuration metadata for one conversion pipeline.
+@router.get("/pipelines/{stage}/{pipeline}/config")
+def get_pipeline_config(stage: PipelineStage, pipeline: str) -> PipelineConfigInfo:
+    """Get configuration metadata for one pipeline of a processing stage.
 
     Synchronous so FastAPI runs it in the threadpool: the first request for a
-    pipeline imports its backend, which must not block the event loop.
+    pipeline imports its backend, which must not block the event loop. An
+    unknown pipeline name is a 404 like an uninstalled one.
     """
     try:
-        return get_conversion_pipeline_config(pipeline)
-    except (ImportError, ValueError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.get("/pipelines/chunking")
-async def list_chunking_pipelines() -> list[ChunkingPipeline]:
-    """Get the installed chunking pipelines."""
-    return get_chunking_pipelines()
-
-
-@router.get("/pipelines/chunking/{pipeline}/config")
-def get_chunking_config(
-    pipeline: ChunkingPipeline,
-) -> PipelineConfigInfo:
-    """Get configuration metadata for one chunking pipeline.
-
-    Synchronous for the same reason as the conversion route above.
-    """
-    try:
-        return get_chunking_pipeline_config(pipeline)
+        return _STAGES[stage].config(pipeline)
     except (ImportError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

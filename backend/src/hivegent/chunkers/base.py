@@ -95,10 +95,6 @@ class EntryMetadata(BaseModel):
         default="user",
         description="How the markdown content was produced",
     )
-    files: list[str] = Field(
-        default_factory=list,
-        description="Workspace-relative files that belong to the logical entry",
-    )
 
 
 class DocumentMetadata(EntryMetadata):

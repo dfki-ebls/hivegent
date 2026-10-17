@@ -5,7 +5,6 @@ as initial context, linking back to the original.
 """
 
 import logging
-from dataclasses import dataclass
 
 from pydantic_ai.messages import ModelResponse, TextPart
 
@@ -20,10 +19,7 @@ from .db.conversations import (
 from .l10n import Localized
 from .tmp import copy_tmp
 
-__all__ = [
-    "CompactionResult",
-    "compact_conversation",
-]
+__all__ = ["compact_conversation"]
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +38,10 @@ def _continued_title(title: str | None) -> Localized[str]:
     )
 
 
-@dataclass(slots=True, frozen=True)
-class CompactionResult:
-    """Result of a conversation compaction."""
-
-    new_conversation_id: str
-    summary: str
-
-
 async def compact_conversation(
     conversation: OwnedConversation,
     run: RunPrefix,
-) -> CompactionResult:
+) -> OwnedConversation:
     """Compact a conversation by summarizing it into a new conversation.
 
     Generates a summary of the conversation's persisted active path with the
@@ -79,7 +67,7 @@ async def compact_conversation(
         run: The prompt prefix the conversation's turns ran under.
 
     Returns:
-        A CompactionResult with the new conversation ID and summary.
+        The new conversation, opening with the summary.
 
     Raises:
         ValueError: If the conversation has no messages.
@@ -106,7 +94,4 @@ async def compact_conversation(
         conversation.user.id,
     )
 
-    return CompactionResult(
-        new_conversation_id=compacted.id,
-        summary=summary,
-    )
+    return compacted

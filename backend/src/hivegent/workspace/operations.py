@@ -3,6 +3,8 @@
 The operations themselves are the plain, location-generic data of
 :mod:`hivegent.changes`, and :func:`route` turns one spelled in canonical paths
 into one the gateway in :mod:`~hivegent.workspace.changeset` plans and applies.
+An :class:`Upload` is the one item that exists only here, routed already,
+since it carries bytes no stored changeset may hold.
 
 A :class:`Root` answers for the rules its changes follow, so the gateway never
 asks which kind it holds: a :class:`~hivegent.store.Casebase`, whose workspace
@@ -11,23 +13,37 @@ whose plain files are written directly, such as a conversation's ``/tmp``.
 """
 
 import os
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
 from fastapi import HTTPException
 
-from ..changes import Changeset, CreateDir, Delete, Edit, Move, Operation, Write
+from ..changes import Basis, Changeset, CreateDir, Delete, Edit, Move, Operation, Write
+from ..chunkers.base import EntryOrigin
+from ..entries import is_description_file, stem_path_from_reference
 from ..files import disk_size
 from ..humanize import format_bytes
 from ..l10n import Localized
+from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..tools.base import CommitPolicy, Direct
 from ..tools.scope import Scope
+from ..types import PipelineSpec, ProgressReporter
 
-__all__ = ["Folder", "Location", "Quota", "Root", "changed_root", "route"]
+__all__ = [
+    "Folder",
+    "Item",
+    "Location",
+    "Quota",
+    "Root",
+    "Upload",
+    "changed_root",
+    "locations",
+    "route",
+]
 
 
 def _no_workspace(path: str) -> Localized[str]:
@@ -64,7 +80,13 @@ class Quota:
     evictable: str | None = None
 
     def admit(
-        self, folder: Path, shown: str, growth: int, keep: AbstractSet[Path], *, evict: bool
+        self,
+        folder: Path,
+        shown: str,
+        growth: int,
+        keep: AbstractSet[Path],
+        *,
+        evict: bool,
     ) -> list[Path]:
         """The files to evict so that *growth* more bytes fit in *folder*, none of *keep*.
 
@@ -203,9 +225,72 @@ class Location:
         return self.root.path / self.path
 
 
-def changed_root(operation: Operation[Location]) -> Root:
+@dataclass(slots=True, frozen=True)
+class Upload:
+    """Land a file's bytes as an entry, converted the way every upload is.
+
+    Only the host builds one, from bytes it received, so it carries what no
+    stored changeset may: the bytes, the pipelines, and the progress the
+    conversion reports to.
+
+    Attributes:
+        target: The file, a markdown description or an original whose
+            projection the conversion derives.
+        content: Its bytes.
+        spec: The conversion and chunking pipelines.
+        llm: The model that describes images and videos.
+        origin: How a new entry came to be.
+        companion: A markdown upload's original, a sibling path local to the
+            target's root with its bytes.
+        overwrite: Whether it replaces the entry at its stem, keeping that
+            entry's origin, which otherwise must not exist.
+        basis: What the caller saw of the target, if anything.
+        progress: Where the conversion reports its stages.
+    """
+
+    target: Location
+    content: bytes
+    spec: PipelineSpec = field(default_factory=PipelineSpec)
+    llm: LlmConfig = field(default_factory=LlmConfig)
+    origin: EntryOrigin = "upload"
+    companion: tuple[str, bytes] | None = None
+    overwrite: bool = False
+    basis: Basis | None = None
+    progress: ProgressReporter | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.companion is None:
+            return
+
+        path, original = self.target.path, self.companion[0]
+
+        if not is_description_file(path) or is_description_file(original):
+            raise ValueError("A companion original belongs to a markdown upload")
+
+        if stem_path_from_reference(original) != stem_path_from_reference(path):
+            raise ValueError("A companion original must share the upload's stem")
+
+
+type Item = Operation[Location] | Upload
+"""What the gateway commits: an operation routed to its root, or an upload."""
+
+
+def changed_root(operation: Item) -> Root:
     """The root an item changes, a move's source's, since no move leaves a folder."""
-    return operation.source.root if isinstance(operation, Move) else operation.target.root
+    return (
+        operation.source.root if isinstance(operation, Move) else operation.target.root
+    )
+
+
+def locations(items: Iterable[Item]) -> tuple[Location, ...]:
+    """Every path *items* name, in order, as :attr:`Changeset.locations` reads them."""
+    return tuple(
+        location
+        for op in items
+        for location in (
+            (op.source, op.destination) if isinstance(op, Move) else (op.target,)
+        )
+    )
 
 
 def _located(roots: Sequence[Root], canonical: str) -> Location:

@@ -103,6 +103,7 @@ def _found[T](value: T | None) -> T:
 
     return value
 
+
 _TITLE_INSTRUCTIONS = Localized(
     en="""Generate a short, descriptive title (max 60 characters) for the conversation.
 The title should capture the main topic or question.
@@ -198,11 +199,7 @@ async def get_conversations(
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationListResponse:
     """List all conversations with summary information."""
-    conversations = await list_conversations(user)
-    return ConversationListResponse(
-        conversations=conversations,
-        total_count=len(conversations),
-    )
+    return ConversationListResponse(conversations=await list_conversations(user))
 
 
 @router.get("/conversations/{conversation_id}")
@@ -315,7 +312,7 @@ async def create_conversation_compaction(
     run_prefix = build_run_prefix(request, conversation)
 
     try:
-        result = await run_until_disconnect(
+        compacted = await run_until_disconnect(
             http_request,
             compact_conversation(conversation, run_prefix),
         )
@@ -333,11 +330,7 @@ async def create_conversation_compaction(
         logger.exception("Failed to compact conversation %s", conversation.id)
         raise HTTPException(status_code=500, detail=_COMPACTION_FAILED.current) from exc
 
-    return CompactConversationResponse(
-        new_conversation_id=result.new_conversation_id,
-        summary=result.summary,
-        message="Conversation compacted successfully",
-    )
+    return CompactConversationResponse(new_conversation_id=compacted.id)
 
 
 @router.get("/conversations/{conversation_id}/messages")
@@ -559,7 +552,9 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
     # can never be applied, so they go now rather than at the next boot sweep.
     if prefix and isinstance(prefix[-1], ModelResponse):
         approved = {
-            call for call, decision in adapter.approval_decisions.items() if decision.approved
+            call
+            for call, decision in adapter.approval_decisions.items()
+            if decision.approved
         }
         await discard_unapproved_changes(conversation, prefix[-1], approved)
 

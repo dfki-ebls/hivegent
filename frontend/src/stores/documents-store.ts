@@ -1,15 +1,12 @@
 import { create } from "zustand";
-import type { ReconvertDocumentOptions } from "@/lib/api";
 import {
   applyChanges,
-  bulkRechunk as apiBulkRechunk,
-  bulkReconvert as apiBulkReconvert,
   type ChangeOperation,
   canonicalPath,
   type DeleteKind,
   getDirectories,
-  rechunkDocument,
-  reconvertDocument,
+  rechunkDocuments,
+  reconvertDocuments,
 } from "@/lib/api";
 import type {
   DirectoryTreeResponse,
@@ -56,10 +53,9 @@ interface DocumentsStore {
   refresh: (scope: string) => Promise<void>;
   // Deletes documents (`entry`) or directories (`dir`), refused for the other kind.
   remove: (scope: string, paths: string[], expect: DeleteKind) => Promise<void>;
-  rechunk: (scope: string, filename: string, spec?: PipelineSpec) => Promise<void>;
-  reconvert: (scope: string, filename: string, options?: ReconvertDocumentOptions) => Promise<void>;
-  bulkRechunk: (scope: string, files: string[], spec?: PipelineSpec) => Promise<void>;
-  bulkReconvert: (
+  // Both resolve once their job settles, so a caller can refetch the result.
+  rechunk: (scope: string, files: string[], spec?: PipelineSpec) => Promise<void>;
+  reconvert: (
     scope: string,
     files: string[],
     spec?: PipelineSpec,
@@ -160,26 +156,19 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
       onApplied?.();
     });
 
-  // Submit a background job: the tray shows its progress and the job-settle
-  // handler refreshes the job's scope, so the store only has to record the new
-  // job (or surface a submit failure). Shared by bulk rechunk and reconvert.
-  const submitJob = async (scope: string, submit: () => Promise<JobView>): Promise<void> => {
-    patch(scope, { error: null });
-    try {
-      useJobsStore.getState().upsert(await submit());
-    } catch (err) {
-      patch(scope, { error: errorMessage(err) });
-    }
-  };
-
-  // Submit a job, record it, and resolve once it settles — for the callers
-  // (reconvert, the dialog's rechunk) that refresh inline on completion while
-  // the work itself runs off the request.
-  const submitAndAwait = async (submit: () => Promise<JobView>): Promise<void> => {
-    const job = await submit();
-    useJobsStore.getState().upsert(job);
-    await awaitJobSettled(job.id);
-  };
+  // Run a background job over documents: the tray shows its progress, and the
+  // targeted rows spin until it settles, so they visibly reflect that they are
+  // being reprocessed.
+  const runJob = (
+    scope: string,
+    files: string[],
+    submit: (paths: string[]) => Promise<JobView>,
+  ): Promise<void> =>
+    withMutating(scope, files, async () => {
+      const job = await submit(files.map((f) => canonicalPath(scope, f)));
+      useJobsStore.getState().upsert(job);
+      await awaitJobSettled(job.id);
+    });
 
   return {
     byScope: {},
@@ -202,42 +191,10 @@ export const useDocumentsStore = create<DocumentsStore>((set) => {
         paths.map((path) => ({ kind: "delete", path: canonicalPath(scope, path), expect })),
       ),
 
-    // Rechunk runs as a background job; the tray shows its progress. The promise
-    // resolves once the job settles so a caller that needs the fresh chunks (the
-    // document dialog) can refetch, while the work itself runs off the request.
-    rechunk: async (scope, filename, spec) => {
-      patch(scope, { error: null });
-      try {
-        await submitAndAwait(() => rechunkDocument(canonicalPath(scope, filename), spec));
-      } catch (err) {
-        patch(scope, { error: errorMessage(err) });
-      }
-    },
+    rechunk: (scope, files, spec) => runJob(scope, files, (paths) => rechunkDocuments(paths, spec)),
 
-    // Reconvert runs as a background job (the tray surfaces its progress), but
-    // the targeted row also spins until the job settles so the document visibly
-    // reflects that it is being reprocessed.
-    reconvert: (scope, filename, options) =>
-      withMutating(scope, [filename], () =>
-        submitAndAwait(() => reconvertDocument(canonicalPath(scope, filename), options)),
-      ),
-
-    bulkRechunk: (scope, files, spec) =>
-      submitJob(scope, () =>
-        apiBulkRechunk(
-          files.map((f) => canonicalPath(scope, f)),
-          spec,
-        ),
-      ),
-
-    bulkReconvert: (scope, files, spec, llm) =>
-      submitJob(scope, () =>
-        apiBulkReconvert(
-          files.map((f) => canonicalPath(scope, f)),
-          spec,
-          llm,
-        ),
-      ),
+    reconvert: (scope, files, spec, llm) =>
+      runJob(scope, files, (paths) => reconvertDocuments(paths, spec, llm)),
 
     move: (srcScope, destScope, moves) =>
       change(

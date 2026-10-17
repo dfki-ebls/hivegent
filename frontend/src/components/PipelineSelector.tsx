@@ -1,60 +1,42 @@
 import type { TFunction } from "i18next";
 import { FileType, type LucideIcon, Scissors } from "lucide-react";
-import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  getChunkingPipelineConfig,
-  getConversionPipelineConfig,
-  listChunkingPipelines,
-  listConversionPipelines,
-} from "@/lib/api";
-import {
   ChunkingPipeline,
   ConversionPipeline,
-  type PipelineConfigInfo,
+  type PipelineByKind,
   type PipelineKind,
 } from "@/lib/types";
-import { usePipelineConfig } from "@/hooks/use-pipeline-config";
+import { usePipelineConfig, usePipelines } from "@/hooks/use-pipeline-config";
 import { PIPELINE_CONFIG_FIELDS, useSettingsStore } from "@/stores/settings-store";
 import { PipelineConfigDialog } from "@/components/PipelineConfigDialog";
 import { LabeledOptionSelect } from "@/components/OptionSelect";
 
-interface PipelineValues {
-  conversion: ConversionPipeline;
-  chunking: ChunkingPipeline;
-}
-
 interface PipelineRegistry<P extends string> {
   icon: LucideIcon;
   auto: P;
-  list: () => Promise<P[]>;
   text: (t: TFunction, pipeline: P) => { label: string; description: string };
-  fetchConfig: (pipeline: P) => Promise<PipelineConfigInfo>;
 }
 
-const REGISTRIES: { [K in PipelineKind]: PipelineRegistry<PipelineValues[K]> } = {
+const REGISTRIES: { [K in PipelineKind]: PipelineRegistry<PipelineByKind[K]> } = {
   conversion: {
     icon: FileType,
     auto: ConversionPipeline.AUTO,
-    list: listConversionPipelines,
     text: (t, pipeline) =>
       t(($) => $.options.conversionPipeline[pipeline], { returnObjects: true }),
-    fetchConfig: getConversionPipelineConfig,
   },
   chunking: {
     icon: Scissors,
     auto: ChunkingPipeline.AUTO,
-    list: listChunkingPipelines,
     text: (t, pipeline) => t(($) => $.options.chunkingPipeline[pipeline], { returnObjects: true }),
-    fetchConfig: getChunkingPipelineConfig,
   },
 };
 
 interface PipelineSelectorProps<K extends PipelineKind> {
   kind: K;
-  value: PipelineValues[K];
-  onChange: (value: PipelineValues[K]) => void;
+  value: PipelineByKind[K];
+  onChange: (value: PipelineByKind[K]) => void;
   disabled?: boolean;
 }
 
@@ -66,26 +48,14 @@ export function PipelineSelector<K extends PipelineKind>({
   disabled,
 }: PipelineSelectorProps<K>) {
   const { t } = useTranslation();
-  const registry: PipelineRegistry<PipelineValues[K]> = REGISTRIES[kind];
-  const [pipelines, setPipelines] = useState<PipelineValues[K][]>([]);
+  const registry: PipelineRegistry<PipelineByKind[K]> = REGISTRIES[kind];
+  const pipelines = usePipelines(kind);
 
   const configs = useSettingsStore((s) => s[PIPELINE_CONFIG_FIELDS[kind]]);
   const setPipelineConfig = useSettingsStore((s) => s.setPipelineConfig);
   const resetPipelineConfig = useSettingsStore((s) => s.resetPipelineConfig);
 
-  useEffect(() => {
-    registry
-      .list()
-      .then(setPipelines)
-      .catch(() => {
-        // Silently fail, the selector stays empty until the pipelines load.
-      });
-  }, [registry]);
-
-  const pipelineConfig = usePipelineConfig(
-    value === registry.auto ? null : value,
-    registry.fetchConfig,
-  );
+  const pipelineConfig = usePipelineConfig(kind, value === registry.auto ? null : value);
   const options = pipelines.map((pipeline) => ({ value: pipeline, ...registry.text(t, pipeline) }));
   // Widened from `K`, since the selector API cannot index a catalog by a type parameter.
   const stage: PipelineKind = kind;

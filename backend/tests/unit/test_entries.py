@@ -77,7 +77,6 @@ def _converted_entry(filepath: str) -> EntryMetadata:
         mime=None,
         origin="upload",
         generated_by="converter",
-        files=[description_path_for_stem(stem), filepath],
     )
 
 
@@ -117,7 +116,6 @@ def test_markdown_entry_has_no_original_after_projection() -> None:
         mime=None,
         origin="upload",
         generated_by="user",
-        files=["notes/memo.md"],
     )
     assert _EntryColumns.from_entry(entry).original_suffix is None
     assert _project(entry).original_path is None

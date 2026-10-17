@@ -92,9 +92,7 @@ def run_prefix(monkeypatch: pytest.MonkeyPatch) -> RunPrefix:
     monkeypatch.setattr(capabilities, "load_memory", _memory)
 
     return RunPrefix(
-        deps=UserDeps(
-            user=User("u"), mode="interactive"
-        ),
+        deps=UserDeps(user=User("u"), mode="interactive"),
         capabilities=build_capabilities(ToolsSpec(), mode="interactive", language="en"),
         instructions="chat instructions",
         llm=LlmConfig(),
@@ -279,13 +277,14 @@ async def test_compaction_summarizes_the_persisted_path_not_a_posted_one(
     monkeypatch.setattr(compaction, "load_conversation", _load)
     monkeypatch.setattr(compaction, "create_compacted_conversation", _create)
 
-    result = await compaction.compact_conversation(
+    compacted = await compaction.compact_conversation(
         owned("c1"), replace(run_prefix, model=FunctionModel(respond))
     )
 
-    assert result == compaction.CompactionResult(
-        new_conversation_id="c2", summary="summary text"
-    )
+    assert compacted == owned("c2")
+    summary = created["summary_message"]
+    assert isinstance(summary, ModelResponse)
+    assert summary.parts == [TextPart(content="summary text")]
     assert seen[0][:-1] == _MESSAGES
     assert created["source"] == owned("c1")
     assert created["title"] == "Manual questions (continued)"

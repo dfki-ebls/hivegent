@@ -10,8 +10,9 @@ and :func:`delete_chunked_document`), which sibling modules import directly.
 
 import asyncio
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 
 from ..chunks import chunk_and_index_document
 from ..chunks import delete_document as delete_chunked_document
@@ -67,26 +68,31 @@ def _sync_verbatim_description(
     return True
 
 
-async def _sync_verbatim_projection(workspace_dir: Path, resolved: EntryPaths) -> bool:
-    """Synchronize the markdown projection of a projectable original.
+def _probe(
+    workspace_dir: Path, reference: str
+) -> tuple[EntryPaths, ContentStat | None]:
+    """Resolve an entry, derive a projectable original's description, and stat the description.
 
-    This derives a missing description and refreshes an existing one before
-    its stat can take the SQL fast path.
-    Anything else, a binary or a format needing a converter or vision model,
-    is left alone.
-
-    The classification is dependency-free, while the file work is offloaded.
+    Blocking.  Anything but a projectable original, a binary or a format
+    needing a converter or vision model, is left alone.  The stat is ``None``
+    once the description is gone.
     """
+    resolved = resolve_entry_paths(workspace_dir, reference)
     original = resolved.original_path
-    if original is None or not is_projectable_original(original):
-        return False
 
-    return await asyncio.to_thread(
-        _sync_verbatim_description, workspace_dir, original, resolved.description_path
-    )
+    if original is not None and is_projectable_original(original):
+        _sync_verbatim_description(workspace_dir, original, resolved.description_path)
+
+    description = workspace_dir / resolved.description_path
+
+    return resolved, ContentStat.from_path(
+        description
+    ) if description.is_file() else None
 
 
-async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
+async def _sync_entry_from_disk_locked(
+    store: Casebase, reference: str, states: Mapping[str, db_documents.EntryState]
+) -> bool:
     """Re-derive one logical entry's SQL + chunk rows from its on-disk markdown.
 
     The single idempotent ingest path: derive the description of a plain-text
@@ -100,19 +106,20 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
     casebase lock.
     """
     workspace_dir = store.workspace_dir(settings.data_dir)
-    resolved = resolve_entry_paths(workspace_dir, reference)
-    description_full = workspace_dir / resolved.description_path
+    resolved, stat = await asyncio.to_thread(_probe, workspace_dir, reference)
+    description = resolved.description_path
 
-    await _sync_verbatim_projection(workspace_dir, resolved)
-
-    if not description_full.is_file():
+    if stat is None:
         # Entry gone on disk: drop the row if one exists (chunks cascade).
-        return await delete_chunked_document(store, resolved.description_path)
+        return await delete_chunked_document(store, description)
 
-    state = await db_documents.get_entry_state(store, resolved.description_path)
+    state = (
+        states[description]
+        if description in states
+        else await db_documents.get_entry_state(store, description)
+    )
     existing = state.metadata if state else None
     entry_metadata = _entry_metadata_from_disk(resolved, existing)
-    stat = ContentStat.from_path(description_full)
 
     # Fast path: a stored stat equal to the file's stat means the digest cannot
     # have changed, so skip the read + hash and only reconcile companion-file
@@ -121,20 +128,17 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
     if (
         state is not None
         and state.content_digest is not None
-        and stat is not None
         and state.content_stat == stat
     ):
         return await _refresh_unchanged_entry(store, state, entry_metadata, stat)
 
     # Offloaded: reconciliation walks every description in the workspace under
     # the store lock, and a legacy-encoded one costs a detection pass.
-    decoded = await asyncio.to_thread(read_text_file, description_full)
+    decoded = await asyncio.to_thread(read_text_file, workspace_dir / description)
     if decoded is None:
         # A description that is not text at all cannot be chunked; leave any
         # existing row untouched rather than replacing it with garbage.
-        logger.warning(
-            "Skipping %s: content %s", resolved.description_path, NOT_TEXT_REASON
-        )
+        logger.warning("Skipping %s: content %s", description, NOT_TEXT_REASON)
         return False
 
     content = decoded.text
@@ -148,7 +152,7 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
     await shield_to_completion(
         chunk_and_index_document(
             store,
-            resolved.description_path,
+            description,
             content,
             stat=stat,
             entry_metadata=entry_metadata,
@@ -157,13 +161,21 @@ async def _sync_entry_from_disk_locked(store: Casebase, reference: str) -> bool:
     return True
 
 
-async def sync_entries_from_disk(store: Casebase, references: Iterable[str]) -> int:
+async def sync_entries_from_disk(
+    store: Casebase,
+    references: Iterable[str],
+    states: Mapping[str, db_documents.EntryState] = MappingProxyType({}),
+) -> int:
     """Fold a batch of on-disk entry changes into SQL under one lock.
 
     The fold-back primitive a future read-write shell tool calls once a
     session ends: pass every touched description path and SQL is re-derived
     from the current bytes in a single locked, idempotent pass.  Reused by the
-    startup reconciler.  Returns the number of entries whose index changed.
+    startup reconciler, which passes every entry on disk and every SQL row, so
+    a row whose description is gone is dropped here too, and the state of every
+    row it read in one query as *states*, by description path.  An entry absent
+    from *states* is looked up on its own, so one created since is not taken for
+    new.  Returns the number of entries whose index changed.
 
     Each entry is isolated: one file that fails to index (a chunker or embedder
     error, unreadable bytes) is logged and skipped so the rest of the batch
@@ -177,7 +189,7 @@ async def sync_entries_from_disk(store: Casebase, references: Iterable[str]) -> 
         changed = 0
         for reference in pending:
             try:
-                if await _sync_entry_from_disk_locked(store, reference):
+                if await _sync_entry_from_disk_locked(store, reference, states):
                     changed += 1
             except Exception:
                 logger.warning(

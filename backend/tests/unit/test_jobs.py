@@ -12,7 +12,7 @@ from hivegent.server.operations.processing import (
     run_bulk_document_job,
     summarize_failed_files,
 )
-from hivegent.types import FailedFile
+from hivegent.types import FailedFile, ProgressReporter
 
 
 async def _run_to_terminal(
@@ -129,7 +129,7 @@ async def test_bulk_runner_raises_so_failures_are_not_a_false_success() -> None:
     progress = _Progress()
     processed: list[str] = []
 
-    async def process_one(filepath: str) -> None:
+    async def process_one(filepath: str, _ctx: ProgressReporter) -> None:
         processed.append(filepath)
         if filepath == "b.md":
             raise RuntimeError("boom")

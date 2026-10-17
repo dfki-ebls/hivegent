@@ -30,8 +30,9 @@ async def bounded_as_completed[T, R](
 
     A semaphore bounds concurrency and results stream in completion order.  On
     cancellation or an early break, every unfinished task is cancelled and
-    awaited to completion, so a task owning a rollback (a phased upload unwinding
-    a half-written entry) finishes unwinding before this generator returns.
+    awaited to completion, so a task owning cleanup (a changeset rolling back its
+    journal or releasing its in-flight claims) finishes it before this generator
+    returns.
     *run* should return its failures rather than raise, so one bad item does not
     abort the batch.
 

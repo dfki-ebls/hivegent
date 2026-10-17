@@ -20,13 +20,9 @@ from .chunkers.base import (
     DocumentMetadata,
     EntryMetadata,
 )
-from .config import content_digest, settings
+from .config import content_digest
 from .db import documents as db_documents
-from .entries import (
-    ContentStat,
-    resolve_entry_paths,
-    stem_path_from_reference,
-)
+from .entries import ContentStat
 from .retrieval import index_document
 from .store import Casebase
 
@@ -44,30 +40,6 @@ logger = logging.getLogger(__name__)
 # ─── Writer / coordinator ─────────────────────────────────────────────
 
 
-def _default_entry_metadata(
-    filename: str,
-    resolved_original_path: str | None,
-    resolved_assets_dir: str | None,
-) -> EntryMetadata:
-    """Build the default logical-entry metadata for a markdown file."""
-    import mimetypes
-
-    files = [filename]
-    if resolved_original_path is not None:
-        files.append(resolved_original_path)
-    return EntryMetadata(
-        entry_kind="user_markdown",
-        stem_path=stem_path_from_reference(filename),
-        description_path=filename,
-        original_path=resolved_original_path,
-        assets_dir=resolved_assets_dir,
-        mime=mimetypes.guess_type(resolved_original_path or filename)[0],
-        origin="upload",
-        generated_by="user",
-        files=files,
-    )
-
-
 async def chunk_and_index_document(
     store: Casebase,
     filename: str,
@@ -75,8 +47,8 @@ async def chunk_and_index_document(
     chunking: ChunkingSpec | None = None,
     *,
     stat: ContentStat | None,
-    entry_metadata: EntryMetadata | None = None,
-) -> DocumentMetadata:
+    entry_metadata: EntryMetadata,
+) -> None:
     """Chunk a document, embed it, and persist the row, its chunks, and digest.
 
     Not one transaction but an ordered sequence of them: the ``Document`` row is
@@ -90,20 +62,10 @@ async def chunk_and_index_document(
 
     *stat* is the on-disk ``(mtime, size)`` fingerprint of *content*, captured
     by the caller when it read or wrote the file so the stamped stat matches the
-    indexed bytes without this coordinator reaching back to disk for it.
+    indexed bytes without this coordinator reaching back to disk for it, and
+    *entry_metadata* is the row it upserts.
     """
     spec = chunking or ChunkingSpec()
-
-    if entry_metadata is None:
-        entry_metadata = await db_documents.get_entry_metadata(store, filename)
-        if entry_metadata is None:
-            workspace_dir = store.workspace_dir(settings.data_dir)
-            resolved = resolve_entry_paths(workspace_dir, filename)
-            entry_metadata = _default_entry_metadata(
-                resolved.description_path,
-                resolved.original_path,
-                resolved.assets_dir,
-            )
 
     if entry_metadata.generated_by in ("vision", "stub"):
         spec = ChunkingSpec(pipeline=ChunkingPipeline.NONE)
@@ -130,9 +92,6 @@ async def chunk_and_index_document(
         )
         await index_document(doc.id, raw_chunks)
         await db_documents.set_content_state(doc.id, digest, stat)
-        return doc.model_copy(
-            update={"chunks": list(raw_chunks), "content_digest": digest}
-        )
 
 
 async def delete_document(store: Casebase, filepath: str) -> bool:

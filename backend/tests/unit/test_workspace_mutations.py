@@ -7,16 +7,15 @@ where it lies, while a text original's rewrite regenerates its markdown
 projection through the upload conversion.
 """
 
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import ClassVar
 
 import pytest
 from fastapi import HTTPException
 
 from hivegent import workspace
 from hivegent.changes import (
-    Changeset,
     Delete,
     Edit,
     Operation,
@@ -28,16 +27,16 @@ from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import content_digest, content_hash, settings
 from hivegent.converters import VISION_MEDIA_TYPES
 from hivegent.db import documents as db_documents
+from hivegent.db import engine as db_engine
 from hivegent.db.documents import EntryState
 from hivegent.entries import ContentStat
 from hivegent.server.operations import reads
 from hivegent.store import Casebase
-from hivegent.workspace import Location, changeset, commit
-from hivegent.workspace import assets as workspace_assets
+from hivegent.workspace import Location, changeset
 
 
 async def _single(operation: Operation[Location]) -> str:
-    (report,) = (await workspace.apply_changeset(Changeset((operation,)))).reports
+    (report,) = (await workspace.apply_changeset((operation,))).reports
 
     return report
 
@@ -69,13 +68,6 @@ async def _delete(store: Casebase, path: str) -> str:
     return await _single(Delete(Location(store, path)))
 
 
-class _Chunked:
-    """Stand-in for the indexed document the phased commit reports on."""
-
-    chunks: ClassVar[tuple[()]] = ()
-    pipeline: ClassVar[str] = "none"
-
-
 @pytest.fixture()
 def workspace_dir(
     user_store: Casebase, monkeypatch: pytest.MonkeyPatch
@@ -85,14 +77,10 @@ def workspace_dir(
     async def _noop(*_args: object, **_kwargs: object) -> None:
         return None
 
-    async def _chunked(*_args: object, **_kwargs: object) -> _Chunked:
-        return _Chunked()
-
     async def _no_rows(*_args: object, **_kwargs: object) -> int:
         return 0
 
     monkeypatch.setattr(changeset, "chunk_and_index_document", _noop)
-    monkeypatch.setattr(commit, "chunk_and_index_document", _chunked)
     monkeypatch.setattr(db_documents, "get_entry_metadata", _noop)
     monkeypatch.setattr(db_documents, "delete_subtree", _no_rows)
     path = user_store.workspace_dir(settings.data_dir)
@@ -111,9 +99,7 @@ class TestEditDocumentText:
 
     async def test_replace_all(self, user_store: Casebase, workspace_dir: Path) -> None:
         (workspace_dir / "doc.md").write_text("foo foo foo")
-        result = await _edit(
-            user_store, "doc.md", "foo", "bar", replace_all=True
-        )
+        result = await _edit(user_store, "doc.md", "foo", "bar", replace_all=True)
         assert "Replaced 3 occurrences" in result
         assert (workspace_dir / "doc.md").read_text() == "bar bar bar"
 
@@ -199,15 +185,11 @@ class TestCanonicalPathsInMessages:
         assert "'~/a/b.md'" in receipt
 
         with pytest.raises(HTTPException, match=r"'~/a/b\.md' changed since"):
-            await _write(
-                user_store, "a/b.md", "x", expected_hash="0" * 12
-            )
+            await _write(user_store, "a/b.md", "x", expected_hash="0" * 12)
 
         (workspace_dir / "blocker.md").write_text("in the way")
         with pytest.raises(HTTPException, match=r"parent '~/blocker\.md' is a file"):
-            await _write(
-                user_store, "blocker.md/child.md", "nope"
-            )
+            await _write(user_store, "blocker.md/child.md", "nope")
 
     async def test_a_group_message_carries_the_group_prefix(
         self, data_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -216,6 +198,7 @@ class TestCanonicalPathsInMessages:
             return None
 
         monkeypatch.setattr(changeset, "chunk_and_index_document", _noop)
+        monkeypatch.setattr(db_documents, "get_entry_metadata", _noop)
         store = Casebase.for_group("team", writable=True)
         store.workspace_dir(data_dir).mkdir(parents=True, exist_ok=True)
 
@@ -236,40 +219,30 @@ class TestWriteDocumentText:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         """A new document lands wherever its path says, folders and all."""
-        result = await _write(
-            user_store, "reports/2026/q1.md", "content"
-        )
+        result = await _write(user_store, "reports/2026/q1.md", "content")
         assert "Wrote" in result
         assert (workspace_dir / "reports" / "2026" / "q1.md").read_text() == "content"
 
     async def test_create_mode_rejects_existing_path(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        result = await _write(
-            user_store, "fresh.md", "body", mode="create"
-        )
+        result = await _write(user_store, "fresh.md", "body", mode="create")
         assert "Created" in result
 
         with pytest.raises(HTTPException) as exc:
-            await _write(
-                user_store, "fresh.md", "other", mode="create"
-            )
+            await _write(user_store, "fresh.md", "other", mode="create")
         assert exc.value.status_code == 409
         assert (workspace_dir / "fresh.md").read_text() == "body"
 
     async def test_append(self, user_store: Casebase, workspace_dir: Path) -> None:
         (workspace_dir / "doc.md").write_text("start")
-        result = await _write(
-            user_store, "doc.md", " end", mode="append"
-        )
+        result = await _write(user_store, "doc.md", " end", mode="append")
         assert "Appended" in result
         assert (workspace_dir / "doc.md").read_text() == "start end"
 
     async def test_prepend(self, user_store: Casebase, workspace_dir: Path) -> None:
         (workspace_dir / "doc.md").write_text("end")
-        result = await _write(
-            user_store, "doc.md", "start ", mode="prepend"
-        )
+        result = await _write(user_store, "doc.md", "start ", mode="prepend")
         assert "Prepended" in result
         assert (workspace_dir / "doc.md").read_text() == "start end"
 
@@ -277,9 +250,7 @@ class TestWriteDocumentText:
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
         with pytest.raises(HTTPException) as exc:
-            await _write(
-                user_store, "nope.md", "x", mode="append"
-            )
+            await _write(user_store, "nope.md", "x", mode="append")
         assert exc.value.status_code == 404
 
     async def test_stale_expected_hash_is_409(
@@ -315,9 +286,7 @@ class TestWriteDocumentText:
     ) -> None:
         """A hash for a file that does not exist signals a hallucinated read."""
         with pytest.raises(HTTPException) as exc:
-            await _write(
-                user_store, "new.md", "body", expected_hash="deadbeef0000"
-            )
+            await _write(user_store, "new.md", "body", expected_hash="deadbeef0000")
         assert exc.value.status_code == 409
 
 
@@ -334,9 +303,7 @@ class TestTextOriginals:
     ) -> None:
         (workspace_dir / "settings.ini").write_text("[db]\nhost = old\n")
 
-        result = await _edit(
-            user_store, "settings.ini", "old", "new"
-        )
+        result = await _edit(user_store, "settings.ini", "old", "new")
 
         assert (workspace_dir / "settings.ini").read_text() == "[db]\nhost = new\n"
         assert "host = new" in (workspace_dir / "settings.md").read_text()
@@ -349,9 +316,7 @@ class TestTextOriginals:
         original = workspace_dir / "settings.ini"
         original.write_bytes("city = Köln\n".encode(encoding))
 
-        result = await _edit(
-            user_store, "settings.ini", "Köln", "Berlin"
-        )
+        result = await _edit(user_store, "settings.ini", "Köln", "Berlin")
 
         assert original.read_bytes() == b"city = Berlin\n"
         assert f"transcoded from {encoding} to UTF-8" in result
@@ -395,7 +360,7 @@ class TestTextOriginals:
         )
 
         with pytest.raises(HTTPException, match="more than one change") as exc:
-            await changeset.apply_changeset(Changeset(operations[::-1] if reverse else operations))
+            await changeset.apply_changeset(operations[::-1] if reverse else operations)
 
         assert exc.value.status_code == 400
         assert (workspace_dir / "doc.txt").read_text() == "before"
@@ -469,9 +434,6 @@ def _entry_metadata(
     original_path: str | None = None,
     assets_dir: str | None = None,
 ) -> EntryMetadata:
-    files = ["doc.md"]
-    if original_path is not None:
-        files.append(original_path)
     return EntryMetadata(
         entry_kind="user_markdown",
         stem_path="doc",
@@ -481,7 +443,32 @@ def _entry_metadata(
         mime="text/markdown",
         origin="upload",
         generated_by="user",
-        files=files,
+    )
+
+
+async def test_rechunk_infers_a_rowless_entry_from_disk(
+    user_store: Casebase, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (workspace_dir / "photo.png").write_bytes(b"png")
+    (workspace_dir / "photo.md").write_text("caption")
+    indexed: list[EntryMetadata] = []
+
+    async def chunk_and_index_document(*_args: object, **kwargs: object) -> None:
+        metadata = kwargs["entry_metadata"]
+        assert isinstance(metadata, EntryMetadata)
+        indexed.append(metadata)
+
+    monkeypatch.setattr(
+        workspace.documents, "chunk_and_index_document", chunk_and_index_document
+    )
+
+    await workspace.rechunk(user_store, "photo.md")
+
+    [entry] = indexed
+    assert (entry.entry_kind, entry.origin, entry.original_path) == (
+        "image",
+        "upload",
+        "photo.png",
     )
 
 
@@ -664,17 +651,34 @@ class TestSyncEntryFromDisk:
         assert changed == 0
 
 
+@pytest.fixture()
+def deleted_rows(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The rows a changeset deletes, in a transaction that reaches no database."""
+    deleted: list[str] = []
+
+    @asynccontextmanager
+    async def session() -> AsyncGenerator[object]:
+        yield object()
+
+    async def no_rows(*_args: object, **_kwargs: object) -> dict[object, object]:
+        return {}
+
+    async def delete_document(store: Casebase, reference: str, *, s: object) -> bool:
+        _ = store, s
+        deleted.append(reference)
+        return True
+
+    monkeypatch.setattr(db_engine, "session", session)
+    monkeypatch.setattr(db_documents, "get_entries_metadata", no_rows)
+    monkeypatch.setattr(db_documents, "delete_document", delete_document)
+
+    return deleted
+
+
 class TestDeleteAssetDescription:
     async def test_nested_asset_can_be_listed_and_updated(
-        self,
-        user_store: Casebase,
-        workspace_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        async def fake_chunk(*_args: object, **_kwargs: object) -> None:
-            return None
-
-        monkeypatch.setattr(workspace_assets, "chunk_and_index_document", fake_chunk)
         images = workspace_dir / "doc.assets/images"
         images.mkdir(parents=True)
         (images / "img.png").write_bytes(b"binary")
@@ -690,20 +694,21 @@ class TestDeleteAssetDescription:
             ("images/img.png", "nested description")
         ]
 
-    async def test_removes_companion_md_and_clears_entry(
-        self,
-        user_store: Casebase,
-        workspace_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
+    async def test_description_needs_its_asset(
+        self, user_store: Casebase, workspace_dir: Path
     ) -> None:
-        deleted: list[str] = []
+        (workspace_dir / "doc.assets").mkdir()
+        write = Write(Location(user_store, "doc.assets/img.md"), "orphan")
 
-        async def fake_delete(store: Casebase, reference: str) -> bool:
-            _ = store
-            deleted.append(reference)
-            return True
+        with pytest.raises(HTTPException) as exc:
+            await workspace.apply_changeset((write,), host=True)
 
-        monkeypatch.setattr(workspace_assets, "delete_chunked_document", fake_delete)
+        assert exc.value.status_code == 404
+        assert not (workspace_dir / "doc.assets/img.md").exists()
+
+    async def test_removes_companion_md_and_clears_entry(
+        self, user_store: Casebase, workspace_dir: Path, deleted_rows: list[str]
+    ) -> None:
         assets = workspace_dir / "doc.assets"
         assets.mkdir()
         (assets / "img.png").write_bytes(b"binary")
@@ -717,20 +722,15 @@ class TestDeleteAssetDescription:
         assert (assets / "img.png").exists()
         assert entry.description == ""
         assert entry.description_path is None
-        assert deleted == ["doc.assets/img.md"]
+        assert deleted_rows == ["doc.assets/img.md"]
 
     async def test_missing_asset_is_404(
-        self,
-        user_store: Casebase,
-        workspace_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        self, user_store: Casebase, workspace_dir: Path, deleted_rows: list[str]
     ) -> None:
-        async def fail(*_args: object, **_kwargs: object) -> bool:
-            raise AssertionError("must not touch the index when the asset is absent")
-
-        monkeypatch.setattr(workspace_assets, "delete_chunked_document", fail)
         (workspace_dir / "doc.assets").mkdir()
 
         with pytest.raises(HTTPException) as exc:
             await workspace.delete_asset_description(user_store, "doc.md", "img.png")
+
         assert exc.value.status_code == 404
+        assert not deleted_rows

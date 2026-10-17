@@ -109,7 +109,7 @@ async def test_bounded_as_completed_unwinds_in_flight_on_cancel() -> None:
         try:
             await asyncio.sleep(10)
         except asyncio.CancelledError:
-            # Stand in for a phased upload unwinding its half-written entry.
+            # Stand in for a task unwinding its half-done work.
             rolled_back += 1
             raise
         return item

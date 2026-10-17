@@ -13,6 +13,7 @@ from uuid import uuid4
 __all__ = [
     "atomic_write",
     "disk_size",
+    "is_blocked_by_other",
     "remove_path",
     "remove_paths",
     "rmdir_if_empty",
@@ -52,6 +53,22 @@ def touched_since(path: Path, cutoff: float) -> bool:
     counts as touched.
     """
     return any(_mtime(entry) >= cutoff for entry in chain((path,), path.rglob("*")))
+
+
+def is_blocked_by_other(target: Path, source: Path) -> bool:
+    """Whether *target* exists as a node distinct from *source*.
+
+    ``exists()`` alone cannot tell another file from *source* under another
+    spelling, which a case- or normalization-insensitive filesystem (macOS)
+    resolves to the same inode, so only a distinct inode blocks.
+    """
+    if not target.exists():
+        return False
+
+    try:
+        return not target.samefile(source)
+    except OSError:
+        return True
 
 
 def _mtime(path: Path) -> float:

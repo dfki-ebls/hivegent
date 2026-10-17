@@ -10,7 +10,7 @@ touch ``documents``.
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any, Self, TypedDict
 
 import sqlalchemy as sa
@@ -23,7 +23,6 @@ from ..chunkers.base import (
     DocumentMetadata,
     EntryMetadata,
 )
-from ..config import settings
 from ..entries import (
     ContentStat,
     assets_dir_for_stem,
@@ -56,6 +55,7 @@ __all__ = [
     "get_entries_metadata",
     "get_entry_metadata",
     "get_entry_state",
+    "get_entry_states",
     "get_line_counts",
     "list_document_paths",
     "list_known_stores",
@@ -100,7 +100,11 @@ def _stat_columns(stat: ContentStat | None) -> _StatColumns:
 
 def _stat_from_row(row: Document) -> ContentStat | None:
     """Rebuild the stat fingerprint persisted across the three stat columns."""
-    if row.content_mtime_ns is None or row.content_size is None or row.content_inode is None:
+    if (
+        row.content_mtime_ns is None
+        or row.content_size is None
+        or row.content_inode is None
+    ):
         return None
 
     return ContentStat(
@@ -156,50 +160,26 @@ def _owner_kwargs(store: Casebase) -> _OwnerColumns:
 # ─── Row → Pydantic ────────────────────────────────────────────────────
 
 
-def _walk_assets(workspace_root: Path, assets_dir: str) -> list[str]:
-    """Recursively enumerate workspace-relative files beneath an assets dir."""
-    base = workspace_root / assets_dir
-    if not base.is_dir():
-        return []
-    return sorted(
-        p.relative_to(workspace_root).as_posix() for p in base.rglob("*") if p.is_file()
-    )
-
-
-def _entry_from_row(doc: Document, workspace_root: Path | None = None) -> EntryMetadata:
+def _entry_from_row(doc: Document) -> EntryMetadata:
     """Build an :class:`EntryMetadata` from a row, deriving the path columns."""
-    description_path = description_path_for_stem(doc.stem_path)
-    original_path = original_path_for_stem(doc.stem_path, doc.original_suffix)
-    assets_dir = assets_dir_for_stem(doc.stem_path) if doc.has_assets else None
-
-    files = [description_path]
-    if original_path is not None:
-        files.append(original_path)
-    if assets_dir is not None and workspace_root is not None:
-        files.extend(_walk_assets(workspace_root, assets_dir))
-
     return EntryMetadata(
         entry_kind=doc.entry_kind.value,  # type: ignore[arg-type]
         stem_path=doc.stem_path,
-        description_path=description_path,
-        original_path=original_path,
-        assets_dir=assets_dir,
+        description_path=description_path_for_stem(doc.stem_path),
+        original_path=original_path_for_stem(doc.stem_path, doc.original_suffix),
+        assets_dir=assets_dir_for_stem(doc.stem_path) if doc.has_assets else None,
         mime=doc.mime,
         origin=doc.origin.value,  # type: ignore[arg-type]
         generated_by=doc.generated_by.value,  # type: ignore[arg-type]
-        files=files,
     )
 
 
 def _document_from_row(
-    doc: Document,
-    chunks_data: Sequence[ChunkData],
-    workspace_root: Path | None = None,
+    doc: Document, chunks_data: Sequence[ChunkData]
 ) -> DocumentMetadata:
     """Assemble a :class:`DocumentMetadata` from a row + prepared chunks."""
-    entry = _entry_from_row(doc, workspace_root)
     return DocumentMetadata(
-        **entry.model_dump(),
+        **_entry_from_row(doc).model_dump(),
         id=doc.id,
         pipeline=doc.pipeline,
         created_at=doc.created_at,
@@ -276,13 +256,11 @@ async def get_document(store: Casebase, reference: str) -> DocumentMetadata | No
         row = await _find(s, store, stem_path)
         if row is None:
             return None
-        chunks_data = await _load_chunks(s, row.id)
-        workspace_root = store.workspace_path(settings.data_dir)
-        return _document_from_row(row, chunks_data, workspace_root)
+        return _document_from_row(row, await _load_chunks(s, row.id))
 
 
 async def get_entry_metadata(store: Casebase, reference: str) -> EntryMetadata | None:
-    """Load an entry's persisted metadata without chunks or filesystem walks."""
+    """Load an entry's persisted metadata without its chunks."""
     stem_path = stem_path_from_reference(reference)
     async with session() as s:
         row = await _find(s, store, stem_path)
@@ -335,13 +313,25 @@ async def get_entry_state(store: Casebase, reference: str) -> EntryState | None:
     stem_path = stem_path_from_reference(reference)
     async with session() as s:
         row = await _find(s, store, stem_path)
-        if row is None:
-            return None
-        return EntryState(
-            content_digest=row.content_digest,
-            content_stat=_stat_from_row(row),
-            metadata=_entry_from_row(row),
-        )
+        return _state_from_row(row) if row is not None else None
+
+
+async def get_entry_states(store: Casebase) -> dict[str, EntryState]:
+    """Return every entry's state in *store* by its description path, in one query."""
+    async with session() as s:
+        rows = (await s.scalars(select(Document).where(_owner_filter(store)))).all()
+
+    return {
+        description_path_for_stem(row.stem_path): _state_from_row(row) for row in rows
+    }
+
+
+def _state_from_row(row: Document) -> EntryState:
+    return EntryState(
+        content_digest=row.content_digest,
+        content_stat=_stat_from_row(row),
+        metadata=_entry_from_row(row),
+    )
 
 
 async def list_document_paths(store: Casebase) -> dict[str, int]:
@@ -357,22 +347,6 @@ async def list_document_paths(store: Casebase) -> dict[str, int]:
             )
         ).all()
     return {description_path_for_stem(stem): int(count) for stem, count in rows}
-
-
-async def list_stem_paths(store: Casebase) -> list[str]:
-    """Return every raw ``stem_path`` in *store*.
-
-    The stems themselves, not the description paths
-    :func:`list_document_paths` derives: a caller that needs to address rows
-    would otherwise append ``.md`` here and strip it again through
-    :func:`~hivegent.entries.stem_path_from_reference`, which truncates a stem
-    that contains dots.  Skips that function's chunk-count aggregate too.
-    """
-    async with session() as s:
-        rows = (
-            await s.execute(select(Document.stem_path).where(_owner_filter(store)))
-        ).all()
-    return [stem for (stem,) in rows]
 
 
 async def get_line_counts(store: Casebase, references: Sequence[str]) -> dict[str, int]:
@@ -567,9 +541,7 @@ async def upsert_document(
             )
             .returning(Document)
         )
-        doc = (await s.scalars(stmt)).one()
-        workspace_root = store.workspace_path(settings.data_dir)
-        return _document_from_row(doc, [], workspace_root)
+        return _document_from_row((await s.scalars(stmt)).one(), [])
 
 
 async def update_entry(
@@ -635,7 +607,9 @@ async def delete_documents(store: Casebase, references: Sequence[str]) -> int:
         return 0
     async with session() as s:
         result = await s.execute(
-            delete(Document).where(_writable_filter(store), Document.stem_path.in_(stems))
+            delete(Document).where(
+                _writable_filter(store), Document.stem_path.in_(stems)
+            )
         )
     return affected_rows(result)
 

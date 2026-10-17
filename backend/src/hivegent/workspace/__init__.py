@@ -8,7 +8,8 @@ workspace and SQL writes in one step.  Writes, edits, moves, and deletes
 are items of one :class:`~hivegent.changes.Changeset`, which
 :func:`~hivegent.workspace.changeset.apply_changeset` commits all or
 nothing, however many items and casebases it spans, and creating a directory
-is one of those items too.
+is one of those items too.  So is an
+:class:`~hivegent.workspace.operations.Upload`, which only the host builds.
 
 Chunks (text + vector) live next to documents in Postgres and cascade
 on delete: any operation that drops a Document row also drops its
@@ -34,16 +35,13 @@ The implementation is split into focused submodules:
 * :mod:`~hivegent.workspace.prepare` — lock-free per-kind upload preparation.
 * :mod:`~hivegent.workspace.indexing` — markdown projection writes and the
   disk-to-SQL entry sync (owns the chunk/index primitives).
-* :mod:`~hivegent.workspace.commit` — atomic commit, deletion, rollback, and
-  the phased-upload lifecycle.
-* :mod:`~hivegent.workspace.normalize` — the one-off sweep folding pre-existing
-  paths and SQL stems to their canonical NFC spelling.
 * :mod:`~hivegent.workspace.documents` — text-mutation building blocks and
   the in-place rechunk.
 * :mod:`~hivegent.workspace.operations` and
   :mod:`~hivegent.workspace.changeset` — the locations a change's operations
-  (:mod:`hivegent.changes`) are routed to, and the gateway that plans and
-  commits writes, edits, moves, and deletes.
+  (:mod:`hivegent.changes`) are routed to, the uploads only the host builds,
+  and the gateway that plans and commits writes, edits, moves, deletes, and
+  uploads.
 * :mod:`~hivegent.workspace.uploads`, :mod:`~hivegent.workspace.assets`,
   :mod:`~hivegent.workspace.directories`,
   :mod:`~hivegent.workspace.collections` — the rest of the public mutation API.
@@ -70,25 +68,24 @@ from .directories import (
 from .documents import rechunk
 from .indexing import sync_entries_from_disk
 from .locks import inflight_stems
-from .metadata import resolve_entry
-from .normalize import NormalizeReport, normalize_workspace_paths
-from .operations import Location, route
+from .metadata import find_original, resolve_entry
+from .operations import Location, Upload, route
 from .uploads import reconvert, replace_original, upload
 
 __all__ = [
     "AppliedChangeset",
     "Gateway",
     "Location",
-    "NormalizeReport",
     "PlannedChangeset",
+    "Upload",
     "apply_changeset",
     "delete_all",
     "delete_asset_description",
     "delete_workspace_root",
     "describe",
+    "find_original",
     "generate_asset_description",
     "inflight_stems",
-    "normalize_workspace_paths",
     "plan_changeset",
     "prepare",
     "process_collection",

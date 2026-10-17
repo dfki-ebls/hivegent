@@ -2,8 +2,8 @@
 
 The slow work of an upload — conversion, vision captioning, frame sampling —
 runs here without the casebase lock and without touching the live workspace,
-producing the side-effect-free :class:`_PreparedUpload` that
-:func:`hivegent.workspace.commit._apply_prepared` then lands.
+producing the side-effect-free :class:`_PreparedUpload` that the changeset
+gateway (:func:`~hivegent.workspace.changeset.apply_changeset`) then lands.
 """
 
 import asyncio
@@ -65,45 +65,6 @@ __all__: list[str] = []
 logger = logging.getLogger(__name__)
 
 
-def _decoded_from(encoding: str) -> Localized[str]:
-    return Localized(
-        en=f" (decoded from {encoding})", de=f" (dekodiert aus {encoding})"
-    )
-
-
-def _markdown_uploaded(note: str) -> Localized[str]:
-    return Localized(
-        en=f"Document uploaded successfully{note}",
-        de=f"Dokument erfolgreich hochgeladen{note}",
-    )
-
-
-def _plain_text_uploaded(note: str) -> Localized[str]:
-    return Localized(
-        en=f"Document uploaded as plain text{note}",
-        de=f"Dokument als reiner Text hochgeladen{note}",
-    )
-
-
-def _converted_uploaded(note: str) -> Localized[str]:
-    return Localized(
-        en=f"Document uploaded and converted successfully{note}",
-        de=f"Dokument erfolgreich hochgeladen und konvertiert{note}",
-    )
-
-
-_IMAGE_UPLOADED = Localized(
-    en="Image uploaded and described successfully",
-    de="Bild erfolgreich hochgeladen und beschrieben",
-)
-_VIDEO_UPLOADED = Localized(
-    en="Video uploaded and described successfully",
-    de="Video erfolgreich hochgeladen und beschrieben",
-)
-_STUB_UPLOADED = Localized(
-    en="Binary file uploaded with searchable stub",
-    de="Binärdatei mit durchsuchbarem Platzhalter hochgeladen",
-)
 _STAGE_IMAGE = Localized(
     en="Generating image description", de="Bildbeschreibung wird erstellt"
 )
@@ -118,15 +79,6 @@ def _conversion_failed(reason: str) -> Localized[str]:
     return Localized(
         en=f"Conversion failed: {reason}", de=f"Konvertierung fehlgeschlagen: {reason}"
     )
-
-
-def _encoding_note(source_encoding: str | None) -> str:
-    """Render the message suffix reporting a transcode, empty when there was none.
-
-    CP1252 is a fallback for undeclared Western input, so every upload whose
-    bytes were not already UTF-8 reports the source encoding in its response.
-    """
-    return _decoded_from(source_encoding).current if source_encoding else ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -150,44 +102,16 @@ class _PreparedAsset:
 class _PreparedUpload:
     """The side-effect-free result of preparing an upload.
 
-    Produced lock-free — the slow work (conversion, vision captioning,
-    frame sampling) happens here — then written to the workspace under the
-    casebase lock and indexed without it by :func:`_apply_prepared`.
-    Holding the lock only for the file writes, not the whole pipeline, is
-    what keeps the rest of the workspace usable while a long upload runs.
+    Produced lock-free, since the slow work (conversion, vision captioning,
+    frame sampling) happens here, then written to the workspace under the
+    casebase lock and indexed without it by the changeset gateway.  Holding
+    the lock only for the file writes, not the whole pipeline, is what keeps
+    the rest of the workspace usable while a long upload runs.
     """
 
     main: _PreparedEntry
-    filename: str
-    size_bytes: int
-    message: str
-    converted_filename: str | None = None
-    conversion_pipeline_used: str | None = None
     assets: tuple[_PreparedAsset, ...] = ()
     asset_entries: tuple[_PreparedEntry, ...] = ()
-
-
-@dataclass(slots=True, frozen=True)
-class _Reserved:
-    """What an upload's locked reserve phase captured for prepare and commit.
-
-    Reserve only validates and reads — it never mutates the workspace — so a
-    failure during the lock-free prepare leaves any pre-existing entry intact.
-    These fields tell :func:`_write_prepared_files` how to apply the new content
-    and supersede a prior entry, all under the lock.  ``original_path`` is also
-    recorded in the entry metadata, while ``original_content`` is present only
-    when commit must write it.  ``preserve`` marks a reprocess of an existing
-    entry whose old paths are restored if apply fails.  A fresh upload is rolled
-    back by deletion if indexing fails.
-    """
-
-    reference: str
-    content: bytes
-    origin: EntryOrigin
-    original_path: str | None = None
-    original_content: bytes | None = None
-    preserve: bool = False
-    supersede_original: str | None = None
 
 
 @contextmanager
@@ -288,43 +212,32 @@ def _prepare_markdown(
     *,
     origin: EntryOrigin,
     original_path: str | None,
-    clearing_assets: bool,
 ) -> _PreparedUpload:
     """Prepare a user-authored markdown document for commit.
 
-    A markdown entry surfaces a companion ``.assets`` directory if one exists,
-    except when the commit will clear it (an overwrite), so the metadata never
-    claims a directory the same commit is about to remove.
+    It has no assets: the commit clears the ``.assets`` directory of an entry
+    it replaces, and a new entry's stem holds none.
     """
-    workspace_dir = store.workspace_dir(settings.data_dir)
     decoded = decode_bytes(content)
     if decoded is None:
         raise HTTPException(
             status_code=422, detail=not_text(_shown(store, filepath)).current
         )
-    text = decoded.text
     stem_path = stem_path_from_reference(filepath)
-    assets_dir = assets_dir_for_stem(stem_path)
-    has_assets = not clearing_assets and (workspace_dir / assets_dir).exists()
     main = _PreparedEntry(
         description_path=filepath,
-        markdown=text,
+        markdown=decoded.text,
         entry_metadata=_build_entry_metadata(
             stem_path=stem_path,
             description_path=filepath,
             original_path=original_path,
-            assets_dir=assets_dir if has_assets else None,
+            assets_dir=None,
             entry_kind="user_markdown",
             origin=origin,
             generated_by="user",
         ),
     )
-    return _PreparedUpload(
-        main=main,
-        filename=filepath,
-        size_bytes=len(content),
-        message=_markdown_uploaded(_encoding_note(decoded.source_encoding)).current,
-    )
+    return _PreparedUpload(main=main)
 
 
 async def _prepare_image(
@@ -348,13 +261,7 @@ async def _prepare_image(
         llm,
         origin=origin,
     )
-    return _PreparedUpload(
-        main=entry,
-        filename=filepath,
-        size_bytes=len(content),
-        converted_filename=entry.description_path,
-        message=_IMAGE_UPLOADED.current,
-    )
+    return _PreparedUpload(main=entry)
 
 
 async def _prepare_video(
@@ -385,13 +292,7 @@ async def _prepare_video(
     main = _derived_entry(
         filepath, markdown, entry_kind="video", generated_by="vision", origin=origin
     )
-    return _PreparedUpload(
-        main=main,
-        filename=filepath,
-        size_bytes=len(content),
-        converted_filename=main.description_path,
-        message=_VIDEO_UPLOADED.current,
-    )
+    return _PreparedUpload(main=main)
 
 
 def _prepare_plain_text_or_stub(
@@ -413,12 +314,8 @@ def _prepare_plain_text_or_stub(
             f"File name: {PurePosixPath(filepath).name}.\n"
             f"MIME type: {mime}.\nSize: {len(content)} bytes.\n"
         )
-        pipeline_used = None
-        message = _STUB_UPLOADED.current
     else:
         markdown = result.markdown
-        pipeline_used = ConversionPipeline.PLAIN_TEXT.value
-        message = _plain_text_uploaded(_encoding_note(result.source_encoding)).current
 
     main = _derived_entry(
         filepath,
@@ -427,14 +324,7 @@ def _prepare_plain_text_or_stub(
         generated_by=generated_by,
         origin=origin,
     )
-    return _PreparedUpload(
-        main=main,
-        filename=filepath,
-        size_bytes=len(content),
-        converted_filename=main.description_path,
-        conversion_pipeline_used=pipeline_used,
-        message=message,
-    )
+    return _PreparedUpload(main=main)
 
 
 async def _prepare_conversion_assets(
@@ -456,7 +346,9 @@ async def _prepare_conversion_assets(
 
     def child_path(relpath: str) -> str:
         # The converter names the file, so `..` or an absolute name is refused.
-        return str((PurePosixPath(assets_dir) / sanitize_document_path(relpath)).as_posix())
+        return str(
+            (PurePosixPath(assets_dir) / sanitize_document_path(relpath)).as_posix()
+        )
 
     ref_mapping: dict[str, str | None] = {}
     assets: list[_PreparedAsset] = []
@@ -539,11 +431,10 @@ async def _convert_source(
     filepath: str,
     content: bytes,
     converter: DocumentConverter,
-    pipeline: ConversionPipeline,
     *,
     allow_recovery: bool,
-) -> tuple[ConversionResult, ConversionPipeline]:
-    """Convert a temp copy of the source, returning the result and the pipeline used.
+) -> ConversionResult:
+    """Convert a temp copy of the source.
 
     *allow_recovery* (AUTO only) lets a failed or degraded primary conversion be
     replaced by a fallback converter's text; an explicit pipeline keeps its own
@@ -553,10 +444,7 @@ async def _convert_source(
     suffix = PurePosixPath(filepath).suffix.lower()
     with (
         logfire.span(
-            "convert_document",
-            filepath=filepath,
-            converter=converter.name,
-            pipeline=pipeline.value,
+            "convert_document", filepath=filepath, converter=converter.name
         ) as span,
         _source_on_disk(filepath, content) as source_path,
     ):
@@ -583,7 +471,6 @@ async def _convert_source(
                 exc_info=failure,
             )
             result = ConversionResult(markdown=recovery.markdown)
-            pipeline = recovery.pipeline
         elif isinstance(outcome, Exception):
             raise outcome
         else:
@@ -594,7 +481,7 @@ async def _convert_source(
         if result.source_encoding is not None:
             span.set_attribute("source_encoding", result.source_encoding)
 
-        return result, pipeline
+        return result
 
 
 async def _prepare_convertible(
@@ -625,11 +512,10 @@ async def _prepare_convertible(
         return _prepare_plain_text_or_stub(filepath, content, origin=origin)
 
     converter = _build_converter(conversion_pipeline, basename, spec, llm)
-    resolved_conversion = ConversionPipeline(converter.name)
 
     try:
-        result, resolved_conversion = await _convert_source(
-            filepath, content, converter, resolved_conversion, allow_recovery=is_auto
+        result = await _convert_source(
+            filepath, content, converter, allow_recovery=is_auto
         )
     except Exception as exc:
         if is_auto:
@@ -681,16 +567,7 @@ async def _prepare_convertible(
         origin=origin,
         assets_dir=assets_dir if has_assets else None,
     )
-    return _PreparedUpload(
-        main=main,
-        filename=filepath,
-        size_bytes=len(content),
-        converted_filename=main.description_path,
-        conversion_pipeline_used=resolved_conversion.value,
-        assets=assets,
-        asset_entries=asset_entries,
-        message=_converted_uploaded(_encoding_note(result.source_encoding)).current,
-    )
+    return _PreparedUpload(main=main, assets=assets, asset_entries=asset_entries)
 
 
 async def _prepare_upload(
@@ -703,18 +580,16 @@ async def _prepare_upload(
     origin: EntryOrigin,
     original_path: str | None,
     ctx: ProgressReporter | None,
-    clearing_assets: bool,
 ) -> _PreparedUpload:
-    """Dispatch to the per-kind preparation. No lock held."""
+    """Dispatch to the per-kind preparation. No lock held.
+
+    *original_path* is a markdown upload's companion original, ``None`` for
+    none, while every other kind is its own original.
+    """
     match projection_for(filepath):
         case EntryProjection.MARKDOWN:
             return _prepare_markdown(
-                store,
-                filepath,
-                content,
-                origin=origin,
-                original_path=original_path,
-                clearing_assets=clearing_assets,
+                store, filepath, content, origin=origin, original_path=original_path
             )
         case EntryProjection.IMAGE:
             return await _prepare_image(filepath, content, llm, origin=origin, ctx=ctx)

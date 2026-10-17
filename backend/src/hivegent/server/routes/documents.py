@@ -24,7 +24,7 @@ from starlette.responses import FileResponse, Response
 
 from ... import workspace
 from ...auth import get_current_user
-from ...changes import Changeset, WorkspaceChanged, Write
+from ...changes import WorkspaceChanged, Write
 from ...chunkers.base import DocumentMetadata
 from ...config import settings
 from ...db.conversations import OwnedConversation, owned_conversation
@@ -44,7 +44,7 @@ from ...types import (
     DirectoryTreeResponse,
     DocumentLineCountsResponse,
     GenerateAssetDescriptionRequest,
-    PipelineSpec,
+    ProgressReporter,
     UpdateAssetDescriptionRequest,
     WriteDocumentRequest,
 )
@@ -58,8 +58,6 @@ from ..common import (
     resolve_workspace_path,
 )
 from ..models import (
-    BulkRechunkRequest,
-    BulkReconvertRequest,
     ChangesRequest,
     CreateDirOperation,
     DeleteOperation,
@@ -67,6 +65,7 @@ from ..models import (
     MoveDestination,
     MoveOperation,
     MovePaths,
+    RechunkRequest,
     ReconvertRequest,
     WorkspacePath,
 )
@@ -74,7 +73,6 @@ from ..operations import (
     attachment_disposition,
     build_tree_response,
     enforce_upload_size,
-    find_original,
     get_document_response,
     get_file_response,
     list_assets,
@@ -184,8 +182,6 @@ class DocumentJobKind(StrEnum):
     COLLECTION = "document.collection"
     RECONVERT = "document.reconvert"
     RECHUNK = "document.rechunk"
-    RECHUNK_BULK = "document.rechunk_bulk"
-    RECONVERT_BULK = "document.reconvert_bulk"
 
 
 def _submit_document_job(
@@ -212,34 +208,43 @@ def _submit_document_job(
     )
 
 
-def _bulk_scope(user: User, paths: list[str]) -> str | None:
-    """Resolve the common scope of a bulk selection for job attribution.
-
-    A selection always comes from one scope's view, so the first entry names it
-    and resolving it doubles as an early access check; an empty list has no scope.
-    """
-    if not paths:
-        return None
-    store, _ = resolve_workspace_path(user, paths[0], write=True)
-    return store.scope.prefix
-
-
 def _submit_bulk_job(
     *,
     user: User,
     kind: DocumentJobKind,
-    title: str,
+    title: Callable[[int], Localized[str]],
     files: list[str],
-    process_one: Callable[[str], Awaitable[None]],
+    process_one: Callable[[str, ProgressReporter], Awaitable[None]],
     verb: Localized[str],
 ) -> JobView:
-    """Submit a bulk per-file mutation as a single background job."""
-    scope = _bulk_scope(user, files)
+    """Submit a per-file mutation over documents as a single background job.
+
+    A lone file runs as a plain single-document job that fails with its own
+    error. A batch takes its scope from the first entry, since a selection
+    always comes from one scope's view, and resolving it doubles as an early
+    access check.
+    """
+    store, safe = resolve_workspace_path(user, files[0], write=True)
+
+    if len(files) == 1:
+        return _submit_document_job(
+            user=user,
+            store=store,
+            safe=safe,
+            kind=kind,
+            work=lambda ctx: process_one(files[0], ctx),
+        )
 
     async def work(ctx: JobContext) -> None:
         await run_bulk_document_job(files, process_one, verb=verb, ctx=ctx)
 
-    return manager.submit(kind=kind, title=title, owner=user.id, scope=scope, work=work)
+    return manager.submit(
+        kind=kind,
+        title=title(len(files)).current,
+        owner=user.id,
+        scope=store.scope.prefix,
+        work=work,
+    )
 
 
 @router.get("/documents/original/{filepath:path}")
@@ -249,7 +254,7 @@ async def download_original(
 ) -> Response:
     """Download the original binary file for a document."""
     store, safe = resolve_workspace_path(user, filepath)
-    original = await find_original(store, safe)
+    original = await workspace.find_original(store, safe)
     media_type = mimetypes.guess_type(original.name)[0] or "application/octet-stream"
     return FileResponse(
         path=original,
@@ -344,7 +349,7 @@ async def upload_collection(
 ) -> JobView:
     """Accept a ZIP collection and process it as a background job.
 
-    Each file flows through the phased upload, so the job reports per-file
+    Each file flows through its own upload, so the job reports per-file
     progress and the workspace stays usable while a large archive processes.
     ``target`` is a canonical directory — a scope root (``~``, ``@<group>``) or a
     subdir under it — so a drop can target a folder, not just the workspace root;
@@ -414,45 +419,46 @@ async def delete_all_documents(
     )
 
 
-@router.post("/documents/rechunk/bulk")
-async def bulk_rechunk(
-    request: BulkRechunkRequest,
+@router.post("/documents/rechunk")
+async def rechunk_documents(
+    request: RechunkRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> JobView:
-    """Rechunk multiple documents as a single background job."""
+    """Rechunk documents with new settings as a single background job."""
     spec = request.pipeline
 
-    async def _rechunk_one(filepath: str) -> None:
+    async def _rechunk_one(filepath: str, ctx: ProgressReporter) -> None:
         store, safe = resolve_workspace_path(user, filepath, write=True)
+        ctx.set_stage(_STAGE_CHUNKING.current)
         await workspace.rechunk(store, safe, spec=spec)
 
     return _submit_bulk_job(
         user=user,
-        kind=DocumentJobKind.RECHUNK_BULK,
-        title=_rechunk_title(len(request.files)).current,
+        kind=DocumentJobKind.RECHUNK,
+        title=_rechunk_title,
         files=request.files,
         process_one=_rechunk_one,
         verb=_RECHUNKED,
     )
 
 
-@router.post("/documents/reconvert/bulk")
-async def bulk_reconvert(
-    request: BulkReconvertRequest,
+@router.post("/documents/reconvert")
+async def reconvert_documents(
+    request: ReconvertRequest,
     user: Annotated[User, Depends(get_current_user)],
 ) -> JobView:
-    """Reconvert multiple documents as a single background job."""
+    """Reconvert documents from their originals as a single background job."""
     spec = request.pipeline
     resolved = prepare_llm_config(request.llm)
 
-    async def _reconvert_one(filepath: str) -> None:
+    async def _reconvert_one(filepath: str, ctx: ProgressReporter) -> None:
         store, safe = resolve_workspace_path(user, filepath, write=True)
-        await workspace.reconvert(store, safe, spec=spec, llm=resolved)
+        await workspace.reconvert(store, safe, spec=spec, llm=resolved, ctx=ctx)
 
     return _submit_bulk_job(
         user=user,
-        kind=DocumentJobKind.RECONVERT_BULK,
-        title=_reconvert_title(len(request.files)).current,
+        kind=DocumentJobKind.RECONVERT,
+        title=_reconvert_title,
         files=request.files,
         process_one=_reconvert_one,
         verb=_RECONVERTED,
@@ -502,44 +508,6 @@ async def get_document_chunks(
     return chunked
 
 
-@router.post("/documents/rechunk/{filepath:path}")
-async def rechunk_document(
-    filepath: str,
-    request: PipelineSpec,
-    user: Annotated[User, Depends(get_current_user)],
-) -> JobView:
-    """Re-chunk a document with different settings as a background job."""
-    store, safe = resolve_workspace_path(user, filepath, write=True)
-
-    async def work(ctx: JobContext) -> None:
-        ctx.set_stage(_STAGE_CHUNKING.current)
-        await workspace.rechunk(store, safe, spec=request)
-
-    return _submit_document_job(
-        user=user, store=store, safe=safe, kind=DocumentJobKind.RECHUNK, work=work
-    )
-
-
-@router.post("/documents/reconvert/{filepath:path}")
-async def reconvert_document(
-    filepath: str,
-    request: ReconvertRequest,
-    user: Annotated[User, Depends(get_current_user)],
-) -> JobView:
-    """Re-convert a document from its original binary file as a background job."""
-    store, safe = resolve_workspace_path(user, filepath, write=True)
-    resolved = prepare_llm_config(request.llm)
-
-    async def work(ctx: JobContext) -> None:
-        await workspace.reconvert(
-            store, safe, spec=request.pipeline, llm=resolved, ctx=ctx
-        )
-
-    return _submit_document_job(
-        user=user, store=store, safe=safe, kind=DocumentJobKind.RECONVERT, work=work
-    )
-
-
 @router.get("/documents/assets/{filepath:path}")
 async def list_document_assets(
     filepath: str,
@@ -559,13 +527,15 @@ async def patch_asset_description(
 ) -> AssetEntry:
     """Update an asset's companion .md description."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    entry = await workspace.update_asset_description(
-        store, safe, request.asset_name, request.content
+
+    return await workspace.update_asset_description(
+        store,
+        safe,
+        request.asset_name,
+        request.content,
+        owner=user.id,
+        exclude_client=client,
     )
-    announce_workspace_changed(
-        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
-    )
-    return entry
 
 
 @router.post("/documents/assets/{filepath:path}")
@@ -578,13 +548,10 @@ async def generate_asset_description(
     """Generate an asset's companion .md description with the vision model."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
     llm = prepare_llm_config(request.llm)
-    entry = await workspace.generate_asset_description(
-        store, safe, request.asset_name, llm
+
+    return await workspace.generate_asset_description(
+        store, safe, request.asset_name, llm, owner=user.id, exclude_client=client
     )
-    announce_workspace_changed(
-        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
-    )
-    return entry
 
 
 @router.delete("/documents/assets/{filepath:path}")
@@ -596,11 +563,10 @@ async def delete_asset_description(
 ) -> AssetEntry:
     """Delete an asset's companion .md description, keeping the asset itself."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    entry = await workspace.delete_asset_description(store, safe, asset_name)
-    announce_workspace_changed(
-        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
+
+    return await workspace.delete_asset_description(
+        store, safe, asset_name, owner=user.id, exclude_client=client
     )
-    return entry
 
 
 # Registered after the more specific /documents/assets/ PATCH route so the
@@ -624,9 +590,7 @@ async def write_document(
         mode=request.mode,
         chunking=request.chunking,
     )
-    await workspace.apply_changeset(
-        Changeset((write,)), owner=user.id, exclude_client=client
-    )
+    await workspace.apply_changeset((write,), owner=user.id, exclude_client=client)
 
 
 def _tmp_file(conversation: OwnedConversation, filepath: str) -> Path | None:
@@ -656,7 +620,9 @@ async def get_document_content(
     conversation = await owned_conversation(user, conversation_id)
 
     if conversation is None:
-        raise HTTPException(status_code=404, detail=document_not_found(filepath).current)
+        raise HTTPException(
+            status_code=404, detail=document_not_found(filepath).current
+        )
 
     return await get_file_response(lambda: _tmp_file(conversation, filepath), filepath)
 
@@ -687,8 +653,10 @@ async def _apply(
     def at(path: str) -> Location:
         return Location(*resolve_workspace_path(user, path, write=True))
 
-    changeset = Changeset(tuple(op.operation(at) for op in operations))
-    applied = await workspace.apply_changeset(changeset, owner=user.id, exclude_client=client)
+    items = tuple(op.operation(at) for op in operations)
+    applied = await workspace.apply_changeset(
+        items, owner=user.id, exclude_client=client
+    )
 
     return applied.changed
 
@@ -740,7 +708,9 @@ async def create_directory(
     client: ClientId = None,
 ) -> WorkspaceChanged:
     """Create one directory, a shortcut for one mkdir in ``POST /changes``."""
-    return await _apply(user, client, [CreateDirOperation(kind="mkdir", path=request.path)])
+    return await _apply(
+        user, client, [CreateDirOperation(kind="mkdir", path=request.path)]
+    )
 
 
 @router.post("/directories/move")
@@ -750,7 +720,9 @@ async def move_directory(
     client: ClientId = None,
 ) -> WorkspaceChanged:
     """Move or rename one directory, a shortcut for one move in ``POST /changes``."""
-    move = MoveOperation(kind="move", source=request.source, destination=request.destination)
+    move = MoveOperation(
+        kind="move", source=request.source, destination=request.destination
+    )
     return await _apply(user, client, [move])
 
 

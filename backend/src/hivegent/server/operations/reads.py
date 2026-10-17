@@ -23,12 +23,10 @@ from ...store import Casebase
 from ...text import read_text_file
 from ...tools.base import entry_stat
 from ...types import AssetEntry, AssetListResponse
-from ...workspace import resolve_entry
-from ...workspace.paths import document_not_found, no_original
+from ...workspace.paths import document_not_found
 
 __all__ = [
     "attachment_disposition",
-    "find_original",
     "get_document_response",
     "get_file_response",
     "list_assets",
@@ -41,23 +39,6 @@ _NO_ASSETS = Localized(
     en="Document has no assets directory",
     de="Das Dokument hat keinen Asset-Ordner",
 )
-
-
-async def find_original(store: Casebase, safe: str) -> Path:
-    """Find the absolute path of the original binary for a logical entry."""
-    original_path = (await resolve_entry(store, safe)).original_path
-
-    def locate() -> Path | None:
-        full_path = store.locate(original_path) if original_path else None
-        return full_path if full_path is not None and full_path.exists() else None
-
-    full_path = await asyncio.to_thread(locate)
-    if full_path is None:
-        raise HTTPException(
-            status_code=404,
-            detail=no_original(store.scope.render(safe)).current,
-        )
-    return full_path
 
 
 def attachment_disposition(filename: str) -> str:
@@ -96,7 +77,9 @@ def _file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
         try:
             decoded = read_text_file(file_path)
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=document_not_found(shown).current) from exc
+            raise HTTPException(
+                status_code=404, detail=document_not_found(shown).current
+            ) from exc
         except IsADirectoryError as exc:
             raise HTTPException(status_code=400, detail=_NOT_A_FILE.current) from exc
 

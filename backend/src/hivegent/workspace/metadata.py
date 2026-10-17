@@ -6,16 +6,21 @@ plus the helper that re-stamps a digest-unchanged entry without touching its
 chunks.
 """
 
+import asyncio
 import mimetypes
+from pathlib import Path
+
+from fastapi import HTTPException
 
 from ..chunkers.base import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
 from ..config import settings
 from ..converters import EntryProjection, projection_for
 from ..db import documents as db_documents
-from ..entries import ContentStat, EntryPaths, resolve_entry_paths
+from ..entries import ContentStat, EntryPaths, entry_exists, resolve_entry_paths
 from ..store import Casebase
+from .paths import _shown, document_not_found, no_original
 
-__all__ = ["resolve_entry"]
+__all__ = ["current_entry_metadata", "find_original", "resolve_entry"]
 
 
 def _merge_entry_paths(
@@ -40,12 +45,70 @@ def _merge_entry_paths(
     )
 
 
+def _entry_paths(
+    store: Casebase, safe: str, metadata: EntryMetadata | None
+) -> EntryPaths:
+    """Resolve the files of an entry a removal or a move takes with it, given its row.
+
+    Works for entries without a SQL row or description file too (e.g. a
+    stray original that was never ingested), so any on-disk entry can
+    always be removed through the API.  Blocking: it lists the entry's
+    directory.
+    """
+    workspace = store.workspace_path(settings.data_dir)
+
+    if not metadata and not entry_exists(workspace, safe):
+        raise HTTPException(
+            status_code=404, detail=document_not_found(_shown(store, safe)).current
+        )
+
+    return _merge_entry_paths(resolve_entry_paths(workspace, safe), metadata)
+
+
 async def resolve_entry(store: Casebase, reference: str) -> EntryPaths:
     """Resolve a logical entry's paths from disk, overlaid with its SQL row."""
     return _merge_entry_paths(
         resolve_entry_paths(store.workspace_dir(settings.data_dir), reference),
         await db_documents.get_entry_metadata(store, reference),
     )
+
+
+async def find_original(store: Casebase, reference: str) -> Path:
+    """The absolute path of the original behind *reference*'s entry.
+
+    Raises:
+        HTTPException: When the entry has no original on disk.
+    """
+    original_path = (await resolve_entry(store, reference)).original_path
+
+    def locate() -> Path | None:
+        full_path = store.locate(original_path) if original_path else None
+
+        return full_path if full_path is not None and full_path.is_file() else None
+
+    full_path = await asyncio.to_thread(locate)
+
+    if full_path is None:
+        raise HTTPException(
+            status_code=404, detail=no_original(_shown(store, reference)).current
+        )
+
+    return full_path
+
+
+async def current_entry_metadata(store: Casebase, reference: str) -> EntryMetadata:
+    """The metadata *reference*'s entry is indexed with: its row, else what its files say.
+
+    An entry without a row takes the provenance of an upload.
+    """
+    row = await db_documents.get_entry_metadata(store, reference)
+
+    if row is not None:
+        return row
+
+    resolved = await asyncio.to_thread(resolve_entry_paths, store.path, reference)
+
+    return _entry_metadata_from_disk(resolved, None, origin="upload")
 
 
 def _build_entry_metadata(
@@ -59,9 +122,6 @@ def _build_entry_metadata(
     generated_by: EntryGeneratedBy,
 ) -> EntryMetadata:
     """Build the canonical metadata for a logical entry."""
-    files = [description_path]
-    if original_path is not None:
-        files.append(original_path)
     return EntryMetadata(
         entry_kind=entry_kind,
         stem_path=stem_path,
@@ -71,7 +131,6 @@ def _build_entry_metadata(
         mime=mimetypes.guess_type(original_path or description_path)[0],
         origin=origin,
         generated_by=generated_by,
-        files=files,
     )
 
 
@@ -91,15 +150,18 @@ original only when it reads back as ``image``.
 
 
 def _entry_metadata_from_disk(
-    resolved: EntryPaths, existing: EntryMetadata | None
+    resolved: EntryPaths,
+    existing: EntryMetadata | None,
+    *,
+    origin: EntryOrigin = "imported",
 ) -> EntryMetadata:
     """Build current disk metadata, preserving SQL-only provenance when present.
 
     Without a prior row the provenance is inferred from the files alone: a lone
     description is user markdown, and one sitting beside an original is that
     original's projection.  A markdown upload that carried a companion original
-    is the one shape this infers wrongly, and only after its row was lost — the
-    same limitation that already stamps every rediscovered entry ``imported``.
+    is the one shape this infers wrongly, and only after its row was lost.
+    Such an entry takes *origin*, ``imported`` for one rediscovered on disk.
     """
     kind, generated_by = (
         _REDISCOVERED_KINDS[projection_for(resolved.original_path)]
@@ -112,18 +174,8 @@ def _entry_metadata_from_disk(
         original_path=resolved.original_path,
         assets_dir=resolved.assets_dir,
         entry_kind=existing.entry_kind if existing else kind,
-        origin=existing.origin if existing else "imported",
+        origin=existing.origin if existing else origin,
         generated_by=existing.generated_by if existing else generated_by,
-    )
-
-
-def _same_persisted_entry_metadata(
-    existing: EntryMetadata, current: EntryMetadata
-) -> bool:
-    """Return whether the SQL-backed entry metadata already matches disk."""
-    persisted_fields = set(EntryMetadata.model_fields) - {"files"}
-    return existing.model_dump(include=persisted_fields) == current.model_dump(
-        include=persisted_fields
     )
 
 
@@ -139,9 +191,6 @@ async def _refresh_unchanged_entry(
     or the stat key drifted, so a steady-state boot does no SQL work at all.
     Returns whether SQL changed.
     """
-    if (
-        _same_persisted_entry_metadata(state.metadata, current)
-        and state.content_stat == stat
-    ):
+    if state.metadata == current and state.content_stat == stat:
         return False
     return await db_documents.update_entry(store, current, stat)

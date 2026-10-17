@@ -49,13 +49,10 @@ import { keyPrefix } from "@/i18n";
 import {
   adminDeleteGroupData,
   adminDeleteUserData,
-  adminFactoryReset,
   adminGetMaintenance,
-  adminListGroups,
-  adminListUsers,
+  adminOverview,
   adminReindex,
-  adminResetDatabase,
-  adminResetWorkspace,
+  adminReset,
   adminSetMaintenance,
   deleteAllConversations,
   deleteAllDocuments,
@@ -301,10 +298,10 @@ function AdminSections({ onSelect }: { onSelect: SelectAction }) {
   // Only sets state once the requests settle, so the mount effect can call it.
   const load = useCallback(
     () =>
-      Promise.all([adminListUsers(), adminListGroups()])
-        .then(([u, g]) => {
-          setUsers(u);
-          setGroups(g);
+      adminOverview()
+        .then((overview) => {
+          setUsers(overview.users);
+          setGroups(overview.groups);
         })
         .catch((e: unknown) => console.error("Failed to load admin overview:", e))
         .finally(() => setLoading(false)),
@@ -436,7 +433,7 @@ function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDan
           description: t(($) => $.adminDanger.resetWorkspace.description),
           confirm: t(($) => $.adminDanger.resetWorkspace.confirm),
           run: async () => {
-            await adminResetWorkspace();
+            await adminReset("workspace");
             await refresh();
           },
         },
@@ -458,7 +455,7 @@ function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDan
           title: t(($) => $.adminDanger.resetDatabase.label),
           description: t(($) => $.adminDanger.resetDatabase.description),
           run: async () => {
-            await adminResetDatabase();
+            await adminReset("database");
             await refresh();
           },
         },
@@ -469,7 +466,7 @@ function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDan
           title: t(($) => $.adminDanger.factoryReset.label),
           description: t(($) => $.adminDanger.factoryReset.description),
           run: async () => {
-            await adminFactoryReset();
+            await adminReset("factory");
             clearAllStorage();
           },
         },

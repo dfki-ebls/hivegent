@@ -1,45 +1,30 @@
 """Public upload, replace, and reconvert operations.
 
-Each runs through the phased reserve → prepare → commit lifecycle
-(:func:`hivegent.workspace.commit._phased_upload`): reserve only validates and
-captures the source under the lock, the slow conversion runs lock-free, and the
-commit supersedes any prior entry atomically — so a failed or cancelled
-conversion never destroys what was already there.
+Each is one :class:`~hivegent.workspace.operations.Upload` committed through
+the changeset gateway, which converts it without a lock and lands it
+atomically, so a failed or cancelled conversion never destroys what was
+already there.  Replacing an original and reconverting one are uploads over
+the entry, of new bytes or of its own.
 """
 
 import asyncio
 from pathlib import PurePosixPath
 
-from fastapi import HTTPException
-
+from ..changes import Basis
 from ..chunkers.base import EntryOrigin
-from ..config import settings
-from ..converters.base import is_markdown_suffix
-from ..db import documents as db_documents
-from ..entries import entry_exists, resolve_entry_paths, stem_path_from_reference
-from ..l10n import Localized
+from ..entries import ContentStat, stem_path_from_reference
 from ..llm_config import LlmConfig
 from ..store import Casebase
-from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
-from .commit import _ensure_upload_slot_locked, _phased_upload
-from .metadata import _merge_entry_paths, resolve_entry
-from .paths import (
-    _check_not_reserved_path,
-    _enforce_file_size,
-    _shown,
-    no_original,
-)
-from .prepare import _Reserved
+from ..types import PipelineSpec, ProgressReporter
+from .changeset import apply_changeset
+from .metadata import find_original, resolve_entry
+from .operations import Location, Upload
 
 __all__ = [
     "reconvert",
     "replace_original",
     "upload",
 ]
-
-_DOCUMENT_PATH_REQUIRED = Localized(
-    en="Document path required", de="Dokumentpfad erforderlich"
-)
 
 
 async def upload(
@@ -50,111 +35,60 @@ async def upload(
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
     origin: EntryOrigin = "upload",
-    original_path: str | None = None,
-    original_content: bytes | None = None,
+    companion: tuple[str, bytes] | None = None,
     overwrite: bool = False,
+    basis: Basis | None = None,
     ctx: ProgressReporter | None = None,
-) -> UploadCompleteEvent:
-    """Upload a document to *store*, converting and chunking as needed.
+) -> None:
+    """Upload *content* to *filepath* in *store*, converting and indexing it.
 
-    See :func:`_phased_upload` for the reserve/prepare/commit lifecycle; here
-    reserve only validates the slot and captures the source, and an overwrite
-    supersedes the prior entry atomically at commit.  A markdown upload may carry
-    a sibling companion original, which lands in the same commit.
+    Args:
+        store: The workspace to upload to.
+        filepath: The file, local to *store*.
+        content: Its bytes.
+        spec: The conversion and chunking pipelines.
+        llm: The model that describes images and videos.
+        origin: How a new entry came to be.
+        companion: A markdown upload's original, a sibling path with its bytes.
+        overwrite: Whether it replaces the entry at the same stem, see
+            :class:`~hivegent.workspace.operations.Upload`.
+        basis: What the caller saw of *filepath*, if anything.
+        ctx: Where the conversion reports its stages.
     """
-    if not filepath:
-        raise HTTPException(status_code=400, detail=_DOCUMENT_PATH_REQUIRED.current)
-    _check_not_reserved_path(filepath)
-    if (original_path is None) != (original_content is None):
-        raise ValueError("original_path and original_content must be provided together")
-    _enforce_file_size(content)
-    if original_content is not None:
-        _enforce_file_size(original_content)
-    spec = spec or PipelineSpec()
-    llm = llm or LlmConfig()
-    is_markdown = is_markdown_suffix(PurePosixPath(filepath).suffix.lower())
-    if not is_markdown and original_path is not None:
-        raise ValueError("A companion original is supported only for markdown")
-    if original_path is not None and (
-        is_markdown_suffix(PurePosixPath(original_path).suffix.lower())
-        or stem_path_from_reference(original_path) != stem_path_from_reference(filepath)
-    ):
-        raise ValueError("A companion original must be a non-markdown sibling")
-
-    async def reserve() -> _Reserved:
-        _ensure_upload_slot_locked(store, filepath, overwrite=overwrite)
-        workspace_dir = store.workspace_dir(settings.data_dir)
-        replacing = overwrite and entry_exists(workspace_dir, filepath)
-        supersede = (
-            (await resolve_entry(store, filepath)).original_path if replacing else None
-        )
-
-        return _Reserved(
-            reference=filepath,
-            content=content,
-            origin=origin,
-            original_path=original_path if is_markdown else filepath,
-            original_content=original_content if is_markdown else content,
-            preserve=replacing,
-            supersede_original=supersede,
-        )
-
-    return await _phased_upload(
-        store, spec, llm, stem_reference=filepath, reserve=reserve, ctx=ctx
+    item = Upload(
+        Location(store, filepath),
+        content,
+        spec=spec or PipelineSpec(),
+        llm=llm or LlmConfig(),
+        origin=origin,
+        companion=companion,
+        overwrite=overwrite,
+        basis=basis,
+        progress=ctx,
     )
+    await apply_changeset((item,))
 
 
 async def replace_original(
     store: Casebase,
     safe: str,
-    new_content: bytes,
+    content: bytes,
     *,
     new_filename: str | None,
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
     ctx: ProgressReporter | None = None,
-) -> UploadCompleteEvent:
-    """Replace the original file backing a logical entry and reconvert.
+) -> None:
+    """Replace the original behind *safe*'s entry with *content*, converted afresh.
 
-    The new original keeps the entry's stem; only the suffix may change.  See
-    :func:`_phased_upload` for the lifecycle; the swap (new original written,
-    stale assets cleared, old original unlinked) happens atomically at commit,
-    so a failed conversion or a cancel leaves the prior entry intact.
+    The new original keeps the entry's stem and takes the suffix of
+    *new_filename*, else the one the original had, and an entry without one
+    gains it.
     """
-    _enforce_file_size(new_content)
-    spec = spec or PipelineSpec()
-    llm = llm or LlmConfig()
-
-    async def reserve() -> _Reserved:
-        metadata = await db_documents.get_entry_metadata(store, safe)
-        existing_original_rel = _merge_entry_paths(
-            resolve_entry_paths(store.workspace_dir(settings.data_dir), safe), metadata
-        ).original_path
-        if not existing_original_rel:
-            raise HTTPException(
-                status_code=404,
-                detail=no_original(_shown(store, safe)).current,
-            )
-
-        existing_suffix = PurePosixPath(existing_original_rel).suffix
-        new_suffix = (
-            PurePosixPath(new_filename).suffix if new_filename else existing_suffix
-        ) or existing_suffix
-        new_original_relpath = f"{stem_path_from_reference(safe)}{new_suffix.lower()}"
-
-        return _Reserved(
-            reference=new_original_relpath,
-            content=new_content,
-            origin=metadata.origin if metadata else "upload",
-            original_path=new_original_relpath,
-            original_content=new_content,
-            preserve=True,
-            supersede_original=existing_original_rel,
-        )
-
-    return await _phased_upload(
-        store, spec, llm, stem_reference=safe, reserve=reserve, ctx=ctx
-    )
+    current = (await resolve_entry(store, safe)).original_path
+    suffix = PurePosixPath(new_filename or current or "").suffix
+    target = f"{stem_path_from_reference(safe)}{suffix.lower()}"
+    await upload(store, target, content, spec=spec, llm=llm, overwrite=True, ctx=ctx)
 
 
 async def reconvert(
@@ -164,45 +98,27 @@ async def reconvert(
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
     ctx: ProgressReporter | None = None,
-) -> UploadCompleteEvent:
-    """Re-run conversion and chunking for an entry's existing original.
+) -> None:
+    """Convert the original behind *safe*'s entry again, an upload of its own bytes over it.
 
-    See :func:`_phased_upload` for the lifecycle; reserve only reads the
-    existing original, and the stale assets are cleared atomically at commit.
-    A cancel or a failed conversion therefore leaves the entry exactly as it
-    was, so the user can simply retry.
+    Raises:
+        HTTPException: When the entry has no original.
     """
-    spec = spec or PipelineSpec()
-    llm = llm or LlmConfig()
+    located = await find_original(store, safe)
 
-    async def reserve() -> _Reserved:
-        metadata = await db_documents.get_entry_metadata(store, safe)
-        if not metadata or not metadata.original_path:
-            raise HTTPException(
-                status_code=404,
-                detail=no_original(_shown(store, safe)).current,
-            )
-        original_path = metadata.original_path
+    def read() -> tuple[ContentStat | None, bytes]:
+        # The stat comes first, so a change while reading refuses the commit.
+        return ContentStat.from_path(located), located.read_bytes()
 
-        def read() -> bytes | None:
-            located = store.locate(original_path)
-            return located.read_bytes() if located is not None and located.is_file() else None
-
-        content = await asyncio.to_thread(read)
-        if content is None:
-            raise HTTPException(
-                status_code=404,
-                detail=no_original(_shown(store, safe)).current,
-            )
-
-        return _Reserved(
-            reference=metadata.original_path,
-            content=content,
-            origin=metadata.origin,
-            original_path=metadata.original_path,
-            preserve=True,
-        )
-
-    return await _phased_upload(
-        store, spec, llm, stem_reference=safe, reserve=reserve, ctx=ctx
+    basis, content = await asyncio.to_thread(read)
+    original = located.relative_to(store.path.resolve()).as_posix()
+    await upload(
+        store,
+        original,
+        content,
+        spec=spec,
+        llm=llm,
+        overwrite=True,
+        basis=basis,
+        ctx=ctx,
     )
