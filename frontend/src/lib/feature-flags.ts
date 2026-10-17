@@ -76,10 +76,8 @@ export interface FeatureFlags {
 
   /**
    * Show the coverage map in the context panel — the bar marking where a
-   * document's read chunks sit within the whole.  Unlike the opt-in flags
-   * above this is a kill-switch for an on-by-default feature, so it defaults
-   * to `true`; disabling it hides the bar and skips the line-count fetch that
-   * supplies its denominator.
+   * document's read chunks sit within the whole.  When disabled, the bar is
+   * hidden and the line-count fetch that supplies its denominator is skipped.
    */
   documentMap: boolean;
 }
