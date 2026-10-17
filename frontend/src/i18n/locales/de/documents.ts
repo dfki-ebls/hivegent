@@ -17,7 +17,6 @@ export const documents = {
     grep: "Grep",
     search: "Suche",
     web: "Web",
-    preview: "Vorschau",
   },
   chunkOriginDetail: "{{origin}}: {{detail}}",
   chunkSummary: "{{origin}}, {{position}}",

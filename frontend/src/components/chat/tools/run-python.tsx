@@ -1,5 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { FileCodeIcon, SquareFunctionIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { HighlightedCode } from "@/components/HighlightedCode";
@@ -11,7 +12,7 @@ import {
 } from "@/components/chat/tools/changeset";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { ToolCode, ToolOutputResult } from "@/components/chat/tools/display";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ErrorAlert } from "@/components/ErrorAlert";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,7 +26,7 @@ import { Item, ItemActions, ItemContent, ItemMedia, ItemTitle } from "@/componen
 import { Spinner } from "@/components/ui/spinner";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { keyPrefix } from "@/i18n";
-import { getDocumentContent } from "@/lib/api";
+import { documentQueries } from "@/queries/documents";
 import { type ToolPart, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
 import { basename, errorMessage } from "@/lib/utils";
 
@@ -71,8 +72,6 @@ function given(value: string | null | undefined): string | undefined {
   return value?.trim() ? value : undefined;
 }
 
-type ScriptSource = { code: string } | { error: string };
-
 function ScriptSourceView({
   path,
   conversationId,
@@ -80,34 +79,17 @@ function ScriptSourceView({
   path: string;
   conversationId: string | null;
 }) {
-  const [source, setSource] = useState<ScriptSource | null>(null);
+  const { data: code, error } = useQuery(documentQueries.content(path, conversationId));
 
-  useEffect(() => {
-    let cancelled = false;
-
-    getDocumentContent(path, conversationId).then(
-      (code) => !cancelled && setSource({ code }),
-      (cause: unknown) => !cancelled && setSource({ error: errorMessage(cause) }),
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [path, conversationId]);
-
-  if (!source) return <Spinner className="mx-auto" />;
-
-  if ("error" in source) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription>{source.error}</AlertDescription>
-      </Alert>
-    );
+  if (error) {
+    return <ErrorAlert>{errorMessage(error)}</ErrorAlert>;
   }
+
+  if (code === undefined) return <Spinner className="mx-auto" />;
 
   return (
     <HighlightedCode
-      code={source.code}
+      code={code}
       language="python"
       lineNumbers
       copyable

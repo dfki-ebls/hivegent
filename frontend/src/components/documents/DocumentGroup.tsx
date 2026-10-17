@@ -11,7 +11,6 @@ import { AssetImage } from "@/components/documents/AssetImage";
 import { ChunkCard, GridCard } from "@/components/documents/ChunkCard";
 import { DocumentMap } from "@/components/documents/DocumentMap";
 import { ExpandButton, NameButton } from "@/components/RowButtons";
-import { documentReadMap } from "@/components/documents/utils";
 
 interface DocumentGroupProps {
   doc: FetchedDocument;
@@ -39,22 +38,8 @@ export function DocumentGroup({
       : doc.filename;
   const titlePath = doc.image?.filePath ?? doc.filename;
 
-  // Include all chunks except user-initiated "preview" full-document fetches.
-  // Model-fetched full documents appear as regular chunk cards (sorted first).
-  const contentChunks = useMemo(() => {
-    const visible = chunks.filter(
-      (c) => !(c.position.type === "full_document" && c.origin === "preview"),
-    );
-    return sortChunks(visible);
-  }, [chunks]);
-
-  // A preview-fetched full document records the line count (doc.totalLines)
-  // without being counted as a read span, so the map stays accurate once the
-  // dialog opens.
-  const mapSegments = useMemo(
-    () => documentReadMap(contentChunks, doc.totalLines),
-    [contentChunks, doc.totalLines],
-  );
+  // Full documents appear as regular chunk cards, sorted first.
+  const contentChunks = useMemo(() => sortChunks(chunks), [chunks]);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -80,7 +65,9 @@ export function DocumentGroup({
             {t(($) => $.documents.chunks, { count: contentChunks.length })}
           </Badge>
         )}
-        {featureFlags.documentMap && <DocumentMap segments={mapSegments} />}
+        {featureFlags.documentMap && (
+          <DocumentMap filename={doc.filename} chunks={contentChunks} totalLines={doc.totalLines} />
+        )}
       </div>
       <CollapsibleContent className="@container pb-2 pl-8">
         <div className="grid auto-rows-fr grid-cols-2 gap-2 @sm:grid-cols-3 @lg:grid-cols-4">

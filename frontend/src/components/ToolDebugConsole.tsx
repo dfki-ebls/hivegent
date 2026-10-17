@@ -7,17 +7,19 @@
  * unit tests don't cover, such as pgvector retrieval. Admin only.
  */
 
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { LockIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
 import { formatDecimal } from "@/i18n/format";
-import { listToolSchemas, runTool } from "@/lib/api";
+import { runTool } from "@/lib/api";
 import { prettyPrint } from "@/lib/chat/tool-part";
-import type { ToolRunResult, ToolSchema } from "@/lib/types";
+import type { ToolRunResult } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
-import { selectIsAdmin, useSettingsStore } from "@/stores/settings-store";
+import { toolQueries } from "@/queries/tools";
+import { useIsAdmin } from "@/queries/settings";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorAlert } from "@/components/ErrorAlert";
 import { HighlightedCode } from "@/components/HighlightedCode";
@@ -121,29 +123,18 @@ function ResultPanel({ result }: { result: ToolRunResult }) {
 
 export function ToolDebugConsole() {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const isAdmin = useSettingsStore(selectIsAdmin);
-  const [tools, setTools] = useState<ToolSchema[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const isAdmin = useIsAdmin();
+  const { data: tools = [], error: loadError } = useQuery({
+    ...toolQueries.schemas(),
+    enabled: isAdmin,
+  });
   const [selected, setSelected] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<ToolRunResult | null>(null);
-  const [runError, setRunError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isAdmin) return;
-
-    let active = true;
-    listToolSchemas()
-      .then((fetched) => active && setTools(fetched))
-      .catch((e: unknown) => {
-        if (active) setLoadError(errorMessage(e));
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [isAdmin]);
+  const run = useMutation({
+    mutationFn: ({ name, args }: { name: string; args: Record<string, unknown> }) =>
+      runTool(name, args),
+    meta: { inlineError: true },
+  });
 
   const selectedTool = useMemo(
     () => tools.find((tool) => tool.name === selected),
@@ -156,25 +147,8 @@ export function ToolDebugConsole() {
   function handleSelect(name: string | null) {
     const tool = tools.find((candidate) => candidate.name === name);
     setSelected(name);
-    setResult(null);
-    setRunError(null);
+    run.reset();
     setValues(tool && isJsonSchema(tool.parameters) ? defaultValues(tool.parameters) : {});
-  }
-
-  async function handleRun() {
-    if (!selectedTool) return;
-
-    setRunning(true);
-    setResult(null);
-    setRunError(null);
-
-    try {
-      setResult(await runTool(selectedTool.name, values));
-    } catch (e: unknown) {
-      setRunError(errorMessage(e));
-    } finally {
-      setRunning(false);
-    }
   }
 
   if (!isAdmin) {
@@ -198,7 +172,9 @@ export function ToolDebugConsole() {
       {/* Body: one scroll region on mobile, two independent columns on desktop. */}
       <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         <div className="flex flex-col gap-6 p-6 lg:w-1/2 lg:overflow-y-auto lg:border-r">
-          {loadError && <ErrorAlert title={t(($) => $.loadFailed)}>{loadError}</ErrorAlert>}
+          {loadError && (
+            <ErrorAlert title={t(($) => $.loadFailed)}>{errorMessage(loadError)}</ErrorAlert>
+          )}
 
           <Select value={selected} onValueChange={handleSelect}>
             <SelectTrigger className="w-full">
@@ -234,8 +210,12 @@ export function ToolDebugConsole() {
                     onChange={setValues}
                   />
                 )}
-                <Button className="self-start" onClick={handleRun} disabled={running}>
-                  {running && <Spinner data-icon="inline-start" />}
+                <Button
+                  className="self-start"
+                  onClick={() => run.mutate({ name: selectedTool.name, args: values })}
+                  disabled={run.isPending}
+                >
+                  {run.isPending && <Spinner data-icon="inline-start" />}
                   {t(($) => $.run)}
                 </Button>
               </CardContent>
@@ -244,10 +224,10 @@ export function ToolDebugConsole() {
         </div>
 
         <div className="flex flex-col gap-6 p-6 lg:w-1/2 lg:overflow-y-auto">
-          {result ? (
-            <ResultPanel result={result} />
-          ) : runError ? (
-            <ErrorAlert title={t(($) => $.requestFailed)}>{runError}</ErrorAlert>
+          {run.data ? (
+            <ResultPanel result={run.data} />
+          ) : run.error ? (
+            <ErrorAlert title={t(($) => $.requestFailed)}>{errorMessage(run.error)}</ErrorAlert>
           ) : (
             <EmptyState
               title={t(($) => $.noResults)}

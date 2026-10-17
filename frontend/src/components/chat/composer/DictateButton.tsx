@@ -1,3 +1,4 @@
+import { useMutation } from "@tanstack/react-query";
 import { MicIcon, SquareIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -43,7 +44,11 @@ interface DictateButtonProps {
 export function DictateButton({ disabled, onText, transcribe }: DictateButtonProps) {
   const { t } = useTranslation();
   const [listening, setListening] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
+  // A failed transcription raises the mutation toast, the draft stays as it was.
+  const transcription = useMutation({
+    mutationFn: async (audio: Blob) => (transcribe ? transcribe(audio) : ""),
+    onSuccess: (text) => text && onText(text),
+  });
   const stopRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => stopRef.current?.(), []);
@@ -70,7 +75,7 @@ export function DictateButton({ disabled, onText, transcribe }: DictateButtonPro
     stopRef.current = () => recognition.stop();
   };
 
-  const record = async (send: (audio: Blob) => Promise<string>) => {
+  const record = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const recorder = new MediaRecorder(stream);
     const chunks: Blob[] = [];
@@ -79,11 +84,7 @@ export function DictateButton({ disabled, onText, transcribe }: DictateButtonPro
       for (const track of stream.getTracks()) track.stop();
       stopRef.current = null;
       setListening(false);
-      setTranscribing(true);
-      send(new Blob(chunks, { type: recorder.mimeType }))
-        .then((text) => text && onText(text))
-        .catch(() => {})
-        .finally(() => setTranscribing(false));
+      transcription.mutate(new Blob(chunks, { type: recorder.mimeType }));
     });
     recorder.start();
     stopRef.current = () => recorder.state === "recording" && recorder.stop();
@@ -97,7 +98,7 @@ export function DictateButton({ disabled, onText, transcribe }: DictateButtonPro
 
     setListening(true);
     if (Recognition) recognize(Recognition);
-    else if (transcribe) record(transcribe).catch(() => setListening(false));
+    else if (transcribe) record().catch(() => setListening(false));
   };
 
   if (!Recognition && !(canRecord && transcribe)) return null;
@@ -108,10 +109,10 @@ export function DictateButton({ disabled, onText, transcribe }: DictateButtonPro
         size="icon-sm"
         variant={listening ? "destructive" : "ghost"}
         aria-pressed={listening}
-        disabled={(disabled && !listening) || transcribing}
+        disabled={(disabled && !listening) || transcription.isPending}
         onClick={toggle}
       >
-        {transcribing ? <Spinner /> : listening ? <SquareIcon /> : <MicIcon />}
+        {transcription.isPending ? <Spinner /> : listening ? <SquareIcon /> : <MicIcon />}
       </InputGroupButton>
     </WithTooltip>
   );

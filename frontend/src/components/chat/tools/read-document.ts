@@ -16,7 +16,7 @@ export const syncReadDocumentOutput: SyncOutput = ({
     const isFullFile = result.start_line === 1 && result.end_line === result.total_lines;
 
     if (isFullFile) {
-      markFullDocument(filename, result.content, "read", sourceId);
+      markFullDocument(filename, result.content, "read", sourceId, result.total_lines);
       continue;
     }
 

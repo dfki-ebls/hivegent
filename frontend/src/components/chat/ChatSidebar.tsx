@@ -1,3 +1,4 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { type FileUIPart } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -24,7 +25,7 @@ import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
 import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
-import { getServerConversation, importConversation, transcribeAudio } from "@/lib/api";
+import { getServerConversation, transcribeAudio } from "@/lib/api";
 import { downloadJson } from "@/lib/download";
 import {
   activeChatError,
@@ -33,13 +34,12 @@ import {
   recordChatError,
 } from "@/lib/chat/chat-utils";
 import { type AgentMode, type ConversationArchive, type ReasoningEffort } from "@/lib/types";
-import { errorMessage } from "@/lib/utils";
-import { useConversationsStore } from "@/stores/conversations-store";
+import { conversationMutations, conversationQueries } from "@/queries/conversations";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useDraftHandoffStore } from "@/stores/draft-handoff-store";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useServerSettings } from "@/queries/settings";
 
 interface ChatSidebarProps {
   id: string;
@@ -55,10 +55,11 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   const addImage = useFetchedDocumentsStore((state) => state.addImage);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const clearFilter = useDocumentFilterStore((state) => state.clear);
-  const fetchConversations = useConversationsStore((state) => state.fetchConversations);
-  const conversationTitle = useConversationsStore(
-    (state) => state.conversations.find((c) => c.id === id)?.title,
-  );
+  const queryClient = useQueryClient();
+  const { data: conversationTitle } = useQuery({
+    ...conversationQueries.list(),
+    select: (list) => list.find((c) => c.id === id)?.title,
+  });
   const setDocumentTab = useDocumentCanvasStore((state) => state.setActiveTab);
   const stashHandoff = useDraftHandoffStore((state) => state.stash);
   // Server-issued ID of a draft whose first turn finished cleanly; state
@@ -145,7 +146,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     if (adoptedRef.current) return;
     adoptedRef.current = true;
     stashHandoff(createdId, recordChatError(messages, error));
-    void fetchConversations();
+    void queryClient.invalidateQueries({ queryKey: conversationQueries.all() });
     // Replace, not push: the transient draft URL ("/") shouldn't be a
     // back-button target once it has become a real conversation.
     void navigate({ to: "/conversations/$id", params: { id: createdId }, replace: true });
@@ -157,7 +158,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     messages,
     steeringQueue,
     stashHandoff,
-    fetchConversations,
+    queryClient,
     navigate,
   ]);
 
@@ -280,36 +281,25 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
 
   const importInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImportFile = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      // Reset so re-picking the same file fires onChange again.
-      event.target.value = "";
-      if (!file) return;
-      try {
-        const summary = await importConversation(file);
-        await fetchConversations();
-        await handleConversationSelect(summary.id);
-        toast.add({ type: "success", title: i18n.t(($) => $.chat.sidebar.imported) });
-      } catch (e) {
-        toast.add({ type: "error", title: errorMessage(e) });
-      }
+  const importArchive = useMutation({
+    ...conversationMutations.import(),
+    onSuccess: async (summary) => {
+      await handleConversationSelect(summary.id);
+      toast.add({ type: "success", title: i18n.t(($) => $.chat.sidebar.imported) });
     },
-    [fetchConversations, handleConversationSelect],
-  );
+  });
+
+  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Reset so re-picking the same file fires onChange again.
+    event.target.value = "";
+    if (file) importArchive.mutate(file);
+  };
 
   // Server-side transcription backs the recording fallback for browsers
   // without a working Web Speech API; only offered when an STT model is
   // configured on the backend.
-  const sttModel = useSettingsStore((state) => state.backendDefaults?.stt_model);
-  const handleAudioRecorded = useCallback(async (audio: Blob) => {
-    try {
-      return await transcribeAudio(audio);
-    } catch (e) {
-      toast.add({ type: "error", title: errorMessage(e) });
-      return "";
-    }
-  }, []);
+  const sttModel = useServerSettings((s) => s.stt_model);
 
   return (
     <Tabs
@@ -351,7 +341,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
                 editingId={editingId}
                 onNavigatePrevious={handleConversationSelect}
                 onRetry={handleRetry}
-                onCompact={() => void compact(true)}
+                onCompact={() => compact(true)}
                 onDismissError={() => {
                   clearError();
                   setDismissedErrorId(lastMessage?.id ?? null);
@@ -380,7 +370,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
             onAgentModeChange={setAgentMode}
             reasoningEffort={reasoningEffort}
             onReasoningEffortChange={setReasoningEffort}
-            onAudioRecorded={sttModel ? handleAudioRecorded : undefined}
+            onAudioRecorded={sttModel ? transcribeAudio : undefined}
           />
           <AiDisclosure />
         </div>

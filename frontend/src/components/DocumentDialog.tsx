@@ -9,15 +9,8 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import {
-  type ReactNode,
-  startTransition,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { type ReactNode, startTransition, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
@@ -26,14 +19,9 @@ import { downloadBlob } from "@/lib/download";
 import { basename, errorMessage, isWebUrl } from "@/lib/utils";
 import {
   buildAuxLlmConfig,
-  deleteAssetDescription,
   formatTarget,
-  generateAssetDescription,
-  getDocumentChunks,
-  getDocumentContent,
-  listDocumentAssets,
-  updateAssetDescription,
 } from "@/lib/api";
+import { documentMutations, documentQueries } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
 import { AssetImage } from "@/components/documents/AssetImage";
 import { EmptyState, LoadingState } from "@/components/EmptyState";
@@ -42,8 +30,6 @@ import { TooltipButton } from "@/components/TooltipButton";
 import { WorkspaceImage } from "@/components/WorkspaceImage";
 import { WorkspaceMarkdown } from "@/components/WorkspaceMarkdown";
 import {
-  type AssetEntry,
-  type AssetListResponse,
   type ChunkedDocumentResponse,
   type FetchedChunk,
   type FetchedImage,
@@ -89,7 +75,9 @@ interface DocumentDialogProps {
   /** Management mode: show pipeline/chunk_size/created_at badges. */
   showMetadata?: boolean;
   /** Management mode: show rechunk button and trigger rechunk. */
-  onRechunk?: () => Promise<void>;
+  onRechunk?: () => void;
+  /** Whether the rechunk triggered from this dialog is still running. */
+  rechunking?: boolean;
   /** Reconvert from the original binary (only for documents that have one). */
   onReconvert?: () => void;
   /** Download the original binary (only for documents that have one). */
@@ -111,7 +99,6 @@ type View =
   | { mode: "chunk"; id: string }
   | { mode: "asset"; index: number }
   | { mode: "edit" };
-type AssetAction = "save" | "generate" | "delete";
 type SidebarTab = "chunks" | "assets";
 
 interface ContentChunk {
@@ -309,6 +296,7 @@ function DocumentDialogBody({
   initialFullDoc = false,
   showMetadata = false,
   onRechunk,
+  rechunking = false,
   onReconvert,
   onDownloadOriginal,
   editable = false,
@@ -318,10 +306,6 @@ function DocumentDialogBody({
 }: Omit<DocumentDialogProps, "open">) {
   const { t } = useTranslation();
   const conversationId = useConversationId();
-  // Local content is only used in managed mode (custom getContent fetcher).
-  // In fetched mode the store is the source of truth (see `fullContent` below).
-  const [localFullContent, setLocalFullContent] = useState<string | null>(null);
-  const [contentSettled, setContentSettled] = useState(false);
   const [view, setView] = useState<View>(() => {
     if (isNew) return { mode: "edit" };
     if (!chunk || initialFullDoc || chunk.position.type === "full_document") {
@@ -330,21 +314,12 @@ function DocumentDialogBody({
     return { mode: "chunk", id: chunk.id };
   });
 
-  const [managedData, setManagedData] = useState<ChunkedDocumentResponse | null>(null);
-  const [managedError, setManagedError] = useState<string | null>(null);
-  const [isRechunking, setIsRechunking] = useState(false);
-
   const [editFilename, setEditFilename] = useState(filename);
   const [editContent, setEditContent] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chunks");
-  const [assetsData, setAssetsData] = useState<AssetListResponse | null>(null);
-  const [assetsLoading, setAssetsLoading] = useState(false);
   const [assetDescriptionDraft, setAssetDescriptionDraft] = useState("");
   const [isEditingAssetDescription, setIsEditingAssetDescription] = useState(false);
-  const [pendingAssetAction, setPendingAssetAction] = useState<AssetAction | null>(null);
 
   // When true, the next scroll-into-view uses "instant" instead of "smooth".
   const isInitialScrollRef = useRef(true);
@@ -352,32 +327,42 @@ function DocumentDialogBody({
   // Fetched-mode store access
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
-  const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
   const overrides = useSettingsStore((state) => state.overrides);
 
   const isManagedMode = showMetadata || onRechunk != null;
 
-  // Subscribe to just this document's full content so unrelated store
-  // updates (e.g., new search chunks streaming in) don't refire the fetch
-  // effect below.
+  // Content a tool output already delivered, the only source of a web page.
   const storedFullContent = useFetchedDocumentsStore((state) =>
     filename ? state.documents.get(filename)?.fullContent : undefined,
   );
 
   const isWeb = isWebUrl(filename);
   const wantsManagedChunks = isManagedMode && !!filename && !isNew;
-  const managedLoading = wantsManagedChunks && managedData === null && managedError === null;
-  // In fetched mode the store is the source of truth, so skip the fetcher when
-  // content is already present (or arrives via a tool output mid-flight). Web
-  // URLs are never fetched from the backend, their content comes from the store.
   const needsContent =
     !!filename && !isNew && !isWeb && (isManagedMode || storedFullContent == null);
-  const isLoading = needsContent && !contentSettled;
+
+  // The workspace queries refetch whenever the workspace changes, so an open
+  // dialog follows a reconvert, a rechunk, or an edit by the agent.
+  const contentQuery = useQuery({
+    ...documentQueries.content(filename, conversationId),
+    enabled: needsContent,
+  });
+  const chunksQuery = useQuery({ ...documentQueries.chunks(filename), enabled: wantsManagedChunks });
+  // Loaded on the first switch to the assets tab
+  // (404 when the document has none → tab stays hidden via assets_dir)
+  const assetsQuery = useQuery({
+    ...documentQueries.assets(filename),
+    enabled: sidebarTab === "assets",
+  });
+  const assetsData = assetsQuery.data;
+  const managedData = chunksQuery.data ?? null;
+  const managedLoading = chunksQuery.isLoading;
+  const isLoading = contentQuery.isLoading;
 
   const contentModel = useMemo<ContentModel>(() => {
     if (isManagedMode) {
       return {
-        content: localFullContent,
+        content: contentQuery.data ?? null,
         chunks:
           managedData?.chunks.map((item, index) => ({
             id: `managed:${index}`,
@@ -387,7 +372,7 @@ function DocumentDialogBody({
             range: { start: item.start_index, end: item.end_index },
           })) ?? [],
         loading: isLoading || managedLoading,
-        error: managedError,
+        error: chunksQuery.error && errorMessage(chunksQuery.error),
         assetsDir: managedData?.assets_dir ?? null,
         image:
           managedData?.entry_kind === "image" && managedData.original_path
@@ -397,7 +382,7 @@ function DocumentDialogBody({
       };
     }
 
-    const content = storedFullContent ?? null;
+    const content = storedFullContent ?? contentQuery.data ?? null;
     const document = filename ? documents.get(filename) : undefined;
     const fetched = document ? chunksForDocument(document, chunks) : [];
     if (chunk && !fetched.some((item) => item.id === chunk.id)) fetched.push(chunk);
@@ -415,9 +400,9 @@ function DocumentDialogBody({
     chunk,
     isLoading,
     isManagedMode,
-    localFullContent,
+    contentQuery.data,
     managedData,
-    managedError,
+    chunksQuery.error,
     managedLoading,
     chunks,
     documents,
@@ -432,42 +417,6 @@ function DocumentDialogBody({
       ? (contentModel.chunks.find((item) => item.id === view.id) ?? null)
       : null;
   const activeAsset = view.mode === "asset" ? (assetsData?.assets[view.index] ?? null) : null;
-
-  // Only sets state once the request settles, so the mount effect can call it.
-  const loadManagedChunks = useCallback(() => {
-    getDocumentChunks(filename)
-      .then(setManagedData)
-      .catch((e: unknown) => setManagedError(errorMessage(e)));
-  }, [filename]);
-
-  useEffect(() => {
-    if (wantsManagedChunks) loadManagedChunks();
-  }, [wantsManagedChunks, loadManagedChunks]);
-
-  useEffect(() => {
-    if (!needsContent) return;
-
-    let cancelled = false;
-    getDocumentContent(filename, conversationId)
-      .then((content) => {
-        if (cancelled) return;
-        if (isManagedMode) {
-          setLocalFullContent(content);
-        } else {
-          markFullDocument(filename, content, "preview");
-        }
-        setEditContent(content);
-        startTransition(() => setContentSettled(true));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        if (isManagedMode) setLocalFullContent(null);
-        setContentSettled(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [needsContent, filename, conversationId, isManagedMode, markFullDocument]);
 
   // Scroll the highlight into view when its DOM element mounts. The span
   // is keyed by the active chunk identifier (see renderChunkHighlight), so
@@ -487,36 +436,6 @@ function DocumentDialogBody({
       node.scrollIntoView({ behavior, block: overflows ? "start" : "center" });
     });
   }, []);
-  // Loaded on the first switch to the assets tab
-  // (404 when the document has none → tab stays hidden via assets_dir)
-  const loadAssets = useCallback(() => {
-    setAssetsLoading(true);
-    listDocumentAssets(filename)
-      .then(setAssetsData)
-      .catch(() => setAssetsData(null))
-      .finally(() => setAssetsLoading(false));
-  }, [filename]);
-
-  const handleSidebarTabChange = (tab: SidebarTab) => {
-    setSidebarTab(tab);
-    if (tab === "assets" && !assetsData) loadAssets();
-  };
-
-  const handleRechunk = useCallback(async () => {
-    if (!onRechunk) return;
-    setIsRechunking(true);
-    try {
-      await onRechunk();
-      setManagedData(null);
-      setManagedError(null);
-      loadManagedChunks();
-      // Invalidate the asset list and refetch it if it is on screen.
-      setAssetsData(null);
-      if (sidebarTab === "assets") loadAssets();
-    } finally {
-      setIsRechunking(false);
-    }
-  }, [onRechunk, loadManagedChunks, sidebarTab, loadAssets]);
 
   // Download the markdown description shown in the dialog under its on-disk name.
   const handleDownloadMarkdown = useCallback(() => {
@@ -525,41 +444,19 @@ function DocumentDialogBody({
     downloadBlob(new Blob([fullContent], { type: "text/markdown" }), name);
   }, [fullContent, filename]);
 
-  // Run one request on the shown asset's description and swap in the updated entry.
-  const runAssetAction = async (
-    action: AssetAction,
-    request: (asset: AssetEntry) => Promise<AssetEntry>,
-  ) => {
-    if (view.mode !== "asset" || !activeAsset) return;
+  // One request on the shown asset's description, after which the list refetches.
+  const assetAction = useMutation({
+    ...documentMutations.assetDescription(filename),
+    onSuccess: () => setIsEditingAssetDescription(false),
+  });
+  const pendingAssetAction = assetAction.isPending ? assetAction.variables.action : null;
 
-    const { index } = view;
-    setPendingAssetAction(action);
-
-    try {
-      const updated = await request(activeAsset);
-      setAssetsData(
-        (prev) =>
-          prev && { ...prev, assets: prev.assets.map((a, i) => (i === index ? updated : a)) },
-      );
-      setIsEditingAssetDescription(false);
-    } finally {
-      setPendingAssetAction(null);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!onSave || !editFilename.trim()) return;
-    setIsSaving(true);
-    setSaveError(null);
-    try {
-      await onSave(editFilename.trim(), editContent);
-      onOpenChange(false);
-    } catch (err) {
-      setSaveError(errorMessage(err));
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  const save = useMutation({
+    mutationFn: async ({ name, content }: { name: string; content: string }) =>
+      onSave?.(name, content),
+    meta: { inlineError: true },
+    onSuccess: () => onOpenChange(false),
+  });
 
   // An uploaded image is a single image whose whole caption is one chunk, so we
   // render it like an extracted asset (image + caption + file metadata) and drop
@@ -607,15 +504,20 @@ function DocumentDialogBody({
             />
           </div>
           <DialogFooter className="p-4">
-            {saveError && <FieldError className="mr-auto self-center">{saveError}</FieldError>}
+            {save.error && (
+              <FieldError className="mr-auto self-center">{errorMessage(save.error)}</FieldError>
+            )}
             <Button
               variant="outline"
               onClick={() => (isNew ? onOpenChange(false) : showView({ mode: "full-doc" }))}
             >
               {t(($) => $.common.actions.cancel)}
             </Button>
-            <Button onClick={handleSave} disabled={isSaving || !editFilename.trim()}>
-              {isSaving && <Spinner aria-hidden data-icon="inline-start" />}
+            <Button
+              onClick={() => save.mutate({ name: editFilename.trim(), content: editContent })}
+              disabled={save.isPending || !editFilename.trim()}
+            >
+              {save.isPending && <Spinner aria-hidden data-icon="inline-start" />}
               {t(($) => $.common.actions.save)}
             </Button>
           </DialogFooter>
@@ -729,9 +631,11 @@ function DocumentDialogBody({
                       disabled={assetActionPending}
                       // Alt-text uses the auxiliary model, like the import-time describe pipeline.
                       onClick={() =>
-                        runAssetAction("generate", ({ name }) =>
-                          generateAssetDescription(filename, name, buildAuxLlmConfig(overrides)),
-                        )
+                        assetAction.mutate({
+                          action: "generate",
+                          name: activeAsset.name,
+                          llm: buildAuxLlmConfig(overrides),
+                        })
                       }
                     >
                       {pendingAssetAction === "generate" ? (
@@ -759,9 +663,7 @@ function DocumentDialogBody({
                         size="xs"
                         disabled={assetActionPending}
                         onClick={() =>
-                          runAssetAction("delete", ({ name }) =>
-                            deleteAssetDescription(filename, name),
-                          )
+                          assetAction.mutate({ action: "delete", name: activeAsset.name })
                         }
                       >
                         {pendingAssetAction === "delete" ? (
@@ -796,9 +698,11 @@ function DocumentDialogBody({
                     size="sm"
                     disabled={assetActionPending}
                     onClick={() =>
-                      runAssetAction("save", ({ name }) =>
-                        updateAssetDescription(filename, name, assetDescriptionDraft),
-                      )
+                      assetAction.mutate({
+                        action: "save",
+                        name: activeAsset.name,
+                        description: assetDescriptionDraft,
+                      })
                     }
                   >
                     {pendingAssetAction === "save" && (
@@ -893,7 +797,7 @@ function DocumentDialogBody({
         {hasAssets ? (
           <Tabs
             value={sidebarTab}
-            onValueChange={(value) => handleSidebarTabChange(value as SidebarTab)}
+            onValueChange={(value) => setSidebarTab(value as SidebarTab)}
           >
             <TabsList className="w-full">
               <TabsTrigger value="chunks">{t(($) => $.documents.dialog.chunksTab)}</TabsTrigger>
@@ -935,7 +839,7 @@ function DocumentDialogBody({
               })}
 
           {sidebarTab === "assets" &&
-            (assetsLoading ? (
+            (assetsQuery.isLoading ? (
               <Skeleton className="h-12" />
             ) : (
               assetsData?.assets.map((asset, index) => (
@@ -1016,7 +920,7 @@ function DocumentDialogBody({
                     onClick={() => {
                       setEditContent(fullContent ?? "");
                       setEditFilename(filename);
-                      setSaveError(null);
+                      save.reset();
                       setView({ mode: "edit" });
                     }}
                   >
@@ -1028,10 +932,10 @@ function DocumentDialogBody({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={handleRechunk}
-                    disabled={isRechunking}
+                    onClick={onRechunk}
+                    disabled={rechunking}
                   >
-                    {isRechunking ? (
+                    {rechunking ? (
                       <Spinner aria-hidden data-icon="inline-start" />
                     ) : (
                       <RefreshCw data-icon="inline-start" />

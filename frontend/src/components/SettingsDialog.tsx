@@ -1,3 +1,4 @@
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   CheckIcon,
   EraserIcon,
@@ -9,21 +10,22 @@ import {
   SettingsIcon,
   TrashIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { i18n, isCatalogKey, keyPrefix } from "@/i18n";
 import { settings } from "@/i18n/locales/en/settings";
-import { clearMemory, clearTmp, listTools, type McpTestResult, testMcpServer } from "@/lib/api";
+import { clearMemory, clearTmp, testMcpServer } from "@/lib/api";
 import { featureFlags } from "@/lib/feature-flags";
 import {
   type McpOAuth2Config,
   type McpServerEntry,
   PersonalitySchema,
-  type ToolInfo,
   type UserOverrides,
 } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
+import { toolQueries } from "@/queries/tools";
+import { useServerSettings } from "@/queries/settings";
 import { useSettingsStore } from "@/stores/settings-store";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { OptionSelect } from "@/components/OptionSelect";
@@ -77,24 +79,15 @@ interface ConfirmButtonProps {
   onConfirm: () => Promise<void>;
 }
 
-/**
- * Footer action that runs behind a confirmation dialog.
- *
- * Every action goes through `requestJson`/`requestVoid`, which throw on a
- * failed response, so the error toast belongs at this one seam.
- */
+/** Footer action that runs behind a confirmation dialog, a failure raising the mutation toast. */
 function ConfirmButton({ icon: Icon, label, title, description, onConfirm }: ConfirmButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const action = useMutation({ mutationFn: onConfirm });
 
-  async function confirm() {
+  function confirm() {
     setOpen(false);
-
-    try {
-      await onConfirm();
-    } catch (err) {
-      toast.add({ type: "error", title: errorMessage(err) });
-    }
+    action.mutate();
   }
 
   return (
@@ -109,7 +102,7 @@ function ConfirmButton({ icon: Icon, label, title, description, onConfirm }: Con
         title={title}
         description={description}
         confirmLabel={t(($) => $.settings.dialog.clear)}
-        onConfirm={() => void confirm()}
+        onConfirm={confirm}
       />
     </>
   );
@@ -132,7 +125,7 @@ async function clearTmpFiles() {
 function OverrideFields() {
   const { t } = useTranslation(undefined, DIALOG_T);
   const overrides = useSettingsStore((s) => s.overrides);
-  const backendDefaults = useSettingsStore((s) => s.backendDefaults);
+  const backendDefaults = useServerSettings();
   const setOverride = useSettingsStore((s) => s.setOverride);
   const hasServerApiKey = backendDefaults?.has_api_key ?? false;
 
@@ -239,18 +232,12 @@ function PersonalityFields() {
   );
 }
 
-/** The built-in tools by group, each with a switch. Fetched whenever the dialog opens. */
+/** The built-in tools by group, each with a switch. */
 function ToolsFieldSet() {
   const { t } = useTranslation(undefined, DIALOG_T);
   const disabledTools = useSettingsStore((s) => s.toolsSpec.disabledTools);
   const toggleTool = useSettingsStore((s) => s.toggleTool);
-  const [tools, setTools] = useState<ToolInfo[]>([]);
-
-  useEffect(() => {
-    void listTools()
-      .then(setTools)
-      .catch(() => setTools([]));
-  }, []);
+  const { data: tools = [] } = useQuery(toolQueries.list());
 
   if (tools.length === 0) {
     return null;
@@ -326,6 +313,7 @@ function McpServerForm() {
 
   function add() {
     addMcpServer({
+      id: crypto.randomUUID(),
       url: draft.url.trim(),
       toolPrefix: draft.prefix.trim() || undefined,
       headers:
@@ -444,28 +432,62 @@ function McpServerForm() {
   );
 }
 
+/** One configured MCP server with its connection test, whose outcome it shows inline. */
+function McpServerItem({ server, onRemove }: { server: McpServerEntry; onRemove: () => void }) {
+  const { t } = useTranslation(undefined, DIALOG_T);
+  const { t: tRoot } = useTranslation();
+  const test = useMutation({
+    mutationFn: () => testMcpServer(server),
+    meta: { inlineError: true },
+  });
+  const failure = test.error
+    ? errorMessage(test.error)
+    : test.data?.ok === false
+      ? (test.data.error ?? t(($) => $.mcp.connectionFailed))
+      : null;
+
+  return (
+    <Item variant="outline" size="xs">
+      {(Object.keys(server.headers).length > 0 || server.oauth2) && (
+        <ItemMedia variant="icon">
+          <LockIcon />
+        </ItemMedia>
+      )}
+      <ItemContent className="min-w-0">
+        <ItemTitle className="break-all">{server.url}</ItemTitle>
+        {server.toolPrefix && (
+          <ItemDescription>{t(($) => $.mcp.prefix, { prefix: server.toolPrefix })}</ItemDescription>
+        )}
+        {failure && <ItemDescription className="text-destructive">{failure}</ItemDescription>}
+      </ItemContent>
+      <ItemActions>
+        {test.isPending && <Spinner aria-label={tRoot(($) => $.common.states.loading)} />}
+        {test.data?.ok && (
+          <Badge variant="secondary">
+            <CheckIcon data-icon="inline-start" />
+            {t(($) => $.mcp.toolCount, { count: test.data.tool_count ?? 0 })}
+          </Badge>
+        )}
+        <TooltipButton
+          label={t(($) => $.mcp.testConnection)}
+          disabled={test.isPending}
+          onClick={() => test.mutate()}
+        >
+          <PlugIcon />
+        </TooltipButton>
+        <TooltipButton label={t(($) => $.mcp.removeServer)} destructive onClick={onRemove}>
+          <TrashIcon />
+        </TooltipButton>
+      </ItemActions>
+    </Item>
+  );
+}
+
 /** The configured MCP servers, each testable and removable, above the form adding one. */
 function McpServersFieldSet() {
   const { t } = useTranslation(undefined, DIALOG_T);
-  const { t: tRoot } = useTranslation();
   const servers = useSettingsStore((s) => s.toolsSpec.mcpServers);
   const removeMcpServer = useSettingsStore((s) => s.removeMcpServer);
-  // Keyed by entry so a removal never moves a result onto its neighbor, `null` while testing.
-  const [results, setResults] = useState(new Map<McpServerEntry, McpTestResult | null>());
-
-  const setResult = (server: McpServerEntry, result: McpTestResult | null) =>
-    setResults((prev) => new Map(prev).set(server, result));
-
-  function test(server: McpServerEntry) {
-    setResult(server, null);
-    void testMcpServer(server)
-      .catch((e: unknown): McpTestResult => ({
-        ok: false,
-        tool_count: null,
-        error: errorMessage(e),
-      }))
-      .then((result) => setResult(server, result));
-  }
 
   return (
     <FieldSet>
@@ -474,57 +496,14 @@ function McpServersFieldSet() {
 
       {servers.length > 0 && (
         <ItemGroup>
-          {servers.map((server, index) => {
-            const result = results.get(server);
-
-            return (
-              <Item key={index} variant="outline" size="xs">
-                {(Object.keys(server.headers).length > 0 || server.oauth2) && (
-                  <ItemMedia variant="icon">
-                    <LockIcon />
-                  </ItemMedia>
-                )}
-                <ItemContent className="min-w-0">
-                  <ItemTitle className="break-all">{server.url}</ItemTitle>
-                  {server.toolPrefix && (
-                    <ItemDescription>
-                      {t(($) => $.mcp.prefix, { prefix: server.toolPrefix })}
-                    </ItemDescription>
-                  )}
-                  {result?.ok === false && (
-                    <ItemDescription className="text-destructive">
-                      {result.error ?? t(($) => $.mcp.connectionFailed)}
-                    </ItemDescription>
-                  )}
-                </ItemContent>
-                <ItemActions>
-                  {result === null && (
-                    <Spinner aria-label={tRoot(($) => $.common.states.loading)} />
-                  )}
-                  {result?.ok && (
-                    <Badge variant="secondary">
-                      <CheckIcon data-icon="inline-start" />
-                      {t(($) => $.mcp.toolCount, { count: result.tool_count ?? 0 })}
-                    </Badge>
-                  )}
-                  <TooltipButton
-                    label={t(($) => $.mcp.testConnection)}
-                    disabled={result === null}
-                    onClick={() => test(server)}
-                  >
-                    <PlugIcon />
-                  </TooltipButton>
-                  <TooltipButton
-                    label={t(($) => $.mcp.removeServer)}
-                    destructive
-                    onClick={() => removeMcpServer(index)}
-                  >
-                    <TrashIcon />
-                  </TooltipButton>
-                </ItemActions>
-              </Item>
-            );
-          })}
+          {servers.map((server) => (
+            // Keyed by identity, so a removal never moves a test result onto its neighbor.
+            <McpServerItem
+              key={server.id}
+              server={server}
+              onRemove={() => removeMcpServer(server.id)}
+            />
+          ))}
         </ItemGroup>
       )}
 

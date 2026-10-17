@@ -99,7 +99,7 @@ describe("syncReadDocumentOutput", () => {
         addChunk,
       }),
     );
-    expect(markFullDocument).toHaveBeenCalledWith("~/a.md", "a\nb", "read", undefined);
+    expect(markFullDocument).toHaveBeenCalledWith("~/a.md", "a\nb", "read", undefined, 2);
     expect(addChunk).toHaveBeenCalledWith(
       {
         filename: "~/b.md",

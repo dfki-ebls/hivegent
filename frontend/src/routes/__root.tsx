@@ -1,7 +1,8 @@
 import { TanStackDevtools } from "@tanstack/react-devtools";
+import { useQuery } from "@tanstack/react-query";
+import { ReactQueryDevtoolsPanel } from "@tanstack/react-query-devtools";
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
-import { useEffect } from "react";
 
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { Header } from "@/components/Header";
@@ -9,21 +10,17 @@ import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { MaintenanceScreen } from "@/components/MaintenanceScreen";
 import { NotFound } from "@/components/NotFound";
 import { Toaster } from "@/components/ui/toast";
+import { MaintenanceError } from "@/lib/api";
 import { useOidc } from "@/oidc";
-import { useSettingsStore } from "@/stores/settings-store";
+import { settingsQueries } from "@/queries/settings";
 
 function RootComponent() {
   const { isUserLoggedIn } = useOidc();
-  const initFromBackend = useSettingsStore((state) => state.initFromBackend);
-  const maintenance = useSettingsStore((state) => state.maintenance);
+  // The one observer that loads the server settings. A maintenance rejection
+  // shows the maintenance screen while the query keeps retrying.
+  const { failureReason } = useQuery({ ...settingsQueries.server(), enabled: isUserLoggedIn });
 
-  useEffect(() => {
-    if (isUserLoggedIn) {
-      void initFromBackend();
-    }
-  }, [isUserLoggedIn, initFromBackend]);
-
-  if (maintenance) {
+  if (failureReason instanceof MaintenanceError) {
     return <MaintenanceScreen />;
   }
 
@@ -42,6 +39,10 @@ function RootComponent() {
             {
               name: "Tanstack Router",
               render: <TanStackRouterDevtoolsPanel />,
+            },
+            {
+              name: "Tanstack Query",
+              render: <ReactQueryDevtoolsPanel />,
             },
           ]}
         />

@@ -6,12 +6,13 @@ import {
   TrashIcon,
   XIcon,
 } from "lucide-react";
-import { type KeyboardEvent, type Ref, useEffect, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { type KeyboardEvent, type Ref, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { keyPrefix } from "@/i18n";
 import { buildAuxLlmConfig } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import { useConversationsStore } from "@/stores/conversations-store";
+import { cn, errorMessage } from "@/lib/utils";
+import { conversationMutations, conversationQueries } from "@/queries/conversations";
 import { useSettingsStore } from "@/stores/settings-store";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, LoadingState } from "@/components/EmptyState";
@@ -89,13 +90,12 @@ function centerInList(button: HTMLButtonElement | null): void {
 
 interface ConversationItemProps {
   ref?: Ref<HTMLButtonElement>;
+  id: string;
   title: string;
   updatedAt: string;
   isActive: boolean;
   onSelect: () => void;
   onDelete: () => void;
-  onUpdateTitle: (title: string) => void;
-  onGenerateTitle: () => Promise<void>;
 }
 
 /**
@@ -105,35 +105,26 @@ interface ConversationItemProps {
  */
 function ConversationItem({
   ref,
+  id,
   title,
   updatedAt,
   isActive,
   onSelect,
   onDelete,
-  onUpdateTitle,
-  onGenerateTitle,
 }: ConversationItemProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
+  const overrides = useSettingsStore((state) => state.overrides);
+  const rename = useMutation(conversationMutations.rename());
+  const generate = useMutation(conversationMutations.generateTitle());
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
-  const [isGenerating, setIsGenerating] = useState(false);
 
   const handleSaveEdit = () => {
     if (editValue.trim() !== title) {
-      onUpdateTitle(editValue.trim());
+      rename.mutate({ id, title: editValue.trim() });
     }
 
     setIsEditing(false);
-  };
-
-  const handleGenerateTitle = async () => {
-    setIsGenerating(true);
-
-    try {
-      await onGenerateTitle();
-    } finally {
-      setIsGenerating(false);
-    }
   };
 
   return (
@@ -181,10 +172,10 @@ function ConversationItem({
           <TooltipButton
             label={t(($) => $.generateTitle)}
             size="icon-xs"
-            disabled={isGenerating}
-            onClick={handleGenerateTitle}
+            disabled={generate.isPending}
+            onClick={() => generate.mutate({ id, llm: buildAuxLlmConfig(overrides) })}
           >
-            {isGenerating ? <Spinner /> : <SparklesIcon />}
+            {generate.isPending ? <Spinner /> : <SparklesIcon />}
           </TooltipButton>
           <TooltipButton label={t(($) => $.delete)} size="icon-xs" destructive onClick={onDelete}>
             <TrashIcon />
@@ -207,55 +198,40 @@ export function ConversationsList({
   onActiveConversationDeleted,
 }: ConversationsListProps) {
   const { t } = useTranslation();
-  const conversations = useConversationsStore((state) => state.conversations);
-  const isLoading = useConversationsStore((state) => state.isLoading);
-  const error = useConversationsStore((state) => state.error);
-  const fetchConversations = useConversationsStore((state) => state.fetchConversations);
-  const deleteConversation = useConversationsStore((state) => state.deleteConversation);
-  const updateTitle = useConversationsStore((state) => state.updateTitle);
-  const generateTitle = useConversationsStore((state) => state.generateTitle);
-  const overrides = useSettingsStore((state) => state.overrides);
-
+  const {
+    data: conversations = [],
+    isPending,
+    error,
+    refetch,
+  } = useQuery(conversationQueries.list());
   const deletion = useDialogTarget({ id: "", title: "" });
-  const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const matches = useFuzzySearch(conversations, searchQuery, "title");
 
-  useEffect(() => {
-    void fetchConversations();
-  }, [fetchConversations]);
-
-  const confirmDelete = async () => {
+  const remove = useMutation({
+    ...conversationMutations.delete(),
     // Deleting the open conversation leaves the chat view bound to an id the
     // server no longer knows; start a fresh draft so its stale content and
     // dangling route don't linger.
-    const wasActive = deletion.target.id === currentConversationId;
-    setDeleting(true);
-
-    try {
-      await deleteConversation(deletion.target.id);
-    } finally {
-      setDeleting(false);
-      deletion.setOpen(false);
-    }
-
-    if (wasActive) onActiveConversationDeleted();
-  };
-
-  const handleGenerateTitle = async (id: string) => {
-    await generateTitle(id, buildAuxLlmConfig(overrides));
-  };
-
+    onSuccess: (_, id) => {
+      if (id === currentConversationId) onActiveConversationDeleted();
+    },
+    onSettled: () => deletion.setOpen(false),
+  });
   // A refetch keeps the cached list on screen,
   // so it neither flickers nor loses its scroll position.
-  if (isLoading && conversations.length === 0) {
+  if (isPending) {
     return <LoadingState className="h-full" />;
   }
 
   if (error) {
     return (
-      <EmptyState title={t(($) => $.common.states.error)} description={error} destructive>
-        <Button variant="outline" size="sm" onClick={() => void fetchConversations()}>
+      <EmptyState
+        title={t(($) => $.common.states.error)}
+        description={errorMessage(error)}
+        destructive
+      >
+        <Button variant="outline" size="sm" onClick={() => void refetch()}>
           {t(($) => $.common.actions.retry)}
         </Button>
       </EmptyState>
@@ -295,13 +271,12 @@ export function ConversationsList({
               <ConversationItem
                 key={conversation.id}
                 ref={conversation.id === currentConversationId ? centerInList : undefined}
+                id={conversation.id}
                 title={conversation.title}
                 updatedAt={conversation.updated_at}
                 isActive={conversation.id === currentConversationId}
                 onSelect={() => onConversationSelect(conversation.id)}
                 onDelete={() => deletion.show({ id: conversation.id, title: conversation.title })}
-                onUpdateTitle={(title) => updateTitle(conversation.id, title)}
-                onGenerateTitle={() => handleGenerateTitle(conversation.id)}
               />
             ))}
           </ul>
@@ -318,8 +293,8 @@ export function ConversationsList({
             : t(($) => $.chat.conversations.deleteUnnamed)
         }
         confirmLabel={t(($) => $.common.actions.delete)}
-        busy={deleting}
-        onConfirm={() => void confirmDelete()}
+        busy={remove.isPending}
+        onConfirm={() => remove.mutate(deletion.target.id)}
       />
     </div>
   );

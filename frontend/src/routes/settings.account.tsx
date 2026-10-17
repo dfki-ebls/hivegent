@@ -1,3 +1,4 @@
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   DatabaseZapIcon,
@@ -16,7 +17,7 @@ import {
   UsersIcon,
   WrenchIcon,
 } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -49,11 +50,8 @@ import { keyPrefix } from "@/i18n";
 import {
   adminDeleteGroupData,
   adminDeleteUserData,
-  adminGetMaintenance,
-  adminOverview,
   adminReindex,
   adminReset,
-  adminSetMaintenance,
   deleteAllConversations,
   deleteAllDocuments,
   deleteAllUserData,
@@ -63,9 +61,9 @@ import { startImpersonation } from "@/lib/impersonation";
 import type { AdminGroupInfo, AdminUserInfo } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
 import { enforceLogin } from "@/oidc";
-import { useConversationsStore } from "@/stores/conversations-store";
-import { useDocumentsStore } from "@/stores/documents-store";
-import { selectIsAdmin, selectUserId, useSettingsStore } from "@/stores/settings-store";
+import { adminMutations, adminQueries } from "@/queries/admin";
+import { selectUserId, useIsAdmin, useServerSettings } from "@/queries/settings";
+import { useSettingsStore } from "@/stores/settings-store";
 import { clearAllStorage } from "@/stores/storage";
 
 const USER_DANGER_T = keyPrefix(($) => $.settings.account.userDanger);
@@ -88,7 +86,7 @@ interface DangerAction {
   /** The label of the confirm button, the title by default. */
   confirm?: string;
   /** Returns an optional detail line for the success toast (counts, outcomes). */
-  run: () => Promise<string | undefined>;
+  run: () => Promise<string | void>;
 }
 
 /** A danger zone row, whose button opens the confirmation of its action. */
@@ -165,8 +163,6 @@ function DangerZone({
 function UserDangerZone({ onSelect }: { onSelect: SelectAction }) {
   const { t } = useTranslation(undefined, USER_DANGER_T);
   const resetLocalSettings = useSettingsStore((s) => s.reset);
-  const fetchConversations = useConversationsStore((s) => s.fetchConversations);
-  const refreshDocuments = useDocumentsStore((s) => s.refresh);
 
   return (
     <DangerZone
@@ -188,20 +184,14 @@ function UserDangerZone({ onSelect }: { onSelect: SelectAction }) {
           icon: MessageSquareXIcon,
           title: t(($) => $.deleteChats.label),
           description: t(($) => $.deleteChats.description),
-          run: async () => {
-            await deleteAllConversations();
-            await fetchConversations();
-          },
+          run: deleteAllConversations,
         },
         {
           key: "user-docs",
           icon: FileX2Icon,
           title: t(($) => $.deleteDocuments.label),
           description: t(($) => $.deleteDocuments.description),
-          run: async () => {
-            await deleteAllDocuments(PERSONAL_SCOPE);
-            await refreshDocuments(PERSONAL_SCOPE);
-          },
+          run: () => deleteAllDocuments(PERSONAL_SCOPE),
         },
         {
           key: "user-everything",
@@ -288,38 +278,14 @@ function useUserMeta(): (user: AdminUserInfo) => string {
     });
 }
 
-/** Fetches the admin overview once and feeds every admin section. */
+/** Fetches the admin overview and feeds every admin section. */
 function AdminSections({ onSelect }: { onSelect: SelectAction }) {
-  const currentUserId = useSettingsStore(selectUserId);
-  const [users, setUsers] = useState<AdminUserInfo[]>([]);
-  const [groups, setGroups] = useState<AdminGroupInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Only sets state once the requests settle, so the mount effect can call it.
-  const load = useCallback(
-    () =>
-      adminOverview()
-        .then((overview) => {
-          setUsers(overview.users);
-          setGroups(overview.groups);
-        })
-        .catch((e: unknown) => console.error("Failed to load admin overview:", e))
-        .finally(() => setLoading(false)),
-    [],
-  );
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    await load();
-  }, [load]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const currentUserId = useServerSettings(selectUserId);
+  const { data, isPending: loading } = useQuery(adminQueries.overview());
 
   // Self-targeting is never useful: an admin cannot impersonate themselves
   // and wiping their own account belongs in the user danger zone.
-  const otherUsers = users.filter((u) => u.id !== currentUserId);
+  const otherUsers = data?.users.filter((u) => u.id !== currentUserId) ?? [];
 
   return (
     <>
@@ -332,9 +298,8 @@ function AdminSections({ onSelect }: { onSelect: SelectAction }) {
       <AdminDangerZone
         onSelect={onSelect}
         users={otherUsers}
-        groups={groups}
+        groups={data?.groups ?? []}
         loading={loading}
-        refresh={refresh}
       />
     </>
   );
@@ -344,30 +309,20 @@ function AdminSections({ onSelect }: { onSelect: SelectAction }) {
 // it never shows a guessed value.
 function MaintenanceSection() {
   const { t } = useTranslation(undefined, MAINTENANCE_T);
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    adminGetMaintenance()
-      .then(setEnabled)
-      .catch((e: unknown) => {
-        console.error("Failed to read maintenance mode:", e);
-        toast.add({ type: "error", title: errorMessage(e) });
-      });
-  }, []);
-
-  const toggle = async (next: boolean) => {
-    try {
-      setEnabled(await adminSetMaintenance(next));
+  const { data: enabled } = useQuery(adminQueries.maintenance());
+  const toggle = useMutation({
+    ...adminMutations.maintenance(),
+    onSuccess: (next) => {
       toast.add({ type: "success", title: next ? t(($) => $.enabled) : t(($) => $.disabled) });
-    } catch (e) {
-      toast.add({ type: "error", title: t(($) => $.toggleFailed), description: errorMessage(e) });
-    }
-  };
+    },
+    onError: (e) =>
+      toast.add({ type: "error", title: t(($) => $.toggleFailed), description: errorMessage(e) }),
+  });
 
   return (
     <Section icon={WrenchIcon} title={t(($) => $.title)}>
       <FieldLabel htmlFor="maintenance-mode">
-        <Field orientation="horizontal" data-disabled={enabled === null}>
+        <Field orientation="horizontal" data-disabled={enabled === undefined}>
           <FieldContent>
             <FieldTitle>{t(($) => $.label)}</FieldTitle>
             <FieldDescription>{t(($) => $.description)}</FieldDescription>
@@ -375,8 +330,8 @@ function MaintenanceSection() {
           <Switch
             id="maintenance-mode"
             checked={enabled ?? false}
-            disabled={enabled === null}
-            onCheckedChange={(next) => void toggle(next)}
+            disabled={enabled === undefined}
+            onCheckedChange={(next) => toggle.mutate(next)}
           />
         </Field>
       </FieldLabel>
@@ -413,10 +368,9 @@ interface AdminDangerZoneProps {
   users: AdminUserInfo[];
   groups: AdminGroupInfo[];
   loading: boolean;
-  refresh: () => Promise<void>;
 }
 
-function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDangerZoneProps) {
+function AdminDangerZone({ onSelect, users, groups, loading }: AdminDangerZoneProps) {
   const { t } = useTranslation(undefined, ACCOUNT_T);
   const userMeta = useUserMeta();
 
@@ -432,10 +386,7 @@ function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDan
           title: t(($) => $.adminDanger.resetWorkspace.label),
           description: t(($) => $.adminDanger.resetWorkspace.description),
           confirm: t(($) => $.adminDanger.resetWorkspace.confirm),
-          run: async () => {
-            await adminReset("workspace");
-            await refresh();
-          },
+          run: () => adminReset("workspace"),
         },
         {
           key: "admin-reindex",
@@ -443,21 +394,14 @@ function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDan
           title: t(($) => $.adminDanger.reindex.label),
           description: t(($) => $.adminDanger.reindex.description),
           confirm: t(($) => $.adminDanger.reindex.confirm),
-          run: async () => {
-            const { message } = await adminReindex();
-            await refresh();
-            return message;
-          },
+          run: async () => (await adminReindex()).message,
         },
         {
           key: "admin-database",
           icon: DatabaseZapIcon,
           title: t(($) => $.adminDanger.resetDatabase.label),
           description: t(($) => $.adminDanger.resetDatabase.description),
-          run: async () => {
-            await adminReset("database");
-            await refresh();
-          },
+          run: () => adminReset("database"),
         },
         {
           key: "admin-factory",
@@ -492,10 +436,7 @@ function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDan
                 conversations: t(($) => $.conversationCount, { count: u.conversation_count }),
               }),
               confirm: t(($) => $.adminDanger.wipeUser.confirm),
-              run: async () => {
-                await adminDeleteUserData(u.id);
-                await refresh();
-              },
+              run: () => adminDeleteUserData(u.id),
             })
           }
         />
@@ -517,10 +458,7 @@ function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDan
                 count: g.document_count,
               }),
               confirm: t(($) => $.adminDanger.wipeGroup.confirm),
-              run: async () => {
-                await adminDeleteGroupData(g.id);
-                await refresh();
-              },
+              run: () => adminDeleteGroupData(g.id),
             })
           }
         />
@@ -531,34 +469,29 @@ function AdminDangerZone({ onSelect, users, groups, loading, refresh }: AdminDan
 
 function AccountPage() {
   const { t } = useTranslation(undefined, ACCOUNT_T);
-  const isAdmin = useSettingsStore(selectIsAdmin);
+  const isAdmin = useIsAdmin();
   const { target: action, open, show, setOpen } = useDialogTarget<DangerAction | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const handleConfirm = async () => {
-    if (!action) return;
-
-    setBusy(true);
-
-    try {
-      const detail = await action.run();
+  const confirm = useMutation({
+    mutationFn: (target: DangerAction) => target.run(),
+    // Any action here can change what every cached view shows.
+    meta: { invalidates: "all" },
+    onSuccess: (detail, target) => {
       toast.add({
         type: "success",
-        title: t(($) => $.done, { action: action.title }),
-        description: detail,
+        title: t(($) => $.done, { action: target.title }),
+        description: detail || undefined,
       });
-    } catch (e) {
-      console.error(`${action.key} failed:`, e);
+    },
+    onError: (e, target) => {
+      console.error(`${target.key} failed:`, e);
       toast.add({
         type: "error",
-        title: t(($) => $.failed, { action: action.title }),
+        title: t(($) => $.failed, { action: target.title }),
         description: errorMessage(e),
       });
-    } finally {
-      setBusy(false);
-      setOpen(false);
-    }
-  };
+    },
+    onSettled: () => setOpen(false),
+  });
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-8 px-4 py-8">
@@ -577,8 +510,8 @@ function AccountPage() {
         title={action?.title ?? ""}
         description={action?.description ?? ""}
         confirmLabel={action?.confirm ?? action?.title ?? ""}
-        busy={busy}
-        onConfirm={() => void handleConfirm()}
+        busy={confirm.isPending}
+        onConfirm={() => action && confirm.mutate(action)}
       />
     </div>
   );

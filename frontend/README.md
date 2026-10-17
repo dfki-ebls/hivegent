@@ -35,6 +35,17 @@ Workspace documents render with markdown-to-jsx, since Streamdown is too slow fo
 They are styled by shadcn/typeset, vendored unchanged as `src/typeset.css`.
 Replies keep Streamdown's own styles, since it has no unstyled mode.
 
+## Server state lives in TanStack Query, client state in Zustand
+
+Every fetched resource is a `queryOptions` factory in `src/queries`, keyed under a scope that `Register` restricts, and every mutation that changes one names the keys it affects in `meta.invalidates`.
+The mutation cache refetches those before the mutation settles and raises a toast on failure unless the mutation renders it (`meta.inlineError`) or has its own `onError`, so components neither refetch by hand nor copy server data into state.
+Zustand keeps what the browser owns: settings, overrides, chunks the model read, and dialog state.
+
+Two stores still hold server data, since neither fits a query: the jobs store is fed by the event stream, and the upload queue tracks progress of requests in flight.
+Every workspace change the feed reports refetches the workspace queries (`syncWorkspaceQueries`).
+A directory tree read walks the whole workspace, so `refreshTrees` never cancels a read in flight but marks it stale, and the read repeats once for any burst of changes.
+Tree mutations publish their change rather than invalidating, and stay pending until the refreshed tree lands, so the rows they touch spin until then.
+
 ## Chat settings ride on every request
 
 `prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request.

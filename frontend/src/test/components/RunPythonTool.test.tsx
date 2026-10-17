@@ -8,6 +8,7 @@ import { AssetImage } from "@/components/documents/AssetImage";
 import { ConversationIdProvider } from "@/hooks/chat/use-conversation-id";
 import { fetchDocumentAsset, getDocumentContent } from "@/lib/api";
 import type { ToolPart } from "@/lib/chat/tool-part";
+import { renderWithQueries } from "@/test/render";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
@@ -42,7 +43,7 @@ describe("RunPythonTool", () => {
 
   it("loads temporary source with the conversation that owns it", async () => {
     vi.mocked(getDocumentContent).mockResolvedValue("print(1)");
-    render(
+    renderWithQueries(
       <ConversationIdProvider value="c1">
         <RunPythonTool part={finished} metadata={null} />
       </ConversationIdProvider>,
@@ -149,7 +150,7 @@ describe("temporary document previews", () => {
   it("loads complete temporary text with its owning conversation", async () => {
     vi.mocked(getDocumentContent).mockResolvedValue("Temporary document contents");
 
-    render(
+    renderWithQueries(
       <ConversationIdProvider value="c1">
         <DocumentDialog open onOpenChange={() => {}} filename="/tmp/notes.md" initialFullDoc />
       </ConversationIdProvider>,

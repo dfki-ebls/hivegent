@@ -317,11 +317,6 @@ export interface DocumentInfo {
   assets_dir?: string | null;
 }
 
-export const DocumentStatsSchema = z.object({
-  line_count: z.number(),
-  word_count: z.number(),
-  char_count: z.number(),
-});
 /** Batch document line counts, keyed by the requested workspace path. */
 export const DocumentLineCountsResponseSchema = z.object({
   line_counts: z.record(z.string(), z.number()),
@@ -535,6 +530,8 @@ export type McpOAuth2Config = z.infer<typeof McpOAuth2ConfigSchema>;
 
 /** A user-provided MCP server entry (HTTP transport only). */
 export const McpServerEntrySchema = z.object({
+  /** Stable identity of the entry, minted for entries persisted without one. */
+  id: z.string().default(() => crypto.randomUUID()),
   url: z.string(),
   headers: z.record(z.string(), z.string()).default({}),
   toolPrefix: z.string().optional(),
@@ -569,11 +566,8 @@ export type ChunkPosition =
   /** Unlocated span — resolve by searching `FetchedChunk.content` in the document. */
   | { type: "text" };
 
-/**
- * Where a fetched chunk came from: the model tools (read/grep/search/web) plus
- * the UI-only origins (preview fetch, citation marker).
- */
-export type ChunkOrigin = "read" | "grep" | "search" | "web" | "preview";
+/** The model tool a fetched chunk came from. */
+export type ChunkOrigin = "read" | "grep" | "search" | "web";
 
 /** A single fetched chunk from a persisted tool result. */
 export interface FetchedChunk {
@@ -607,13 +601,10 @@ export interface FetchedImage {
 /** A document that groups one or more fetched chunks. */
 export interface FetchedDocument {
   filename: string;
-  fullContentFetched: boolean;
   fullContent?: string;
   /**
-   * Total line count of the document, recorded once from whichever source
-   * learns it first: a partial read's `total_lines` or the fetched full
-   * content.  The single denominator for the coverage map, so a partial read
-   * doesn't render as full coverage.
+   * Total line count of the document as the latest read reported it.  The
+   * coverage map prefers it over the indexed count, which may predate an edit.
    */
   totalLines?: number;
   chunkIds: string[];
@@ -714,9 +705,7 @@ export type LinePosition = Extract<ChunkPosition, { type: "line" | "line_range" 
 
 /**
  * Whether a position carries concrete line numbers, the single unit the
- * coverage map can place.  The one definition of "mappable", shared by the map
- * builder and the line-count backfill so they never disagree about which
- * documents get a map.
+ * coverage map can place.
  */
 export function isLinePosition(position: ChunkPosition): position is LinePosition {
   return position.type === "line" || position.type === "line_range";

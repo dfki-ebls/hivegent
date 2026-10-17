@@ -1,3 +1,4 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { ThemeProvider } from "next-themes";
 import { StrictMode } from "react";
@@ -6,6 +7,8 @@ import ReactDOM from "react-dom/client";
 import { BootstrapGate } from "@/components/BootstrapGate";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/i18n";
+import { createQueryClient } from "@/lib/query-client";
+import { syncWorkspaceQueries } from "@/queries/documents";
 import { OidcInitializationGate } from "@/oidc";
 import { routeTree } from "@/routeTree.gen";
 
@@ -20,6 +23,9 @@ window.addEventListener("vite:preloadError", () => {
   sessionStorage.setItem(key, String(Date.now()));
   window.location.reload();
 });
+
+const queryClient = createQueryClient();
+syncWorkspaceQueries(queryClient);
 
 const router = createRouter({
   routeTree,
@@ -47,15 +53,17 @@ if (rootElement && !rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement);
   root.render(
     <StrictMode>
-      <ThemeProvider attribute="class" enableSystem disableTransitionOnChange>
-        <TooltipProvider>
-          <BootstrapGate>
-            <OidcInitializationGate>
-              <RouterProvider router={router} />
-            </OidcInitializationGate>
-          </BootstrapGate>
-        </TooltipProvider>
-      </ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider attribute="class" enableSystem disableTransitionOnChange>
+          <TooltipProvider>
+            <BootstrapGate>
+              <OidcInitializationGate>
+                <RouterProvider router={router} />
+              </OidcInitializationGate>
+            </BootstrapGate>
+          </TooltipProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
     </StrictMode>,
   );
 }

@@ -1,3 +1,4 @@
+import { useMutation } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -8,7 +9,6 @@ import {
   formatTarget,
   groupScope,
   splitScopePath,
-  writeDocument,
 } from "@/lib/api";
 import {
   buildCollectionZip,
@@ -19,7 +19,8 @@ import { registerTreeAutoScroll } from "@/lib/dnd";
 import { featureFlags } from "@/lib/feature-flags";
 import type { PipelineSpec } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
-import { useDocumentsStore } from "@/stores/documents-store";
+import { documentMutations } from "@/queries/documents";
+import { useServerSettings } from "@/queries/settings";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
   type UploadOptions,
@@ -45,8 +46,8 @@ export function DocumentManager() {
   const assetMode = useSettingsStore((s) => s.assetMode);
   const setAssetMode = useSettingsStore((s) => s.setAssetMode);
 
-  const createDir = useDocumentsStore((s) => s.createDir);
-  const refresh = useDocumentsStore((s) => s.refresh);
+  const { mutateAsync: write } = useMutation(documentMutations.write());
+  const createDir = useMutation(documentMutations.createDir());
   const enqueueFiles = useUploadQueue((s) => s.enqueueFiles);
   const enqueueCollection = useUploadQueue((s) => s.enqueueCollection);
   const reportUpload = useUploadQueue((s) => s.report);
@@ -55,7 +56,7 @@ export function DocumentManager() {
   // Subscribed, not snapshotted: the groups arrive with the settings fetch,
   // which resolves after this component first renders. Already one sorted
   // entry per group, so there is nothing to merge or order here.
-  const groups = useSettingsStore((s) => s.backendDefaults?.user.groups);
+  const groups = useServerSettings((s) => s.user.groups);
 
   // Canonical directory every upload/create lands in — a workspace root or a
   // subdir armed by clicking a folder in the tree. Defaults to the personal root.
@@ -198,22 +199,17 @@ export function DocumentManager() {
   // New in-browser markdown is written synchronously (not as a background job)
   // in "create" mode, so a name collision rejects with a 409 that propagates to
   // the dialog (which stays open with the content) instead of silently
-  // overwriting the existing document; the entry appears the moment we refresh.
+  // overwriting the existing document; the entry appears once the tree refreshes.
   const handleSaveNew = useCallback(
     async (filename: string, content: string) => {
       // New documents are markdown: the backend always chunks the content as the
       // `<stem>.md` description, so the on-disk name must carry the `.md` suffix
       // or the entry and its chunk count drift apart.
       const markdownName = filename.replace(/\.md$/i, "") + ".md";
-      await writeDocument(
-        canonicalPath(targetDir, markdownName),
-        content,
-        pipelineSpec.chunking,
-        "create",
-      );
-      await refresh(splitScopePath(targetDir).scope);
+      const { scope, local } = splitScopePath(canonicalPath(targetDir, markdownName));
+      await write({ scope, paths: [local], content, chunking: pipelineSpec.chunking, mode: "create" });
     },
-    [targetDir, pipelineSpec, refresh],
+    [targetDir, pipelineSpec, write],
   );
 
   return (
@@ -310,7 +306,7 @@ export function DocumentManager() {
         submitLabel={t(($) => $.common.actions.create)}
         onSubmit={(name) => {
           const { scope, local } = splitScopePath(canonicalPath(targetDir, name));
-          void createDir(scope, local);
+          createDir.mutate({ scope, paths: [local] });
         }}
       />
     </div>

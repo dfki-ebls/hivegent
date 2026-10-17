@@ -24,7 +24,7 @@ flowchart LR
 ## Frontend
 
 - React 19, Vite, and TanStack Router, with `oidc-spa` for login and mock auth in development.
-- Vercel AI SDK for chat streaming, Zustand for state, and Zod at the boundaries.
+- Vercel AI SDK for chat streaming, Zustand for client state, TanStack Query for server state, and Zod at the boundaries.
 - Tailwind CSS 4 and shadcn/ui on Base UI.
 
 ## Backend

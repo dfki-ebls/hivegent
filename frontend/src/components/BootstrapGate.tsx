@@ -1,15 +1,13 @@
+import { useQuery } from "@tanstack/react-query";
 import { TriangleAlertIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { errorMessage } from "@/lib/utils";
-import { initOidc } from "@/oidc";
+import { settingsQueries } from "@/queries/settings";
 
 import { ConnectingScreen } from "@/components/ConnectingScreen";
 import { EmptyState } from "@/components/EmptyState";
-
-type State = { status: "loading" } | { status: "ready" } | { status: "error"; message: string };
 
 /**
  * Drive app startup from inside React so the connection spinner stays on screen
@@ -20,38 +18,16 @@ type State = { status: "loading" } | { status: "ready" } | { status: "error"; me
  */
 export function BootstrapGate({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
-  const [state, setState] = useState<State>({ status: "loading" });
+  const { status, error } = useQuery(settingsQueries.bootstrap());
 
-  useEffect(() => {
-    let cancelled = false;
+  if (status === "success") return children;
 
-    // initOidc caches its promise, so StrictMode's double-mount reuses the one
-    // in-flight bootstrap rather than racing a second.
-    initOidc().then(
-      () => {
-        if (!cancelled) setState({ status: "ready" });
-      },
-      (e: unknown) => {
-        if (cancelled) return;
-
-        console.error("[bootstrap] startup failed", e);
-        setState({ status: "error", message: errorMessage(e) });
-      },
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (state.status === "ready") return children;
-
-  if (state.status === "error") {
+  if (status === "error") {
     return (
       <EmptyState
         icon={<TriangleAlertIcon />}
         title={t(($) => $.app.startup.failed)}
-        description={state.message}
+        description={errorMessage(error)}
         destructive
         className="h-dvh"
       />

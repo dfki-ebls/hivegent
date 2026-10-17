@@ -82,12 +82,11 @@ describe("useFetchedDocumentsStore", () => {
       const state = useFetchedDocumentsStore.getState();
       const doc = state.documents.get("report.md");
       expect(doc).toBeDefined();
-      expect(doc!.fullContentFetched).toBe(true);
       expect(doc!.fullContent).toBe("full content");
     });
 
-    it("records the line count from the fetched full content", () => {
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "a\nb\nc", "read");
+    it("records the line count the backend reported", () => {
+      useFetchedDocumentsStore.getState().markFullDocument("report.md", "a\nb\nc\n", "read", "s1", 3);
 
       expect(useFetchedDocumentsStore.getState().documents.get("report.md")!.totalLines).toBe(3);
     });
@@ -102,7 +101,7 @@ describe("useFetchedDocumentsStore", () => {
       useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "read");
 
       const doc = useFetchedDocumentsStore.getState().documents.get("report.md");
-      expect(doc!.fullContentFetched).toBe(true);
+      expect(doc!.fullContent).toBe("full");
       expect(doc!.chunkIds.length).toBeGreaterThanOrEqual(2);
     });
 

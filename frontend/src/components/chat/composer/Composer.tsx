@@ -17,7 +17,7 @@ import { keyPrefix } from "@/i18n";
 import { formatFileSize } from "@/i18n/format";
 import { featureFlags } from "@/lib/feature-flags";
 import type { AgentMode, ReasoningEffort } from "@/lib/types";
-import { selectAttachmentLimits, useSettingsStore } from "@/stores/settings-store";
+import { selectAttachmentLimits, useServerSettings } from "@/queries/settings";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.composer);
 
@@ -64,7 +64,7 @@ export function Composer({
   // Served by the backend so the picker, the paste handler, and the chat
   // route all gate on one table: a file the model could not read is refused
   // here rather than after a round trip.
-  const limits = useSettingsStore(selectAttachmentLimits);
+  const limits = useServerSettings(selectAttachmentLimits);
   const [hasText, setHasText] = useState(false);
   const [files, setFiles] = useState<ComposerFile[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);

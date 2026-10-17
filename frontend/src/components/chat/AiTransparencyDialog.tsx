@@ -1,3 +1,4 @@
+import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { DownloadIcon, ScanSearchIcon } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
@@ -20,7 +21,6 @@ import { keyPrefix } from "@/i18n";
 import { formatNumber } from "@/i18n/format";
 import { detectAiGeneratedText } from "@/lib/api";
 import { downloadBlob } from "@/lib/download";
-import type { TransparencyDetectionResponse } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.transparency);
@@ -40,29 +40,16 @@ const STATUS_STYLES = {
 export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTransparencyDialogProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const [text, setText] = useState("");
-  const [result, setResult] = useState<TransparencyDetectionResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
+  const detection = useMutation({
+    mutationFn: detectAiGeneratedText,
+    meta: { inlineError: true },
+  });
+  const { data: result, error, isPending: checking } = detection;
 
   function changeOpen(open: boolean): void {
     if (!open) {
       setText("");
-      setResult(null);
-      setError(null);
-    }
-  }
-
-  async function detect(): Promise<void> {
-    setChecking(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      setResult(await detectAiGeneratedText(text));
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setChecking(false);
+      detection.reset();
     }
   }
 
@@ -95,8 +82,7 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
                 value={text}
                 onChange={(event) => {
                   setText(event.target.value);
-                  setResult(null);
-                  setError(null);
+                  detection.reset();
                 }}
                 placeholder={t(($) => $.placeholder)}
                 className="h-[40vh] resize-y field-sizing-fixed"
@@ -116,7 +102,7 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
               </Field>
             )}
 
-            {error && <ErrorAlert>{error}</ErrorAlert>}
+            {error && <ErrorAlert>{errorMessage(error)}</ErrorAlert>}
 
             {contactEmail && (
               <FieldDescription>
@@ -136,7 +122,7 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
               {t(($) => $.download)}
             </Button>
           )}
-          <Button size="sm" onClick={detect} disabled={!text.trim() || checking}>
+          <Button size="sm" onClick={() => detection.mutate(text)} disabled={!text.trim() || checking}>
             {checking ? (
               <Spinner data-icon="inline-start" />
             ) : (

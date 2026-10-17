@@ -19,16 +19,18 @@ export interface FetchedDocumentsStore {
    */
   addChunk: (chunk: Omit<FetchedChunk, "id">, totalLines?: number) => void;
 
-  /** Mark a document as fully fetched, storing its full content. */
+  /**
+   * Mark a document as fully fetched, storing its full content.  Pass
+   * *totalLines* when the backend reported it (a read), since only the
+   * backend counts lines the way the coverage map's line numbers do.
+   */
   markFullDocument: (
     filename: string,
     content: string,
     origin: ChunkOrigin,
     sourceId?: string,
+    totalLines?: number,
   ) => void;
-
-  /** Record fetched document line counts (the coverage-map denominator). */
-  setLineCounts: (counts: Record<string, number>) => void;
 
   /** Attach an image to the document at *filename* (its description path). */
   addImage: (filename: string, image: FetchedImage) => void;
@@ -77,7 +79,6 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       newDocs.set(chunk.filename, {
         ...existing,
         filename: chunk.filename,
-        fullContentFetched: existing?.fullContentFetched ?? false,
         totalLines: totalLines ?? existing?.totalLines,
         chunkIds: [...(existing?.chunkIds ?? []), id],
       });
@@ -85,7 +86,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       return { chunks: newChunks, documents: newDocs };
     }),
 
-  markFullDocument: (filename, content, origin, sourceId) =>
+  markFullDocument: (filename, content, origin, sourceId, totalLines) =>
     set((state) => {
       const position: ChunkPosition = { type: "full_document" };
       const id = makeChunkId(filename, origin, undefined, position, sourceId);
@@ -94,9 +95,9 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       const existingDoc = state.documents.get(filename);
       const chunkUpToDate = existingChunk?.content === content;
       const docUpToDate =
-        existingDoc?.fullContentFetched === true &&
-        existingDoc.fullContent === content &&
-        existingDoc.chunkIds.includes(id);
+        existingDoc?.fullContent === content &&
+        existingDoc.chunkIds.includes(id) &&
+        (totalLines === undefined || existingDoc.totalLines === totalLines);
 
       if (chunkUpToDate && docUpToDate) return state;
 
@@ -113,30 +114,13 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
         newDocs.set(filename, {
           ...existingDoc,
           filename,
-          fullContentFetched: true,
           fullContent: content,
-          totalLines: content.split("\n").length,
+          totalLines: totalLines ?? existingDoc?.totalLines,
           chunkIds,
         });
       }
 
       return { chunks: newChunks, documents: newDocs };
-    }),
-
-  setLineCounts: (counts) =>
-    set((state) => {
-      let changed = false;
-      const newDocs = new Map(state.documents);
-
-      for (const [filename, lineCount] of Object.entries(counts)) {
-        const doc = newDocs.get(filename);
-        if (doc && doc.totalLines !== lineCount) {
-          newDocs.set(filename, { ...doc, totalLines: lineCount });
-          changed = true;
-        }
-      }
-
-      return changed ? { documents: newDocs } : state;
     }),
 
   addImage: (filename, image) =>
@@ -149,7 +133,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
         filename,
         existing
           ? { ...existing, image }
-          : { filename, fullContentFetched: false, chunkIds: [], image },
+          : { filename, chunkIds: [], image },
       );
       return { documents: newDocs };
     }),

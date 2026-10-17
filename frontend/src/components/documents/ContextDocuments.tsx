@@ -3,7 +3,6 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useDialogTarget } from "@/hooks/use-dialog-target";
-import { useDocumentLineCounts } from "@/hooks/use-document-line-counts";
 import type { FetchedChunk, FetchedDocument } from "@/lib/types";
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "@/components/DocumentDialog";
@@ -22,9 +21,6 @@ export function ContextDocuments() {
   const { t } = useTranslation();
   const chunks = useFetchedDocumentsStore((state) => state.chunks);
   const documents = useFetchedDocumentsStore((state) => state.documents);
-
-  // Lazily backfill line counts for search/grep docs so their map renders.
-  useDocumentLineCounts();
 
   const dialog = useDialogTarget<DialogTarget>({
     filename: "",

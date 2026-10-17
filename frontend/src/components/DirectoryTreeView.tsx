@@ -25,7 +25,7 @@ interface DirectoryTreeViewProps {
   entry: DirectoryEntry;
   /** Source workspace scope of this tree (`~` or `@<group>`), for drag identity. */
   scope: string;
-  mutatingPaths: Set<string>;
+  mutatingPaths: ReadonlySet<string>;
   onEditFile: (path: string) => void;
   onInclude: (path: string) => void;
   onExclude: (path: string) => void;

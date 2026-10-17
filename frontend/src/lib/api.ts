@@ -121,8 +121,18 @@ function fallbackMessage(error: ApiError, status: number): string {
   return `${statusExplanation(status) ?? i18n.t(($) => $.app.api.errors[error])} (HTTP ${status})`;
 }
 
+/** A request the backend answered with an error status. */
+export class HttpError extends Error {
+  constructor(
+    message: string | undefined,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 /** Thrown when the backend rejects a request through the maintenance gate. */
-export class MaintenanceError extends Error {}
+export class MaintenanceError extends HttpError {}
 
 async function responseError(res: Response, error: ApiError): Promise<Error> {
   const body = (await res.json().catch(() => null)) as {
@@ -133,13 +143,14 @@ async function responseError(res: Response, error: ApiError): Promise<Error> {
     typeof body?.detail === "object" &&
     body.detail.code === "maintenance"
   ) {
-    return new MaintenanceError(body.detail.message);
+    return new MaintenanceError(body.detail.message, res.status);
   }
 
-  return new Error(
+  return new HttpError(
     typeof body?.detail === "string" && body.detail
       ? body.detail
       : fallbackMessage(error, res.status),
+    res.status,
   );
 }
 
@@ -750,14 +761,6 @@ export async function compactConversation(
   );
 }
 
-export async function getConversation(conversationId: string): Promise<ConversationSummary | null> {
-  const res = await authFetch(`${API_BASE_URL}/api/conversations/${conversationId}`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw await responseError(res, "fetchConversation");
-  const data: unknown = await res.json();
-  return ConversationSummarySchema.parse(data);
-}
-
 /** Restore a previously exported conversation as a new chat owned by the user. */
 export async function importConversation(file: File): Promise<ConversationSummary> {
   return requestJson(
@@ -974,11 +977,15 @@ export async function applyChanges(operations: ChangeOperation[]): Promise<Works
 // Directory tree
 
 /** Fetch a workspace directory tree; `scope` is `~` (personal) or `@<group>`. */
-export async function getDirectories(scope: string): Promise<DirectoryTreeResponse> {
+export async function getDirectories(
+  scope: string,
+  signal?: AbortSignal,
+): Promise<DirectoryTreeResponse> {
   return requestJson(
     `${API_BASE_URL}/api/directories/${encodeFilePath(scope)}`,
     "fetchDirectories",
     DirectoryTreeResponseSchema,
+    { signal },
   );
 }
 

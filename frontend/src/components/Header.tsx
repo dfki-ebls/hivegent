@@ -6,7 +6,7 @@ import { DocsLink } from "@/components/DocsLink";
 import { JobTray } from "@/components/JobTray";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
-import { selectIsAdmin, useSettingsStore } from "@/stores/settings-store";
+import { useIsAdmin } from "@/queries/settings";
 import { PRODUCT_NAME } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +23,7 @@ import { Item, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/i
 function UserMenu() {
   const { t } = useTranslation();
   const oidc = useOidc();
-  const isAdmin = useSettingsStore(selectIsAdmin);
+  const isAdmin = useIsAdmin();
 
   if (!oidc.isUserLoggedIn) {
     return null;

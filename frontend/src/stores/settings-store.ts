@@ -12,13 +12,10 @@ import { z } from "zod";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { getSettings, MaintenanceError } from "@/lib/api";
 import { featureFlags } from "@/lib/feature-flags";
 import {
   AssetProcessingMode,
   AssetProcessingModeSchema,
-  type AttachmentLimits,
-  type BackendSettings,
   ChunkingPipeline,
   ChunkingPipelineSchema,
   ConversionPipeline,
@@ -85,9 +82,6 @@ const UI_DEFAULTS = {
 };
 
 interface SettingsState {
-  // Backend defaults, used only to display placeholders in the settings UI
-  backendDefaults: BackendSettings | null;
-
   // User LLM overrides (persisted). Empty string means "no override".
   overrides: UserOverrides;
 
@@ -102,15 +96,9 @@ interface SettingsState {
   chunkingConfigs: PipelineConfigs;
   toolsSpec: ToolsSpec;
 
-  // Whether the backend rejected us with its maintenance gate. While
-  // true, the root route shows the maintenance screen instead of the
-  // app; the init loop keeps polling so it clears itself.
-  maintenance: boolean;
-
   // LLM actions
   setOverride: (partial: Partial<UserOverrides>) => void;
   reset: () => void;
-  initFromBackend: () => Promise<void>;
 
   // UI preference actions
   setConversionPipeline: (pipeline: ConversionPipeline) => void;
@@ -129,8 +117,7 @@ interface SettingsState {
   setDisabledTools: (tools: string[]) => void;
   toggleTool: (toolName: string) => void;
   addMcpServer: (server: McpServerEntry) => void;
-  removeMcpServer: (index: number) => void;
-  updateMcpServer: (index: number, server: McpServerEntry) => void;
+  removeMcpServer: (id: string) => void;
 }
 
 // The persisted types omit the secret fields outright (apiKey; MCP header
@@ -145,6 +132,7 @@ function persistedToolsSpec(toolsSpec: ToolsSpec): PersistedToolsSpec {
   return {
     disabledTools: toolsSpec.disabledTools,
     mcpServers: toolsSpec.mcpServers.map((server) => ({
+      id: server.id,
       url: server.url,
       toolPrefix: server.toolPrefix,
     })),
@@ -164,9 +152,7 @@ function rehydrateToolsSpec(spec: PersistedToolsSpec): ToolsSpec {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      backendDefaults: null,
       overrides: EMPTY_OVERRIDES,
-      maintenance: false,
       ...UI_DEFAULTS,
 
       setOverride: (partial) =>
@@ -175,26 +161,6 @@ export const useSettingsStore = create<SettingsState>()(
         })),
 
       reset: () => set({ overrides: EMPTY_OVERRIDES }),
-
-      initFromBackend: async () => {
-        // getSettings goes through authFetch, which already gates on backend
-        // readiness, so the first attempt never races a booting backend. Keep
-        // retrying on failure; during maintenance this doubles as the recovery
-        // poll, so the app loads by itself once an admin turns the mode back off.
-        while (true) {
-          try {
-            const defaults = await getSettings();
-            set({ maintenance: false, backendDefaults: defaults });
-            return;
-          } catch (e) {
-            const maintenance = e instanceof MaintenanceError;
-            if (maintenance) {
-              set({ maintenance: true });
-            }
-            await new Promise((resolve) => setTimeout(resolve, maintenance ? 5000 : 1000));
-          }
-        }
-      },
 
       setConversionPipeline: (pipeline) => set({ conversionPipeline: pipeline }),
 
@@ -258,19 +224,11 @@ export const useSettingsStore = create<SettingsState>()(
           },
         })),
 
-      removeMcpServer: (index) =>
+      removeMcpServer: (id) =>
         set((state) => ({
           toolsSpec: {
             ...state.toolsSpec,
-            mcpServers: state.toolsSpec.mcpServers.filter((_, i) => i !== index),
-          },
-        })),
-
-      updateMcpServer: (index, server) =>
-        set((state) => ({
-          toolsSpec: {
-            ...state.toolsSpec,
-            mcpServers: state.toolsSpec.mcpServers.map((s, i) => (i === index ? server : s)),
+            mcpServers: state.toolsSpec.mcpServers.filter((server) => server.id !== id),
           },
         })),
     }),
@@ -369,36 +327,3 @@ export const useSettingsStore = create<SettingsState>()(
     },
   ),
 );
-
-/** The fixed role name that grants administrator privileges. */
-const ADMIN_ROLE = "admin";
-
-/**
- * Zustand selector: whether the user is an administrator.
- *
- * Derived from the fixed `admin` role in the user's roles — same rule as
- * the server's `User.is_admin` property.
- */
-export function selectIsAdmin(state: SettingsState): boolean {
-  return state.backendDefaults?.user.roles.includes(ADMIN_ROLE) ?? false;
-}
-
-/**
- * Zustand selector: the current user's backend id, if known.
- *
- * Shares the id space of the admin user listings, so it can filter the
- * caller out of self-targeting lists (impersonation, per-user wipes).
- */
-export function selectUserId(state: SettingsState): string | undefined {
-  return state.backendDefaults?.user.id;
-}
-
-/**
- * Zustand selector: the constraints the composer enforces on attachments.
- *
- * Undefined until the settings load, a sub-second window in which the
- * composer simply does not filter and the server rejects what it must.
- */
-export function selectAttachmentLimits(state: SettingsState): AttachmentLimits | undefined {
-  return state.backendDefaults?.attachments;
-}

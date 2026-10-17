@@ -2,7 +2,7 @@ import { BotIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { AiTransparencyDialog } from "@/components/chat/AiTransparencyDialog";
 import { cn } from "@/lib/utils";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useServerSettings } from "@/queries/settings";
 
 // EU AI Act Article 50(1): users must be informed they are interacting with an
 // AI system, clearly and distinguishably, at the latest at the first
@@ -11,7 +11,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 // over a one-time disclosure.
 export function AiDisclosure({ className }: { className?: string }) {
   const { t } = useTranslation();
-  const transparency = useSettingsStore((state) => state.backendDefaults?.transparency);
+  const transparency = useServerSettings((s) => s.transparency);
 
   return (
     <div

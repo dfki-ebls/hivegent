@@ -1,3 +1,4 @@
+import { useMutation } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, RotateCw, X } from "lucide-react";
 import type { TFunction } from "i18next";
 import { useEffect, useMemo, useState } from "react";
@@ -5,6 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { ACTIVE_JOB_STATUSES, type JobView } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { jobMutations } from "@/queries/jobs";
 import { onJobStarted, useJobsStore } from "@/stores/jobs-store";
 import { type UploadItem, onUploadAdded, useUploadQueue } from "@/stores/upload-queue-store";
 import { TooltipButton } from "@/components/TooltipButton";
@@ -184,7 +186,7 @@ export function JobTray() {
   const { t } = useTranslation();
   const start = useJobsStore((s) => s.start);
   const jobsMap = useJobsStore((s) => s.jobs);
-  const jobCancel = useJobsStore((s) => s.cancel);
+  const { mutate: jobCancel } = useMutation(jobMutations.cancel());
   const jobDismiss = useJobsStore((s) => s.dismiss);
 
   const uploadMap = useUploadQueue((s) => s.items);
@@ -218,7 +220,7 @@ export function JobTray() {
       uploadRow(item, { retry, cancel: uploadCancel, dismiss: uploadDismiss }, t),
     );
     const jobRows = Object.values(jobsMap).map((job) =>
-      jobRow(job, { cancel: (id) => void jobCancel(id), dismiss: jobDismiss }, t),
+      jobRow(job, { cancel: jobCancel, dismiss: jobDismiss }, t),
     );
 
     return [...uploadRows, ...jobRows].sort((a, b) => a.order - b.order);

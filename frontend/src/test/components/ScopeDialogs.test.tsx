@@ -1,18 +1,8 @@
 import { act, createRef } from "react";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ScopeDialogs, type ScopeDialogsHandle } from "@/components/documents/ScopeDialogs";
-
-vi.mock("@/stores/documents-store", () => {
-  const store = {
-    remove: vi.fn<() => void>(),
-    move: vi.fn<() => void>(),
-  };
-
-  return {
-    useDocumentsStore: (selector: (state: typeof store) => unknown) => selector(store),
-  };
-});
+import { renderWithQueries } from "@/test/render";
 
 describe("ScopeDialogs", () => {
   it.each([
@@ -20,7 +10,7 @@ describe("ScopeDialogs", () => {
     ["directory", "~/reports/archive", "archive"],
   ] as const)("prefills the current %s name when renaming", (kind, path, name) => {
     const ref = createRef<ScopeDialogsHandle>();
-    render(<ScopeDialogs ref={ref} scope="~" onBulkDone={vi.fn<() => void>()} />);
+    renderWithQueries(<ScopeDialogs ref={ref} scope="~" onBulkDone={vi.fn<() => void>()} />);
 
     act(() => {
       if (kind === "file") {

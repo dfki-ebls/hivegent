@@ -73,7 +73,6 @@ function evidenceForPosition(chunks: FetchedChunk[], position: LinePosition): Ev
   const unique = new Map<string, Evidence>();
 
   for (const chunk of chunks) {
-    if (chunk.origin === "preview") continue;
     const evidence = evidenceFromChunk(chunk, position);
     if (!evidence) continue;
     if (!unique.has(evidence.text)) unique.set(evidence.text, evidence);

@@ -1,8 +1,9 @@
+import { useMutation } from "@tanstack/react-query";
 import { type Ref, useImperativeHandle } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useDialogTarget } from "@/hooks/use-dialog-target";
-import { useDocumentsStore } from "@/stores/documents-store";
+import { documentMutations } from "@/queries/documents";
 import { basename, parentDir } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { NameInputDialog } from "@/components/documents/NameInputDialog";
@@ -33,15 +34,15 @@ interface ScopeDialogsProps {
 
 /**
  * The delete confirmation and rename dialogs for one scope. Owns their state and
- * runs the matching store mutations, so ScopeSection only has to call the
+ * runs the matching mutations, so ScopeSection only has to call the
  * imperative openers from its tree and bulk actions. A rename is a same-directory
- * move, so it reuses the store's move action. Each target outlives its dialog's
+ * move, so it reuses the move mutation. Each target outlives its dialog's
  * close, so the dialog keeps its text while it animates out.
  */
 export function ScopeDialogs({ ref, scope, onBulkDone }: ScopeDialogsProps) {
   const { t } = useTranslation();
-  const remove = useDocumentsStore((s) => s.remove);
-  const move = useDocumentsStore((s) => s.move);
+  const remove = useMutation(documentMutations.remove());
+  const move = useMutation(documentMutations.move());
 
   const deleteDialog = useDialogTarget<DeleteTarget | null>(null);
   const renameDialog = useDialogTarget<RenameTarget | null>(null);
@@ -67,16 +68,17 @@ export function ScopeDialogs({ ref, scope, onBulkDone }: ScopeDialogsProps) {
 
     deleteDialog.setOpen(false);
 
-    if (pendingDelete.kind === "bulk") {
-      onBulkDone();
-      void remove(scope, pendingDelete.files, "entry");
-    } else {
-      void remove(
-        scope,
-        [pendingDelete.path],
-        pendingDelete.kind === "directory" ? "dir" : "entry",
-      );
-    }
+    if (pendingDelete.kind === "bulk") onBulkDone();
+
+    remove.mutate(
+      pendingDelete.kind === "bulk"
+        ? { scope, paths: pendingDelete.files, expect: "entry" }
+        : {
+            scope,
+            paths: [pendingDelete.path],
+            expect: pendingDelete.kind === "directory" ? "dir" : "entry",
+          },
+    );
   };
 
   // A rename keeps the entry's parent directory and swaps its basename, which is
@@ -85,7 +87,7 @@ export function ScopeDialogs({ ref, scope, onBulkDone }: ScopeDialogsProps) {
     if (!pendingRename) return;
 
     const { path } = pendingRename;
-    void move(scope, scope, [{ source: path, destination: parentDir(path) + name }]);
+    move.mutate({ scope, paths: [path], destScope: scope, destination: () => parentDir(path) + name });
   };
 
   return (

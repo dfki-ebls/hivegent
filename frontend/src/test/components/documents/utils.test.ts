@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { documentReadMap } from "@/components/documents/utils";
+import { documentReadMap, readSpans } from "@/components/documents/utils";
 import type { FetchedChunk } from "@/lib/types";
 
 const readChunk = (startLine: number, endLine: number): FetchedChunk => ({
@@ -13,13 +13,13 @@ const readChunk = (startLine: number, endLine: number): FetchedChunk => ({
 
 describe("documentReadMap", () => {
   it("does not render a partial read as full coverage when the length is known", () => {
-    const segments = documentReadMap([readChunk(1, 40)], 200);
+    const segments = documentReadMap(readSpans([readChunk(1, 40)]), 200);
 
     expect(segments).toEqual([{ start: 0, end: 0.2 }]);
   });
 
   it("hides the bar (no segments) when the document length is unknown", () => {
-    const segments = documentReadMap([readChunk(1, 40)]);
+    const segments = documentReadMap(readSpans([readChunk(1, 40)]));
 
     expect(segments).toEqual([]);
   });

@@ -1,55 +1,34 @@
+import { useQuery } from "@tanstack/react-query";
 import type { ChatMessage } from "@/lib/chat/chat-utils";
-import { useEffect, useState } from "react";
-import { getConversation, getConversationMessages } from "@/lib/api";
+import { useLayoutEffect } from "react";
+import { conversationQueries } from "@/queries/conversations";
 import { useDraftHandoffStore } from "@/stores/draft-handoff-store";
-
-interface LoadedHistory {
-  id: string;
-  compactedFrom: string | null;
-}
 
 export function useConversationHistory(
   id: string,
   setMessages: (messages: ChatMessage[]) => void,
   draft = false,
 ) {
-  // Tagged with the conversation it was loaded for, so switching conversations
-  // reads as loading again without resetting state inside the effect.
-  const [loaded, setLoaded] = useState<LoadedHistory | null>(null);
   const takeHandoff = useDraftHandoffStore((state) => state.take);
+  // The compacted-from banner reads the link off the conversation list.
+  const { data: compactedFrom = null } = useQuery({
+    ...conversationQueries.list(),
+    select: (list) => list.find((c) => c.id === id)?.compacted_from ?? null,
+  });
+  // A draft owns its messages in memory, and its id is no row yet. The
+  // conversation a draft just became starts from the messages it handed off,
+  // taken once per visit, so the freshly streamed turn never flashes through a
+  // loading state.
+  const { data: history, isPending } = useQuery({
+    ...conversationQueries.messages(id),
+    initialData: () => takeHandoff(id),
+    enabled: !draft,
+  });
 
-  useEffect(() => {
-    // A draft chat owns its messages in memory — there is no server history
-    // to load, and loading the id would 404 since it isn't a row yet.
-    if (draft) return;
-    let cancelled = false;
-    let compactedFrom: string | null = null;
-    void (async () => {
-      try {
-        // Messages handed off from the draft we just navigated from: seed them
-        // directly so the freshly streamed turn doesn't flash a loading state.
-        const seeded = takeHandoff(id);
-        if (seeded) {
-          setMessages(seeded);
-          return;
-        }
-        // Fetch messages first and skip the summary call (only needed for
-        // the compacted-from banner) when there's nothing to show.
-        const initialMessages = await getConversationMessages(id);
-        if (cancelled || initialMessages.length === 0) return;
-        setMessages(initialMessages);
-        const conv = await getConversation(id);
-        compactedFrom = conv?.compacted_from ?? null;
-      } finally {
-        if (!cancelled) setLoaded({ id, compactedFrom });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [id, draft, setMessages, takeHandoff]);
+  // Seeded before paint, so loaded history never shows as an empty chat.
+  useLayoutEffect(() => {
+    if (history && history.length > 0) setMessages(history);
+  }, [history, setMessages]);
 
-  const current = loaded?.id === id ? loaded : null;
-
-  return { isLoadingHistory: !draft && !current, compactedFrom: current?.compactedFrom ?? null };
+  return { isLoadingHistory: !draft && isPending, compactedFrom };
 }

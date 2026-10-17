@@ -1,11 +1,12 @@
+import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import type { FileUIPart } from "ai";
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { toast } from "@/components/ui/toast";
 import { i18n } from "@/i18n";
-import { compactConversation } from "@/lib/api";
 import { type ChatMessage, type UserTurn, getLastUserMessage } from "@/lib/chat/chat-utils";
 import { errorMessage } from "@/lib/utils";
+import { conversationMutations } from "@/queries/conversations";
 import type { BuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
@@ -27,7 +28,6 @@ export function useCompaction({
 }: UseCompactionArgs) {
   const navigate = useNavigate();
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
-  const [isCompacting, setIsCompacting] = useState(false);
   const pendingRetryRef = useRef<UserTurn | undefined>(undefined);
   const activeIdRef = useRef<string | null>(null);
 
@@ -39,64 +39,56 @@ export function useCompaction({
     };
   }, [id]);
 
-  const compact = useCallback(
-    async (retryLastMessage = false) => {
-      setIsCompacting(true);
-      const toastId = `compaction:${id}`;
+  const toastId = (compactedId: string) => `compaction:${compactedId}`;
+
+  const compaction = useMutation({
+    ...conversationMutations.compact(),
+    onMutate: ({ id: compactedId }) => {
       toast.add({
-        id: toastId,
+        id: toastId(compactedId),
         type: "loading",
         title: i18n.t(($) => $.chat.compaction.compacting),
         description: i18n.t(($) => $.chat.compaction.compactingDescription),
       });
+    },
+    onSuccess: async ({ new_conversation_id }, { id: compactedId, retryLastMessage }) => {
+      const open = () => navigate({ to: "/conversations/$id", params: { id: new_conversation_id } });
 
-      try {
-        const result = await compactConversation(id, buildRequestBody());
-
-        if (activeIdRef.current !== id) {
-          toast.add({
-            id: toastId,
-            type: "success",
-            title: i18n.t(($) => $.chat.compaction.compacted),
-            description: i18n.t(($) => $.chat.compaction.compactedDescription),
-            actionProps: {
-              children: i18n.t(($) => $.common.actions.open),
-              onClick: () =>
-                void navigate({
-                  to: "/conversations/$id",
-                  params: { id: result.new_conversation_id },
-                }),
-            },
-          });
-
-          return;
-        }
-
-        clearAll();
-        pendingRetryRef.current = retryLastMessage ? getLastUserMessage(messages) : undefined;
-        await navigate({
-          to: "/conversations/$id",
-          params: { id: result.new_conversation_id },
-        });
+      // The user moved on while it ran, so offer the result instead of switching.
+      if (activeIdRef.current !== compactedId) {
         toast.add({
-          id: toastId,
+          id: toastId(compactedId),
           type: "success",
           title: i18n.t(($) => $.chat.compaction.compacted),
-          description: undefined,
+          description: i18n.t(($) => $.chat.compaction.compactedDescription),
+          actionProps: { children: i18n.t(($) => $.common.actions.open), onClick: () => void open() },
         });
-      } catch (error) {
-        toast.add({
-          id: toastId,
-          type: "error",
-          title: i18n.t(($) => $.chat.compaction.failed),
-          description: errorMessage(error),
-        });
-      } finally {
-        setIsCompacting(false);
+
+        return;
       }
+
+      clearAll();
+      pendingRetryRef.current = retryLastMessage ? getLastUserMessage(messages) : undefined;
+      await open();
+      toast.add({
+        id: toastId(compactedId),
+        type: "success",
+        title: i18n.t(($) => $.chat.compaction.compacted),
+        description: undefined,
+      });
     },
-    [id, buildRequestBody, messages, clearAll, navigate],
-  );
+    onError: (error, { id: compactedId }) => {
+      toast.add({
+        id: toastId(compactedId),
+        type: "error",
+        title: i18n.t(($) => $.chat.compaction.failed),
+        description: errorMessage(error),
+      });
+    },
+  });
+
+  const compact = (retryLastMessage = false) =>
+    compaction.mutate({ id, body: buildRequestBody(), retryLastMessage });
 
   const retry = useEffectEvent((turn: UserTurn) => onRetry(turn.text, turn.files));
 
@@ -107,5 +99,5 @@ export function useCompaction({
     retry(turn);
   }, [isLoadingHistory]);
 
-  return { compact, isCompacting };
+  return { compact, isCompacting: compaction.isPending };
 }

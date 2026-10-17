@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { cancelJob, subscribeJobs } from "@/lib/api";
+import { subscribeJobs } from "@/lib/api";
 import { TERMINAL_JOB_STATUSES, type JobView, type WorkspaceChanged } from "@/lib/types";
 
 // Reconnect backoff for the SSE feed: start fast, ramp toward the cap only while
@@ -35,7 +35,7 @@ const register =
   };
 
 /** Register a callback fired after the feed has replayed state on each connect. */
-export const onFeedReady = register(feedReadyListeners);
+const onFeedReady = register(feedReadyListeners);
 
 /**
  * Register a callback fired once per workspace change that never was a job,
@@ -54,12 +54,8 @@ export function publishWorkspaceChanged(changed: WorkspaceChanged): void {
   workspaceChangedListeners.forEach((listener) => listener(changed));
 }
 
-/**
- * Register a callback fired once when any job reaches a terminal state. Keeps
- * the job store generic: a feature (e.g. documents) reacts only to its own job
- * kinds. Returns an unsubscribe function.
- */
-export const onJobSettled = register(settledListeners);
+/** Register a callback fired once when any job reaches a terminal state. */
+const onJobSettled = register(settledListeners);
 
 /**
  * Register a callback fired once when a job first appears in an active
@@ -70,9 +66,28 @@ export const onJobSettled = register(settledListeners);
 export const onJobStarted = register(startedListeners);
 
 /**
+ * Register a callback fired whenever the workspaces may have changed, with the
+ * scopes that did, or `"all"` after a feed handshake that may have missed some.
+ * The one rule for when workspace views are stale: a settled document job
+ * (whatever its outcome, it may have added, reconverted, or dropped entries),
+ * an inline mutation by anyone, or a reconnect. Returns an unsubscribe function.
+ */
+export function onWorkspaceStale(listener: (scopes: readonly string[] | "all") => void) {
+  const unsubscribes = [
+    onJobSettled((job) => {
+      if (job.scope && job.kind.startsWith("document.")) listener([job.scope]);
+    }),
+    onWorkspaceChanged(({ scopes }) => listener(scopes)),
+    onFeedReady(() => listener("all")),
+  ];
+
+  return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+}
+
+/**
  * Resolve once the job with `id` reaches a terminal state. Lets a caller that
- * submitted a job (e.g. the dialog's rechunk) await its real completion to
- * refresh inline, while the work itself still runs off the request. Resolves
+ * submitted a job await its real completion, while the work itself still runs
+ * off the request. Resolves
  * with `undefined` if the job already settled and was dismissed, or if the
  * feed never delivers the terminal snapshot before {@link SETTLE_TIMEOUT_MS}.
  */
@@ -131,8 +146,6 @@ interface JobsStore {
    * jobs that were already running or had already finished when we connected.
    */
   upsert: (job: JobView, opts?: { seeding?: boolean }) => void;
-  /** Request cancellation; the feed reflects the resulting state. */
-  cancel: (id: string) => Promise<void>;
   /** Drop a job from the tray (client-only). */
   dismiss: (id: string) => void;
 }
@@ -238,9 +251,6 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
       startedListeners.forEach((listener) => listener(job));
     }
   },
-
-  // The feed stays the source of truth, so a failed cancel request is a no-op.
-  cancel: (id) => cancelJob(id).catch(() => {}),
 
   dismiss: (id) => {
     set((s) => {

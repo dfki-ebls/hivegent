@@ -1,5 +1,6 @@
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { FolderOpen, Users } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -8,15 +9,24 @@ import {
   canonicalPath,
   downloadOriginal,
   splitScopePath,
-  writeDocument,
 } from "@/lib/api";
 import type { TreeItemDrag } from "@/lib/dnd";
 import type { DocumentActionId } from "@/lib/document-actions";
 import type { PipelineSpec } from "@/lib/types";
 import { downloadBlob } from "@/lib/download";
-import { basename, collectFilePaths, commonParentDir, errorMessage } from "@/lib/utils";
+import {
+  basename,
+  collectFilePaths,
+  commonParentDir,
+  errorMessage,
+  treeDocuments,
+} from "@/lib/utils";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
-import { DEFAULT_SCOPE_STATE, useDocumentsStore } from "@/stores/documents-store";
+import {
+  documentMutations,
+  documentQueries,
+  useMutatingPaths,
+} from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
 import { DirectoryTreeView, TreeRow, type TreeRowDnd } from "@/components/DirectoryTreeView";
 import { DocumentDialog } from "@/components/DocumentDialog";
@@ -27,7 +37,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { ItemGroup } from "@/components/ui/item";
-import { toast } from "@/components/ui/toast";
 import { BulkActionBar } from "@/components/documents/BulkActionBar";
 import { DocumentListItem } from "@/components/documents/DocumentListItem";
 import {
@@ -64,8 +73,8 @@ interface ScopeSectionProps {
 /**
  * Self-contained document manager for one workspace scope. Used identically
  * for the personal store and each group, so the two share one code path. The
- * shared upload area (in DocumentManager) deposits into the selected scope and
- * the store refresh flows back here through `byScope[scope]`.
+ * shared upload area (in DocumentManager) deposits into the selected scope, and
+ * the job that settles refreshes the scope's tree query.
  */
 export function ScopeSection({
   scope,
@@ -80,19 +89,22 @@ export function ScopeSection({
 }: ScopeSectionProps) {
   const { t } = useTranslation();
   const selectAllId = useId();
-  const state = useDocumentsStore((s) => s.byScope[scope] ?? DEFAULT_SCOPE_STATE);
-  const refresh = useDocumentsStore((s) => s.refresh);
-  const storeRechunk = useDocumentsStore((s) => s.rechunk);
-  const storeReconvert = useDocumentsStore((s) => s.reconvert);
-  const storeMove = useDocumentsStore((s) => s.move);
-  const clearError = useDocumentsStore((s) => s.clearError);
+  const { data: directoryTree, isPending, error } = useQuery(documentQueries.tree(scope));
+  const mutatingPaths = useMutatingPaths(scope);
+  const { mutate: rechunk } = useMutation(documentMutations.rechunk());
+  const { mutate: reconvert } = useMutation(documentMutations.reconvert());
+  const { mutate: move } = useMutation(documentMutations.move());
+  const { mutateAsync: write } = useMutation(documentMutations.write());
   const overrides = useSettingsStore((s) => s.overrides);
   const included = useDocumentFilterStore((s) => s.included);
   const excluded = useDocumentFilterStore((s) => s.excluded);
   const toggleInclude = useDocumentFilterStore((s) => s.toggleInclude);
   const toggleExclude = useDocumentFilterStore((s) => s.toggleExclude);
 
-  const { documents, directoryTree, mutatingPaths, error, hasFetched } = state;
+  const documents = useMemo(
+    () => (directoryTree ? treeDocuments(directoryTree.root) : []),
+    [directoryTree],
+  );
 
   const dialogs = useRef<ScopeDialogsHandle>(null);
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -101,11 +113,6 @@ export function ScopeSection({
   const [dialogPath, setDialogPath] = useFollowedState<string | null>(scope, null, followDialog);
   const [selectedFiles, setSelectedFiles] = useFollowedState(scope, new Set<string>(), followSet);
   const filtered = useFuzzySearch(documents, searchQuery, "display_name", "filename");
-
-  // Refresh this scope's documents and tree once on mount.
-  useEffect(() => {
-    void refresh(scope);
-  }, [refresh, scope]);
 
   const toCanonical = useCallback((path: string) => canonicalPath(scope, path), [scope]);
   const filterStateOf = useCallback(
@@ -162,10 +169,8 @@ export function ScopeSection({
   const visibleFilePaths = useMemo(() => {
     if (isSearching) return filtered.map((d) => d.filename);
 
-    if (directoryTree) return collectFilePaths(directoryTree.root);
-
-    return documents.map((d) => d.filename);
-  }, [isSearching, filtered, directoryTree, documents]);
+    return directoryTree ? collectFilePaths(directoryTree.root) : [];
+  }, [isSearching, filtered, directoryTree]);
 
   const selectedVisible = visibleFilePaths.filter((p) => selectedFiles.has(p)).length;
   const allSelected = visibleFilePaths.length > 0 && selectedVisible === visibleFilePaths.length;
@@ -181,69 +186,64 @@ export function ScopeSection({
   );
 
   const handleReconvert = (paths: string[]) =>
-    void storeReconvert(scope, paths, pipelineSpec, buildAuxLlmConfig(overrides));
+    reconvert({ scope, paths, spec: pipelineSpec, llm: buildAuxLlmConfig(overrides) });
 
-  const handleDownloadOriginal = useCallback(
-    async (path: string) => {
-      try {
+  // One at a time, so the browser never sees a burst of downloads.
+  const { mutate: downloadOriginals } = useMutation({
+    mutationFn: async (paths: readonly string[]) => {
+      for (const path of paths) {
         const blob = await downloadOriginal(toCanonical(path));
         downloadBlob(blob, basename(docsByFilename.get(path)?.original_path ?? "") || "original");
-      } catch (err) {
-        toast.add({ type: "error", title: errorMessage(err) });
       }
     },
-    [docsByFilename, toCanonical],
-  );
+  });
 
   const handleSave = useCallback(
     async (filename: string, content: string) => {
-      await writeDocument(filename, content, pipelineSpec.chunking);
-      await refresh(scope);
+      const { scope: target, local } = splitScopePath(filename);
+      await write({ scope: target, paths: [local], content, chunking: pipelineSpec.chunking });
     },
-    [pipelineSpec, scope, refresh],
+    [pipelineSpec, write],
   );
 
   const bulkHandlers: Record<DocumentActionId, () => void> = {
     rechunk: () => {
-      const files = [...selectedFiles];
+      const paths = [...selectedFiles];
       clearSelection();
-      void storeRechunk(scope, files, pipelineSpec);
+      rechunk({ scope, paths, spec: pipelineSpec });
     },
     reconvert: () => {
       const files = [...selectedReconvertable];
       clearSelection();
       handleReconvert(files);
     },
-    download: () =>
-      void selectedReconvertable.reduce(
-        (chain, p) => chain.then(() => handleDownloadOriginal(p)),
-        Promise.resolve(),
-      ),
+    download: () => downloadOriginals(selectedReconvertable),
     delete: () => dialogs.current?.bulkDelete([...selectedFiles]),
   };
 
-  // Resolve a dragged row or selection into one store move. The drag originates
-  // in `drag.scope` and lands in this section's `scope`, the same workspace for
-  // an in-place move, a different one when migrating between the personal and a
+  // Resolve a dragged row or selection into one move. The drag originates in
+  // `drag.scope` and lands in this section's `scope`, the same workspace for an
+  // in-place move, a different one when migrating between the personal and a
   // shared space (the drop only fires for a valid move). The dragged paths keep
   // their structure relative to their common parent, so a single file or
   // directory keeps its name under the destination.
   const handleMoveInto = useCallback(
     (drag: TreeItemDrag, destDir: string) => {
-      const into = (suffix: string) => (destDir ? `${destDir}/${suffix}` : suffix);
       const commonParent = commonParentDir(drag.paths);
+      const destination = (source: string) => {
+        const suffix = source.slice(commonParent.length);
+        return destDir ? `${destDir}/${suffix}` : suffix;
+      };
       const sameScope = drag.scope === scope;
-      const moves = drag.paths
-        .map((source) => ({ source, destination: into(source.slice(commonParent.length)) }))
-        // Within one workspace a same-path entry is a no-op; across workspaces
-        // it still re-homes the entry, so keep it.
-        .filter(({ source, destination }) => !sameScope || destination !== source);
+      // Within one workspace a same-path entry is a no-op; across workspaces
+      // it still re-homes the entry, so keep it.
+      const paths = drag.paths.filter((source) => !sameScope || destination(source) !== source);
 
       if (drag.paths.length > 1) clearSelection();
 
-      if (moves.length > 0) void storeMove(drag.scope, scope, moves);
+      if (paths.length > 0) move({ scope: drag.scope, paths, destScope: scope, destination });
     },
-    [scope, storeMove, clearSelection],
+    [scope, move, clearSelection],
   );
 
   // Local dir armed within this scope, or null when the target is elsewhere.
@@ -320,7 +320,7 @@ export function ScopeSection({
     );
   };
 
-  const fileCount = directoryTree?.total_files ?? documents.length;
+  const fileCount = directoryTree?.total_files ?? 0;
   const ScopeIcon = scope === PERSONAL_SCOPE ? FolderOpen : Users;
 
   // In a writable scope the label arms the root (and opens the section),
@@ -360,8 +360,8 @@ export function ScopeSection({
       </TreeRow>
 
       <CollapsibleContent className="flex flex-col gap-1 py-1">
-        {error && <ErrorAlert onDismiss={() => clearError(scope)}>{error}</ErrorAlert>}
-        {!hasFetched ? (
+        {error && <ErrorAlert>{errorMessage(error)}</ErrorAlert>}
+        {isPending ? (
           <LoadingState className="p-6" />
         ) : (
           <>
@@ -405,9 +405,10 @@ export function ScopeSection({
         onSave={handleSave}
         onRechunk={
           canWrite && dialogPath !== null
-            ? () => storeRechunk(scope, [dialogPath], pipelineSpec)
+            ? () => rechunk({ scope, paths: [dialogPath], spec: pipelineSpec })
             : undefined
         }
+        rechunking={dialogPath !== null && mutatingPaths.has(dialogPath)}
         onReconvert={
           canWrite && dialogPath !== null && dialogDoc?.has_original
             ? () => handleReconvert([dialogPath])
@@ -415,7 +416,7 @@ export function ScopeSection({
         }
         onDownloadOriginal={
           dialogPath !== null && dialogDoc?.has_original
-            ? () => void handleDownloadOriginal(dialogPath)
+            ? () => downloadOriginals([dialogPath])
             : undefined
         }
       />

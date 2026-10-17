@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vitest";
 
 import { Header } from "@/components/Header";
+import { renderWithQueries } from "@/test/render";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ to, children, ...props }: ComponentProps<"a"> & { to: string }) => (
@@ -23,7 +24,7 @@ vi.mock("@/oidc", () => ({
 }));
 
 it("opens the user menu with the account and links its entries", async () => {
-  render(<Header />);
+  renderWithQueries(<Header />);
 
   fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace" }));
 
