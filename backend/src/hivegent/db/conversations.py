@@ -16,7 +16,7 @@ stored JSON on the way back out.
 """
 
 import contextlib
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -68,7 +68,6 @@ __all__ = [
     "append_branch",
     "create_compacted_conversation",
     "delete_all_conversations",
-    "existing_conversation_ids",
     "extract_title",
     "import_conversation",
     "is_user_request",
@@ -387,8 +386,7 @@ def _owned(user: User) -> ColumnElement[bool]:
 
     Every statement selecting, changing, or deleting conversations names them
     through this or :func:`_row`, and the messages of one are reached only
-    through a conversation it matched.  The one exception is
-    :func:`existing_conversation_ids`, the ``/tmp`` sweep's lookup across owners.
+    through a conversation it matched.
     """
     return Conversation.user_id == user.id
 
@@ -398,12 +396,16 @@ def _row(conversation: OwnedConversation) -> ColumnElement[bool]:
     return and_(Conversation.id == conversation.id, _owned(conversation.user))
 
 
-async def _get_owned(s: AsyncSession, conversation: OwnedConversation) -> Conversation | None:
+async def _get_owned(
+    s: AsyncSession, conversation: OwnedConversation
+) -> Conversation | None:
     """Return *conversation*'s row, ``None`` before its first turn is persisted."""
     return await s.scalar(select(Conversation).where(_row(conversation)))
 
 
-async def owned_conversation(user: User, conversation_id: str) -> OwnedConversation | None:
+async def owned_conversation(
+    user: User, conversation_id: str
+) -> OwnedConversation | None:
     """The one ownership check: *conversation_id* as *user*'s, or ``None``.
 
     An id that is no safe path segment names no conversation either.
@@ -480,17 +482,6 @@ async def owned_conversations(user: User) -> list[OwnedConversation]:
         ids = (await s.scalars(select(Conversation.id).where(_owned(user)))).all()
 
     return [OwnedConversation(user, cid) for cid in ids]
-
-
-async def existing_conversation_ids(ids: Collection[str]) -> set[str]:
-    """Return those of *ids* that still name a conversation, whoever owns it."""
-    if not ids:
-        return set()
-
-    async with session() as s:
-        query = select(Conversation.id).where(Conversation.id.in_(ids))
-
-        return set((await s.scalars(query)).all())
 
 
 # ─── Writes ────────────────────────────────────────────────────────────
@@ -656,9 +647,7 @@ async def delete_all_conversations(user: User) -> list[OwnedConversation]:
     """Delete every conversation owned by *user*, returning them."""
     async with session() as s:
         result = await s.scalars(
-            delete(Conversation)
-            .where(_owned(user))
-            .returning(Conversation.id)
+            delete(Conversation).where(_owned(user)).returning(Conversation.id)
         )
 
         return [OwnedConversation(user, cid) for cid in result.all()]

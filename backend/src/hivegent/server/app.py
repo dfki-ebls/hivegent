@@ -124,7 +124,9 @@ async def _housekeeping() -> AsyncGenerator[None]:
     Never awaited by the boot: the first pass walks every conversation's folder,
     which the requests the app starts serving meanwhile do not wait on.
     """
-    task = asyncio.create_task(_housekeep(settings.tmp.sweep_interval_hours * 3600))
+    task = asyncio.create_task(
+        _housekeep(settings.conversations.sweep_interval_hours * 3600)
+    )
 
     try:
         yield
@@ -149,7 +151,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         AsyncExitStack() as background,
     ):
         await apply_migrations()
-        # After the migrations, since the /tmp sweep reads conversation rows.
         await background.enter_async_context(_housekeeping())
         await _verify_vector_dim()
         await _verify_fts_config()

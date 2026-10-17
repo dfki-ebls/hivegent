@@ -33,6 +33,7 @@ __all__ = [
     "ADMIN_ROLE",
     "AuthSettings",
     "ClaimSettings",
+    "ConversationSettings",
     "DatabaseSettings",
     "EmbeddingSettings",
     "InferenceProvider",
@@ -780,8 +781,6 @@ class SandboxSettings(BaseModel):
     moves, or deletes, how many of those are deletions, and the characters it
     writes in total.  A program that passes one is told so where it stands,
     as an exception it can handle.
-    ``staged_changeset_ttl_hours`` is how long a staged changeset waits for
-    ``apply_changes`` before the conversation folders' sweep discards it.
 
     ``max_host_calls`` caps how many calls one program makes to the functions
     it is handed, the injected tools and ``complete`` alike, so a runaway loop
@@ -807,7 +806,6 @@ class SandboxSettings(BaseModel):
     max_changeset_operations: int = 200
     max_changeset_deletes: int = 100
     max_changeset_chars: int = 20_000_000
-    staged_changeset_ttl_hours: float = 24.0
     max_host_calls: int = Field(default=100, ge=1)
     completion_max_calls: int = Field(default=50, ge=0)
     completion_max_tokens: int = Field(default=1024, ge=1)
@@ -815,20 +813,28 @@ class SandboxSettings(BaseModel):
     completion_concurrency: int = Field(default=4, ge=1)
 
 
-class TmpSettings(BaseModel):
-    """Lifetime and size of a conversation's ``/tmp`` folder.
+class ConversationSettings(BaseModel):
+    """Lifetime of a conversation's folder on disk.
 
-    ``/tmp`` is ``<data_dir>/conversations/<conversation_id>/tmp/``, outside
-    every workspace.  One untouched for ``ttl_hours`` expires in the sweep of
-    every conversation's folder, which runs in the background at startup and
-    every ``sweep_interval_hours`` after and also expires staged changesets
-    and the folders of conversations that are gone, and deleting the
-    conversation deletes it at once.  ``max_bytes`` caps what one ``/tmp`` may hold, checked
-    on every write into it.
+    The folder is ``<data_dir>/conversations/<conversation_id>/``, holding its
+    ``/tmp`` and staged changesets alike.  It goes whole once untouched for
+    ``ttl_hours``, whether or not its conversation still exists, in a sweep
+    that runs in the background at startup and every ``sweep_interval_hours``
+    after, and deleting the conversation deletes it at once.
     """
 
     ttl_hours: float = Field(default=72.0, gt=0)
     sweep_interval_hours: float = Field(default=1.0, gt=0)
+
+
+class TmpSettings(BaseModel):
+    """Size of a conversation's ``/tmp`` folder.
+
+    ``/tmp`` is ``<data_dir>/conversations/<conversation_id>/tmp/``, outside
+    every workspace.  ``max_bytes`` caps what one ``/tmp`` may hold, checked on
+    every write into it.
+    """
+
     max_bytes: int = Field(default=100_000_000, ge=0)
 
 
@@ -1087,6 +1093,7 @@ class Settings(BaseSettings):
     security: SecuritySettings = SecuritySettings()
     tools: ToolsSettings = ToolsSettings()
     sandbox: SandboxSettings = SandboxSettings()
+    conversations: ConversationSettings = ConversationSettings()
     tmp: TmpSettings = TmpSettings()
     compute: ComputeSettings = ComputeSettings()
     conversion: ConversionSettings = ConversionSettings()

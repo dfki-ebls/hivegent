@@ -6,9 +6,9 @@ reload or a server restart, so they live as one JSON file each in the
 (:meth:`~hivegent.db.conversations.OwnedConversation.folder`) rather than in
 memory.  Files rather than a table: a staged changeset is write-once, read-once
 state with no query beyond its id, and one whose approval was denied or
-abandoned is dropped when the next request answers it, so the sweep
-(:func:`~hivegent.conversation_files.sweep_conversations`) only expires what was
-never answered, and deleting the conversation deletes the rest with its folder.
+abandoned is dropped when the next request answers it, while one never
+answered goes with its conversation's folder, once that is deleted or the sweep
+(:func:`~hivegent.conversation_files.sweep_conversations`) finds it idle.
 
 What is stored is the program's own spelling, a
 :class:`~hivegent.changes.Changeset` of canonical paths with their bases: the
@@ -21,7 +21,6 @@ guessing its id.
 
 import asyncio
 import re
-from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,12 +29,11 @@ from pydantic import TypeAdapter, ValidationError
 from .changes import Changeset
 from .config import settings
 from .db.conversations import OwnedConversation
-from .files import atomic_write, remove_path, rmdir_if_empty
+from .files import atomic_write
 
 __all__ = [
     "CHANGESETS_FOLDER",
     "discard_staged",
-    "expire_staged",
     "load_staged",
     "stage",
 ]
@@ -57,14 +55,20 @@ def _path(conversation: OwnedConversation, changeset_id: str) -> Path | None:
     The id arrives from a model's tool call, so only the exact shape
     :func:`stage` mints may become a file name, which no traversal can escape.
     """
-    return _folder(conversation) / f"{changeset_id}.json" if _ID.fullmatch(changeset_id) else None
+    return (
+        _folder(conversation) / f"{changeset_id}.json"
+        if _ID.fullmatch(changeset_id)
+        else None
+    )
 
 
 async def stage(conversation: OwnedConversation, changeset: Changeset[str]) -> str:
     """Store *changeset* for *conversation* and return the id that applies it."""
     changeset_id = uuid4().hex
     data = _ADAPTER.dump_json(changeset)
-    await asyncio.to_thread(atomic_write, _folder(conversation) / f"{changeset_id}.json", data)
+    await asyncio.to_thread(
+        atomic_write, _folder(conversation) / f"{changeset_id}.json", data
+    )
 
     return changeset_id
 
@@ -93,21 +97,3 @@ async def discard_staged(conversation: OwnedConversation, changeset_id: str) -> 
 
     if path is not None:
         await asyncio.to_thread(path.unlink, missing_ok=True)
-
-
-def expire_staged(folder: Path, cutoff: float) -> None:
-    """Remove what *cutoff* expired from a ``changesets`` *folder*, and the folder once empty.
-
-    Tolerates a :func:`stage` running meanwhile: a file it renames away is
-    already gone, and a folder it writes into again is no longer empty.  The
-    partial files a crash left expire like any other.
-    """
-    if not folder.is_dir():
-        return
-
-    for path in folder.iterdir():
-        with suppress(FileNotFoundError):
-            if path.lstat().st_mtime < cutoff:
-                remove_path(path)
-
-    rmdir_if_empty(folder)

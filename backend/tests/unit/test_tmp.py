@@ -17,11 +17,9 @@ from hivegent.changes import Changeset, ChangesetSummary, Delete, Move, Write
 from hivegent.config import settings
 from hivegent.conversation_files import reset_conversation_files, sweep_conversations
 from hivegent.db.conversations import OwnedConversation
-from hivegent.mcp.tools import documents as mcp_documents
-from hivegent.mcp.tools import mutations as mcp_mutations
 from hivegent.server.operations import reads
 from hivegent.server.routes import documents
-from hivegent.store import Casebase, User
+from hivegent.store import User
 from hivegent.text import DecodedText
 from hivegent.tmp import save_result, tmp_dir, tmp_root, tmp_search_path
 from hivegent.tools.base import ToolRetry
@@ -29,7 +27,6 @@ from hivegent.tools.changeset import PendingChanges
 from hivegent.tools.documents import DocumentRead, ListDocumentsTool, ReadDocumentTool
 from hivegent.tools.grep import GrepTool
 from hivegent.tools.jq import JqTool
-from hivegent.tools.mutations import write_changeset
 from hivegent.tools.python import RunPythonTool
 from hivegent.tools.table import QueryTableTool
 from hivegent.tools.workspace_os import ChangesetLimits
@@ -63,7 +60,9 @@ async def test_the_document_route_reads_an_owned_conversations_tmp(
         folder.mkdir(parents=True)
         (folder / "report.py").write_text(f"print('{cid}')")
 
-    (tmp_dir(data_dir, owned("c1")) / "escape.py").symlink_to(tmp_dir(data_dir, owned("c2")) / "report.py")
+    (tmp_dir(data_dir, owned("c1")) / "escape.py").symlink_to(
+        tmp_dir(data_dir, owned("c2")) / "report.py"
+    )
 
     async def lookup(user: User, cid: str) -> OwnedConversation | None:
         return owned(cid, user) if user.id == "u" and cid == "c1" else None
@@ -95,26 +94,15 @@ async def test_the_read_tools_reach_tmp(data_dir: Path) -> None:
     grep = await GrepTool(paths=paths)("needle")
     listing = await ListDocumentsTool(paths=paths)("/tmp")
     jq = await JqTool(paths=paths)(["/tmp/data.json"], ".total + 1")
-    table = await QueryTableTool(paths=paths)(["/tmp/rows.csv"], ["SELECT x + y AS s FROM t"])
+    table = await QueryTableTool(paths=paths)(
+        ["/tmp/rows.csv"], ["SELECT x + y AS s FROM t"]
+    )
 
     assert "needle" in read.text
     assert "/tmp/notes.md" in grep.text
     assert all(f"/tmp/{name}" in listing.text for name in ("data.json", "rows.csv"))
     assert "42" in jq.text
     assert "3" in table.text
-
-
-async def test_mcp_has_no_tmp(data_dir: Path) -> None:
-    """A caller without a conversation is told which roots it does have."""
-    store = Casebase.for_user("u")
-    tmp_dir(data_dir, owned("c1")).mkdir(parents=True)
-    paths = mcp_documents._search_paths(User("u"))
-
-    with pytest.raises(ToolRetry, match=r"not found\. This tool addresses ~;"):
-        await ReadDocumentTool(paths=paths)([DocumentRead("/tmp/state.json")])
-
-    with pytest.raises(ToolRetry, match=r"not accessible\. This tool addresses ~;"):
-        _ = write_changeset(mcp_mutations._paths(store), "/tmp/state.json", "x")
 
 
 async def test_a_write_past_the_quota_is_refused_unless_it_frees_room(
@@ -182,11 +170,14 @@ async def test_spills_preserve_working_files_and_recheck_planned_write_quotas(
     assert not (folder / "state.txt").exists()
 
 
-@pytest.mark.parametrize("operation", [
-    Write("/tmp/.tool-results/new.txt", "x"),
-    Move("/tmp/.tool-results", "/tmp/moved"),
-    Move("/tmp/state.txt", "/tmp/.tool-results/new.txt"),
-])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        Write("/tmp/.tool-results/new.txt", "x"),
+        Move("/tmp/.tool-results", "/tmp/moved"),
+        Move("/tmp/state.txt", "/tmp/.tool-results/new.txt"),
+    ],
+)
 async def test_ordinary_changes_cannot_modify_the_spill_cache(
     data_dir: Path, operation: Write[str] | Move[str]
 ) -> None:
@@ -200,7 +191,9 @@ async def test_ordinary_changes_cannot_modify_the_spill_cache(
     assert (folder / ".tool-results" / "saved.txt").read_text() == "saved"
 
 
-async def test_a_program_can_read_but_cannot_write_the_spill_cache(data_dir: Path) -> None:
+async def test_a_program_can_read_but_cannot_write_the_spill_cache(
+    data_dir: Path,
+) -> None:
     root = tmp_search_path(data_dir, owned("c1"))
     _ = await save_result(root.path, "saved.txt", "saved")
 
@@ -253,7 +246,9 @@ async def test_a_program_writes_tmp_once_it_succeeds_and_stages_the_workspace(
 ) -> None:
     planned: list[Changeset[Location]] = []
 
-    async def plan(changeset: Changeset[Location], **_options: object) -> PlannedChangeset:
+    async def plan(
+        changeset: Changeset[Location], **_options: object
+    ) -> PlannedChangeset:
         planned.append(changeset)
 
         return PlannedChangeset(changeset, ChangesetSummary())
@@ -307,43 +302,31 @@ def _age(*paths: Path, touched: float) -> None:
         os.utime(path, (touched, touched))
 
 
-async def test_the_sweep_expires_each_lifetime_and_drops_orphaned_folders(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+def _stale() -> float:
+    return time.time() - settings.conversations.ttl_hours * 3600 - 60
+
+
+async def test_the_sweep_removes_a_folder_only_once_all_of_it_is_idle(
+    data_dir: Path,
 ) -> None:
-    """An orphan is kept for a sweep interval, since a first turn has no row yet."""
+    """A stale `/tmp` beside a fresh changeset stays, and the other way round."""
+    root = data_dir / "conversations"
 
-    async def live(ids: list[str]) -> set[str]:
-        assert set(ids) == {"fresh", "expired", "orphan", "first-turn"}
-
-        return {"fresh", "expired"} & set(ids)
-
-    monkeypatch.setattr("hivegent.conversation_files.existing_conversation_ids", live)
-    now = time.time()
-    ages = {
-        "fresh": now,
-        "expired": now - settings.tmp.ttl_hours * 3600 - 60,
-        "orphan": now - settings.tmp.sweep_interval_hours * 3600 - 60,
-        "first-turn": now,
-    }
-
-    for name, touched in ages.items():
+    for name in ("idle", "fresh-tmp", "fresh-changeset"):
         folder = tmp_dir(data_dir, owned(name))
         folder.mkdir(parents=True)
         (folder / "state.json").write_text("{}")
-        _age(folder.parent, folder, folder / "state.json", touched=touched)
+        _ = await staging.stage(owned(name), Changeset(()))
+        _age(*(root / name).rglob("*"), root / name, touched=_stale())
 
-    # A changeset nobody answered expires on its own, beside a fresh `/tmp`.
-    unanswered = await staging.stage(owned("fresh"), Changeset(()))
-    staged = data_dir / "conversations" / "fresh" / "changesets" / f"{unanswered}.json"
-    _age(staged, touched=now - settings.sandbox.staged_changeset_ttl_hours * 3600 - 60)
+    os.utime(tmp_dir(data_dir, owned("fresh-tmp")) / "state.json")
+    os.utime(next((root / "fresh-changeset" / staging.CHANGESETS_FOLDER).iterdir()))
 
-    assert await sweep_conversations() == 2
-    assert sorted(path.name for path in (data_dir / "conversations").iterdir()) == [
-        "first-turn",
-        "fresh",
+    assert await sweep_conversations() == 1
+    assert sorted(path.name for path in root.iterdir()) == [
+        "fresh-changeset",
+        "fresh-tmp",
     ]
-    assert await staging.load_staged(owned("fresh"), unanswered) is None
-    assert tmp_dir(data_dir, owned("fresh")).is_dir()
 
 
 async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:
@@ -355,20 +338,21 @@ async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:
     assert not (data_dir / "conversations").exists()
 
 
-async def test_the_sweep_keeps_an_orphan_used_during_its_lookup(
+async def test_the_sweep_keeps_a_folder_written_while_it_waits_on_the_lock(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    folder = tmp_dir(data_dir, owned("first-turn"))
+    folder = tmp_dir(data_dir, owned("c1"))
     folder.mkdir(parents=True)
-    _age(folder.parent, folder, touched=time.time() - settings.tmp.sweep_interval_hours * 3600 - 60)
+    _age(folder.parent, folder, touched=_stale())
 
-    async def live(ids: list[str]) -> set[str]:
-        assert ids == ["first-turn"]
-        (folder / "active.txt").write_text("working")
+    class WriteFirst(asyncio.Lock):
+        async def __aenter__(self) -> None:
+            (folder / "active.txt").write_text("working")
+            await super().__aenter__()
 
-        return set()
-
-    monkeypatch.setattr("hivegent.conversation_files.existing_conversation_ids", live)
+    monkeypatch.setattr(
+        "hivegent.conversation_files.root_lock", lambda _root: WriteFirst()
+    )
 
     assert await sweep_conversations() == 0
     assert (folder / "active.txt").read_text() == "working"

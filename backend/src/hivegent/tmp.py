@@ -28,7 +28,7 @@ from pathlib import Path
 from .changes import Changeset, Write
 from .config import settings
 from .db.conversations import OwnedConversation
-from .files import remove_path, remove_paths, touched_since
+from .files import remove_paths
 from .tools.base import Direct, SearchPath, ToolRetry
 from .tools.mutations import mutation_errors
 from .tools.scope import PrefixScope
@@ -40,10 +40,8 @@ __all__ = [
     "TMP_SCOPE",
     "clear_tmp",
     "copy_tmp",
-    "expire_tmp",
     "save_result",
     "tmp_dir",
-    "tmp_expired",
     "tmp_root",
     "tmp_search_path",
 ]
@@ -72,7 +70,9 @@ def tmp_dir(data_dir: Path, conversation: OwnedConversation) -> Path:
 
 def tmp_search_path(data_dir: Path, conversation: OwnedConversation) -> SearchPath:
     """The ``/tmp`` root a conversation's run resolves against, written directly."""
-    return SearchPath(path=tmp_dir(data_dir, conversation), scope=TMP_SCOPE, policy=_POLICY)
+    return SearchPath(
+        path=tmp_dir(data_dir, conversation), scope=TMP_SCOPE, policy=_POLICY
+    )
 
 
 def tmp_root(folder: Path) -> Folder:
@@ -82,7 +82,9 @@ def tmp_root(folder: Path) -> Folder:
     oldest to make room, since a result can be asked for again while the
     run's own state cannot.
     """
-    return Folder(folder, TMP_SCOPE, _POLICY, Quota(settings.tmp.max_bytes, _RESULTS_DIR))
+    return Folder(
+        folder, TMP_SCOPE, _POLICY, Quota(settings.tmp.max_bytes, _RESULTS_DIR)
+    )
 
 
 async def save_result(folder: Path, name: str, content: str) -> str:
@@ -119,7 +121,9 @@ async def clear_tmp(conversations: Iterable[OwnedConversation]) -> int:
     Their staged changesets are pending approvals rather than temporary files,
     so they stay.
     """
-    folders = [tmp_dir(settings.data_dir, conversation) for conversation in conversations]
+    folders = [
+        tmp_dir(settings.data_dir, conversation) for conversation in conversations
+    ]
 
     def clear() -> int:
         files = sum(map(_files, folders))
@@ -128,22 +132,6 @@ async def clear_tmp(conversations: Iterable[OwnedConversation]) -> int:
         return files
 
     return await asyncio.to_thread(clear)
-
-
-def tmp_expired(folder: Path, cutoff: float) -> bool:
-    """Whether the ``/tmp`` in a conversation *folder* went unchanged since *cutoff*.
-
-    Judged by the newest change anywhere in it, so one in use never expires.
-    """
-    tmp = folder / TMP_FOLDER
-
-    return tmp.is_dir() and not touched_since(tmp, cutoff)
-
-
-def expire_tmp(folder: Path, cutoff: float) -> None:
-    """Remove the ``/tmp`` in a conversation *folder* once :func:`tmp_expired`."""
-    if tmp_expired(folder, cutoff):
-        remove_path(folder / TMP_FOLDER)
 
 
 async def copy_tmp(source: OwnedConversation, target: OwnedConversation) -> None:
