@@ -135,6 +135,22 @@ class TestJqFilter:
         result = await jq_filter(".", "[]")
         assert result == [[]]
 
+    @pytest.mark.parametrize(
+        "filter_expr",
+        ['import "x" as $d {search: "/"}; $d', '# c\ninclude "x"; .'],
+    )
+    async def test_module_directive_refused(self, filter_expr: str) -> None:
+        with pytest.raises(ValueError, match="import and include"):
+            await jq_filter(filter_expr, "{}")
+
+    async def test_keywords_as_fields_pass(self) -> None:
+        result = await jq_filter('.include, ."import"', '{"include": 1, "import": 2}')
+        assert result == [1, 2]
+
+    async def test_server_environment_hidden(self) -> None:
+        result = await jq_filter("$ENV | keys", "{}")
+        assert result == [["PATH"]]
+
 
 class TestPandocConvert:
     """Tests for ``pandoc_convert``."""

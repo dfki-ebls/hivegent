@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Container, Iterator, Sequence
+from collections.abc import Container, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,6 +66,7 @@ async def run(
     *,
     stdin: bytes | None = None,
     cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
     check: bool = True,
     allowed_returncodes: Container[int] = (),
 ) -> SubprocessResult:
@@ -75,6 +76,7 @@ async def run(
         args: Command and arguments.
         stdin: Bytes to pipe to stdin.
         cwd: Working directory.
+        env: Environment of the child, the server's own when ``None``.
         check: Raise SubprocessError on unexpected return code.
         allowed_returncodes: Additional return codes besides 0 that are
             acceptable (e.g., rg returns 1 for "no matches").
@@ -85,6 +87,7 @@ async def run(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
+        env=env,
     )
 
     try:
