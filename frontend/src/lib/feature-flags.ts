@@ -65,21 +65,6 @@ export interface FeatureFlags {
    * custom MCP servers.
    */
   toolsSpec: boolean;
-
-  /**
-   * Allow users to pick the agent mode from the composer — whether writes
-   * are confirmed, withheld, or unattended.  When disabled, the Mode selector
-   * is hidden and outgoing requests always send `mode: "interactive"`, so
-   * writes keep asking for confirmation.
-   */
-  agentModes: boolean;
-
-  /**
-   * Show the coverage map in the context panel — the bar marking where a
-   * document's read chunks sit within the whole.  When disabled, the bar is
-   * hidden and the line-count fetch that supplies its denominator is skipped.
-   */
-  documentMap: boolean;
 }
 
 const FEATURE_DEFAULTS: FeatureFlags = {
@@ -87,8 +72,6 @@ const FEATURE_DEFAULTS: FeatureFlags = {
   pipelineSpec: false,
   assetSpec: false,
   toolsSpec: false,
-  agentModes: false,
-  documentMap: false,
 };
 
 /**
@@ -102,8 +85,6 @@ const FEATURE_ENV: Record<keyof FeatureFlags, string | undefined> = {
   pipelineSpec: import.meta.env.VITE_FEATURE_PIPELINE_SPEC,
   assetSpec: import.meta.env.VITE_FEATURE_ASSET_SPEC,
   toolsSpec: import.meta.env.VITE_FEATURE_TOOLS_SPEC,
-  agentModes: import.meta.env.VITE_FEATURE_AGENT_MODES,
-  documentMap: import.meta.env.VITE_FEATURE_DOCUMENT_MAP,
 };
 
 function parseBool(raw: string | undefined, key: string): boolean | undefined {

@@ -2,7 +2,6 @@ import type { ChatMessage } from "@/lib/chat/chat-utils";
 import { z } from "zod";
 
 import type {
-  AgentMode,
   AgentRunConfig,
   McpServerEntry,
   ToolsPayload,
@@ -422,19 +421,6 @@ export function buildAuxLlmConfig(overrides: {
     apiKey: overrides.apiKey,
     baseUrl: overrides.baseUrl,
   });
-}
-
-/**
- * Build the agent mode value sent to the backend.
- *
- * When the {@link featureFlags.agentModes} flag is disabled, always returns
- * `"interactive"` — mode selection is a frontend-only feature, so disabling
- * it implicitly pins the backend to the confirm-before-writing default
- * without a parallel flag system.
- */
-export function buildModePayload(mode: AgentMode): AgentMode {
-  if (!featureFlags.agentModes) return "interactive";
-  return mode;
 }
 
 /**

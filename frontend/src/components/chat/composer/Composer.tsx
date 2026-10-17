@@ -15,7 +15,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import { keyPrefix } from "@/i18n";
 import { formatFileSize } from "@/i18n/format";
-import { featureFlags } from "@/lib/feature-flags";
 import type { AgentMode, ReasoningEffort } from "@/lib/types";
 import { selectAttachmentLimits, useServerSettings } from "@/queries/settings";
 
@@ -188,9 +187,7 @@ export function Composer({
             onChange={onReasoningEffortChange}
             className="ml-auto"
           />
-          {featureFlags.agentModes && (
-            <ModeSelector value={agentMode} onChange={onAgentModeChange} />
-          )}
+          <ModeSelector value={agentMode} onChange={onAgentModeChange} />
           {/* Enter still submits while streaming, which steers the running turn. */}
           <InputGroupButton
             type={isStreaming ? "button" : "submit"}

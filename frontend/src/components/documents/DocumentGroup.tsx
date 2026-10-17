@@ -2,7 +2,6 @@ import { Globe } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { featureFlags } from "@/lib/feature-flags";
 import { type FetchedChunk, type FetchedDocument, sortChunks } from "@/lib/types";
 import { basename, formatWebUrl, isWebUrl } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -65,9 +64,7 @@ export function DocumentGroup({
             {t(($) => $.documents.chunks, { count: contentChunks.length })}
           </Badge>
         )}
-        {featureFlags.documentMap && (
-          <DocumentMap filename={doc.filename} chunks={contentChunks} totalLines={doc.totalLines} />
-        )}
+        <DocumentMap filename={doc.filename} chunks={contentChunks} totalLines={doc.totalLines} />
       </div>
       <CollapsibleContent className="@container pb-2 pl-8">
         <div className="grid auto-rows-fr grid-cols-2 gap-2 @sm:grid-cols-3 @lg:grid-cols-4">
