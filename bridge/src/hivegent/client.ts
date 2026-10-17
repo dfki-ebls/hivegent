@@ -10,7 +10,7 @@ import type { BridgeConfig } from "../config.js";
 export class ConversationNotFoundError extends Error {}
 
 interface ChatRequestOptions {
-  reasoningEffort: string;
+  reasoningEffort?: string | undefined;
   disabledTools: string[];
 }
 
@@ -19,7 +19,7 @@ interface ChatRequestBody {
   id: string;
   messages: UIMessage[];
   mode: "read";
-  reasoning_effort: string;
+  reasoning_effort?: string | undefined;
   tools: { disabled_tools: string[] };
 }
 

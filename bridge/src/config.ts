@@ -21,7 +21,8 @@ export interface BridgeConfig {
   hivegentUrl: string;
   /** Absent for local debugging against an auth-disabled hivegent. */
   oidc?: OidcConfig;
-  reasoningEffort: string;
+  /** Absent to use the server default. */
+  reasoningEffort?: string;
   disabledTools: string[];
   postgresUrl: string;
   botUserName: string;
@@ -146,7 +147,7 @@ export function resolveConfig(env: NodeJS.ProcessEnv, file: FileConfig): BridgeC
       requireValue(env.HIVEGENT_URL ?? file.hivegentUrl, "HIVEGENT_URL"),
     ),
     oidc,
-    reasoningEffort: env.REASONING_EFFORT ?? file.reasoningEffort ?? "high",
+    reasoningEffort: env.REASONING_EFFORT ?? file.reasoningEffort,
     // The bot is read-only over documents and never writes cross-conversation memory.
     disabledTools: ["edit_document", "write_document", "save_memory"],
     postgresUrl: requireValue(env.POSTGRES_URL ?? file.postgresUrl, "POSTGRES_URL"),
