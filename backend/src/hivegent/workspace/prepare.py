@@ -21,7 +21,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from ..chunkers.base import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
-from ..config import settings
+from ..config import sanitize_document_path, settings
 from ..converters import (
     ConversionPipeline,
     EntryProjection,
@@ -455,7 +455,8 @@ async def _prepare_conversion_assets(
     """
 
     def child_path(relpath: str) -> str:
-        return str((PurePosixPath(assets_dir) / relpath).as_posix())
+        # The converter names the file, so `..` or an absolute name is refused.
+        return str((PurePosixPath(assets_dir) / sanitize_document_path(relpath)).as_posix())
 
     ref_mapping: dict[str, str | None] = {}
     assets: list[_PreparedAsset] = []

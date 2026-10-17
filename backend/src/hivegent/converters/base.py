@@ -230,7 +230,8 @@ def collect_dir_images(root: Path, relative_to: Path) -> dict[str, ExtractedImag
     if not root.exists():
         return result
     for f in root.rglob("*"):
-        if f.is_file():
+        # A symlink a converter left behind could name any file on the host.
+        if f.is_file() and not f.is_symlink():
             result[str(f.relative_to(relative_to).as_posix())] = ExtractedImage(
                 data=f.read_bytes()
             )
