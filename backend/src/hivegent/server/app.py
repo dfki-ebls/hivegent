@@ -14,6 +14,7 @@ from starlette.responses import PlainTextResponse, Response
 from ..agents import check_tool_settings
 from ..config import settings
 from ..db import apply_migrations, engine_lifespan
+from ..entries import folds_case
 from ..http_client import shared_http_client_lifespan
 from ..l10n import Localized
 from ..logging_config import configure_logging
@@ -210,17 +211,30 @@ async def validation_error_handler(
 
 
 def _validate_auth_settings() -> None:
-    if settings.auth.enable and not settings.auth.issuer:
-        raise ValueError(
-            "Authentication is enabled but HIVEGENT_AUTH__ISSUER is unset."
-        )
-    if settings.auth.enable and not settings.auth.audience:
-        raise ValueError(
-            "Authentication is enabled but HIVEGENT_AUTH__AUDIENCE is empty. "
-            "Set it to the client IDs allowed to call the API (token audiences)."
-        )
     if settings.auth.enable:
+        if not settings.auth.issuer:
+            raise ValueError(
+                "Authentication is enabled but HIVEGENT_AUTH__ISSUER is unset."
+            )
+        if not settings.auth.audience:
+            raise ValueError(
+                "Authentication is enabled but HIVEGENT_AUTH__AUDIENCE is empty. "
+                "Set it to the client IDs allowed to call the API (token audiences)."
+            )
+        if settings.mcp.enable and not settings.mcp.client_id:
+            raise ValueError(
+                "MCP is enabled but HIVEGENT_MCP__CLIENT_ID is empty, which would "
+                "accept a token the issuer minted for any other client."
+            )
+        if folds_case(settings.data_dir):
+            raise ValueError(
+                "HIVEGENT_DATA_DIR is on a case-insensitive filesystem, where user "
+                "and group IDs differing only in case would share one workspace. "
+                "Use a case-sensitive volume while authentication is enabled."
+            )
+
         return
+
     if not settings.auth.allow_disabled:
         raise ValueError(
             "Authentication is disabled. Set HIVEGENT_AUTH__ALLOW_DISABLED=1 only "

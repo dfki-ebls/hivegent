@@ -126,3 +126,17 @@ def test_auth_enabled_requires_audience(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(ValueError, match="AUDIENCE"):
         create_app()
+
+
+def test_mcp_requires_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP endpoint must pin tokens to its own client."""
+    from hivegent.server.app import create_app
+
+    monkeypatch.setattr(settings.auth, "enable", True)
+    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
+    monkeypatch.setattr(settings.auth, "audience", ["hivegent-*"])
+    monkeypatch.setattr(settings.mcp, "enable", True)
+    monkeypatch.setattr(settings.mcp, "client_id", "")
+
+    with pytest.raises(ValueError, match="CLIENT_ID"):
+        create_app()
