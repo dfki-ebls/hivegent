@@ -22,6 +22,7 @@ from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import Response
 
+from ... import conversation_files
 from ...agents import (
     UserDeps,
     discard_unapproved_changes,
@@ -30,7 +31,7 @@ from ...agents import (
     user_agent,
 )
 from ...agents.subagent_events import SubagentUpdate
-from ...auth import User, get_current_user
+from ...auth import get_current_user
 from ...compaction import compact_conversation
 from ...config import settings
 from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
@@ -40,16 +41,15 @@ from ...db.conversations import (
     UNTITLED,
     ConversationSummary,
     MessagePair,
+    OwnedConversation,
     append_branch,
-    conversation_exists,
-    delete_all_conversations,
     import_conversation,
     is_user_request,
     list_conversations,
     load_active_for_display,
     load_conversation,
     load_conversation_summary,
-    remove_conversation,
+    owned_conversation,
     resolve_fork,
     set_conversation_title,
 )
@@ -60,7 +60,7 @@ from ...llm import (
     resolve_thinking,
     thinking_model_settings,
 )
-from ...tmp import remove_tmp
+from ...store import User
 from ...tools.formatting import BLOCK_SEP
 from ...transparency import sign_provenance
 from ...types import (
@@ -94,6 +94,15 @@ router = APIRouter()
 _CONVERSATION_NOT_FOUND = Localized(
     en="Conversation not found", de="Konversation nicht gefunden"
 )
+
+
+def _found[T](value: T | None) -> T:
+    """*value*, or ``404`` for a conversation that is missing or not the caller's."""
+    if value is None:
+        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
+
+    return value
+
 _TITLE_INSTRUCTIONS = Localized(
     en="""Generate a short, descriptive title (max 60 characters) for the conversation.
 The title should capture the main topic or question.
@@ -169,12 +178,27 @@ def _too_many_images(cap: int) -> Localized[str]:
 _INVALID_CHAT_REQUEST = Localized(en="Invalid chat request", de="Ungültige Chatanfrage")
 
 
+async def _owned_conversation(
+    conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> OwnedConversation:
+    """The path's conversation, once the database names the caller its owner.
+
+    Every ``{conversation_id}`` route takes the :class:`OwnedConversation` its
+    message tree and ``/tmp`` need from here.
+    """
+    return _found(await owned_conversation(user, conversation_id))
+
+
+type Owned = Annotated[OwnedConversation, Depends(_owned_conversation)]
+
+
 @router.get("/conversations")
 async def get_conversations(
     user: Annotated[User, Depends(get_current_user)],
 ) -> ConversationListResponse:
     """List all conversations with summary information."""
-    conversations = await list_conversations(user.id)
+    conversations = await list_conversations(user)
     return ConversationListResponse(
         conversations=conversations,
         total_count=len(conversations),
@@ -182,28 +206,17 @@ async def get_conversations(
 
 
 @router.get("/conversations/{conversation_id}")
-async def get_conversation(
-    conversation_id: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> ConversationSummary:
+async def get_conversation(conversation: Owned) -> ConversationSummary:
     """Get summary information for a specific conversation."""
-    summary = await load_conversation_summary(user.id, conversation_id)
-    if summary is None:
-        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
-    return summary
+    return _found(await load_conversation_summary(conversation))
 
 
 @router.patch("/conversations/{conversation_id}")
 async def update_conversation_title(
-    conversation_id: str,
-    request: UpdateTitleRequest,
-    user: Annotated[User, Depends(get_current_user)],
+    conversation: Owned, request: UpdateTitleRequest
 ) -> ConversationSummary:
     """Update the title of a conversation."""
-    summary = await set_conversation_title(user.id, conversation_id, request.title)
-    if summary is None:
-        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
-    return summary
+    return _found(await set_conversation_title(conversation, request.title))
 
 
 def _extract_message_texts(
@@ -227,19 +240,16 @@ def _extract_message_texts(
 
 @router.post("/conversations/{conversation_id}/title/generation")
 async def generate_conversation_title(
-    conversation_id: str,
+    conversation: Owned,
     request: GenerateTitleRequest,
     http_request: Request,
-    user: Annotated[User, Depends(get_current_user)],
 ) -> GenerateTitleResponse:
     """Generate a title for a conversation using an LLM."""
-    conversation = await load_conversation(user.id, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
+    data = _found(await load_conversation(conversation))
 
-    messages_text = _extract_message_texts(conversation.messages)
+    messages_text = _extract_message_texts(data.messages)
     if not messages_text:
-        return GenerateTitleResponse(title=conversation.title or UNTITLED.current)
+        return GenerateTitleResponse(title=data.title or UNTITLED.current)
 
     conversation_preview = BLOCK_SEP.join(messages_text)
 
@@ -259,13 +269,13 @@ async def generate_conversation_title(
         if len(generated_title) > 100:
             generated_title = generated_title[:97] + "..."
 
-        await set_conversation_title(user.id, conversation_id, generated_title)
+        await set_conversation_title(conversation, generated_title)
         return GenerateTitleResponse(title=generated_title)
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception(
-            "Failed to generate title for conversation %s", conversation_id
+            "Failed to generate title for conversation %s", conversation.id
         )
         raise HTTPException(status_code=500, detail=_TITLE_FAILED.current) from exc
 
@@ -273,31 +283,25 @@ async def generate_conversation_title(
 @router.delete(
     "/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT
 )
-async def delete_conversation(
-    conversation_id: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> None:
-    """Delete a conversation and its ``/tmp`` folder."""
-    if not await remove_conversation(user.id, conversation_id):
+async def delete_conversation(conversation: Owned) -> None:
+    """Delete a conversation and its files on disk."""
+    if not await conversation_files.delete_conversation(conversation):
         raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
-
-    await remove_tmp([conversation_id])
 
 
 @router.delete("/conversations", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_all_conversations_route(
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    """Delete all conversations for the authenticated user, and their ``/tmp`` folders."""
-    await remove_tmp(await delete_all_conversations(user.id))
+    """Delete all conversations for the authenticated user, and their files on disk."""
+    await conversation_files.delete_conversations(user)
 
 
 @router.post("/conversations/{conversation_id}/compaction")
 async def create_conversation_compaction(
-    conversation_id: str,
+    conversation: Owned,
     request: AgentRunConfig,
     http_request: Request,
-    user: Annotated[User, Depends(get_current_user)],
 ) -> CompactConversationResponse:
     """Compact a conversation by summarizing it into a new conversation.
 
@@ -308,25 +312,25 @@ async def create_conversation_compaction(
     which needs the full context window rather than a small scoped-task model.
     """
 
-    run_prefix = build_run_prefix(request, user, conversation_id)
+    run_prefix = build_run_prefix(request, conversation)
 
     try:
         result = await run_until_disconnect(
             http_request,
-            compact_conversation(user.id, conversation_id, run_prefix),
+            compact_conversation(conversation, run_prefix),
         )
     except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ModelHTTPError as exc:
-        logger.exception("Failed to compact conversation %s", conversation_id)
+        logger.exception("Failed to compact conversation %s", conversation.id)
         raise HTTPException(
             status_code=502,
             detail=_summarizer_rejected(exc.status_code).current,
         ) from exc
     except Exception as exc:
-        logger.exception("Failed to compact conversation %s", conversation_id)
+        logger.exception("Failed to compact conversation %s", conversation.id)
         raise HTTPException(status_code=500, detail=_COMPACTION_FAILED.current) from exc
 
     return CompactConversationResponse(
@@ -337,16 +341,13 @@ async def create_conversation_compaction(
 
 
 @router.get("/conversations/{conversation_id}/messages")
-async def get_conversation_messages(
-    conversation_id: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> list[UIMessage]:
+async def get_conversation_messages(conversation: Owned) -> list[UIMessage]:
     """Get the active path of a conversation in Vercel AI format.
 
     Each ``UIMessage.id`` is the tree-node id the client addresses for edit /
     regenerate; forking nodes carry branch metadata.
     """
-    result = await load_active_for_display(user.id, conversation_id)
+    result = await load_active_for_display(conversation)
     if result is None:
         return []
     pairs, siblings = result
@@ -380,10 +381,7 @@ def _instruction_snapshots(pairs: Sequence[MessagePair]) -> list[InstructionsSna
 
 
 @router.get("/conversations/{conversation_id}/export")
-async def export_conversation_route(
-    conversation_id: str,
-    user: Annotated[User, Depends(get_current_user)],
-) -> Response:
+async def export_conversation_route(conversation: Owned) -> Response:
     """Export a conversation's active path as a downloadable archive.
 
     The payload is a :class:`ConversationArchive` whose ``backend`` half carries
@@ -392,11 +390,9 @@ async def export_conversation_route(
     export button fills that half in and downloads the same shape, and the
     counterpart :func:`import_conversation_route` restores either one.
     """
-    summary = await load_conversation_summary(user.id, conversation_id)
-    if summary is None:
-        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
+    summary = _found(await load_conversation_summary(conversation))
 
-    result = await load_active_for_display(user.id, conversation_id)
+    result = await load_active_for_display(conversation)
     pairs, siblings = result if result else ([], {})
     server = ServerConversation(
         id=summary.id,
@@ -416,7 +412,7 @@ async def export_conversation_route(
         media_type="application/json",
         headers={
             "Content-Disposition": attachment_disposition(
-                f"conversation-{conversation_id}.json"
+                f"conversation-{conversation.id}.json"
             )
         },
     )
@@ -443,7 +439,7 @@ async def import_conversation_route(
     ui_messages, title = archive.active_path()
     try:
         messages = ChatAdapter.load_messages(ui_messages)
-        return await import_conversation(user.id, messages, title=title)
+        return await import_conversation(user, messages, title=title)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -508,8 +504,8 @@ def _accept_attachments(messages: Sequence[ModelMessage]) -> None:
         _accept_attachment(item)
 
 
-async def _run_chat(conversation_id: str, request: Request, user: User) -> Response:
-    """Stream a chat turn for *conversation_id* via the Vercel AI protocol.
+async def _run_chat(conversation: OwnedConversation, request: Request) -> Response:
+    """Stream a chat turn for *conversation* via the Vercel AI protocol.
 
     A turn that carries a new user message returns its tree-node id in the
     ``X-Message-Id`` response header, under the same CORS constraint as
@@ -520,7 +516,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     # the compaction request that has to reproduce the same prefix.
     config = ChatRequestConfig.model_validate(await request.json())
 
-    run_prefix = build_run_prefix(config, user, conversation_id)
+    run_prefix = build_run_prefix(config, conversation)
     thinking = resolve_thinking(config.reasoning_effort)
     model_settings = thinking_model_settings(thinking, run_prefix.llm)
 
@@ -554,8 +550,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     # fork point from the DB and replay it, ignoring the browser echo.  The
     # client sends only the new message (none for a regenerate).
     prefix, fork_id = await resolve_fork(
-        user.id,
-        conversation_id,
+        conversation,
         regenerate=config.trigger == "regenerate-message",
         message_id=config.message_id,
     )
@@ -566,7 +561,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         approved = {
             call for call, decision in adapter.approval_decisions.items() if decision.approved
         }
-        await discard_unapproved_changes(user.id, prefix[-1], approved)
+        await discard_unapproved_changes(conversation, prefix[-1], approved)
 
     # A turn that ended awaiting approval or answers left its calls dangling so
     # this request could answer them.  One that carries anything else abandons
@@ -577,7 +572,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
     if not resumed:
         declined = abandon_pending_calls(prefix)
         if declined is not None:
-            fork_id = await append_branch(user.id, conversation_id, fork_id, [declined])
+            fork_id = await append_branch(conversation, fork_id, [declined])
             prefix = [*prefix, declined]
 
     # Reserve the node id the new user message will be persisted under, so the
@@ -598,6 +593,9 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         model_settings=model_settings,
         message_history=prefix,
         usage_limits=turn_usage_limits,
+        # The server's id rather than the client's, so the run knows the one
+        # conversation its `/tmp` and persisted turns belong to.
+        conversation_id=conversation.id,
     )
 
     # Capture only the prefix length, not the prefix list, so the closure
@@ -609,8 +607,7 @@ async def _run_chat(conversation_id: str, request: Request, user: User) -> Respo
         # branch under the fork point.  The delta's head is the user message
         # whose id was announced, so it lands under exactly that id.
         await append_branch(
-            user.id,
-            conversation_id,
+            conversation,
             fork_id,
             messages[prefix_len:],
             head_id=user_node_id,
@@ -645,24 +642,18 @@ async def create_new_conversation_chat(
     config; cross-origin deployments must expose them explicitly (custom
     response headers are hidden from JS otherwise).
     """
-    conversation_id = new_id()
-    response = await _run_chat(conversation_id, request, user)
-    response.headers["X-Conversation-Id"] = conversation_id
+    conversation = OwnedConversation.mint(user)
+    response = await _run_chat(conversation, request)
+    response.headers["X-Conversation-Id"] = conversation.id
     return response
 
 
 @router.post("/conversations/{conversation_id}/chat")
-async def create_conversation_chat(
-    conversation_id: str,
-    request: Request,
-    user: Annotated[User, Depends(get_current_user)],
-) -> Response:
+async def create_conversation_chat(conversation: Owned, request: Request) -> Response:
     """Continue an existing conversation.
 
     Only conversations that already hold a message exist as rows, so an ID
     the server never issued is a 404 rather than a silently created
     conversation — clients cannot mint their own IDs.
     """
-    if not await conversation_exists(user.id, conversation_id):
-        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
-    return await _run_chat(conversation_id, request, user)
+    return await _run_chat(conversation, request)

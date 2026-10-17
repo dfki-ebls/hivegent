@@ -112,10 +112,25 @@ def _stat_from_row(row: Document) -> ContentStat | None:
 
 
 def _owner_filter(store: Casebase):
-    """Build a SQL WHERE expression matching *store*'s documents."""
+    """Build a SQL WHERE expression matching *store*'s documents, for a read.
+
+    Every query on ``documents`` names its rows through this or
+    :func:`_writable_filter`, so no statement here reaches another owner's.
+    """
     if store.kind == "user":
         return Document.owner_user_id == store.id
     return Document.owner_group_id == store.id
+
+
+def _writable_filter(store: Casebase):
+    """Match *store*'s documents for an update or delete, refusing a read-only grant.
+
+    Raises:
+        AccessDenied: When *store* may not be written.
+    """
+    store.require_writable()
+
+    return _owner_filter(store)
 
 
 class _OwnerColumns(TypedDict):
@@ -126,7 +141,13 @@ class _OwnerColumns(TypedDict):
 
 
 def _owner_kwargs(store: Casebase) -> _OwnerColumns:
-    """Single-owner FK kwargs for inserts."""
+    """Single-owner FK kwargs for an insert or a move, refusing a read-only grant.
+
+    Raises:
+        AccessDenied: When *store* may not be written.
+    """
+    store.require_writable()
+
     if store.kind == "user":
         return {"owner_user_id": store.id, "owner_group_id": None}
     return {"owner_user_id": None, "owner_group_id": store.id}
@@ -388,8 +409,9 @@ async def _distinct_owner_ids(s: AsyncSession, column) -> list[str]:
 async def list_known_stores() -> set[Casebase]:
     """Return every casebase that owns at least one document row.
 
-    Ids that can no longer back a casebase (e.g. the admin marker) are
-    skipped so a single legacy row cannot break reconciliation.
+    Granted for writing, since reconciliation is their only caller.  Ids that
+    can no longer back a casebase (e.g. the admin marker) are skipped so a
+    single legacy row cannot break reconciliation.
     """
     async with session() as s:
         user_ids = await _distinct_owner_ids(s, Document.owner_user_id)
@@ -397,7 +419,7 @@ async def list_known_stores() -> set[Casebase]:
     stores: set[Casebase] = {Casebase.for_user(uid) for uid in user_ids}
     for gid in group_ids:
         try:
-            stores.add(Casebase.for_group(gid))
+            stores.add(Casebase.for_group(gid, writable=True))
         except ValueError:
             continue
     return stores
@@ -564,7 +586,7 @@ async def update_entry(
     async with session() as s:
         result = await s.execute(
             update(Document)
-            .where(_owner_filter(store), Document.stem_path == entry.stem_path)
+            .where(_writable_filter(store), Document.stem_path == entry.stem_path)
             .values(**columns, **_stat_columns(stat), updated_at=func.now())
         )
     return affected_rows(result) > 0
@@ -595,7 +617,7 @@ async def delete_document(
     async with session(s) as tx:
         result = await tx.execute(
             delete(Document).where(
-                _owner_filter(store), Document.stem_path == stem_path
+                _writable_filter(store), Document.stem_path == stem_path
             )
         )
 
@@ -613,7 +635,7 @@ async def delete_documents(store: Casebase, references: Sequence[str]) -> int:
         return 0
     async with session() as s:
         result = await s.execute(
-            delete(Document).where(_owner_filter(store), Document.stem_path.in_(stems))
+            delete(Document).where(_writable_filter(store), Document.stem_path.in_(stems))
         )
     return affected_rows(result)
 
@@ -631,7 +653,7 @@ async def delete_subtree(
 
     async with session(s) as tx:
         result = await tx.execute(
-            delete(Document).where(_owner_filter(store), stem_subtree_filter(prefix))
+            delete(Document).where(_writable_filter(store), stem_subtree_filter(prefix))
         )
 
     return affected_rows(result)
@@ -640,7 +662,7 @@ async def delete_subtree(
 async def delete_all(store: Casebase) -> int:
     """Delete every document owned by *store*.  Cascades to chunks."""
     async with session() as s:
-        result = await s.execute(delete(Document).where(_owner_filter(store)))
+        result = await s.execute(delete(Document).where(_writable_filter(store)))
     return affected_rows(result)
 
 
@@ -685,7 +707,7 @@ async def move_document(
 
         result = await tx.execute(
             update(Document)
-            .where(_owner_filter(src_store), Document.stem_path == src_stem)
+            .where(_writable_filter(src_store), Document.stem_path == src_stem)
             .values(stem_path=dst_stem, **_owner_kwargs(dst_store))
         )
 
@@ -719,7 +741,7 @@ async def move_subtree(
 
         await tx.execute(
             update(Document)
-            .where(_owner_filter(src_store), stem_subtree_filter(src_prefix))
+            .where(_writable_filter(src_store), stem_subtree_filter(src_prefix))
             .values(
                 stem_path=func.concat(
                     dst_prefix, func.substr(Document.stem_path, len(src_prefix) + 1)

@@ -97,7 +97,7 @@ type FeatureInstruction = Localized[str] | SystemPromptFunc[UserDeps]
 async def _memory_instructions(ctx: RunContext[UserDeps]) -> str:
     """Inject the user's persisted memory alongside the save-memory guidance."""
     language = ctx.deps.language
-    content = await load_memory(ctx.deps.user_id)
+    content = await load_memory(ctx.deps.user)
 
     if content:
         return memory_instructions(content)[language]

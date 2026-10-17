@@ -12,13 +12,20 @@ from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+from hivegent.db.conversations import OwnedConversation
+from hivegent.store import User
 from hivegent.tools.base import Batch, ItemFailure
 from hivegent.tools.workspace_os import ChangesetLimits
 
-__all__ = ["LIMITS", "png_bytes", "run_context", "single"]
+__all__ = ["LIMITS", "owned", "png_bytes", "run_context", "single"]
 
 LIMITS = ChangesetLimits(max_operations=200, max_deletes=100, max_chars=20_000_000)
 """What one program may stage in a test that is not about the limits."""
+
+
+def owned(conversation_id: str, user: User | None = None) -> OwnedConversation:
+    """*conversation_id* as a conversation of *user*, ``u`` when none is given."""
+    return OwnedConversation(user or User("u"), conversation_id)
 
 
 def png_bytes(info: PngInfo | None = None) -> bytes:

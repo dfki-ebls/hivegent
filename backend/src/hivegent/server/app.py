@@ -3,16 +3,17 @@
 import asyncio
 import logging
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from pydantic import ValidationError
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from ..agents import check_tool_settings
 from ..config import settings
+from ..conversation_files import sweep_conversations
 from ..db import apply_migrations, engine_lifespan
 from ..entries import folds_case
 from ..http_client import shared_http_client_lifespan
@@ -23,8 +24,7 @@ from ..observability import configure_observability
 from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state, warm_index
 from ..sandbox import monty_pool_lifespan
-from ..staging import prune_staged
-from ..tmp import sweep_tmp
+from ..store import AccessDenied
 from ..workers.pool import pipeline_pool
 from .access_log import install_probe_access_filter
 from .language import LanguageMiddleware
@@ -106,20 +106,13 @@ async def _verify_fts_config() -> None:
         )
 
 
-_HOUSEKEEPING: tuple[tuple[str, Callable[[], Awaitable[object]]], ...] = (
-    ("staged changesets", prune_staged),
-    ("/tmp folders", sweep_tmp),
-)
-
-
 async def _housekeep(interval: float) -> None:
-    """Prune what expired now, then once every *interval* seconds."""
+    """Sweep the conversation folders now, then once every *interval* seconds."""
     while True:
-        for name, job in _HOUSEKEEPING:
-            try:
-                _ = await job()
-            except Exception:
-                logger.warning("Cleaning up %s failed", name, exc_info=True)
+        try:
+            _ = await sweep_conversations()
+        except Exception:
+            logger.warning("Sweeping the conversation folders failed", exc_info=True)
 
         await asyncio.sleep(interval)
 
@@ -128,7 +121,7 @@ async def _housekeep(interval: float) -> None:
 async def _housekeeping() -> AsyncGenerator[None]:
     """Run the cleanups in the background for as long as the app does.
 
-    Never awaited by the boot: the first pass walks every ``/tmp`` folder,
+    Never awaited by the boot: the first pass walks every conversation's folder,
     which the requests the app starts serving meanwhile do not wait on.
     """
     task = asyncio.create_task(_housekeep(settings.tmp.sweep_interval_hours * 3600))
@@ -210,6 +203,15 @@ async def validation_error_handler(
     )
 
 
+async def access_denied_handler(_request: Request, exc: Exception) -> Response:
+    """Answer a store asked for beyond its grant with ``403``, wherever it was refused.
+
+    The body is the one an ``HTTPException`` carries, so a refusal reads the
+    same whichever layer raised it.
+    """
+    return JSONResponse({"detail": str(exc)}, status_code=403)
+
+
 def _validate_auth_settings() -> None:
     if settings.auth.enable:
         if not settings.auth.issuer:
@@ -273,6 +275,7 @@ def create_app() -> FastAPI:
     configure_observability(app)
     app.add_middleware(LanguageMiddleware)
     app.add_exception_handler(ValidationError, validation_error_handler)
+    app.add_exception_handler(AccessDenied, access_denied_handler)
     app.include_router(public_router)
     app.include_router(api_router)
     if mcp_http_app is not None:

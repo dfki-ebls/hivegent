@@ -27,7 +27,6 @@ from pydantic import ValidationError
 from pydantic_monty import OSAccess
 
 from hivegent import workspace, workspace_events
-from hivegent.auth import User
 from hivegent.changes import (
     Changeset,
     ChangesetSummary,
@@ -52,7 +51,7 @@ from hivegent.entries import (
 from hivegent.jobs import FeedReady, JobManager
 from hivegent.server.models import ChangesRequest, MoveDestination, WorkspacePath
 from hivegent.server.routes import documents as documents_routes
-from hivegent.store import Casebase
+from hivegent.store import Casebase, User
 from hivegent.tools.base import SearchPath
 from hivegent.tools.changeset import stage_changes
 from hivegent.tools.workspace_os import WORKSPACE_MOUNT, WorkspaceOS
@@ -394,7 +393,7 @@ class TestCrossStoreMove:
     @pytest.fixture()
     def group_store(self, data_dir: Path) -> Casebase:
         _ = data_dir
-        return Casebase(kind="group", id="team")
+        return Casebase.for_group("team", writable=True)
 
     async def test_document_relocates_to_group_workspace(
         self,

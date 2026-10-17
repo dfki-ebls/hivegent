@@ -4,16 +4,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from ... import workspace
-from ...auth import User, get_current_user
-from ...changes import WorkspaceChanged
-from ...db.conversations import conversation_ids
+from ...auth import get_current_user
+from ...db.conversations import owned_conversations
 from ...db.memory import clear_memory
-from ...db.users import delete_user
-from ...tmp import clear_tmp, remove_tmp
+from ...store import User
+from ...tmp import clear_tmp
 from ...types import TmpClearedResponse
-from ...workspace_events import announce_workspace_changed
-from ..common import ClientId, user_store
+from ..common import ClientId, delete_user_data
 
 __all__ = ["router"]
 
@@ -25,7 +22,7 @@ async def delete_memory(
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
     """Clear the authenticated user's persistent memory."""
-    await clear_memory(user.id)
+    await clear_memory(user)
 
 
 @router.delete("/tmp")
@@ -37,7 +34,7 @@ async def delete_tmp(
     The folders live outside every workspace, so the file count is the whole
     of the result and no client refresh follows.
     """
-    removed = await clear_tmp(await conversation_ids(user.id))
+    removed = await clear_tmp(await owned_conversations(user))
 
     return TmpClearedResponse(files_removed=removed)
 
@@ -47,19 +44,5 @@ async def delete_all_user_data(
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
 ) -> None:
-    """Delete all data for the authenticated user.
-
-    ``workspace.delete_all`` clears documents (cascades to chunks via
-    FK ``ON DELETE CASCADE``) and the workspace directory.
-    ``delete_user`` then drops the ``User`` row so memory and
-    conversations cascade, after their ``/tmp`` folders went, which the
-    cascade cannot reach.  The user re-materialises lazily on the next
-    request via :func:`ensure_user`.
-    """
-    store = user_store(user)
-    await workspace.delete_all(store)
-    await remove_tmp(await conversation_ids(user.id))
-    await delete_user(user.id)
-    announce_workspace_changed(
-        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
-    )
+    """Delete all data for the authenticated user (:func:`delete_user_data`)."""
+    await delete_user_data(user, exclude_client=client)

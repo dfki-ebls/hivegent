@@ -2,12 +2,22 @@
 
 import os
 import shutil
+import time
+from collections.abc import Iterable
 from contextlib import suppress
+from itertools import chain
 from pathlib import Path
 from stat import S_ISDIR
 from uuid import uuid4
 
-__all__ = ["atomic_write", "disk_size", "remove_path"]
+__all__ = [
+    "atomic_write",
+    "disk_size",
+    "remove_path",
+    "remove_paths",
+    "rmdir_if_empty",
+    "touched_since",
+]
 
 
 def remove_path(path: Path) -> None:
@@ -21,6 +31,35 @@ def remove_path(path: Path) -> None:
             shutil.rmtree(path)
     else:
         path.unlink(missing_ok=True)
+
+
+def remove_paths(paths: Iterable[Path]) -> None:
+    """:func:`remove_path` each of *paths*."""
+    for path in paths:
+        remove_path(path)
+
+
+def rmdir_if_empty(directory: Path) -> None:
+    """Remove *directory* if it is empty, and leave it otherwise."""
+    with suppress(OSError):
+        directory.rmdir()
+
+
+def touched_since(path: Path, cutoff: float) -> bool:
+    """Whether anything at or below *path* changed after *cutoff*, stopping at the first.
+
+    A file that vanishes while the tree is walked was just in use, so it
+    counts as touched.
+    """
+    return any(_mtime(entry) >= cutoff for entry in chain((path,), path.rglob("*")))
+
+
+def _mtime(path: Path) -> float:
+    """When *path* last changed, now for a path that no longer exists."""
+    try:
+        return path.lstat().st_mtime
+    except FileNotFoundError:
+        return time.time()
 
 
 def disk_size(path: Path) -> int:

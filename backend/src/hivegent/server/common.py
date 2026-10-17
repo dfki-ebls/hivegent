@@ -1,44 +1,44 @@
 """Shared helpers for server routes and operations."""
 
+import asyncio
 from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import Header, HTTPException
 from pydantic import ValidationError
 
+from .. import workspace
 from ..agents import RunPrefix, UserDeps, build_capabilities
-from ..auth import User
+from ..changes import WorkspaceChanged
 from ..config import (
     normalize_unicode,
     sanitize_document_path,
-    sanitize_group_id,
     settings,
 )
+from ..conversation_files import delete_conversations
+from ..db.conversations import OwnedConversation
+from ..db.users import delete_user
 from ..l10n import Localized, current_language
 from ..llm import model_from_config
 from ..llm_config import LlmConfig, LlmTier, resolve_llm_config
 from ..mcp import build_mcp_server, validate_mcp_servers
 from ..prompts import compose_instructions
 from ..security import require_safe_external_url
-from ..store import Casebase, WorkspaceScope
+from ..store import AccessDenied, Casebase, User, WorkspaceScope
 from ..tmp import tmp_dir
 from ..types import AgentRunConfig, DocumentFilter
+from ..workspace_events import announce_workspace_changed
 from .models import PipelineSpec
 
 __all__ = [
     "ClientId",
     "build_run_prefix",
-    "group_store",
-    "group_stores",
+    "delete_user_data",
     "parse_document_scope",
     "parse_pipeline_spec",
     "prepare_llm_config",
-    "require_group_member",
-    "require_group_write",
     "resolve_workspace_path",
-    "safe_group_id",
     "safe_path",
-    "user_store",
 ]
 
 
@@ -53,15 +53,6 @@ def _invalid_pipeline_spec(error: str) -> Localized[str]:
     return Localized(
         en=f"Invalid pipeline_spec: {error}", de=f"Ungültige pipeline_spec: {error}"
     )
-
-
-_NOT_A_MEMBER = Localized(
-    en="Not a member of this group", de="Kein Mitglied dieser Gruppe"
-)
-_WRITE_ACCESS_REQUIRED = Localized(
-    en="Write access required for this group",
-    de="Für diese Gruppe ist Schreibzugriff erforderlich",
-)
 
 
 def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
@@ -145,30 +136,8 @@ def parse_document_scope(
     )
 
 
-def user_store(user: User) -> Casebase:
-    """Build the personal casebase for a user."""
-    return Casebase.for_user(user.id)
-
-
-def group_store(group_id: str) -> Casebase:
-    """Build the casebase for a group."""
-    return Casebase.for_group(group_id)
-
-
-def group_stores(user: User, *, writable: bool = False) -> tuple[Casebase, ...]:
-    """Build group casebases for the groups the user belongs to.
-
-    With *writable* only the groups the user may write to are returned, the
-    same permission :func:`resolve_workspace_path` enforces on the HTTP write
-    routes, so the agent's mutating tools reach exactly the workspaces the API
-    would let the user mutate by hand.
-    """
-    groups = user.write_groups if writable else user.all_groups
-    return tuple(group_store(group_id) for group_id in groups)
-
-
 def build_run_prefix(
-    config: AgentRunConfig, user: User, conversation_id: str
+    config: AgentRunConfig, conversation: OwnedConversation
 ) -> RunPrefix:
     """Compose the prompt prefix *config* describes, for chat or compaction.
 
@@ -184,14 +153,16 @@ def build_run_prefix(
     language is read once and handed to every part of the prefix explicitly.
     """
     language = current_language()
+    user = conversation.user
 
     try:
         validate_mcp_servers(config.tools.mcp_servers)
-        # The conversation's `/tmp` exists for as long as it runs, as in a
-        # container session, which also checks the id names a safe folder.
-        tmp_dir(settings.data_dir, conversation_id).mkdir(parents=True, exist_ok=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # The conversation's `/tmp` exists for as long as it runs, as in a
+    # container session.
+    tmp_dir(settings.data_dir, conversation).mkdir(parents=True, exist_ok=True)
 
     llm = prepare_llm_config(config.llm, tier="main")
     relevant_documents, document_filter, group_filters = parse_document_scope(
@@ -201,12 +172,9 @@ def build_run_prefix(
     )
 
     deps = UserDeps(
-        user_id=user.id,
-        store=user_store(user),
+        user=user,
         mode=config.mode,
-        conversation_id=conversation_id,
-        group_stores=group_stores(user),
-        write_group_stores=group_stores(user, writable=True),
+        conversation=conversation,
         document_filter=document_filter,
         group_filters=group_filters,
         relevant_documents=relevant_documents,
@@ -251,30 +219,6 @@ def safe_path(filepath: str) -> str:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def safe_group_id(group_id: str) -> str:
-    """Sanitize a group ID from a URL path parameter."""
-    try:
-        return sanitize_group_id(group_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def require_group_member(user: User, group_id: str) -> str:
-    """Validate the group ID and require group membership."""
-    safe_id = safe_group_id(group_id)
-    if safe_id not in user.all_groups:
-        raise HTTPException(status_code=403, detail=_NOT_A_MEMBER.current)
-    return safe_id
-
-
-def require_group_write(user: User, group_id: str) -> str:
-    """Validate the group ID and require group write access."""
-    safe_id = safe_group_id(group_id)
-    if safe_id not in user.write_groups:
-        raise HTTPException(status_code=403, detail=_WRITE_ACCESS_REQUIRED.current)
-    return safe_id
-
-
 def resolve_workspace_path(
     user: User, path: str, *, write: bool = False
 ) -> tuple[Casebase, str]:
@@ -292,15 +236,30 @@ def resolve_workspace_path(
         scope, local = WorkspaceScope.parse(path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    group_id = scope.group_id
-    if group_id is not None:
-        safe_id = (
-            require_group_write(user, group_id)
-            if write
-            else require_group_member(user, group_id)
+    try:
+        store = (
+            user.store
+            if scope.group_id is None
+            else user.group_store(scope.group_id, writable=write)
         )
-        store = group_store(safe_id)
-    else:
-        store = user_store(user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AccessDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return store, safe_path(local) if local else ""
 
+
+async def delete_user_data(user: User, *, exclude_client: str | None = None) -> None:
+    """Delete everything *user* owns and announce their emptied workspace.
+
+    The workspace (documents, cascading to chunks, and the directory) and the
+    conversations (rows and folders) go independently, and deleting the
+    ``User`` row then cascades to memory.  The user re-materialises lazily on
+    the next request.
+    """
+    store = user.store
+    await asyncio.gather(workspace.delete_all(store), delete_conversations(user))
+    await delete_user(user.id)
+    announce_workspace_changed(
+        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=exclude_client
+    )

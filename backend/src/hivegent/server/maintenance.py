@@ -27,7 +27,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from ..auth import get_current_user
 from ..db.application_settings import read_maintenance_enabled
-from ..types import User
+from ..store import User
 
 __all__ = [
     "MAINTENANCE_DETAIL",

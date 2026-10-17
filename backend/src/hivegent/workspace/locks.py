@@ -22,7 +22,7 @@ from .operations import Root
 
 __all__ = [
     "inflight_stems",
-    "store_lock",
+    "root_lock",
 ]
 
 
@@ -89,7 +89,17 @@ _locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
 
 def _lock_of(root: Root) -> asyncio.Lock:
-    """The lock guarding changes to *root*, whichever kind it is."""
+    """The lock guarding changes to *root*, whichever kind it is.
+
+    Every mutation takes it, so this is where a casebase granted for reading
+    only is refused, whichever surface the change came from.
+
+    Raises:
+        AccessDenied: When *root* is a casebase the caller may not write.
+    """
+    if root.store is not None:
+        root.store.require_writable()
+
     lock = _locks.get(root.store_key)
 
     if lock is None:
@@ -98,9 +108,9 @@ def _lock_of(root: Root) -> asyncio.Lock:
     return lock
 
 
-def store_lock(store: Casebase) -> asyncio.Lock:
-    """Return the asyncio lock guarding mutations on *store*."""
-    return _lock_of(store)
+def root_lock(root: Root) -> asyncio.Lock:
+    """Return the asyncio lock guarding changes to *root*, a casebase or a folder."""
+    return _lock_of(root)
 
 
 def inflight_stems(store: Casebase) -> frozenset[str]:

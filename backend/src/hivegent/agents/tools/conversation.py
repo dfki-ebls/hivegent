@@ -12,7 +12,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from ...db.conversations import ConversationData, ConversationSummary
+from ...db.conversations import (
+    ConversationData,
+    ConversationSummary,
+    owned_conversation,
+)
 from ...db.conversations import (
     list_conversations as _list_conversations,
 )
@@ -43,6 +47,7 @@ conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 _MAX_TOOL_CALL_CHARS = 200
 """Cap on one rendered tool call, which names what was done, not its result."""
+
 
 def _header(conversation: ConversationData | ConversationSummary) -> str:
     """The `id  date  title` line naming *conversation*."""
@@ -108,7 +113,7 @@ async def list_conversations(
     Metadata only: no message content is returned.  Pass an `id` from this
     listing verbatim to `get_conversation` to open a conversation.
     """
-    conversations = await _list_conversations(ctx.deps.store.id)
+    conversations = await _list_conversations(ctx.deps.user)
     formatted = "\n".join(map(_header, conversations)) or "(no conversations)"
 
     return wrap_tool_output(
@@ -127,7 +132,8 @@ async def get_conversation(
     Returns the conversation header plus messages so the LLM can scan
     them with its own filtering rather than a jq query.
     """
-    conv = await _load_conversation(ctx.deps.store.id, conversation_id)
+    owned = await owned_conversation(ctx.deps.user, conversation_id)
+    conv = None if owned is None else await _load_conversation(owned)
 
     if conv is None:
         raise ModelRetry(f"conversation '{conversation_id}' not found.")

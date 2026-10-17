@@ -6,16 +6,11 @@ from fastmcp.dependencies import CurrentAccessToken
 from fastmcp.server.auth import AccessToken
 from pydantic import Field
 
-from ..auth import resolve_group_claim
+from ..auth import dev_user, user_from_claims
 from ..config import settings
-from ..store import Casebase
+from ..store import User
 
-__all__ = [
-    "ExploreTaskArg",
-    "get_mcp_group_stores",
-    "get_mcp_user_id",
-    "get_mcp_user_store",
-]
+__all__ = ["ExploreTaskArg", "get_mcp_user"]
 
 ExploreTaskArg = Annotated[
     str,
@@ -23,38 +18,18 @@ ExploreTaskArg = Annotated[
 ]
 
 
-def get_mcp_user_id(
+async def get_mcp_user(
     access_token: AccessToken | None = CurrentAccessToken(),
-) -> str:
-    """Extract the user ID from the MCP auth token."""
+) -> User:
+    """Build the caller's :class:`User` from the MCP auth token.
+
+    The same construction the HTTP API uses, so an MCP client is granted
+    exactly the groups and permissions its token grants there.
+    """
     if not settings.auth.enable:
-        return "localhost"
+        return await dev_user()
+
     if access_token is None:
         raise RuntimeError("No authenticated user in MCP context")
-    sub = access_token.claims.get("sub")
-    if not isinstance(sub, str) or not sub:
-        raise RuntimeError("Token missing 'sub' claim")
-    return sub
 
-
-def get_mcp_user_store(
-    access_token: AccessToken | None = CurrentAccessToken(),
-) -> Casebase:
-    """Build the user's casebase from the MCP auth token."""
-    return Casebase.for_user(get_mcp_user_id(access_token))
-
-
-def get_mcp_group_stores(
-    access_token: AccessToken | None = CurrentAccessToken(),
-) -> tuple[Casebase, ...]:
-    """Build group casebases from the MCP auth token."""
-    if not settings.auth.enable:
-        return ()
-
-    if access_token is None:
-        return ()
-
-    return tuple(
-        Casebase.for_group(group_id)
-        for group_id in resolve_group_claim(access_token.claims)
-    )
+    return user_from_claims(access_token.claims)

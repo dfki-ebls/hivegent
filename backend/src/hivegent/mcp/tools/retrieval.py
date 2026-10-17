@@ -14,27 +14,19 @@ from ...config import settings
 from ...llm import model_from_config
 from ...llm_config import LlmConfig, resolve_llm_config
 from ...retrieval import build_search_tool
-from ...store import Casebase
+from ...store import User
 from ...tools import VectorSearchTool
 from ...tools.fastmcp import register_mcp_tools
 from ..app import mcp_app
-from ..common import (
-    ExploreTaskArg,
-    get_mcp_group_stores,
-    get_mcp_user_id,
-    get_mcp_user_store,
-)
+from ..common import ExploreTaskArg, get_mcp_user
 
 __all__ = [
     "explore_documents",
 ]
 
 
-def _search(
-    store: Casebase = Depends(get_mcp_user_store),
-    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
-) -> VectorSearchTool[RetrievedChunk]:
-    return build_search_tool((store, *group_stores))
+def _search(user: User = Depends(get_mcp_user)) -> VectorSearchTool[RetrievedChunk]:
+    return build_search_tool(user.stores())
 
 
 register_mcp_tools(
@@ -45,9 +37,7 @@ register_mcp_tools(
 @mcp_app.tool()
 async def explore_documents(
     task: ExploreTaskArg,
-    user_id: str = Depends(get_mcp_user_id),
-    store: Casebase = Depends(get_mcp_user_store),
-    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
+    user: User = Depends(get_mcp_user),
 ) -> str:
     """Explore documents with the configured subagent."""
     if not settings.llm.model:
@@ -56,12 +46,7 @@ async def explore_documents(
     result = await explore_agent.run(
         task,
         model=model_from_config(resolve_llm_config(LlmConfig(), tier="main")),
-        deps=UserDeps(
-            user_id=user_id,
-            store=store,
-            mode="read",
-            group_stores=group_stores,
-        ),
+        deps=UserDeps(user=user, mode="read"),
         capabilities=[SUBAGENT_CAPABILITIES["documents"]],
         usage_limits=turn_usage_limits,
     )

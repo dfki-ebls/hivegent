@@ -68,6 +68,7 @@ from hivegent.server.vercel import (
     dump_messages_with_ids,
     run_and_persist,
 )
+from hivegent.store import User
 from hivegent.types import (
     ClientConversation,
     ConversationArchive,
@@ -387,7 +388,9 @@ async def test_a_decision_note_reaches_the_model_and_the_reload(approved: bool) 
         tool_needs_approval=True,
     )
 
-    expected = ["written", approval_note_text(note)] if approved else denial_message(note)
+    expected = (
+        ["written", approval_note_text(note)] if approved else denial_message(note)
+    )
     assert [part.content for part in _parts(seen, ToolReturnPart)] == [expected]
     assert _tool_approvals(recorded[0]) == [(approved, note)]
 
@@ -487,9 +490,7 @@ async def _pending_question() -> list[ModelMessage]:
     return recorded[0]
 
 
-def _reply(
-    pending: Sequence[ModelMessage], output: object | None
-) -> UIMessage:
+def _reply(pending: Sequence[ModelMessage], output: object | None) -> UIMessage:
     """Echo the assistant message with its question answered, or dismissed for ``None``."""
     message = _ui_messages(pending)[-1]
     message.parts = [
@@ -733,7 +734,7 @@ async def test_import_conversation_rejects_empty_export() -> None:
     live database; the happy path is DB-backed and covered by smoke tests.
     """
     with pytest.raises(ValueError, match="no messages"):
-        await import_conversation("user-1", [])
+        await import_conversation(User("user-1"), [])
 
 
 class TestInstructionSnapshots:

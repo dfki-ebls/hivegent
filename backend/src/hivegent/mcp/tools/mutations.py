@@ -16,7 +16,7 @@ from ... import workspace
 from ...changes import Changeset
 from ...config import settings
 from ...humanize import pluralize
-from ...store import Casebase, build_search_paths
+from ...store import Casebase, User, build_search_paths
 from ...tools import EditDocumentTool, WriteDocumentTool
 from ...tools.base import SearchPath, ToolOutput, tool_description, translate_tool_retry
 from ...tools.mutations import (
@@ -30,7 +30,7 @@ from ...tools.mutations import (
     write_changeset,
 )
 from ..app import mcp_app
-from ..common import get_mcp_user_store
+from ..common import get_mcp_user
 from ..confirmation import MUTATION_ANNOTATIONS, PendingMutation, confirm_mutation
 
 __all__ = ["edit_document", "write_document"]
@@ -38,7 +38,7 @@ __all__ = ["edit_document", "write_document"]
 
 def _paths(store: Casebase) -> tuple[SearchPath, ...]:
     """The one root an MCP mutation reaches, with no conversation and so no ``/tmp``."""
-    return build_search_paths(store, (), settings.data_dir)[:1]
+    return build_search_paths((store,), settings.data_dir)
 
 
 def _gateway(store: Casebase) -> workspace.Gateway:
@@ -65,8 +65,10 @@ async def edit_document(
     edits: DocumentEditsArg,
     ctx: Context,
     expected_hash: ExpectedHashArg = None,
-    store: Casebase = Depends(get_mcp_user_store),
+    user: User = Depends(get_mcp_user),
 ) -> str | InputRequiredResult:
+    store = user.store
+
     with translate_tool_retry(ToolError):
         changeset = edit_changeset(_paths(store), file_path, edits, expected_hash)
 
@@ -100,8 +102,10 @@ async def write_document(
     ctx: Context,
     mode: WriteModeArg = "replace",
     expected_hash: ExpectedHashArg = None,
-    store: Casebase = Depends(get_mcp_user_store),
+    user: User = Depends(get_mcp_user),
 ) -> str | InputRequiredResult:
+    store = user.store
+
     with translate_tool_retry(ToolError):
         changeset = write_changeset(_paths(store), file_path, content, mode, expected_hash)
 

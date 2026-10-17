@@ -13,10 +13,11 @@ from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext
 
 from ..config import settings
+from ..db.conversations import OwnedConversation
 from ..l10n import DEFAULT_LANGUAGE, Language
 from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
-from ..store import Casebase, build_search_paths
+from ..store import Casebase, User, build_search_paths
 from ..tmp import tmp_search_path
 from ..tools.base import SearchPath, query_hint, resolve_accessible_file
 from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
@@ -62,9 +63,13 @@ class Completions(AbstractCapability[None]):
     are no such calls, so a subagent that meets the limit still ends the turn.
     """
 
-    max_calls: int = field(default_factory=lambda: settings.sandbox.completion_max_calls)
+    max_calls: int = field(
+        default_factory=lambda: settings.sandbox.completion_max_calls
+    )
     gate: asyncio.Semaphore = field(
-        default_factory=lambda: asyncio.Semaphore(settings.sandbox.completion_concurrency)
+        default_factory=lambda: asyncio.Semaphore(
+            settings.sandbox.completion_concurrency
+        )
     )
     calls: int = 0
     pending: int = 0
@@ -98,7 +103,10 @@ class Completions(AbstractCapability[None]):
         """Hold a request slot through one request, refusing one the parent's reserve needs."""
         limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
 
-        if limit is not None and ctx.usage.requests + self.pending + 1 + _PARENT_RESERVE > limit:
+        if (
+            limit is not None
+            and ctx.usage.requests + self.pending + 1 + _PARENT_RESERVE > limit
+        ):
             raise CompletionRefused(
                 "No request is left for another completion once the parent keeps "
                 "one for its response. Finish with the results already obtained."
@@ -115,24 +123,23 @@ class Completions(AbstractCapability[None]):
 
 @dataclass(slots=True, frozen=True)
 class UserDeps:
-    """Dependencies for user-specific agent operations."""
+    """Dependencies for user-specific agent operations.
 
-    user_id: str
-    store: Casebase
+    Every store the run reaches is derived from :attr:`user`, never passed in,
+    so a run holds exactly the workspaces the token grants and writes only the
+    ones it may write.
+    """
+
+    user: User
     mode: Mode
-    # The conversation the run belongs to, whose folder `/tmp` names.  A
-    # subagent shares its parent's, and a caller without one (MCP, the admin tool
-    # console) has no `/tmp`, so no root claims a path into it.
-    conversation_id: str | None = None
+    # The conversation the run belongs to, whose folder `/tmp` names, owned by
+    # `user`.  A subagent shares its parent's, and a caller without one (MCP,
+    # the admin tool console) has no `/tmp`, so no root claims a path into it.
+    conversation: OwnedConversation | None = None
     # The run's interface language, which selects the language of its
     # instructions and injected notes, while tool schemas and results stay
     # English.  The default serves runs without a user interface (MCP).
     language: Language = DEFAULT_LANGUAGE
-    group_stores: tuple[Casebase, ...] = ()
-    # The subset of `group_stores` the user may write to; the mutating tools
-    # search these instead of every readable one, so a document the user can
-    # only read is never offered as a write target.
-    write_group_stores: tuple[Casebase, ...] = ()
     document_filter: DocumentFilter | None = None
     group_filters: dict[str, DocumentFilter] = field(default_factory=dict)
     # Canonical paths the user pointed the conversation at.  Advisory: they are
@@ -155,10 +162,9 @@ class UserDeps:
     # where the streaming response drains it (None elsewhere disables it).
     subagent_sink: asyncio.Queue[SubagentUpdate] | None = None
 
-    @property
-    def all_stores(self) -> tuple[Casebase, ...]:
-        """All stores the user has access to (personal + group)."""
-        return (self.store, *self.group_stores)
+    def __post_init__(self) -> None:
+        if self.conversation is not None and self.conversation.user != self.user:
+            raise ValueError("a run's conversation must belong to its user")
 
     @property
     def can_write(self) -> bool:
@@ -173,10 +179,10 @@ class UserDeps:
     @property
     def tmp(self) -> SearchPath | None:
         """The conversation's ``/tmp``, ``None`` for a caller without one."""
-        if self.conversation_id is None:
+        if self.conversation is None:
             return None
 
-        return tmp_search_path(settings.data_dir, self.conversation_id)
+        return tmp_search_path(settings.data_dir, self.conversation)
 
     @property
     def withheld_tools(self) -> frozenset[str]:
@@ -185,8 +191,7 @@ class UserDeps:
 
     def _workspace_paths(self, *, writable: bool) -> tuple[SearchPath, ...]:
         return build_search_paths(
-            self.store,
-            self.write_group_stores if writable else self.group_stores,
+            self.user.stores(writable=writable),
             settings.data_dir,
             filter_for_store=self.filter_for_store,
         )
@@ -206,7 +211,9 @@ class UserDeps:
         since it is the conversation's own.
         """
         tmp = self.tmp
-        roots = self._workspace_paths(writable=True) if workspace and self.can_write else ()
+        roots = (
+            self._workspace_paths(writable=True) if workspace and self.can_write else ()
+        )
 
         return roots if tmp is None else (*roots, tmp)
 
@@ -235,7 +242,7 @@ class UserDeps:
         """
         hidden = frozenset(
             store.scope.render_filter_entry(entry)
-            for store in self.all_stores
+            for store in self.user.stores()
             if (document_filter := self.filter_for_store(store)) is not None
             for entry in document_filter.excluded
         )

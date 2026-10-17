@@ -9,7 +9,7 @@ from starlette.requests import Request
 
 from hivegent.server.app import validation_error_handler
 from hivegent.server.routes.conversations import _run_chat
-from hivegent.types import User
+from tests.helpers import owned
 
 
 def _request(body: dict[str, Any]) -> Request:
@@ -43,7 +43,7 @@ async def test_invalid_chat_configuration_returns_422(body: dict[str, Any]) -> N
     request = _request(body)
 
     with pytest.raises(ValidationError) as raised:
-        await _run_chat("conversation", request, User(id="user"))
+        await _run_chat(owned("conversation"), request)
 
     response = await validation_error_handler(request, raised.value)
 

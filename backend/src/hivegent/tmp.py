@@ -1,57 +1,55 @@
 """A conversation's ``/tmp``: its working files, outside every workspace.
 
-Each chat conversation owns one folder, ``<data_dir>/tmp/<conversation_id>/``,
-and every agent surface spells it ``/tmp``: the read and write tools, a tool
-result too large to show whole, and a sandboxed program, where it is mounted at
-``/tmp``.  It lives for the conversation like ``/tmp`` lives for a container
-session, and is never indexed, searched, or announced.
+Each chat conversation owns one folder below its own
+(:meth:`~hivegent.db.conversations.OwnedConversation.folder`), and every agent
+surface spells it ``/tmp``: the read and write tools, a tool result too large to
+show whole, and a sandboxed program, where it is mounted at ``/tmp``.  It lives
+for the conversation like ``/tmp`` lives for a container session, and is never
+indexed, searched, or announced.
 
 Its changes commit through the one changeset gateway as a
 :class:`~hivegent.workspace.operations.Folder`, written directly with no
-approval, while this module keeps what is ``/tmp``'s own: the folder's
-lifecycle, its size cap, and the saved tool results only the host writes and
-the cap may evict.
+approval, while this module keeps what is ``/tmp``'s own: its size cap, the
+saved tool results only the host writes and the cap may evict, and the copy a
+compacted conversation starts with.
 
 There is no user level: conversation ids are server-generated keys and the
 ``conversations`` row names the one user a folder belongs to, so ownership is
-read from the database and never from the path.  :func:`tmp_dir` is the one
-place an id becomes a path, and it refuses an id that is no safe path segment.
-
-A folder ends three ways: deleting its conversation, the user clearing every
-one of theirs (both look the ids up in the database), and :func:`sweep_tmp`,
-which also catches what the first two cannot see, a conversation that went with
-its user or a turn that never persisted one.
+read from the database and never from the path.  :func:`tmp_dir` takes only an
+:class:`~hivegent.db.conversations.OwnedConversation`, and the folder ends with
+its conversation's (:mod:`hivegent.conversation_files`).
 """
 
 import asyncio
 import shutil
-import time
 from collections.abc import Iterable
-from itertools import chain
 from pathlib import Path
 
 from .changes import Changeset, Write
-from .config import sanitize_conversation_id, settings
-from .db.conversations import existing_conversation_ids
-from .files import remove_path
+from .config import settings
+from .db.conversations import OwnedConversation
+from .files import remove_path, remove_paths, touched_since
 from .tools.base import Direct, SearchPath, ToolRetry
 from .tools.mutations import mutation_errors
 from .tools.scope import PrefixScope
 from .workspace import Gateway
-from .workspace.locks import _locked
 from .workspace.operations import Folder, Quota
 
 __all__ = [
+    "TMP_FOLDER",
     "TMP_SCOPE",
     "clear_tmp",
     "copy_tmp",
-    "remove_tmp",
+    "expire_tmp",
     "save_result",
-    "sweep_tmp",
     "tmp_dir",
+    "tmp_expired",
     "tmp_root",
     "tmp_search_path",
 ]
+
+TMP_FOLDER = "tmp"
+"""The folder below a conversation's own that ``/tmp`` names."""
 
 TMP_SCOPE = PrefixScope("/tmp")
 """How every agent surface spells a conversation's folder."""
@@ -63,22 +61,18 @@ _POLICY = Direct(reserved=_RESULTS_DIR)
 """Written directly, the saved results kept for the host."""
 
 
-def _tmp_root(data_dir: Path) -> Path:
-    return data_dir / "tmp"
+def tmp_dir(data_dir: Path, conversation: OwnedConversation) -> Path:
+    """The folder ``/tmp`` names for *conversation*, without creating it.
 
-
-def tmp_dir(data_dir: Path, conversation_id: str) -> Path:
-    """The folder ``/tmp`` names for *conversation_id*, without creating it.
-
-    Raises:
-        ValueError: When *conversation_id* is no safe path segment.
+    Only an :class:`OwnedConversation` names one, so no caller reaches the
+    folder of a conversation its user does not own.
     """
-    return _tmp_root(data_dir) / sanitize_conversation_id(conversation_id)
+    return conversation.folder(data_dir) / TMP_FOLDER
 
 
-def tmp_search_path(data_dir: Path, conversation_id: str) -> SearchPath:
+def tmp_search_path(data_dir: Path, conversation: OwnedConversation) -> SearchPath:
     """The ``/tmp`` root a conversation's run resolves against, written directly."""
-    return SearchPath(path=tmp_dir(data_dir, conversation_id), scope=TMP_SCOPE, policy=_POLICY)
+    return SearchPath(path=tmp_dir(data_dir, conversation), scope=TMP_SCOPE, policy=_POLICY)
 
 
 def tmp_root(folder: Path) -> Folder:
@@ -119,29 +113,40 @@ def _files(folder: Path) -> int:
     return sum(len(files) for _, _, files in folder.walk()) if folder.is_dir() else 0
 
 
-async def remove_tmp(ids: Iterable[str]) -> None:
-    """Delete the folders of the conversations *ids*."""
-    folders = [tmp_dir(settings.data_dir, cid) for cid in ids]
+async def clear_tmp(conversations: Iterable[OwnedConversation]) -> int:
+    """Empty the ``/tmp`` of *conversations*, returning how many files it held.
 
-    await asyncio.to_thread(lambda: [remove_path(folder) for folder in folders])
-
-
-async def clear_tmp(ids: Iterable[str]) -> int:
-    """Delete the folders of the conversations *ids*, returning how many files they held."""
-    folders = [tmp_dir(settings.data_dir, cid) for cid in ids]
+    Their staged changesets are pending approvals rather than temporary files,
+    so they stay.
+    """
+    folders = [tmp_dir(settings.data_dir, conversation) for conversation in conversations]
 
     def clear() -> int:
-        count = sum(map(_files, folders))
+        files = sum(map(_files, folders))
+        remove_paths(folders)
 
-        for folder in folders:
-            remove_path(folder)
-
-        return count
+        return files
 
     return await asyncio.to_thread(clear)
 
 
-async def copy_tmp(source: str, target: str) -> None:
+def tmp_expired(folder: Path, cutoff: float) -> bool:
+    """Whether the ``/tmp`` in a conversation *folder* went unchanged since *cutoff*.
+
+    Judged by the newest change anywhere in it, so one in use never expires.
+    """
+    tmp = folder / TMP_FOLDER
+
+    return tmp.is_dir() and not touched_since(tmp, cutoff)
+
+
+def expire_tmp(folder: Path, cutoff: float) -> None:
+    """Remove the ``/tmp`` in a conversation *folder* once :func:`tmp_expired`."""
+    if tmp_expired(folder, cutoff):
+        remove_path(folder / TMP_FOLDER)
+
+
+async def copy_tmp(source: OwnedConversation, target: OwnedConversation) -> None:
     """Give conversation *target* a copy of *source*'s folder.
 
     A compacted conversation continues its source, whose summary may name the
@@ -157,74 +162,3 @@ async def copy_tmp(source: str, target: str) -> None:
             symlinks=True,
             dirs_exist_ok=True,
         )
-
-
-def _touched_since(path: Path, cutoff: float) -> bool:
-    """Whether anything at or below *path* changed after *cutoff*, stopping at the first.
-
-    A file that vanishes while the folder is walked was just in use, so it
-    counts as touched rather than failing the sweep of every other folder.
-    """
-    return any(_mtime(entry) >= cutoff for entry in chain((path,), path.rglob("*")))
-
-
-def _mtime(path: Path) -> float:
-    """When *path* last changed, now for a path that no longer exists."""
-    try:
-        return path.lstat().st_mtime
-    except FileNotFoundError:
-        return time.time()
-
-
-def _remove_if_idle(folder: Path, cutoff: float) -> bool:
-    if _touched_since(folder, cutoff):
-        return False
-
-    remove_path(folder)
-
-    return True
-
-
-async def sweep_tmp() -> int:
-    """Delete stale and orphaned folders, returning how many went.
-
-    Stale is untouched for ``tmp.ttl_hours``.  Orphaned is naming no
-    conversation row, which a user deletion cascades away without asking this
-    module, but only once it sat untouched for a sweep interval: a new
-    conversation's row is written when its first turn ends, so a folder that
-    turn is still using has none yet.  Only those idle folders are looked up.
-    """
-    root = _tmp_root(settings.data_dir)
-
-    if not root.is_dir():
-        return 0
-
-    now = time.time()
-    stale = now - settings.tmp.ttl_hours * 3600
-    orphaned = now - settings.tmp.sweep_interval_hours * 3600
-
-    def candidates() -> tuple[list[Path], list[Path]]:
-        expired: list[Path] = []
-        idle: list[Path] = []
-
-        for folder in root.iterdir():
-            if not _touched_since(folder, stale):
-                expired.append(folder)
-            elif not _touched_since(folder, orphaned):
-                idle.append(folder)
-
-        return expired, idle
-
-    expired, idle = await asyncio.to_thread(candidates)
-    live = await existing_conversation_ids([folder.name for folder in idle])
-    orphans = [folder for folder in idle if folder.name not in live]
-    removed = 0
-
-    for folder, cutoff in chain(
-        ((folder, stale) for folder in expired),
-        ((folder, orphaned) for folder in orphans),
-    ):
-        async with _locked(tmp_root(folder)):
-            removed += await asyncio.to_thread(_remove_if_idle, folder, cutoff)
-
-    return removed

@@ -265,9 +265,9 @@ def _environ(deps: UserDeps) -> dict[str, str]:
     the conversation has one.
     """
     environ = {
-        "HOME": str(WORKSPACE_MOUNT / deps.store.scope.prefix),
-        "USER": deps.user_id,
-        "LOGNAME": deps.user_id,
+        "HOME": str(WORKSPACE_MOUNT / deps.user.store.scope.prefix),
+        "USER": deps.user.id,
+        "LOGNAME": deps.user.id,
     }
 
     if deps.tmp is not None:

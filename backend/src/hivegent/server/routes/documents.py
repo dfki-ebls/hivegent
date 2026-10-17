@@ -23,17 +23,17 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
 from starlette.responses import FileResponse, Response
 
 from ... import workspace
-from ...auth import User, get_current_user
+from ...auth import get_current_user
 from ...changes import Changeset, WorkspaceChanged, Write
 from ...chunkers.base import DocumentMetadata
 from ...config import settings
-from ...db.conversations import conversation_exists
+from ...db.conversations import OwnedConversation, owned_conversation
 from ...db.documents import get_document, get_line_counts
 from ...humanize import format_bytes, pluralize
 from ...jobs import JobContext, JobView, JobWork, manager
 from ...l10n import Localized
 from ...llm_config import LlmConfig
-from ...store import Casebase
+from ...store import Casebase, User
 from ...tmp import TMP_SCOPE, tmp_search_path
 from ...tools.base import resolve_accessible_file
 from ...types import (
@@ -629,13 +629,9 @@ async def write_document(
     )
 
 
-def _tmp_file(conversation_id: str, filepath: str) -> Path | None:
-    """The file *filepath* names in the ``/tmp`` of *conversation_id*, as the agent's tools resolve it."""
-    try:
-        root = tmp_search_path(settings.data_dir, conversation_id)
-    except ValueError:
-        return None
-
+def _tmp_file(conversation: OwnedConversation, filepath: str) -> Path | None:
+    """The file *filepath* names in the ``/tmp`` of *conversation*, as the agent's tools resolve it."""
+    root = tmp_search_path(settings.data_dir, conversation)
     resolved = resolve_accessible_file((root,), filepath)
 
     return None if resolved is None else resolved[2]
@@ -657,10 +653,12 @@ async def get_document_content(
 
         return await get_document_response(store, safe)
 
-    if not await conversation_exists(user.id, conversation_id):
+    conversation = await owned_conversation(user, conversation_id)
+
+    if conversation is None:
         raise HTTPException(status_code=404, detail=document_not_found(filepath).current)
 
-    return await get_file_response(lambda: _tmp_file(conversation_id, filepath), filepath)
+    return await get_file_response(lambda: _tmp_file(conversation, filepath), filepath)
 
 
 @router.get("/directories/{scope}")

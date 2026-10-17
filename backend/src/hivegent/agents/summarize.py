@@ -243,6 +243,9 @@ async def _ask(
         capabilities=run.capabilities,
         instructions=run.instructions,
         usage_limits=_COMPACT_LIMITS,
+        conversation_id=None
+        if run.deps.conversation is None
+        else run.deps.conversation.id,
     )
 
     return result.output.strip()

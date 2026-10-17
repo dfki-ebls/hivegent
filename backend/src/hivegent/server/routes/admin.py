@@ -19,22 +19,19 @@ leaves the deployment in the same state as a clean checkout.
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import delete
 
 from ... import workspace
 from ...auth import require_admin
-from ...changes import WorkspaceChanged
 from ...config import settings
+from ...conversation_files import reset_conversation_files
 from ...db.application_settings import write_maintenance_enabled
 from ...db.documents import delete_all_documents
-from ...db.engine import session
-from ...db.groups import delete_all_groups, list_groups_with_counts
-from ...db.models import Group, User
-from ...db.users import delete_all_users, delete_user, list_users_with_counts
+from ...db.groups import list_groups_with_counts
+from ...db.users import delete_all_identities, list_users_with_counts
 from ...humanize import pluralize
 from ...l10n import Localized
 from ...reconcile import reconcile_all
-from ...store import Casebase
+from ...store import Casebase, User
 from ...types import (
     AdminFactoryResetResponse,
     AdminGroupInfo,
@@ -45,7 +42,7 @@ from ...types import (
     AdminResetResponse,
     AdminUserInfo,
 )
-from ...workspace_events import announce_workspace_changed
+from ..common import delete_user_data
 from ..maintenance import is_enabled, set_enabled
 
 __all__ = ["router"]
@@ -174,15 +171,13 @@ async def admin_reset_database() -> AdminResetResponse:
 
     Cascade chain (see ``backend/src/hivegent/db/models.py``):
     users → memory, conversations (→ messages), documents (→ chunks);
-    groups → group documents.  The workspace tree on disk is not
-    touched.
+    groups → group documents.  The conversations' folders go with them,
+    while the workspace tree on disk is not touched.
 
-    Both deletes run in a single session so a crash between them cannot
-    leave the database in a half-wiped state.
+    Both deletes run in one transaction (:func:`delete_all_identities`).
     """
-    async with session() as s:
-        await s.execute(delete(User))
-        await s.execute(delete(Group))
+    await delete_all_identities()
+    await reset_conversation_files()
     return AdminResetResponse(
         action="reset_database",
         message="All users, groups, and dependent rows removed",
@@ -209,14 +204,13 @@ async def admin_reindex() -> AdminReindexResponse:
 
 @router.post("/reset/factory")
 async def admin_factory_reset() -> AdminFactoryResetResponse:
-    """Composite full reset: workspace + SQL.
+    """Composite full reset: workspace, conversation folders, and SQL.
 
     Idempotent — re-running on a clean tree is a no-op.  Leaves the
     deployment in the same shape as a fresh checkout.
     """
-    await workspace.delete_workspace_root()
-    await delete_all_users()
-    await delete_all_groups()
+    await asyncio.gather(workspace.delete_workspace_root(), reset_conversation_files())
+    await delete_all_identities()
     return AdminFactoryResetResponse(
         actions=["reset_workspace", "reset_database"],
         message="Factory reset complete",
@@ -236,7 +230,7 @@ def _casebase_or_400(kind: str, identifier: str) -> Casebase:
         return (
             Casebase.for_user(identifier)
             if kind == "user"
-            else Casebase.for_group(identifier)
+            else Casebase.for_group(identifier, writable=True)
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -244,19 +238,12 @@ def _casebase_or_400(kind: str, identifier: str) -> Casebase:
 
 @router.delete("/users/{user_id}/data", status_code=status.HTTP_204_NO_CONTENT)
 async def admin_delete_user_data(user_id: str) -> None:
-    """Wipe all data owned by a single user.
+    """Wipe all data owned by a single user (:func:`delete_user_data`).
 
-    ``workspace.delete_all`` clears documents (cascades to chunks via
-    FK ``ON DELETE CASCADE``) and the workspace directory.  Removing
-    the ``User`` row then cascades to memory and conversations.  The
-    user re-materialises lazily on the next request.
+    The wiped user is never the caller here, so every one of their tabs is told.
     """
     store = _casebase_or_400("user", user_id)
-    await workspace.delete_all(store)
-    await delete_user(store.id)
-    # The wiped user is never the caller here, so every one of their tabs needs
-    # telling — none of them made this request.
-    announce_workspace_changed(store.id, WorkspaceChanged((store.scope.prefix,)))
+    await delete_user_data(User(id=store.id))
 
 
 @router.delete("/groups/{group_id}/data", status_code=status.HTTP_204_NO_CONTENT)

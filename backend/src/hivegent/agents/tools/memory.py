@@ -17,5 +17,5 @@ async def save_memory(ctx: RunContext[UserDeps], content: MemoryContentArg) -> s
     Overwrites the entire memory, so always include previously saved information
     you want to retain.
     """
-    await _save_memory(ctx.deps.user_id, content)
+    await _save_memory(ctx.deps.user, content)
     return "Memory saved successfully."

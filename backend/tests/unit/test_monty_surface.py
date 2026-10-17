@@ -33,7 +33,7 @@ from hivegent.agents.tools.python import (
 )
 from hivegent.agents.tools.web import WEB_FACTORIES, web_enabled
 from hivegent.config import settings
-from hivegent.store import Casebase
+from hivegent.store import User
 from hivegent.tools.base import (
     AsyncTool,
     CallBudget,
@@ -84,7 +84,9 @@ class _Search(AsyncTool[list[Hit]]):
     """Search the things."""
 
     @override
-    async def __call__(self, query: QueryArg, limit: LimitArg = 5) -> ToolOutput[list[Hit]]:
+    async def __call__(
+        self, query: QueryArg, limit: LimitArg = 5
+    ) -> ToolOutput[list[Hit]]:
         """Find matching records.
 
         A second paragraph the stub must leave out, since the tool list already
@@ -124,7 +126,7 @@ def deps(data_dir: Path) -> UserDeps:
     """A run with one personal workspace and nothing withheld."""
     _ = data_dir
 
-    return UserDeps(user_id="u", store=Casebase.for_user("u"), mode="interactive")
+    return UserDeps(user=User("u"), mode="interactive")
 
 
 class TestStub:
@@ -213,7 +215,9 @@ class TestInsideTheSandbox:
     @pytest.fixture()
     async def tool(self) -> AsyncIterator[RunPythonTool]:
         async with AsyncMonty(min_processes=1) as pool:
-            yield RunPythonTool(pool=pool, changeset_limits=LIMITS, surface=_surface(_search))
+            yield RunPythonTool(
+                pool=pool, changeset_limits=LIMITS, surface=_surface(_search)
+            )
 
     async def test_a_program_awaits_the_call_and_works_on_the_whole_result(
         self, tool: RunPythonTool
@@ -229,7 +233,9 @@ class TestInsideTheSandbox:
 
         assert result.data.result == "['a.md']"
 
-    async def test_host_calls_are_capped_and_recorded(self, tool: RunPythonTool) -> None:
+    async def test_host_calls_are_capped_and_recorded(
+        self, tool: RunPythonTool
+    ) -> None:
         program = """
 await search(query='a')
 await search(query='b')
@@ -242,11 +248,18 @@ refused
         result = await replace(tool, max_host_calls=2)(program)
 
         assert "limit of 2 host function calls" in str(result.data.result)
-        assert [call.arguments for call in result.data.calls] == ["query='a'", "query='b'"]
+        assert [call.arguments for call in result.data.calls] == [
+            "query='a'",
+            "query='b'",
+        ]
         assert result.data.calls[0].result == "[{'filename': 'a.md', 'score': 0.5}]"
 
-    async def test_a_failure_lists_the_calls_that_finished(self, tool: RunPythonTool) -> None:
-        with pytest.raises(ToolRetry, match=r"1 host call finished(.|\n)*search\(query='a'\) -> \["):
+    async def test_a_failure_lists_the_calls_that_finished(
+        self, tool: RunPythonTool
+    ) -> None:
+        with pytest.raises(
+            ToolRetry, match=r"1 host call finished(.|\n)*search\(query='a'\) -> \["
+        ):
             await tool("await search(query='a')\n1 / 0")
 
     async def test_type_checking_rejects_a_misread_field_before_the_run(
@@ -354,9 +367,7 @@ def test_a_run_given_no_tool_opens_no_api_block(
     This is what the truthiness above is for: it silently never fired, so a run
     with every injectable tool withheld opened the block over nothing.
     """
-    monkeypatch.setattr(
-        settings.tools, "disabled", sorted(SANDBOX_FUNCTION_NAMES)
-    )
+    monkeypatch.setattr(settings.tools, "disabled", sorted(SANDBOX_FUNCTION_NAMES))
     context = run_context(deps)
 
     assert not sandbox_surface(context)
@@ -412,7 +423,9 @@ class TestComplete:
     ) -> None:
         """The budget is the turn's, so its end is an exception the program catches."""
         monkeypatch.setattr(
-            llm, "model_from_config", lambda _config: TestModel(custom_output_text="sunny")
+            llm,
+            "model_from_config",
+            lambda _config: TestModel(custom_output_text="sunny"),
         )
         context = run_context(replace(deps, completions=Completions(max_calls=1)))
         program = """
@@ -470,7 +483,9 @@ except RuntimeError:
         started: list[list[ModelMessage]] = []
         both_started = asyncio.Event()
 
-        async def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        async def respond(
+            _messages: list[ModelMessage], _info: AgentInfo
+        ) -> ModelResponse:
             started.append(_messages)
 
             if len(started) == 2:
@@ -480,7 +495,9 @@ except RuntimeError:
 
             return ModelResponse(parts=[TextPart("sunny")])
 
-        monkeypatch.setattr(llm, "model_from_config", lambda _config: FunctionModel(respond))
+        monkeypatch.setattr(
+            llm, "model_from_config", lambda _config: FunctionModel(respond)
+        )
         context = run_context(deps)
         context.usage.requests = 1
         context.usage_limits = UsageLimits(request_limit=4)
@@ -504,9 +521,13 @@ except RuntimeError:
     async def test_retries_cannot_consume_reserved_slots(
         self, deps: UserDeps, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(llm, "_completion_agent", Agent(output_type=Literal["ok"], retries=2))
         monkeypatch.setattr(
-            llm, "model_from_config", lambda _config: TestModel(custom_output_args={"response": "invalid"})
+            llm, "_completion_agent", Agent(output_type=Literal["ok"], retries=2)
+        )
+        monkeypatch.setattr(
+            llm,
+            "model_from_config",
+            lambda _config: TestModel(custom_output_args={"response": "invalid"}),
         )
         context = run_context(deps)
         context.usage.requests = 1

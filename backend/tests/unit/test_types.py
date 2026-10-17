@@ -7,7 +7,7 @@ import pytest
 from hivegent.agents.common import UserDeps
 from hivegent.prompts import format_document_scope
 from hivegent.server.common import parse_document_scope
-from hivegent.store import Casebase
+from hivegent.store import Casebase, User
 from hivegent.types import DocumentFilter
 
 
@@ -123,10 +123,8 @@ class TestDescribeDocumentScope:
         group_filters: dict[str, DocumentFilter] | None = None,
     ) -> UserDeps:
         return UserDeps(
-            user_id="u",
-            store=Casebase.for_user("u"),
+            user=User("u", write_groups=frozenset({"team"})),
             mode="interactive",
-            group_stores=(Casebase.for_group("team"),),
             document_filter=document_filter,
             group_filters=group_filters or {},
             relevant_documents=relevant_documents,

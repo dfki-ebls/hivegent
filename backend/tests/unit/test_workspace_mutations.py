@@ -216,7 +216,7 @@ class TestCanonicalPathsInMessages:
             return None
 
         monkeypatch.setattr(changeset, "chunk_and_index_document", _noop)
-        store = Casebase.for_group("team")
+        store = Casebase.for_group("team", writable=True)
         store.workspace_dir(data_dir).mkdir(parents=True, exist_ok=True)
 
         receipt = await _write(store, "notes.md", "hi")

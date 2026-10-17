@@ -37,7 +37,7 @@ from ..llm_config import LlmConfig
 from ..store import Casebase
 from ..types import PipelineSpec, ProgressReporter, UploadCompleteEvent
 from .indexing import chunk_and_index_document
-from .locks import _add_inflight, _discard_inflight, _locked_for, store_lock
+from .locks import _add_inflight, _discard_inflight, _locked_for, root_lock
 from .metadata import _merge_entry_paths
 from .paths import (
     _check_destination_parents,
@@ -218,7 +218,7 @@ async def _apply_prepared(
     reserved: _Reserved,
 ) -> UploadCompleteEvent:
     """Land a prepared upload: files under the lock, index without it."""
-    async with store_lock(store):
+    async with root_lock(store):
         written = await _write_prepared_files(store, prepared, reserved)
 
     return await _index_prepared(store, prepared, written, spec)
@@ -374,7 +374,7 @@ async def _phased_upload(
             # A new entry's partial artifacts are rolled back; a pre-existing entry
             # is left untouched (prepare never wrote into the workspace).
             if not reserved.preserve:
-                async with store_lock(store):
+                async with root_lock(store):
                     await shield_to_completion(
                         _safe_delete_locked(store, reserved.reference)
                     )

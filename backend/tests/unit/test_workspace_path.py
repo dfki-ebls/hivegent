@@ -1,11 +1,14 @@
 """Unit tests for canonical workspace-path resolution and its permission boundary."""
 
+from pathlib import Path
+
 import pytest
 from fastapi import HTTPException
 
+from hivegent.db import documents as db_documents
 from hivegent.server.common import resolve_workspace_path
-from hivegent.store import Casebase
-from hivegent.types import User
+from hivegent.store import AccessDenied, Casebase, User
+from hivegent.workspace import locks
 from hivegent.workspace.paths import _check_not_reserved_path
 
 _USER = User(
@@ -71,3 +74,38 @@ def test_assets_are_closed_to_the_generic_api() -> None:
 def test_ordinary_paths_pass_the_reserved_check() -> None:
     _check_not_reserved_path("notes/report.md")
     _check_not_reserved_path("notes/tmp/report.md")
+
+
+def test_group_stores_carry_the_token_grant() -> None:
+    assert [(s.id, s.writable) for s in _USER.group_stores()] == [
+        ("readers", False),
+        ("team", True),
+    ]
+    assert [s.id for s in _USER.group_stores(writable=True)] == ["team"]
+
+
+def test_locate_refuses_a_symlink_out_of_the_workspace(data_dir: Path) -> None:
+    other = Casebase.for_user("bob").workspace_dir(data_dir)
+    (other / "secret.md").write_text("bob's")
+    workspace = _USER.store.workspace_dir(data_dir)
+    (workspace / "link.md").symlink_to(other / "secret.md")
+    (workspace / "own.md").write_text("alice's")
+
+    assert _USER.store.locate("link.md") is None
+    assert _USER.store.locate("../user:bob/secret.md") is None
+    assert _USER.store.locate("own.md") == workspace.resolve() / "own.md"
+
+
+def test_a_read_grant_is_refused_by_every_write_path() -> None:
+    readers = _USER.group_store("readers")
+
+    with pytest.raises(AccessDenied):
+        locks._lock_of(readers)
+
+    with pytest.raises(AccessDenied):
+        db_documents._writable_filter(readers)
+
+    with pytest.raises(AccessDenied):
+        db_documents._owner_kwargs(readers)
+
+    _ = locks._lock_of(_USER.group_store("team", writable=True))

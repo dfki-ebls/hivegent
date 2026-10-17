@@ -18,12 +18,11 @@ from hivegent.agents.capabilities import (
 )
 from hivegent.agents.common import UserDeps, scope_instructions
 from hivegent.agents.tools.python import sandbox_surface
-from hivegent.auth import User
 from hivegent.prompts import GROUNDING_INSTRUCTIONS
 from hivegent.server.routes.meta import list_tools
-from hivegent.store import Casebase
+from hivegent.store import User
 from hivegent.types import Mode, ToolsSpec
-from tests.helpers import run_context
+from tests.helpers import owned, run_context
 
 _EXPLORE = next(feature for feature in FEATURES if feature.id == "explore")
 
@@ -109,7 +108,7 @@ def _request_params(
 ) -> ModelRequestParameters:
     """Run one turn against a stub model and capture what it was handed."""
 
-    async def _memory(_user_id: str) -> str:
+    async def _memory(_user: User) -> str:
         return "remembered"
 
     monkeypatch.setattr(capabilities, "load_memory", _memory)
@@ -120,9 +119,9 @@ def _request_params(
         return ModelResponse(parts=[TextPart("ok")])
 
     deps = UserDeps(
-        user_id="u",
-        store=Casebase(kind="user", id="u"),
+        user=User("u"),
         mode=mode,
+        conversation=owned("c1"),
         relevant_documents=relevant,
     )
     user_agent.run_sync(
@@ -154,14 +153,18 @@ def test_the_cacheable_prefix_survives_a_changed_document_selection(
     assert static_part(frozenset({"~/a.md"})) == static_part(frozenset({"~/b.md"}))
 
 
-def _tool_names(monkeypatch: pytest.MonkeyPatch, mode: Mode = "interactive") -> set[str]:
+def _tool_names(
+    monkeypatch: pytest.MonkeyPatch, mode: Mode = "interactive"
+) -> set[str]:
     """Every tool one run in *mode* would hand the model."""
     params = _request_params(monkeypatch, relevant=frozenset(), mode=mode)
 
     return {tool.name for tool in params.function_tools}
 
 
-def test_read_mode_writes_tmp_but_stages_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_mode_writes_tmp_but_stages_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`/tmp` is writable in every mode, so the write tools stay, but nothing stages."""
     monkeypatch.setattr(capabilities.settings.tools, "disabled", [])
     names = _tool_names(monkeypatch, "read")
@@ -199,7 +202,7 @@ def test_the_shape_specific_readers_are_never_merely_hinted_at(
     assert {"jq", "read_binary_document", "query_table"} <= names
 
     declared = sandbox_surface(
-        run_context(UserDeps(user_id="u", store=Casebase.for_user("u"), mode="interactive"))
+        run_context(UserDeps(user=User("u"), mode="interactive"))
     ).declarations
     assert "async def query_table(" in declared
 
@@ -250,9 +253,7 @@ def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
         user_agent.run_sync(
             "hi",
             model=FunctionModel(respond),
-            deps=UserDeps(
-                user_id="u", store=Casebase(kind="user", id="u"), mode="interactive"
-            ),
+            deps=UserDeps(user=User("u"), mode="interactive"),
             capabilities=build_capabilities(
                 ToolsSpec(), extra=[extra], mode="interactive", language="en"
             ),

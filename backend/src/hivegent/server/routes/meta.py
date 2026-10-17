@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...agents import collect_tool_schemas, unlisted_tool_names
-from ...auth import User, get_current_user
+from ...auth import get_current_user
 from ...chunkers import (
     ChunkingPipeline,
     get_chunking_pipeline_config,
@@ -23,6 +23,7 @@ from ...converters import (
 )
 from ...mcp import build_mcp_toolset, validate_mcp_servers
 from ...pipeline_registry import PipelineConfigInfo
+from ...store import User
 from ...transparency import get_transparency_config
 from ...types import (
     AttachmentLimits,

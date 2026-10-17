@@ -18,9 +18,9 @@ from ...agents import (
     collect_tool_schemas,
     invoke_agent_tool,
 )
-from ...auth import User, require_admin
+from ...auth import require_admin
+from ...store import User
 from ...types import ToolRunResult, ToolSchema
-from ..common import group_stores, user_store
 
 __all__ = ["router"]
 
@@ -47,13 +47,7 @@ async def run_tool(
     ``ok=False`` and a message so they can be inspected in the console rather
     than surfacing as opaque HTTP errors. An unknown tool name is a 404.
     """
-    deps = UserDeps(
-        user_id=user.id,
-        store=user_store(user),
-        mode="write",
-        group_stores=group_stores(user),
-        write_group_stores=group_stores(user, writable=True),
-    )
+    deps = UserDeps(user=user, mode="write")
     text: str | None = None
     data: Any = None
     error: str | None = None

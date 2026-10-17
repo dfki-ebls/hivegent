@@ -19,7 +19,8 @@ import contextlib
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Self
 
 from pydantic import (
     BaseModel,
@@ -36,11 +37,23 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
-from sqlalchemy import CTE, ColumnElement, delete, func, literal, or_, select, update
+from sqlalchemy import (
+    CTE,
+    ColumnElement,
+    and_,
+    delete,
+    func,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from ..config import sanitize_conversation_id
 from ..l10n import Localized
+from ..store import User
 from ._common import affected_rows, new_id
 from .engine import session
 from .models import Conversation, Message
@@ -51,9 +64,8 @@ __all__ = [
     "ConversationData",
     "ConversationSummary",
     "MessagePair",
+    "OwnedConversation",
     "append_branch",
-    "conversation_exists",
-    "conversation_ids",
     "create_compacted_conversation",
     "delete_all_conversations",
     "existing_conversation_ids",
@@ -64,10 +76,47 @@ __all__ = [
     "load_active_for_display",
     "load_conversation",
     "load_conversation_summary",
+    "owned_conversation",
+    "owned_conversations",
     "remove_conversation",
     "resolve_fork",
     "set_conversation_title",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class OwnedConversation:
+    """A conversation id together with the user it belongs to.
+
+    Built only by :func:`owned_conversation` and its siblings, which read the
+    owner from the database, or by :meth:`mint`, so holding one is the proof
+    of ownership the message tree and the conversation's :meth:`folder`
+    require.  The id is checked to be a safe path segment, since it names it.
+    """
+
+    user: User
+    id: str
+
+    def __post_init__(self) -> None:
+        sanitize_conversation_id(self.id)
+
+    @classmethod
+    def mint(cls, user: User) -> Self:
+        """A fresh conversation for *user*, whose row its first persisted turn creates."""
+        return cls(user, new_id())
+
+    @staticmethod
+    def root(data_dir: Path) -> Path:
+        """Where every conversation's :meth:`folder` lives."""
+        return data_dir / "conversations"
+
+    def folder(self, data_dir: Path) -> Path:
+        """The one folder holding what this conversation keeps on disk, without creating it.
+
+        Its ``/tmp`` and its staged changesets live below it, so deleting the
+        conversation's files is deleting this folder.
+        """
+        return self.root(data_dir) / self.id
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,25 +382,50 @@ def _to_summary(conv: Conversation) -> ConversationSummary:
 # ─── Reads ─────────────────────────────────────────────────────────────
 
 
-async def _get_owned(
-    s: AsyncSession, user_id: str, conversation_id: str
-) -> Conversation | None:
-    """Return the conversation if it exists and is owned by ``user_id``."""
-    conv = await s.get(Conversation, conversation_id)
-    if conv is None or conv.user_id != user_id:
+def _owned(user: User) -> ColumnElement[bool]:
+    """Match the conversations *user* owns.
+
+    Every statement selecting, changing, or deleting conversations names them
+    through this or :func:`_row`, and the messages of one are reached only
+    through a conversation it matched.  The one exception is
+    :func:`existing_conversation_ids`, the ``/tmp`` sweep's lookup across owners.
+    """
+    return Conversation.user_id == user.id
+
+
+def _row(conversation: OwnedConversation) -> ColumnElement[bool]:
+    """Match *conversation*'s row, still only while its user owns it."""
+    return and_(Conversation.id == conversation.id, _owned(conversation.user))
+
+
+async def _get_owned(s: AsyncSession, conversation: OwnedConversation) -> Conversation | None:
+    """Return *conversation*'s row, ``None`` before its first turn is persisted."""
+    return await s.scalar(select(Conversation).where(_row(conversation)))
+
+
+async def owned_conversation(user: User, conversation_id: str) -> OwnedConversation | None:
+    """The one ownership check: *conversation_id* as *user*'s, or ``None``.
+
+    An id that is no safe path segment names no conversation either.
+    """
+    try:
+        conversation = OwnedConversation(user, conversation_id)
+    except ValueError:
         return None
-    return conv
 
-
-async def load_conversation(
-    user_id: str, conversation_id: str
-) -> ConversationData | None:
-    """Return full conversation data (active path), or ``None`` if not owned."""
     async with session() as s:
-        conv = await _get_owned(s, user_id, conversation_id)
+        found = await s.scalar(select(Conversation.id).where(_row(conversation)))
+
+    return None if found is None else conversation
+
+
+async def load_conversation(conversation: OwnedConversation) -> ConversationData | None:
+    """Return full conversation data (active path), or ``None`` before its first turn."""
+    async with session() as s:
+        conv = await _get_owned(s, conversation)
         if conv is None:
             return None
-        path = await _load_active_path(s, conversation_id)
+        path = await _load_active_path(s, conv.id)
     return ConversationData(
         id=conv.id,
         title=conv.title or "",
@@ -363,28 +437,28 @@ async def load_conversation(
 
 
 async def load_active_for_display(
-    user_id: str, conversation_id: str
+    conversation: OwnedConversation,
 ) -> tuple[list[MessagePair], dict[str, list[str]]] | None:
     """Return the active path as ``(node_id, message)`` pairs plus sibling map.
 
     The node ids anchor each ``UIMessage.id`` so the client can address a
     message for edit / regenerate; the sibling map lists each forking node's
-    siblings.  ``None`` if the conversation is missing or not owned.
+    siblings.  ``None`` before the conversation's first turn.
     """
     async with session() as s:
-        conv = await _get_owned(s, user_id, conversation_id)
+        conv = await _get_owned(s, conversation)
         if conv is None:
             return None
-        return await _display(s, conversation_id)
+        return await _display(s, conv.id)
 
 
-async def list_conversations(user_id: str) -> list[ConversationSummary]:
+async def list_conversations(user: User) -> list[ConversationSummary]:
     """List a user's non-empty conversations newest first."""
     async with session() as s:
         convs = (
             await s.scalars(
                 select(Conversation)
-                .where(Conversation.user_id == user_id, _has_messages())
+                .where(_owned(user), _has_messages())
                 .order_by(Conversation.updated_at.desc())
             )
         ).all()
@@ -392,20 +466,20 @@ async def list_conversations(user_id: str) -> list[ConversationSummary]:
 
 
 async def load_conversation_summary(
-    user_id: str, conversation_id: str
+    conversation: OwnedConversation,
 ) -> ConversationSummary | None:
-    """Return one conversation's summary, or ``None`` if missing or not owned."""
+    """Return one conversation's summary, or ``None`` before its first turn."""
     async with session() as s:
-        conv = await _get_owned(s, user_id, conversation_id)
+        conv = await _get_owned(s, conversation)
     return None if conv is None else _to_summary(conv)
 
 
-async def conversation_ids(user_id: str) -> set[str]:
-    """Return the ids of *user_id*'s conversations."""
+async def owned_conversations(user: User) -> list[OwnedConversation]:
+    """Return every conversation *user* owns."""
     async with session() as s:
-        query = select(Conversation.id).where(Conversation.user_id == user_id)
+        ids = (await s.scalars(select(Conversation.id).where(_owned(user)))).all()
 
-        return set((await s.scalars(query)).all())
+    return [OwnedConversation(user, cid) for cid in ids]
 
 
 async def existing_conversation_ids(ids: Collection[str]) -> set[str]:
@@ -417,15 +491,6 @@ async def existing_conversation_ids(ids: Collection[str]) -> set[str]:
         query = select(Conversation.id).where(Conversation.id.in_(ids))
 
         return set((await s.scalars(query)).all())
-
-
-async def conversation_exists(user_id: str, conversation_id: str) -> bool:
-    """Return whether *conversation_id* exists and is owned by *user_id*."""
-    async with session() as s:
-        owner = await s.scalar(
-            select(Conversation.user_id).where(Conversation.id == conversation_id)
-        )
-    return owner == user_id
 
 
 # ─── Writes ────────────────────────────────────────────────────────────
@@ -487,29 +552,29 @@ def _fork_for_path(
 
 
 async def resolve_fork(
-    user_id: str, conversation_id: str, *, regenerate: bool, message_id: str | None
+    conversation: OwnedConversation, *, regenerate: bool, message_id: str | None
 ) -> tuple[list[ModelMessage], str | None]:
     """Return the history prefix and fork-parent node for the next turn.
 
-    Reads the active path; a missing or unowned conversation (or one with no
-    messages yet) forks at the root with an empty prefix.
+    Reads the active path; a conversation with no persisted turn yet forks at
+    the root with an empty prefix.
     """
     async with session() as s:
-        conv = await _get_owned(s, user_id, conversation_id)
+        conv = await _get_owned(s, conversation)
         if conv is None:
             return [], None
-        path = await _load_active_path(s, conversation_id)
+        path = await _load_active_path(s, conv.id)
     return _fork_for_path(path, regenerate=regenerate, message_id=message_id)
 
 
 async def append_branch(
-    user_id: str,
-    conversation_id: str,
+    conversation: OwnedConversation,
     parent_id: str | None,
     messages: Sequence[ModelMessage],
     *,
     head_id: str | None = None,
     title: str | None = None,
+    compacted_from: OwnedConversation | None = None,
 ) -> str | None:
     """Append *messages* as a chain under *parent_id* and make it active.
 
@@ -524,24 +589,27 @@ async def append_branch(
 
     *head_id* forces the id of the first node instead of minting one, so the
     chat route can announce the new user message's id before the turn is
-    persisted (see ``X-Message-Id`` in ``backend/README.md``).
+    persisted (see ``X-Message-Id`` in ``backend/README.md``).  A row created
+    here links back to *compacted_from*, the conversation it continues.
     """
     msg_list = list(messages)
     if not msg_list:
         return None
 
     async with session() as s:
-        await _lock(s, conversation_id)
-        await ensure_user(s, user_id)
+        await _lock(s, conversation.id)
+        await ensure_user(s, conversation.user.id)
 
-        conv = await s.get(Conversation, conversation_id)
+        # A minted id has no row until this first write; one another user
+        # holds is not matched and fails on the primary key instead.
+        conv = await _get_owned(s, conversation)
         if conv is None:
-            conv = Conversation(id=conversation_id, user_id=user_id)
-            s.add(conv)
-        elif conv.user_id != user_id:
-            raise PermissionError(
-                f"conversation {conversation_id} is not owned by {user_id}"
+            conv = Conversation(
+                id=conversation.id,
+                user_id=conversation.user.id,
+                compacted_from_id=None if compacted_from is None else compacted_from.id,
             )
+            s.add(conv)
 
         parent = parent_id
         last_id: str | None = None
@@ -550,7 +618,7 @@ async def append_branch(
             s.add(
                 Message(
                     id=node_id,
-                    conversation_id=conversation_id,
+                    conversation_id=conversation.id,
                     parent_id=parent,
                     payload=payload,
                 )
@@ -564,54 +632,45 @@ async def append_branch(
 
 
 async def set_conversation_title(
-    user_id: str, conversation_id: str, title: str
+    conversation: OwnedConversation, title: str
 ) -> ConversationSummary | None:
-    """Set the title on a conversation owned by *user_id*."""
+    """Set the title on *conversation*, returning its summary."""
     async with session() as s:
-        result = await s.execute(
+        conv = await s.scalar(
             update(Conversation)
-            .where(
-                Conversation.id == conversation_id,
-                Conversation.user_id == user_id,
-            )
+            .where(_row(conversation))
             .values(title=title)
+            .returning(Conversation)
         )
-        if affected_rows(result) == 0:
-            return None
-    return await load_conversation_summary(user_id, conversation_id)
+    return None if conv is None else _to_summary(conv)
 
 
-async def remove_conversation(user_id: str, conversation_id: str) -> bool:
+async def remove_conversation(conversation: OwnedConversation) -> bool:
     """Delete a conversation (cascades to its messages)."""
     async with session() as s:
-        result = await s.execute(
-            delete(Conversation).where(
-                Conversation.id == conversation_id,
-                Conversation.user_id == user_id,
-            )
-        )
+        result = await s.execute(delete(Conversation).where(_row(conversation)))
     return affected_rows(result) > 0
 
 
-async def delete_all_conversations(user_id: str) -> list[str]:
-    """Delete every conversation owned by *user_id*, returning their ids."""
+async def delete_all_conversations(user: User) -> list[OwnedConversation]:
+    """Delete every conversation owned by *user*, returning them."""
     async with session() as s:
         result = await s.scalars(
             delete(Conversation)
-            .where(Conversation.user_id == user_id)
+            .where(_owned(user))
             .returning(Conversation.id)
         )
 
-        return list(result.all())
+        return [OwnedConversation(user, cid) for cid in result.all()]
 
 
 async def import_conversation(
-    user_id: str,
+    user: User,
     messages: Sequence[ModelMessage],
     *,
     title: str | None = None,
 ) -> ConversationSummary:
-    """Persist *messages* as a fresh single-branch conversation for *user_id*.
+    """Persist *messages* as a fresh single-branch conversation for *user*.
 
     *messages* is a conversation's active path (the Vercel AI UI messages an
     export carries, already decoded to model messages by the caller). It is
@@ -626,10 +685,10 @@ async def import_conversation(
     if not messages:
         raise ValueError(_NO_MESSAGES.current)
 
-    conversation_id = new_id()
-    await append_branch(user_id, conversation_id, None, messages, title=title)
+    conversation = OwnedConversation.mint(user)
+    await append_branch(conversation, None, messages, title=title)
 
-    summary = await load_conversation_summary(user_id, conversation_id)
+    summary = await load_conversation_summary(conversation)
     if summary is None:  # unreachable: the conversation was just created
         raise ValueError(_IMPORT_FAILED.current)
 
@@ -637,34 +696,18 @@ async def import_conversation(
 
 
 async def create_compacted_conversation(
-    user_id: str,
-    original_conversation_id: str,
+    source: OwnedConversation,
     summary_message: ModelMessage,
     title: str,
-) -> str:
-    """Persist a fresh conversation seeded with one summary message as its root.
+) -> OwnedConversation:
+    """Persist a fresh conversation of *source*'s user, seeded with one summary message as its root.
 
     The source is always a persisted row, since its messages are what was
     summarized, so the ``compacted_from`` link is never absent.
     """
-    conversation_id = new_id()
-    node_id = new_id()
-    async with session() as s:
-        await ensure_user(s, user_id)
-        s.add(
-            Conversation(
-                id=conversation_id,
-                user_id=user_id,
-                title=title,
-                compacted_from_id=original_conversation_id,
-            )
-        )
-        s.add(
-            Message(
-                id=node_id,
-                conversation_id=conversation_id,
-                parent_id=None,
-                payload=_dump_messages([summary_message])[0],
-            )
-        )
-    return conversation_id
+    conversation = OwnedConversation.mint(source.user)
+    await append_branch(
+        conversation, None, [summary_message], title=title, compacted_from=source
+    )
+
+    return conversation

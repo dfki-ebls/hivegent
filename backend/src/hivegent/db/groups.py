@@ -9,15 +9,14 @@ stay in :mod:`._common`.
 
 from __future__ import annotations
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ._common import affected_rows, ensure_row
+from ._common import ensure_row
 from .engine import session
 from .models import Document, Group
 
 __all__ = [
-    "delete_all_groups",
     "ensure_group",
     "list_group_ids",
     "list_groups_with_counts",
@@ -61,10 +60,3 @@ async def list_groups_with_counts() -> list[tuple[str, int]]:
             )
         ).all()
     return [(gid, int(docs)) for gid, docs in rows]
-
-
-async def delete_all_groups() -> int:
-    """Delete every group row.  Cascades to group documents."""
-    async with session() as s:
-        result = await s.execute(delete(Group))
-    return affected_rows(result)

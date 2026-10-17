@@ -7,6 +7,7 @@ commit supersedes any prior entry atomically — so a failed or cancelled
 conversion never destroys what was already there.
 """
 
+import asyncio
 from pathlib import PurePosixPath
 
 from fastapi import HTTPException
@@ -181,8 +182,14 @@ async def reconvert(
                 status_code=404,
                 detail=no_original(_shown(store, safe)).current,
             )
-        original_full = store.workspace_dir(settings.data_dir) / metadata.original_path
-        if not original_full.exists():
+        original_path = metadata.original_path
+
+        def read() -> bytes | None:
+            located = store.locate(original_path)
+            return located.read_bytes() if located is not None and located.is_file() else None
+
+        content = await asyncio.to_thread(read)
+        if content is None:
             raise HTTPException(
                 status_code=404,
                 detail=no_original(_shown(store, safe)).current,
@@ -190,7 +197,7 @@ async def reconvert(
 
         return _Reserved(
             reference=metadata.original_path,
-            content=original_full.read_bytes(),
+            content=content,
             origin=metadata.origin,
             original_path=metadata.original_path,
             preserve=True,

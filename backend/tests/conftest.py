@@ -25,4 +25,4 @@ def user_store(data_dir: Path):
     from hivegent.store import Casebase
 
     _ = data_dir
-    return Casebase(kind="user", id="testuser")
+    return Casebase.for_user("testuser")

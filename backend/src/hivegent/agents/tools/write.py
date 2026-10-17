@@ -30,6 +30,7 @@ from pydantic_core import to_jsonable_python
 
 from ... import staging, workspace
 from ...changes import Changeset, ChangesetSummary, Operation, TextEdit
+from ...db.conversations import OwnedConversation
 from ...tmp import TMP_SCOPE, tmp_root
 from ...tools import (
     DeleteDocumentsTool,
@@ -88,7 +89,7 @@ def _gateway(deps: UserDeps, paths: tuple[SearchPath, ...] | None = None) -> wor
     *paths* default to every root the run may write.  A path's root is the
     casebase its scope names, or else the conversation's ``/tmp`` folder.
     """
-    stores = {store.scope.prefix: store for store in deps.all_stores}
+    stores = {store.scope.prefix: store for store in deps.user.stores()}
     roots: list[Root] = []
     filters: dict[str, PathFilter] = {}
 
@@ -99,7 +100,7 @@ def _gateway(deps: UserDeps, paths: tuple[SearchPath, ...] | None = None) -> wor
         if sp.filter_func is not None:
             filters[root.store_key] = sp.filter_func
 
-    return workspace.Gateway(tuple(roots), deps.user_id, filters)
+    return workspace.Gateway(tuple(roots), deps.user.id, filters)
 
 
 def _committer(deps: UserDeps) -> Commit:
@@ -228,15 +229,30 @@ def program_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
     The workspaces only where ``apply_changes`` is not withheld, by the request
     or the operator: that tool is the switch for a program's workspace
     changes, so withholding it must not leave write mode's direct path open as
-    a side door.
+    a side door.  A run without a conversation has nowhere to stage them.
     """
-    staging_allowed = factory_tool_name(_apply_changes) not in deps.withheld_tools
+    staging_allowed = (
+        factory_tool_name(_apply_changes) not in deps.withheld_tools
+        and deps.conversation is not None
+    )
 
     return deps.writable_paths(workspace=staging_allowed)
 
 
 def _picked[T](items: Sequence[T], picks: Sequence[bool], pick: bool) -> tuple[T, ...]:
     return tuple(item for item, picked in zip(items, picks, strict=True) if picked == pick)
+
+
+def _conversation(deps: UserDeps) -> OwnedConversation:
+    """The conversation a program's changes are staged in.
+
+    Only a run with one is offered ``apply_changes`` or a writable workspace
+    mount, so its absence here is a bug rather than a refusal to explain.
+    """
+    if deps.conversation is None:
+        raise RuntimeError("staging needs the run's conversation")
+
+    return deps.conversation
 
 
 def changeset_committer(deps: UserDeps) -> CommitChanges:
@@ -263,7 +279,7 @@ def changeset_committer(deps: UserDeps) -> CommitChanges:
                 _ = await gateway.apply(Changeset(_picked(operations, gated, False)))
                 staged = Changeset(_picked(operations, gated, True))
 
-                return PendingChanges(await staging.stage(deps.user_id, staged), summary)
+                return PendingChanges(await staging.stage(_conversation(deps), staged), summary)
 
             applied = await gateway.apply(changeset)
 
@@ -273,7 +289,7 @@ def changeset_committer(deps: UserDeps) -> CommitChanges:
 
 
 async def _load_staged(deps: UserDeps, changeset_id: str) -> Changeset[str]:
-    staged = await staging.load_staged(deps.user_id, changeset_id)
+    staged = await staging.load_staged(_conversation(deps), changeset_id)
 
     if staged is None:
         raise ToolRetry(
@@ -311,13 +327,13 @@ def _apply_changes(deps: UserDeps) -> ApplyChangesTool:
             with mutation_errors(ToolRetry, _RERUN):
                 return (await _gateway(deps).apply(staged)).reports
         finally:
-            await staging.discard_staged(deps.user_id, changeset_id)
+            await staging.discard_staged(_conversation(deps), changeset_id)
 
     return ApplyChangesTool(apply=apply)
 
 
 async def discard_unapproved_changes(
-    owner: str, response: ModelResponse, approved: Container[str]
+    conversation: OwnedConversation, response: ModelResponse, approved: Container[str]
 ) -> None:
     """Drop the changesets the ``apply_changes`` calls in *response* name, unless approved.
 
@@ -331,14 +347,15 @@ async def discard_unapproved_changes(
             and part.tool_call_id not in approved
             and isinstance(changeset_id := part.args_as_dict().get("changeset_id"), str)
         ):
-            await staging.discard_staged(owner, changeset_id)
+            await staging.discard_staged(conversation, changeset_id)
 
 
 async def _offer_apply_changes(
     ctx: RunContext[UserDeps], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
-    # Only a mode that may write the workspaces stages a program's changes there.
-    return tool_def if ctx.deps.can_write else None
+    # Only a mode that may write the workspaces stages a program's changes
+    # there, and only in a conversation, whose changes they are.
+    return tool_def if ctx.deps.can_write and ctx.deps.conversation is not None else None
 
 
 write_toolset: FunctionToolset[UserDeps] = FunctionToolset()

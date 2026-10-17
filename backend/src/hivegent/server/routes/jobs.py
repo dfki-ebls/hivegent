@@ -14,8 +14,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from fastapi.sse import EventSourceResponse
 
-from ...auth import User, get_current_user
+from ...auth import get_current_user
 from ...jobs import FeedEvent, JobView, manager
+from ...store import User
 from ..common import ClientId
 
 __all__ = ["router"]

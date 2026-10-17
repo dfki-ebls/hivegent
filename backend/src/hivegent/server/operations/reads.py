@@ -10,17 +10,18 @@ import logging
 import mimetypes
 from collections.abc import Callable
 from pathlib import Path
+from stat import S_ISREG
 from urllib.parse import quote
 
 from fastapi import HTTPException
 from starlette.responses import FileResponse, PlainTextResponse, Response
 
-from ...config import settings
 from ...converters.base import DOCUMENT_EXTENSION
 from ...entries import assets_dir_for_stem, stem_path_from_reference
 from ...l10n import Localized
 from ...store import Casebase
 from ...text import read_text_file
+from ...tools.base import entry_stat
 from ...types import AssetEntry, AssetListResponse
 from ...workspace import resolve_entry
 from ...workspace.paths import document_not_found, no_original
@@ -45,12 +46,13 @@ _NO_ASSETS = Localized(
 async def find_original(store: Casebase, safe: str) -> Path:
     """Find the absolute path of the original binary for a logical entry."""
     original_path = (await resolve_entry(store, safe)).original_path
-    full_path = (
-        store.workspace_dir(settings.data_dir) / original_path
-        if original_path
-        else None
-    )
-    if full_path is None or not full_path.exists():
+
+    def locate() -> Path | None:
+        full_path = store.locate(original_path) if original_path else None
+        return full_path if full_path is not None and full_path.exists() else None
+
+    full_path = await asyncio.to_thread(locate)
+    if full_path is None:
         raise HTTPException(
             status_code=404,
             detail=no_original(store.scope.render(safe)).current,
@@ -65,9 +67,7 @@ def attachment_disposition(filename: str) -> str:
 
 async def get_document_response(store: Casebase, safe: str) -> Response:
     """Return the raw content of a document or asset as an HTTP response."""
-    return await get_file_response(
-        lambda: store.workspace_dir(settings.data_dir) / safe, store.scope.render(safe)
-    )
+    return await get_file_response(lambda: store.locate(safe), store.scope.render(safe))
 
 
 async def get_file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
@@ -113,34 +113,34 @@ def _file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
 
 def list_assets(store: Casebase, safe: str) -> AssetListResponse:
     """List the asset files in a document's child-assets directory."""
-    workspace = store.workspace_dir(settings.data_dir)
     assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
-    assets_path = workspace / assets_dir
-    if not assets_path.exists() or not assets_path.is_dir():
+    assets_path = store.locate(assets_dir)
+    if assets_path is None or not assets_path.is_dir():
         raise HTTPException(status_code=404, detail=_NO_ASSETS.current)
 
     md_files: dict[Path, Path] = {}
-    asset_files: list[Path] = []
+    asset_files: list[tuple[Path, int]] = []
     for item in sorted(assets_path.rglob("*")):
-        if not item.is_file():
+        # A symlink counts as absent, since it could name a file outside the workspace.
+        st = entry_stat(item)
+        if st is None or not S_ISREG(st.st_mode):
             continue
         relative = item.relative_to(assets_path)
         if item.suffix == DOCUMENT_EXTENSION:
-            md_files[relative.with_suffix("")] = item
+            md_files[relative.with_suffix("")] = relative
         else:
-            asset_files.append(item)
+            asset_files.append((relative, st.st_size))
 
     entries: list[AssetEntry] = []
-    for item in asset_files:
-        relative = item.relative_to(assets_path)
-        rel_path = item.relative_to(workspace).as_posix()
+    for relative, size in asset_files:
+        rel_path = f"{assets_dir}/{relative.as_posix()}"
         companion = md_files.get(relative.with_suffix(""))
         description = ""
         description_path: str | None = None
         if companion is not None:
-            description_path = companion.relative_to(workspace).as_posix()
+            description_path = f"{assets_dir}/{companion.as_posix()}"
             try:
-                decoded = read_text_file(companion)
+                decoded = read_text_file(assets_path / companion)
                 description = decoded.text if decoded is not None else ""
             except OSError:
                 logger.warning(
@@ -154,8 +154,8 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
                 path=rel_path,
                 description_path=description_path,
                 description=description,
-                size_bytes=item.stat().st_size,
-                media_type=mimetypes.guess_type(item.name)[0],
+                size_bytes=size,
+                media_type=mimetypes.guess_type(relative.name)[0],
             )
         )
 

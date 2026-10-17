@@ -45,10 +45,11 @@ from hivegent.agents.guards import (
 )
 from hivegent.config import settings
 from hivegent.l10n import current_language, use_language
-from hivegent.store import Casebase
+from hivegent.store import User
 from hivegent.tmp import tmp_dir
 from hivegent.tools.base import ToolOutput
 from hivegent.tools.pydantic_ai import wrap_tool_output
+from tests.helpers import owned
 
 _TRUNCATED_CALL = ToolCallPart(
     tool_name="edit_document", args='{"file_path":', tool_call_id="call-1"
@@ -276,7 +277,10 @@ async def test_the_wrap_up_note_stays_off_the_conversation() -> None:
     """
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="go")])]
     sent = await _sent(
-        IterationLimitWarner(), messages, requests=3, limits=UsageLimits(request_limit=4)
+        IterationLimitWarner(),
+        messages,
+        requests=3,
+        limits=UsageLimits(request_limit=4),
     )
 
     assert "used 3 of 4 model requests" in str(sent[-1].parts[0])
@@ -289,9 +293,15 @@ async def test_the_wrap_up_note_reads_the_run_limits() -> None:
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="go")])]
 
     assert await _sent(IterationLimitWarner(), messages, requests=40) == messages
-    assert await _sent(
-        IterationLimitWarner(), messages, requests=40, limits=UsageLimits(request_limit=100)
-    ) == messages
+    assert (
+        await _sent(
+            IterationLimitWarner(),
+            messages,
+            requests=40,
+            limits=UsageLimits(request_limit=100),
+        )
+        == messages
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -310,10 +320,9 @@ async def _spill(
 ) -> Any:
     """Bound *result* to 1000 characters as a grep call's return."""
     deps = UserDeps(
-        user_id="u",
-        store=Casebase.for_user("u"),
+        user=User("u"),
         mode="read",
-        conversation_id=conversation,
+        conversation=None if conversation is None else owned(conversation),
     )
     capability = capability or ToolOutputSpill(max_chars=1_000)
 
@@ -336,7 +345,7 @@ def _saved(preview: str, data_dir: Path) -> Path:
     found = re.search(r"`/tmp/(\.tool-results/grep-\w+\.\w+)`", preview)
     assert found is not None
 
-    return tmp_dir(data_dir, "c1") / found[1]
+    return tmp_dir(data_dir, owned("c1")) / found[1]
 
 
 async def test_a_structured_result_too_large_to_show_is_saved_as_json(
@@ -344,7 +353,9 @@ async def test_a_structured_result_too_large_to_show_is_saved_as_json(
 ) -> None:
     rows = [_Row(f"row {i}", truncated=i == 0) for i in range(300)]
     text = "\n".join(row.text for row in rows)
-    result = wrap_tool_output(ToolOutput(data=rows, formatted=text), tool_call_id="call-1")
+    result = wrap_tool_output(
+        ToolOutput(data=rows, formatted=text), tool_call_id="call-1"
+    )
 
     spilled = await _spill(result)
 
@@ -382,7 +393,7 @@ async def test_a_result_that_fits_passes_untouched(data_dir: Path) -> None:
     result = wrap_tool_output(ToolOutput(data=[_Row("a")], formatted="a"))
 
     assert await _spill(result) is result
-    assert not (data_dir / "tmp").exists()
+    assert not (data_dir / "conversations").exists()
 
 
 async def test_saved_results_stay_within_the_tmp_cap(
@@ -390,7 +401,7 @@ async def test_saved_results_stay_within_the_tmp_cap(
 ) -> None:
     """The oldest saved result makes room, and one that cannot fit is only clamped."""
     monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
-    results = tmp_dir(data_dir, "c1") / ".tool-results"
+    results = tmp_dir(data_dir, owned("c1")) / ".tool-results"
 
     first = _saved(await _spill("a\n" * 2_000, call_id="call-1"), data_dir)
     second = _saved(await _spill("b\n" * 2_000, call_id="call-2"), data_dir)

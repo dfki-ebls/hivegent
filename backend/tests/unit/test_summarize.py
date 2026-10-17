@@ -22,11 +22,12 @@ from pydantic_ai.usage import RequestUsage
 from hivegent import compaction
 from hivegent.agents import RunPrefix, UserDeps, build_capabilities, capabilities
 from hivegent.agents.summarize import COMPACT_PROMPT, _plan, summarize_conversation
-from hivegent.db.conversations import ConversationData
+from hivegent.db.conversations import ConversationData, OwnedConversation
 from hivegent.l10n import LANGUAGES, Language
 from hivegent.llm_config import LlmConfig
-from hivegent.store import Casebase
+from hivegent.store import User
 from hivegent.types import ToolsSpec
+from tests.helpers import owned
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -92,7 +93,7 @@ def run_prefix(monkeypatch: pytest.MonkeyPatch) -> RunPrefix:
 
     return RunPrefix(
         deps=UserDeps(
-            user_id="u", store=Casebase(kind="user", id="u"), mode="interactive"
+            user=User("u"), mode="interactive"
         ),
         capabilities=build_capabilities(ToolsSpec(), mode="interactive", language="en"),
         instructions="chat instructions",
@@ -259,10 +260,10 @@ async def test_compaction_summarizes_the_persisted_path_not_a_posted_one(
         seen.append(messages)
         return ModelResponse(parts=[TextPart(content="summary text")])
 
-    async def _load(user_id: str, conversation_id: str) -> ConversationData:
-        assert (user_id, conversation_id) == ("u", "c1")
+    async def _load(conversation: OwnedConversation) -> ConversationData:
+        assert conversation == owned("c1")
         return ConversationData(
-            id=conversation_id,
+            id=conversation.id,
             title="Manual questions",
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
@@ -271,20 +272,20 @@ async def test_compaction_summarizes_the_persisted_path_not_a_posted_one(
 
     created: dict[str, object] = {}
 
-    async def _create(user_id: str, **kwargs: object) -> str:
-        created.update(kwargs)
-        return "c2"
+    async def _create(source: OwnedConversation, **kwargs: object) -> OwnedConversation:
+        created.update(kwargs, source=source)
+        return owned("c2")
 
     monkeypatch.setattr(compaction, "load_conversation", _load)
     monkeypatch.setattr(compaction, "create_compacted_conversation", _create)
 
     result = await compaction.compact_conversation(
-        "u", "c1", replace(run_prefix, model=FunctionModel(respond))
+        owned("c1"), replace(run_prefix, model=FunctionModel(respond))
     )
 
     assert result == compaction.CompactionResult(
         new_conversation_id="c2", summary="summary text"
     )
     assert seen[0][:-1] == _MESSAGES
-    assert created["original_conversation_id"] == "c1"
+    assert created["source"] == owned("c1")
     assert created["title"] == "Manual questions (continued)"

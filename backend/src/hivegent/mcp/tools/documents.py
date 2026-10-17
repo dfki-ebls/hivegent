@@ -3,7 +3,7 @@
 from fastmcp.dependencies import Depends
 
 from ...config import settings
-from ...store import Casebase, build_search_paths
+from ...store import User, build_search_paths
 from ...tools import (
     GlobDocumentsTool,
     GrepTool,
@@ -16,22 +16,19 @@ from ...tools import (
 )
 from ...tools.fastmcp import register_mcp_tools
 from ..app import mcp_app
-from ..common import get_mcp_group_stores, get_mcp_user_store
+from ..common import get_mcp_user
 
 __all__: list[str] = []
 
 
-def _search_paths(
-    store: Casebase = Depends(get_mcp_user_store),
-    group_stores: tuple[Casebase, ...] = Depends(get_mcp_group_stores),
-) -> tuple[SearchPath, ...]:
+def _search_paths(user: User = Depends(get_mcp_user)) -> tuple[SearchPath, ...]:
     """The roots every read tool on this surface is scoped to.
 
     One dependency rather than the same two stores injected per registration,
     so the span a tool may reach is stated once and a factory below declares
     only what it adds to it.
     """
-    return build_search_paths(store, group_stores, settings.data_dir)
+    return build_search_paths(user.stores(), settings.data_dir)
 
 
 def _list_documents(

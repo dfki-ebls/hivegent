@@ -1,4 +1,9 @@
-"""Casebase identity for user and group storage namespaces.
+"""Identity, and the user and group storage namespaces it grants.
+
+:class:`User` is the request's identity, and the only source of the
+casebases a request may touch: each carries the grant it was derived
+with, so a store the user may only read can never be written
+(:attr:`Casebase.writable`, enforced where every mutation takes its lock).
 
 A :class:`Casebase` is an immutable identifier — ``(kind, id)`` — for
 one user or group's slice of the system.  Only the workspace files
@@ -9,21 +14,23 @@ derives from the document FK — one identifier keys filesystem and SQL
 end-to-end.
 """
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Self, cast, get_args
 
-from .config import sanitize_group_id, sanitize_user_id, settings
+from .config import ADMIN_ROLE, sanitize_group_id, sanitize_user_id, settings
 from .l10n import Localized
-from .tools.base import Gated, SearchPath, SearchPathFilterFunc
+from .tools.base import Gated, SearchPath, SearchPathFilterFunc, canonical_local_path
 from .tools.scope import PrefixScope
 
 __all__ = [
     "GROUP_PREFIX",
     "USER_PREFIX",
+    "AccessDenied",
     "Casebase",
     "CasebaseKind",
+    "User",
     "WorkspaceScope",
     "build_search_paths",
 ]
@@ -34,6 +41,23 @@ USER_PREFIX = "~"
 GROUP_PREFIX = "@"
 
 _GATED = Gated()
+
+
+_NOT_A_MEMBER = Localized(
+    en="Not a member of this group", de="Kein Mitglied dieser Gruppe"
+)
+_WRITE_ACCESS_REQUIRED = Localized(
+    en="Write access required for this group",
+    de="Für diese Gruppe ist Schreibzugriff erforderlich",
+)
+_READ_ONLY = Localized(
+    en="This workspace is read-only for you",
+    de="Dieser Arbeitsbereich ist für dich schreibgeschützt",
+)
+
+
+class AccessDenied(PermissionError):
+    """A store was asked for, or asked to change, beyond what its grant allows."""
 
 
 def _invalid_path(path: str) -> Localized[str]:
@@ -109,20 +133,30 @@ class Casebase:
     database scoped by ``owner_user_id`` / ``owner_group_id``.
     It is a :class:`~hivegent.workspace.operations.Root` of the changeset
     gateway, the one whose changes carry rows, an index, and announcements.
+
+    *writable* is the grant the casebase was built with, and a personal one is
+    always writable.  It takes no part in equality, so the same group read
+    and written is one store, and it defaults to read, so a casebase built
+    without a stated grant can never be changed.
     """
 
     kind: CasebaseKind
     id: str
+    writable: bool = field(default=False, compare=False)
 
     @classmethod
     def for_user(cls, user_id: str) -> Self:
-        """Build a user-scoped casebase."""
-        return cls(kind="user", id=user_id)
+        """Build a user-scoped casebase, which its owner always writes."""
+        return cls(kind="user", id=user_id, writable=True)
 
     @classmethod
-    def for_group(cls, group_id: str) -> Self:
-        """Build a group-scoped casebase."""
-        return cls(kind="group", id=group_id)
+    def for_group(cls, group_id: str, *, writable: bool = False) -> Self:
+        """Build a group-scoped casebase with the grant the caller holds on it.
+
+        Requests derive it from their :class:`User`, and only system code
+        (admin, reconciliation) states a write grant of its own.
+        """
+        return cls(kind="group", id=group_id, writable=writable)
 
     @classmethod
     def for_owner(cls, user_id: str | None, group_id: str | None) -> Self:
@@ -130,7 +164,8 @@ class Casebase:
 
         The ``documents`` table carries exactly one of the pair (its
         ``single_owner`` check constraint), so this is total for any row that
-        is actually in the database.
+        is actually in the database.  It names the row's owner for a read and
+        grants no write to a group.
         """
         if user_id is not None:
             return cls.for_user(user_id)
@@ -139,23 +174,32 @@ class Casebase:
         raise ValueError("document row has neither owner set")
 
     @classmethod
-    def from_store_key(cls, store_key: str) -> Self:
+    def from_store_key(cls, store_key: str, *, writable: bool) -> Self:
         """Parse a ``store_key`` back into a :class:`Casebase`.
 
-        Inverse of :attr:`store_key`.  Raises :class:`ValueError` when
-        the input is not a recognised ``user:<id>`` / ``group:<id>``
-        token.
+        Inverse of :attr:`store_key`, for system code that states its own
+        grant.  Raises :class:`ValueError` when the input is not a recognised
+        ``user:<id>`` / ``group:<id>`` token.
         """
         kind, sep, identifier = store_key.partition(":")
         if not sep or kind not in get_args(CasebaseKind):
             raise ValueError(f"Invalid store_key: {store_key!r}")
-        return cls(kind=cast(CasebaseKind, kind), id=identifier)
+        return cls(kind=cast(CasebaseKind, kind), id=identifier, writable=writable)
 
     def __post_init__(self) -> None:
         if self.kind == "user":
             sanitize_user_id(self.id)
         else:
             sanitize_group_id(self.id)
+
+    def require_writable(self) -> None:
+        """Refuse a change to a store granted for reading only.
+
+        Raises:
+            AccessDenied: When the store is not :attr:`writable`.
+        """
+        if not self.writable:
+            raise AccessDenied(_READ_ONLY.current)
 
     @property
     def store_key(self) -> str:
@@ -200,6 +244,18 @@ class Casebase:
         """Return the workspace path without creating directories."""
         return self.workspace_root(data_dir) / self.store_key
 
+    def locate(self, local: str) -> Path | None:
+        """The absolute path *local* names in the workspace, ``None`` outside it.
+
+        Resolved the way every tool path is
+        (:func:`~hivegent.tools.base.canonical_local_path`), so neither ``..``
+        nor a symlink leads a read out of the workspace.
+        """
+        root = self.path.resolve()
+        canonical = canonical_local_path(root, local)
+
+        return None if canonical is None else canonical[1]
+
     def workspace_dir(self, data_dir: Path) -> Path:
         """Return the workspace directory, creating it if needed.
 
@@ -211,14 +267,98 @@ class Casebase:
         return path
 
 
+@dataclass(slots=True, frozen=True)
+class User:
+    """Authenticated user with group membership and roles.
+
+    Groups model shared knowledge containers (read/write per group);
+    roles model global capabilities.  Admin status is derived on every
+    access from the fixed :data:`~hivegent.config.ADMIN_ROLE` being
+    present in :attr:`roles` — no duplicate flag is stored anywhere.
+    Grant admin by adding a user to that role in the IdP (or, for dev,
+    auth is disabled and the local user is admin).
+
+    Group membership lives solely in the OIDC token and is never
+    persisted: every field here is reconstructed per request from the
+    validated JWT claims.
+
+    The casebases a request may touch are derived here and nowhere else
+    (:attr:`store`, :meth:`group_stores`, :meth:`group_store`), each with the
+    grant the token gives, so no caller can hand a run or a route a workspace
+    the token does not grant, nor write one it may only read.
+
+    Groups are held as IDs, which is what every path, workspace directory,
+    and owner column uses.  ``group_labels`` carries the display names a
+    provider additionally supplied, for the client to show in place of an
+    opaque ID; nothing on the server reads it, so a rename upstream changes
+    only what the UI renders.
+    """
+
+    id: str
+    email: str | None = None
+    name: str | None = None
+    read_groups: frozenset[str] = field(default_factory=frozenset)
+    write_groups: frozenset[str] = field(default_factory=frozenset)
+    group_labels: Mapping[str, str] = field(default_factory=dict, compare=False)
+    roles: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def all_groups(self) -> frozenset[str]:
+        """Return all groups the user belongs to."""
+        return self.read_groups | self.write_groups
+
+    @property
+    def is_admin(self) -> bool:
+        """Whether the user holds the fixed admin role."""
+        return ADMIN_ROLE in self.roles
+
+    @property
+    def store(self) -> Casebase:
+        """The user's personal casebase."""
+        return Casebase.for_user(self.id)
+
+    def stores(self, *, writable: bool = False) -> tuple[Casebase, ...]:
+        """The personal casebase followed by :meth:`group_stores`."""
+        return (self.store, *self.group_stores(writable=writable))
+
+    def group_stores(self, *, writable: bool = False) -> tuple[Casebase, ...]:
+        """The group casebases the user may read, or with *writable* only write.
+
+        Sorted, so a run's roots and the prompt naming them stay stable.
+        """
+        groups = self.write_groups if writable else self.all_groups
+
+        return tuple(
+            Casebase.for_group(group_id, writable=group_id in self.write_groups)
+            for group_id in sorted(groups)
+        )
+
+    def group_store(self, group_id: str, *, writable: bool = False) -> Casebase:
+        """The casebase of *group_id*, as the token grants it.
+
+        Raises:
+            ValueError: When *group_id* is no valid group ID.
+            AccessDenied: When the user is no member, or *writable* asks for a
+                grant the user only holds for reading.
+        """
+        store = Casebase.for_group(group_id, writable=group_id in self.write_groups)
+
+        if group_id not in self.all_groups:
+            raise AccessDenied(_NOT_A_MEMBER.current)
+
+        if writable and not store.writable:
+            raise AccessDenied(_WRITE_ACCESS_REQUIRED.current)
+
+        return store
+
+
 def build_search_paths(
-    store: Casebase,
-    group_stores: Sequence[Casebase],
+    stores: Sequence[Casebase],
     data_dir: Path,
     *,
     filter_for_store: Callable[[Casebase], SearchPathFilterFunc] | None = None,
 ) -> tuple[SearchPath, ...]:
-    """Build :class:`SearchPath` entries for a user store and its groups.
+    """Build :class:`SearchPath` entries for *stores*, typically :meth:`User.stores`.
 
     Nothing is created: a mutation makes its own destination downstream and a
     read of a workspace nobody has written to yet finds nothing, so handing a
@@ -226,8 +366,7 @@ def build_search_paths(
     caller can reach.
 
     Args:
-        store: The user's personal casebase.
-        group_stores: Group casebases the user can access.
+        stores: The casebases to search, the personal one first.
         data_dir: Application data root directory.
         filter_for_store: Optional callable returning a file filter for
             each store.
@@ -239,5 +378,5 @@ def build_search_paths(
             scope=s.scope,
             filter_func=get_filter(s),
         )
-        for s in (store, *group_stores)
+        for s in stores
     )

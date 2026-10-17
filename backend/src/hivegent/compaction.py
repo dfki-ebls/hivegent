@@ -13,6 +13,7 @@ from .agents import RunPrefix
 from .agents.summarize import summarize_conversation
 from .db.conversations import (
     UNTITLED,
+    OwnedConversation,
     create_compacted_conversation,
     load_conversation,
 )
@@ -50,8 +51,7 @@ class CompactionResult:
 
 
 async def compact_conversation(
-    user_id: str,
-    conversation_id: str,
+    conversation: OwnedConversation,
     run: RunPrefix,
 ) -> CompactionResult:
     """Compact a conversation by summarizing it into a new conversation.
@@ -75,40 +75,38 @@ async def compact_conversation(
     conversation, which starts with a copy of the source's ``/tmp``.
 
     Args:
-        user_id: The user who owns the conversation.
-        conversation_id: The conversation being compacted.
+        conversation: The conversation being compacted.
         run: The prompt prefix the conversation's turns ran under.
 
     Returns:
         A CompactionResult with the new conversation ID and summary.
 
     Raises:
-        ValueError: If the conversation is missing, not owned, or empty.
+        ValueError: If the conversation has no messages.
     """
     language = run.deps.language
-    conversation = await load_conversation(user_id, conversation_id)
-    if conversation is None or not conversation.messages:
-        raise ValueError(_not_found(conversation_id)[language])
+    data = await load_conversation(conversation)
+    if data is None or not data.messages:
+        raise ValueError(_not_found(conversation.id)[language])
 
-    summary = await summarize_conversation(conversation.messages, run)
+    summary = await summarize_conversation(data.messages, run)
 
     summary_message = ModelResponse(parts=[TextPart(content=summary)])
-    new_id = await create_compacted_conversation(
-        user_id,
-        original_conversation_id=conversation_id,
+    compacted = await create_compacted_conversation(
+        conversation,
         summary_message=summary_message,
-        title=_continued_title(conversation.title)[language],
+        title=_continued_title(data.title)[language],
     )
-    await copy_tmp(conversation_id, new_id)
+    await copy_tmp(conversation, compacted)
 
     logger.info(
         "Compacted conversation %s -> %s for user %s",
-        conversation_id,
-        new_id,
-        user_id,
+        conversation.id,
+        compacted.id,
+        conversation.user.id,
     )
 
     return CompactionResult(
-        new_conversation_id=new_id,
+        new_conversation_id=compacted.id,
         summary=summary,
     )

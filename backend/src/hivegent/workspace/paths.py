@@ -9,7 +9,7 @@ primitives the mutations build from, including the rename journal
 
 import logging
 from collections.abc import Callable, Generator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -18,7 +18,7 @@ from fastapi import HTTPException
 
 from ..config import settings
 from ..entries import ContentStat, is_reserved_path
-from ..files import remove_path
+from ..files import remove_path, rmdir_if_empty
 from ..humanize import format_bytes
 from ..l10n import Localized
 from ..store import Casebase
@@ -136,11 +136,6 @@ class _WorkspaceChange:
     staged_path: Path | None
 
 
-def _rmdir_if_empty(directory: Path) -> None:
-    with suppress(OSError):
-        directory.rmdir()
-
-
 def _restore(backup: Path, live: Path) -> None:
     live.parent.mkdir(parents=True, exist_ok=True)
     backup.replace(live)
@@ -167,7 +162,7 @@ class _Journal:
         directory.mkdir(parents=True, exist_ok=True)
 
         for path in reversed(missing):
-            self._undo.append(lambda d=path: _rmdir_if_empty(d))
+            self._undo.append(lambda d=path: rmdir_if_empty(d))
 
     def remove(self, live: Path) -> None:
         """Park *live* in the backup root, tolerating its absence."""

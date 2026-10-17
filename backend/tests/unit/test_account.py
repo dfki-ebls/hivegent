@@ -5,10 +5,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from hivegent.auth import User
+from hivegent import conversation_files
 from hivegent.changes import WorkspaceChanged
+from hivegent.db.conversations import OwnedConversation
+from hivegent.server import common
 from hivegent.server.routes import account, conversations
+from hivegent.store import User
 from hivegent.tmp import tmp_dir
+from tests.helpers import owned
 
 
 async def test_delete_all_user_data_announces_to_other_clients(
@@ -19,14 +23,11 @@ async def test_delete_all_user_data_announces_to_other_clients(
     async def noop(*_args: object) -> None:
         pass
 
-    async def no_conversations(*_args: object) -> set[str]:
-        return set()
-
     announce = Mock()
-    monkeypatch.setattr(account.workspace, "delete_all", noop)
-    monkeypatch.setattr(account, "conversation_ids", no_conversations)
-    monkeypatch.setattr(account, "delete_user", noop)
-    monkeypatch.setattr(account, "announce_workspace_changed", announce)
+    monkeypatch.setattr(common.workspace, "delete_all", noop)
+    monkeypatch.setattr(common, "delete_conversations", noop)
+    monkeypatch.setattr(common, "delete_user", noop)
+    monkeypatch.setattr(common, "announce_workspace_changed", announce)
 
     await account.delete_all_user_data(User(id="owner"), "acting-tab")
 
@@ -39,7 +40,8 @@ async def test_tmp_folders_go_by_the_conversation_ids_the_database_names(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One conversation, every one of them, and clearing temporary files, each by id."""
-    folders = {cid: tmp_dir(data_dir, cid) for cid in ("c1", "c2", "c3")}
+    user = User(id="owner")
+    folders = {cid: tmp_dir(data_dir, owned(cid, user)) for cid in ("c1", "c2", "c3")}
 
     for folder in folders.values():
         folder.mkdir(parents=True)
@@ -48,18 +50,17 @@ async def test_tmp_folders_go_by_the_conversation_ids_the_database_names(
     async def removed(*_args: object) -> bool:
         return True
 
-    async def deleted_all(_user_id: str) -> list[str]:
-        return ["c2"]
+    async def deleted_all(owner: User) -> list[OwnedConversation]:
+        return [owned("c2", owner)]
 
-    async def owned(_user_id: str) -> set[str]:
-        return {"c3", "never-ran"}
+    async def remaining(owner: User) -> list[OwnedConversation]:
+        return [owned("c3", owner), owned("never-ran", owner)]
 
-    monkeypatch.setattr(conversations, "remove_conversation", removed)
-    monkeypatch.setattr(conversations, "delete_all_conversations", deleted_all)
-    monkeypatch.setattr(account, "conversation_ids", owned)
-    user = User(id="owner")
+    monkeypatch.setattr(conversation_files, "remove_conversation", removed)
+    monkeypatch.setattr(conversation_files, "delete_all_conversations", deleted_all)
+    monkeypatch.setattr(account, "owned_conversations", remaining)
 
-    await conversations.delete_conversation("c1", user)
+    await conversations.delete_conversation(owned("c1", user))
     assert [cid for cid, folder in folders.items() if folder.exists()] == ["c2", "c3"]
 
     await conversations.delete_all_conversations_route(user)

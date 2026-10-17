@@ -14,12 +14,13 @@ from pydantic_monty import OSAccess
 from hivegent import staging
 from hivegent.changes import Changeset, CreateDir, Delete, Move, Write
 from hivegent.config import settings
-from hivegent.store import WorkspaceScope
+from hivegent.conversation_files import reset_conversation_files
+from hivegent.store import User, WorkspaceScope
 from hivegent.tmp import TMP_SCOPE
 from hivegent.tools.base import Direct, SearchPath, ToolRetry
 from hivegent.tools.changeset import stage_changes
 from hivegent.tools.workspace_os import WORKSPACE_MOUNT, WorkspaceOS
-from tests.helpers import LIMITS
+from tests.helpers import LIMITS, owned
 
 
 @pytest.fixture()
@@ -199,21 +200,23 @@ def test_a_ragged_table_is_refused(mount: WorkspaceOS) -> None:
         _ = stage_changes(mount)
 
 
-async def test_a_staged_changeset_answers_only_its_owner_and_its_own_id(
+async def test_a_staged_changeset_answers_only_its_conversation_and_its_own_id(
     mount: WorkspaceOS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     mount.path_unlink(_virtual("notes.md"))
     changes = _staged(mount)
 
-    changeset_id = await staging.stage("alice", changes)
+    alice = owned("a1", User("alice"))
+    other = owned("a2", User("alice"))
+    changeset_id = await staging.stage(alice, changes)
 
-    assert await staging.load_staged("alice", changeset_id) == changes
-    assert await staging.load_staged("bob", changeset_id) is None
-    assert await staging.load_staged("alice", f"../changesets/{changeset_id}") is None
+    assert await staging.load_staged(alice, changeset_id) == changes
+    assert await staging.load_staged(other, changeset_id) is None
+    assert await staging.load_staged(alice, f"../a1/{changeset_id}") is None
 
-    await staging.discard_staged("bob", changeset_id)
-    assert await staging.load_staged("alice", changeset_id) == changes
+    await staging.discard_staged(other, changeset_id)
+    assert await staging.load_staged(alice, changeset_id) == changes
 
-    await staging.discard_staged("alice", changeset_id)
-    assert await staging.load_staged("alice", changeset_id) is None
+    await reset_conversation_files()
+    assert await staging.load_staged(alice, changeset_id) is None

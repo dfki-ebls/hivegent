@@ -48,7 +48,7 @@ from .workspace import (
     normalize_workspace_paths,
     sync_entries_from_disk,
 )
-from .workspace.locks import store_lock
+from .workspace.locks import root_lock
 
 __all__ = [
     "ReconcileReport",
@@ -121,7 +121,7 @@ async def reconcile_store(store: Casebase) -> ReconcileReport:
     normalized = await normalize_workspace_paths(store)
     references = await asyncio.to_thread(_disk_entry_references, store)
     ingested = await sync_entries_from_disk(store, references)
-    async with store_lock(store):
+    async with root_lock(store):
         sql_paths = await db_documents.list_document_paths(store)
         sql_removed = await _sweep_sql_orphans(store, sql_paths)
 
@@ -142,7 +142,7 @@ def _disk_known_stores() -> set[Casebase]:
         if not child.is_dir():
             continue
         try:
-            stores.add(Casebase.from_store_key(child.name))
+            stores.add(Casebase.from_store_key(child.name, writable=True))
         except ValueError:
             logger.warning("Ignoring unrecognised workspace directory: %s", child.name)
     return stores

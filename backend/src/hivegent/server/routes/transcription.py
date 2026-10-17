@@ -6,11 +6,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from starlette.requests import Request
 
-from ...auth import User, get_current_user
+from ...auth import get_current_user
 from ...config import settings
 from ...l10n import Localized
 from ...llm import create_openai_client
 from ...llm_config import LlmConfig, resolve_llm_config
+from ...store import User
 from ...types import TranscriptionResponse
 from ..cancellation import run_until_disconnect
 

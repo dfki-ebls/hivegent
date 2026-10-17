@@ -8,15 +8,20 @@ from hivegent import entries
 from hivegent.agents.common import UserDeps
 from hivegent.changes import Changeset, Delete
 from hivegent.server.common import parse_document_scope
-from hivegent.store import Casebase, WorkspaceScope
+from hivegent.store import Casebase, User, WorkspaceScope
 from hivegent.tmp import tmp_dir
 from hivegent.tools.base import SearchPath, resolve_accessible_file
 from hivegent.types import DocumentFilter
 from hivegent.workspace.operations import Location, route
+from tests.helpers import owned
 
 
 def _deps(conversation_id: str | None) -> UserDeps:
-    return UserDeps("u", Casebase.for_user("u"), "interactive", conversation_id)
+    return UserDeps(
+        User("u"),
+        "interactive",
+        None if conversation_id is None else owned(conversation_id),
+    )
 
 
 class TestWorkspaceScope:
@@ -47,10 +52,12 @@ class TestWorkspaceScope:
 class TestRoute:
     """Routing a canonical path to the root it names."""
 
-    _roots = (Casebase.for_user("u"), Casebase.for_group("team"))
+    _roots = (Casebase.for_user("u"), Casebase.for_group("team", writable=True))
 
     def test_routes_to_each_addressed_root(self) -> None:
-        routed = route(Changeset((Delete("~/notes.md"), Delete("@team/a.md"))), self._roots)
+        routed = route(
+            Changeset((Delete("~/notes.md"), Delete("@team/a.md"))), self._roots
+        )
 
         assert routed.locations == (
             Location(self._roots[0], "notes.md"),
@@ -65,9 +72,11 @@ class TestRoute:
 class TestConversationTmp:
     """`/tmp` is the conversation's own folder, outside every workspace."""
 
-    def test_each_conversation_resolves_only_its_own_folder(self, data_dir: Path) -> None:
+    def test_each_conversation_resolves_only_its_own_folder(
+        self, data_dir: Path
+    ) -> None:
         for conversation in ("c1", "c2"):
-            folder = tmp_dir(data_dir, conversation)
+            folder = tmp_dir(data_dir, owned(conversation))
             folder.mkdir(parents=True)
             (folder / "state.json").write_text(conversation)
 
@@ -81,10 +90,13 @@ class TestConversationTmp:
             assert resolve_accessible_file(paths, f"/tmp/../{other}/state.json") is None
 
         # A caller without a conversation, such as MCP, has no `/tmp` at all.
-        assert resolve_accessible_file(_deps(None).search_paths(), "/tmp/state.json") is None
+        assert (
+            resolve_accessible_file(_deps(None).search_paths(), "/tmp/state.json")
+            is None
+        )
 
         with pytest.raises(ValueError, match="Invalid conversation ID"):
-            _ = tmp_dir(data_dir, "../c1")
+            _ = owned("../c1")
 
 
 class TestCaseFolding:
@@ -116,8 +128,7 @@ class TestDocumentScopePrompt:
             included, excluded, frozenset()
         )
         return UserDeps(
-            user_id="u1",
-            store=Casebase.for_user("u1"),
+            user=User("u1"),
             mode="interactive",
             document_filter=document_filter,
             group_filters=group_filters,

@@ -37,19 +37,19 @@ from .db.groups import list_group_ids
 from .db.users import user_exists
 from .http_client import get_trusted_http_client
 from .l10n import Localized
-from .types import User
+from .store import User
 
 __all__ = [
     "DEFAULT_JWT_ALGORITHMS",
     "IMPERSONATE_HEADER",
     "GroupClaim",
-    "User",
     "build_discovery_url",
+    "dev_user",
     "fetch_oidc_configuration",
     "get_current_user",
     "parse_group_claims",
     "require_admin",
-    "resolve_group_claim",
+    "user_from_claims",
 ]
 
 logger = logging.getLogger(__name__)
@@ -516,16 +516,6 @@ def _extract_groups(
     return frozenset(read_ids - write_ids), frozenset(write_ids), labels
 
 
-def resolve_group_claim(claims: Mapping[str, Any]) -> frozenset[str]:
-    """Return the ID of every group the claims grant access to.
-
-    The read/write split is an HTTP-layer concern; this is the entry point
-    for callers that only need the readable set (the MCP endpoint, which
-    exposes read-only document tools over group workspaces).
-    """
-    return frozenset(claim.id for claim in _accessible_group_claims(claims))
-
-
 def _extract_roles(claims: Mapping[str, Any]) -> frozenset[str]:
     """Return the role names from the OIDC roles claim.
 
@@ -602,10 +592,8 @@ async def validate_jwt_token(token: str) -> User:
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
 
-    claims = decoded.claims
-    sub = claims["sub"]
     try:
-        sanitize_user_id(sub)
+        return user_from_claims(decoded.claims)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -613,15 +601,44 @@ async def validate_jwt_token(token: str) -> User:
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+
+def user_from_claims(claims: Mapping[str, Any]) -> User:
+    """Build the :class:`User` that validated token *claims* describe.
+
+    The one place claims become an identity, for the HTTP API and the MCP
+    endpoint alike, so both grant the same groups with the same permissions.
+
+    Raises:
+        ValueError: If the subject is no valid user ID.
+    """
+    sub = claims.get("sub")
+    user_id = sanitize_user_id(sub if isinstance(sub, str) else "")
     read_groups, write_groups, group_labels = _extract_groups(claims)
+
     return User(
-        id=sub,
+        id=user_id,
         email=claims.get("email"),
         name=claims.get("name") or claims.get("preferred_username"),
         read_groups=read_groups,
         write_groups=write_groups,
         group_labels=group_labels,
         roles=_extract_roles(claims),
+    )
+
+
+async def dev_user() -> User:
+    """The identity every caller gets while authentication is disabled.
+
+    It writes every group registered in the database and holds the admin
+    role, so destructive endpoints are reachable through the same
+    property-derived ``is_admin`` check used in prod.
+    """
+    return User(
+        id="localhost",
+        email="dev@localhost",
+        name="Localhost User",
+        write_groups=await list_group_ids(),
+        roles=frozenset({ADMIN_ROLE}),
     )
 
 
@@ -683,17 +700,7 @@ async def get_current_user(
         HTTPException: If authentication fails.
     """
     if not settings.auth.enable:
-        # Bypass authentication in development mode: give write access to
-        # every group registered in the database and the admin role, so
-        # destructive endpoints are reachable via the same
-        # property-derived `is_admin` check used in prod.
-        user = User(
-            id="localhost",
-            email="dev@localhost",
-            name="Localhost User",
-            write_groups=await list_group_ids(),
-            roles=frozenset({ADMIN_ROLE}),
-        )
+        user = await dev_user()
     elif credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

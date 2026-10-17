@@ -50,7 +50,7 @@ from hivegent.changes import (
 )
 from hivegent.config import settings
 from hivegent.db import documents as db_documents
-from hivegent.store import Casebase
+from hivegent.store import User
 from hivegent.tmp import tmp_dir
 from hivegent.tools.base import Direct, PathFilter, ToolRetry
 from hivegent.tools.changeset import AppliedChanges, PendingChanges
@@ -58,21 +58,16 @@ from hivegent.tools.mutations import DocumentMove
 from hivegent.types import DocumentFilter
 from hivegent.workspace import Location, PlannedChangeset
 from hivegent.workspace import changeset as gateway
-from tests.helpers import run_context
+from tests.helpers import owned, run_context
 
 
 @pytest.fixture()
 def deps(data_dir: Path) -> UserDeps:
     """Deps with one writable and one read-only group."""
     _ = data_dir
-    return UserDeps(
-        user_id="u",
-        store=Casebase.for_user("u"),
-        mode="interactive",
-        conversation_id="c1",
-        group_stores=(Casebase.for_group("team"), Casebase.for_group("archive")),
-        write_group_stores=(Casebase.for_group("team"),),
-    )
+    user = User("u", read_groups=frozenset({"archive"}), write_groups=frozenset({"team"}))
+
+    return UserDeps(user=user, mode="interactive", conversation=owned("c1", user))
 
 
 @pytest.fixture()
@@ -119,7 +114,7 @@ async def test_tmp_is_written_directly_and_a_program_there_is_pointed_at_run_pyt
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
     """A `/tmp` `.py` is written to be run, so the receipt says how, edit included."""
-    folder = tmp_dir(settings.data_dir, "c1")
+    folder = tmp_dir(settings.data_dir, owned("c1"))
     pointer = "Run it with run_python's `script_path='/tmp/report.py'`."
 
     written = (await _write_document(deps)("/tmp/report.py", "print(1)")).data
@@ -293,7 +288,7 @@ async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
     async def write(mode: str, file_path: str) -> None:
         await validate_document_write(context(mode), file_path=file_path, content="x")
 
-    folder = tmp_dir(settings.data_dir, "c1")
+    folder = tmp_dir(settings.data_dir, owned("c1"))
     folder.mkdir(parents=True)
     (folder / "a.json").write_text("{}")
     (folder / "state.json").write_text("x")
@@ -317,7 +312,7 @@ async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
 
     with pytest.raises(ModelRetry, match="not accessible"):
         await validate_document_write(
-            _context(replace(deps, conversation_id=None), "interactive"),
+            _context(replace(deps, conversation=None), "interactive"),
             file_path="/tmp/state.json",
             content="x",
         )
@@ -329,7 +324,7 @@ async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
 async def test_an_edit_that_cannot_apply_is_refused_before_the_approval(
     deps: UserDeps,
 ) -> None:
-    workspace_dir = deps.store.workspace_dir(settings.data_dir)
+    workspace_dir = deps.user.store.workspace_dir(settings.data_dir)
     (workspace_dir / "notes.md").write_text("alpha beta")
     edits = [TextEdit("alpha", "gamma"), TextEdit("missing", "x")]
 
@@ -380,7 +375,7 @@ def documents(deps: UserDeps, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(db_documents, "get_entry_metadata", _no_metadata)
     monkeypatch.setattr(db_documents, "get_entries_metadata", _no_rows)
-    workspace_dir = deps.store.workspace_dir(settings.data_dir)
+    workspace_dir = deps.user.store.workspace_dir(settings.data_dir)
     (workspace_dir / "a.md").write_text("a")
     (workspace_dir / "b.md").write_text("b")
 
@@ -469,7 +464,7 @@ async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
     planned: list[Changeset[Location]],
     routed: list[tuple[str, str]],
 ) -> None:
-    folder = tmp_dir(settings.data_dir, "c1")
+    folder = tmp_dir(settings.data_dir, owned("c1"))
     with_tmp = Changeset((*_STAGED.operations, Write("/tmp/state.json", "{}")))
 
     staged = await changeset_committer(deps)(with_tmp)
@@ -477,8 +472,8 @@ async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
 
     assert isinstance(staged, PendingChanges)
     assert staged.summary == _SUMMARY
-    assert await staging.load_staged("u", staged.changeset_id) == _STAGED
-    assert await staging.load_staged("someone-else", staged.changeset_id) is None
+    assert await staging.load_staged(owned("c1", deps.user), staged.changeset_id) == _STAGED
+    assert await staging.load_staged(owned("c2", deps.user), staged.changeset_id) is None
     assert (folder / "state.json").read_text() == "{}"
     assert applied == AppliedChanges(("written", "written"))
     assert len(planned) == 1
@@ -499,7 +494,7 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
     planned: list[Changeset[Location]],
     routed: list[tuple[str, str]],
 ) -> None:
-    changeset_id = await staging.stage("u", _STAGED)
+    changeset_id = await staging.stage(owned("c1", deps.user), _STAGED)
 
     with pytest.raises(ApprovalRequired) as exc:
         await validate_apply_changes(
@@ -540,7 +535,7 @@ async def test_a_stale_changeset_asks_for_a_new_run(
         raise HTTPException(status_code=409, detail="'~/a.md' changed")
 
     monkeypatch.setattr(gateway, "plan_changeset", _stale)
-    changeset_id = await staging.stage("u", _STAGED)
+    changeset_id = await staging.stage(owned("c1", deps.user), _STAGED)
 
     with pytest.raises(ModelRetry, match="changed. Run the program again"):
         await validate_apply_changes(
@@ -550,9 +545,10 @@ async def test_a_stale_changeset_asks_for_a_new_run(
 
 async def test_unapproved_changesets_are_discarded(data_dir: Path) -> None:
     _ = data_dir
-    approved = await staging.stage("u", _STAGED)
-    denied = await staging.stage("u", _STAGED)
-    foreign = await staging.stage("someone-else", _STAGED)
+    mine, other = owned("c1"), owned("c2")
+    approved = await staging.stage(mine, _STAGED)
+    denied = await staging.stage(mine, _STAGED)
+    foreign = await staging.stage(other, _STAGED)
     response = ModelResponse(
         parts=[
             ToolCallPart("apply_changes", {"changeset_id": approved}, "call-1"),
@@ -561,8 +557,8 @@ async def test_unapproved_changesets_are_discarded(data_dir: Path) -> None:
         ]
     )
 
-    await discard_unapproved_changes("u", response, {"call-1"})
+    await discard_unapproved_changes(mine, response, {"call-1"})
 
-    assert await staging.load_staged("u", approved) == _STAGED
-    assert await staging.load_staged("u", denied) is None
-    assert await staging.load_staged("someone-else", foreign) == _STAGED
+    assert await staging.load_staged(mine, approved) == _STAGED
+    assert await staging.load_staged(mine, denied) is None
+    assert await staging.load_staged(other, foreign) == _STAGED

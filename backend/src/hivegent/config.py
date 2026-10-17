@@ -781,8 +781,7 @@ class SandboxSettings(BaseModel):
     writes in total.  A program that passes one is told so where it stands,
     as an exception it can handle.
     ``staged_changeset_ttl_hours`` is how long a staged changeset waits for
-    ``apply_changes`` before the background sweep, which runs with the
-    ``/tmp`` one, discards it.
+    ``apply_changes`` before the conversation folders' sweep discards it.
 
     ``max_host_calls`` caps how many calls one program makes to the functions
     it is handed, the injected tools and ``complete`` alike, so a runaway loop
@@ -819,12 +818,13 @@ class SandboxSettings(BaseModel):
 class TmpSettings(BaseModel):
     """Lifetime and size of a conversation's ``/tmp`` folder.
 
-    ``/tmp`` is ``<data_dir>/tmp/<conversation_id>/``, outside every
-    workspace.  A folder untouched for ``ttl_hours`` is swept in the background
-    at startup and every ``sweep_interval_hours`` after, as is one whose
-    conversation is gone,
-    and deleting the conversation deletes it at once.  ``max_bytes`` caps what
-    one folder may hold, checked on every write into it.
+    ``/tmp`` is ``<data_dir>/conversations/<conversation_id>/tmp/``, outside
+    every workspace.  One untouched for ``ttl_hours`` expires in the sweep of
+    every conversation's folder, which runs in the background at startup and
+    every ``sweep_interval_hours`` after and also expires staged changesets
+    and the folders of conversations that are gone, and deleting the
+    conversation deletes it at once.  ``max_bytes`` caps what one ``/tmp`` may hold, checked
+    on every write into it.
     """
 
     ttl_hours: float = Field(default=72.0, gt=0)

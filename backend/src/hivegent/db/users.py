@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ._common import affected_rows, ensure_row
 from .engine import session
-from .models import Conversation, Document, User
+from .models import Conversation, Document, Group, User
 
 __all__ = [
-    "delete_all_users",
+    "delete_all_identities",
     "delete_user",
     "ensure_user",
     "list_users_with_counts",
@@ -83,11 +83,15 @@ async def list_users_with_counts() -> list[tuple[str, int, int]]:
     return [(uid, int(docs), int(convs)) for uid, docs, convs in rows]
 
 
-async def delete_all_users() -> int:
-    """Delete every user row.  Cascades to memory, conversations, documents."""
+async def delete_all_identities() -> None:
+    """Delete every user and group row in one transaction, so a crash leaves neither half.
+
+    Users cascade to memory, conversations (and their messages), and their
+    documents, groups to theirs, and chunks with every document.
+    """
     async with session() as s:
-        result = await s.execute(delete(User))
-    return affected_rows(result)
+        await s.execute(delete(User))
+        await s.execute(delete(Group))
 
 
 async def delete_user(user_id: str) -> bool:

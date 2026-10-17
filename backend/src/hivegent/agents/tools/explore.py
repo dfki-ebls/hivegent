@@ -60,7 +60,7 @@ def _grep(deps: UserDeps) -> GrepTool:
 
 
 def _search(deps: UserDeps) -> VectorSearchTool[RetrievedChunk]:
-    return build_search_tool(deps.all_stores, filter_for_store=deps.filter_for_store)
+    return build_search_tool(deps.user.stores(), filter_for_store=deps.filter_for_store)
 
 
 explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()

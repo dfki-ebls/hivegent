@@ -13,16 +13,17 @@ from pydantic_monty import AsyncMonty
 from hivegent import staging
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.write import changeset_committer, program_paths
-from hivegent.auth import User
 from hivegent.changes import Changeset, ChangesetSummary, Delete, Move, Write
 from hivegent.config import settings
+from hivegent.conversation_files import reset_conversation_files, sweep_conversations
+from hivegent.db.conversations import OwnedConversation
 from hivegent.mcp.tools import documents as mcp_documents
 from hivegent.mcp.tools import mutations as mcp_mutations
 from hivegent.server.operations import reads
 from hivegent.server.routes import documents
-from hivegent.store import Casebase
+from hivegent.store import Casebase, User
 from hivegent.text import DecodedText
-from hivegent.tmp import save_result, sweep_tmp, tmp_dir, tmp_root, tmp_search_path
+from hivegent.tmp import save_result, tmp_dir, tmp_root, tmp_search_path
 from hivegent.tools.base import ToolRetry
 from hivegent.tools.changeset import PendingChanges
 from hivegent.tools.documents import DocumentRead, ListDocumentsTool, ReadDocumentTool
@@ -34,7 +35,7 @@ from hivegent.tools.table import QueryTableTool
 from hivegent.tools.workspace_os import ChangesetLimits
 from hivegent.workspace import Gateway, Location, PlannedChangeset
 from hivegent.workspace import changeset as gateway
-from tests.helpers import LIMITS
+from tests.helpers import LIMITS, owned
 
 
 def _gateway(folder: Path) -> Gateway:
@@ -58,16 +59,16 @@ async def test_the_document_route_reads_an_owned_conversations_tmp(
     status: int,
 ) -> None:
     for cid in ("c1", "c2"):
-        folder = tmp_dir(data_dir, cid)
+        folder = tmp_dir(data_dir, owned(cid))
         folder.mkdir(parents=True)
         (folder / "report.py").write_text(f"print('{cid}')")
 
-    (tmp_dir(data_dir, "c1") / "escape.py").symlink_to(tmp_dir(data_dir, "c2") / "report.py")
+    (tmp_dir(data_dir, owned("c1")) / "escape.py").symlink_to(tmp_dir(data_dir, owned("c2")) / "report.py")
 
-    async def owned(user_id: str, cid: str) -> bool:
-        return user_id == "u" and cid == "c1"
+    async def lookup(user: User, cid: str) -> OwnedConversation | None:
+        return owned(cid, user) if user.id == "u" and cid == "c1" else None
 
-    monkeypatch.setattr(documents, "conversation_exists", owned)
+    monkeypatch.setattr(documents, "owned_conversation", lookup)
     user = User(id="u")
 
     if status != 200:
@@ -83,12 +84,12 @@ async def test_the_document_route_reads_an_owned_conversations_tmp(
 
 
 async def test_the_read_tools_reach_tmp(data_dir: Path) -> None:
-    folder = tmp_dir(data_dir, "c1")
+    folder = tmp_dir(data_dir, owned("c1"))
     folder.mkdir(parents=True)
     (folder / "notes.md").write_text("needle\n")
     (folder / "data.json").write_text('{"total": 41}')
     (folder / "rows.csv").write_text("x,y\n1,2\n")
-    paths = UserDeps("u", Casebase.for_user("u"), "interactive", "c1").search_paths()
+    paths = UserDeps(User("u"), "interactive", owned("c1")).search_paths()
 
     read = await ReadDocumentTool(paths=paths)([DocumentRead("/tmp/notes.md")])
     grep = await GrepTool(paths=paths)("needle")
@@ -106,8 +107,8 @@ async def test_the_read_tools_reach_tmp(data_dir: Path) -> None:
 async def test_mcp_has_no_tmp(data_dir: Path) -> None:
     """A caller without a conversation is told which roots it does have."""
     store = Casebase.for_user("u")
-    tmp_dir(data_dir, "c1").mkdir(parents=True)
-    paths = mcp_documents._search_paths(store, ())
+    tmp_dir(data_dir, owned("c1")).mkdir(parents=True)
+    paths = mcp_documents._search_paths(User("u"))
 
     with pytest.raises(ToolRetry, match=r"not found\. This tool addresses ~;"):
         await ReadDocumentTool(paths=paths)([DocumentRead("/tmp/state.json")])
@@ -137,7 +138,7 @@ async def test_concurrent_spills_check_and_write_under_one_lock(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
-    folder = tmp_dir(data_dir, "c1")
+    folder = tmp_dir(data_dir, owned("c1"))
     write = gateway._write_workspace_file
 
     def slow_write(staging: Path, name: str, data: bytes) -> Path:
@@ -159,7 +160,7 @@ async def test_spills_preserve_working_files_and_recheck_planned_write_quotas(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
-    folder = tmp_dir(data_dir, "c1")
+    folder = tmp_dir(data_dir, owned("c1"))
     (folder / "results").mkdir(parents=True)
     working = folder / "results" / "computed.csv"
     _ = working.write_bytes(b"x" * 1_000)
@@ -189,7 +190,7 @@ async def test_spills_preserve_working_files_and_recheck_planned_write_quotas(
 async def test_ordinary_changes_cannot_modify_the_spill_cache(
     data_dir: Path, operation: Write[str] | Move[str]
 ) -> None:
-    folder = tmp_dir(data_dir, "c1")
+    folder = tmp_dir(data_dir, owned("c1"))
     _ = await save_result(folder, "saved.txt", "saved")
     _ = (folder / "state.txt").write_text("state")
 
@@ -200,7 +201,7 @@ async def test_ordinary_changes_cannot_modify_the_spill_cache(
 
 
 async def test_a_program_can_read_but_cannot_write_the_spill_cache(data_dir: Path) -> None:
-    root = tmp_search_path(data_dir, "c1")
+    root = tmp_search_path(data_dir, owned("c1"))
     _ = await save_result(root.path, "saved.txt", "saved")
 
     async with AsyncMonty(min_processes=1) as pool:
@@ -222,8 +223,8 @@ cached.read_text()
 
 async def test_a_program_renames_within_tmp_without_rewriting(data_dir: Path) -> None:
     """A directory and a binary move as they are, and a plain file may change its extension."""
-    deps = UserDeps("u", Casebase.for_user("u"), "read", "c1")
-    folder = tmp_dir(data_dir, "c1")
+    deps = UserDeps(User("u"), "read", owned("c1"))
+    folder = tmp_dir(data_dir, owned("c1"))
     (folder / "plots").mkdir(parents=True)
     (folder / "plots" / "a.png").write_bytes(b"\x89PNG\x00")
     (folder / "old.bin").write_bytes(b"\x00\xff")
@@ -258,8 +259,8 @@ async def test_a_program_writes_tmp_once_it_succeeds_and_stages_the_workspace(
         return PlannedChangeset(changeset, ChangesetSummary())
 
     monkeypatch.setattr(gateway, "plan_changeset", plan)
-    deps = UserDeps("u", Casebase.for_user("u"), "interactive", "c1")
-    folder = tmp_dir(data_dir, "c1")
+    deps = UserDeps(User("u"), "interactive", owned("c1"))
+    folder = tmp_dir(data_dir, owned("c1"))
     folder.mkdir(parents=True)
     (folder / "state.json").write_text("1")
     program = (
@@ -293,25 +294,30 @@ async def test_a_program_writes_tmp_once_it_succeeds_and_stages_the_workspace(
     assert (folder / "state.json").read_text() == "2"
     changeset = result.data.changeset
     assert isinstance(changeset, PendingChanges)
-    assert await staging.load_staged("u", changeset.changeset_id) == Changeset(
+    assert await staging.load_staged(owned("c1"), changeset.changeset_id) == Changeset(
         (Write("~/report.md", "run 2", "create"),)
     )
     # The run past the cap was planned too, and refused once its `/tmp` half applied.
     assert len(planned) == 2
-    assert not (deps.store.workspace_path(data_dir) / "report.md").exists()
+    assert not (deps.user.store.workspace_path(data_dir) / "report.md").exists()
 
 
-async def test_the_sweep_drops_expired_and_orphaned_folders(
+def _age(*paths: Path, touched: float) -> None:
+    for path in paths:
+        os.utime(path, (touched, touched))
+
+
+async def test_the_sweep_expires_each_lifetime_and_drops_orphaned_folders(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An orphan is kept for a sweep interval, since a first turn has no row yet."""
 
     async def live(ids: list[str]) -> set[str]:
-        assert ids == ["orphan"]
+        assert set(ids) == {"fresh", "expired", "orphan", "first-turn"}
 
         return {"fresh", "expired"} & set(ids)
 
-    monkeypatch.setattr("hivegent.tmp.existing_conversation_ids", live)
+    monkeypatch.setattr("hivegent.conversation_files.existing_conversation_ids", live)
     now = time.time()
     ages = {
         "fresh": now,
@@ -321,27 +327,40 @@ async def test_the_sweep_drops_expired_and_orphaned_folders(
     }
 
     for name, touched in ages.items():
-        folder = tmp_dir(data_dir, name)
+        folder = tmp_dir(data_dir, owned(name))
         folder.mkdir(parents=True)
         (folder / "state.json").write_text("{}")
+        _age(folder.parent, folder, folder / "state.json", touched=touched)
 
-        for path in (folder, folder / "state.json"):
-            os.utime(path, (touched, touched))
+    # A changeset nobody answered expires on its own, beside a fresh `/tmp`.
+    unanswered = await staging.stage(owned("fresh"), Changeset(()))
+    staged = data_dir / "conversations" / "fresh" / "changesets" / f"{unanswered}.json"
+    _age(staged, touched=now - settings.sandbox.staged_changeset_ttl_hours * 3600 - 60)
 
-    assert await sweep_tmp() == 2
-    assert sorted(path.name for path in (data_dir / "tmp").iterdir()) == [
+    assert await sweep_conversations() == 2
+    assert sorted(path.name for path in (data_dir / "conversations").iterdir()) == [
         "first-turn",
         "fresh",
     ]
+    assert await staging.load_staged(owned("fresh"), unanswered) is None
+    assert tmp_dir(data_dir, owned("fresh")).is_dir()
+
+
+async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:
+    tmp_dir(data_dir, owned("c1")).mkdir(parents=True)
+    _ = await staging.stage(owned("c2"), Changeset(()))
+
+    await reset_conversation_files()
+
+    assert not (data_dir / "conversations").exists()
 
 
 async def test_the_sweep_keeps_an_orphan_used_during_its_lookup(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    folder = tmp_dir(data_dir, "first-turn")
+    folder = tmp_dir(data_dir, owned("first-turn"))
     folder.mkdir(parents=True)
-    touched = time.time() - settings.tmp.sweep_interval_hours * 3600 - 60
-    os.utime(folder, (touched, touched))
+    _age(folder.parent, folder, touched=time.time() - settings.tmp.sweep_interval_hours * 3600 - 60)
 
     async def live(ids: list[str]) -> set[str]:
         assert ids == ["first-turn"]
@@ -349,9 +368,9 @@ async def test_the_sweep_keeps_an_orphan_used_during_its_lookup(
 
         return set()
 
-    monkeypatch.setattr("hivegent.tmp.existing_conversation_ids", live)
+    monkeypatch.setattr("hivegent.conversation_files.existing_conversation_ids", live)
 
-    assert await sweep_tmp() == 0
+    assert await sweep_conversations() == 0
     assert (folder / "active.txt").read_text() == "working"
 
 

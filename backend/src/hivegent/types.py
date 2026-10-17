@@ -1,6 +1,5 @@
 """Shared types and server-facing schemas for Hivegent."""
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -10,13 +9,13 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 
 from .chunkers import ChunkingSpec
-from .config import ADMIN_ROLE
 from .converters import ConversionSpec
 from .db.conversations import ConversationSummary
 from .entries import entry_owns, is_below, stem_path_from_reference
 from .llm_config import LlmConfig, ReasoningEffort
 from .prompts import Personality
 from .security import require_safe_headers, require_safe_url_shape
+from .store import User
 
 #: Upper bound on text submitted for watermark verification, roughly 250k
 #: tokens at four characters per token.  That covers a generated document
@@ -81,7 +80,6 @@ __all__ = [
     "UpdateTitleRequest",
     "UploadCompleteEvent",
     "UploadDocumentResponse",
-    "User",
     "UserResponse",
     "WriteDocumentRequest",
 ]
@@ -143,47 +141,6 @@ class DocumentFilter:
     def hides_within(self, path: str) -> bool:
         """Whether the filter hides *path* or anything below it, asked of its entries alone."""
         return any(is_below(entry, path) or self._selects(entry, path) for entry in self.excluded)
-
-
-@dataclass(slots=True, frozen=True)
-class User:
-    """Authenticated user with group membership and roles.
-
-    Groups model shared knowledge containers (read/write per group);
-    roles model global capabilities.  Admin status is derived on every
-    access from the fixed :data:`~hivegent.config.ADMIN_ROLE` being
-    present in :attr:`roles` — no duplicate flag is stored anywhere.
-    Grant admin by adding a user to that role in the IdP (or, for dev,
-    auth is disabled and the local user is admin).
-
-    Group membership lives solely in the OIDC token and is never
-    persisted: every field here is reconstructed per request from the
-    validated JWT claims.
-
-    Groups are held as IDs, which is what every path, workspace directory,
-    and owner column uses.  ``group_labels`` carries the display names a
-    provider additionally supplied, for the client to show in place of an
-    opaque ID; nothing on the server reads it, so a rename upstream changes
-    only what the UI renders.
-    """
-
-    id: str
-    email: str | None = None
-    name: str | None = None
-    read_groups: frozenset[str] = field(default_factory=frozenset)
-    write_groups: frozenset[str] = field(default_factory=frozenset)
-    group_labels: Mapping[str, str] = field(default_factory=dict, compare=False)
-    roles: frozenset[str] = field(default_factory=frozenset)
-
-    @property
-    def all_groups(self) -> frozenset[str]:
-        """Return all groups the user belongs to."""
-        return self.read_groups | self.write_groups
-
-    @property
-    def is_admin(self) -> bool:
-        """Whether the user holds the fixed admin role."""
-        return ADMIN_ROLE in self.roles
 
 
 class AssetProcessingMode(str, Enum):

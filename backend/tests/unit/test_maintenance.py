@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from hivegent.config import ADMIN_ROLE
 from hivegent.server import maintenance
-from hivegent.types import User
+from hivegent.store import User
 
 
 async def test_maintenance_gate_blocks_non_admins_only() -> None:
