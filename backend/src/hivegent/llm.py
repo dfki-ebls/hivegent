@@ -3,7 +3,7 @@ self-hosted OpenAI-compatible endpoints need."""
 
 import asyncio
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import override
+from typing import Literal, override
 
 from openai import AsyncOpenAI
 from openai.types.chat import chat_completion_chunk
@@ -27,7 +27,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .config import InferenceProvider, settings
@@ -35,7 +35,6 @@ from .http_client import get_trusted_http_client, get_user_http_client
 from .llm_config import LlmConfig, ReasoningEffort
 
 __all__ = [
-    "AUTO_REASONING_EFFORT",
     "SUMMARY_MAX_TOKENS",
     "capped_tokens",
     "complete",
@@ -44,7 +43,6 @@ __all__ = [
     "create_openai_provider",
     "is_context_overflow",
     "model_from_config",
-    "resolve_thinking",
     "summary_model_settings",
     "thinking_model_settings",
 ]
@@ -303,61 +301,39 @@ def model_from_config(config: LlmConfig) -> OpenAIChatModel:
     )
 
 
-# ``auto`` is a stable public alias for the deployed default effort — kept in
-# the API enum so the default can be retargeted with a single edit here,
-# without touching clients or the request schema.  It resolves to ``high``.
-AUTO_REASONING_EFFORT: ThinkingEffort = "medium"
-
-
-def resolve_thinking(effort: ReasoningEffort) -> ThinkingLevel:
-    """Resolve an API reasoning effort to a pydantic-ai thinking level.
-
-    ``auto`` resolves to :data:`AUTO_REASONING_EFFORT`; ``none`` disables
-    reasoning (``False``); every explicit level (``minimal``…``xhigh``)
-    passes through unchanged.
-    """
-    if effort == "auto":
-        return AUTO_REASONING_EFFORT
-
-    if effort == "none":
-        return False
-
-    return effort
-
-
 # Per-request reasoning caps for self-hosted endpoints, keyed by the generic
 # effort level before any model-specific mapping.  llama.cpp and vLLM force
 # the reasoning block closed at the cap without truncating the answer.
-# ``xhigh`` is intentionally absent so it runs unbounded; the ``False``
-# (``none``) sentinel never indexes it.  llama.cpp honours a request cap only
-# while ``--reasoning-budget`` remains at its -1 default.  vLLM requires a
-# reasoning parser and runner with thinking-budget support.
-_THINKING_BUDGET_TOKENS: Mapping[ThinkingEffort, int] = {
-    "minimal": 512,
-    "low": 2048,
-    "medium": 6144,
-    "high": 16384,
+# llama.cpp honours a request cap only while ``--reasoning-budget`` remains at
+# its -1 default.  vLLM requires a reasoning parser and runner with
+# thinking-budget support.
+_THINKING_BUDGET_TOKENS: Mapping[ReasoningEffort, int] = {
+    "low": 4096,
+    "medium": 16384,
+    "high": 32768,
 }
 
 
 # Generic-to-native effort remapping for models whose reasoning levels do not
 # line up with pydantic-ai's, keyed by a casefolded model-name prefix (the part
-# after any ``<org>/``).  Levels a model does not implement are mapped onto the
-# nearest one it does; the budget above stays keyed on the generic level, so
-# two levels mapping to the same native one keep distinct caps.
-_REASONING_EFFORT_OVERRIDES: Mapping[str, Mapping[ThinkingEffort, ThinkingEffort]] = {
-    "qwen3.8": {"minimal": "low", "high": "medium"},
+# after any ``<org>/``).  Levels a model does not implement, such as Qwen3.8's
+# missing ``high``, are mapped onto the nearest one it does, while the budget
+# above stays keyed on the generic level.
+_REASONING_EFFORT_OVERRIDES: Mapping[
+    str, Mapping[ReasoningEffort, ThinkingEffort]
+] = {
+    "qwen3.8": {"high": "xhigh"},
 }
 
 
-def _map_reasoning_effort(model: str, effort: ThinkingEffort) -> ThinkingEffort:
+def _map_reasoning_effort(model: str, effort: ReasoningEffort) -> ThinkingEffort:
     overrides = _match_prefix(_bare_model_name(model), _REASONING_EFFORT_OVERRIDES)
 
     return overrides.get(effort, effort) if overrides else effort
 
 
 def _reasoning_extra_body(
-    thinking: ThinkingLevel, provider: InferenceProvider | None
+    thinking: ReasoningEffort | Literal[False], provider: InferenceProvider | None
 ) -> dict[str, object] | None:
     match provider:
         case InferenceProvider.LLAMA_CPP:
@@ -370,51 +346,43 @@ def _reasoning_extra_body(
     extra_body: dict[str, object] = {
         "chat_template_kwargs": {"enable_thinking": thinking is not False}
     }
-    budget = (
-        _THINKING_BUDGET_TOKENS.get(thinking) if isinstance(thinking, str) else None
-    )
-    if budget is not None:
-        extra_body[budget_field] = budget
+    if thinking is not False:
+        extra_body[budget_field] = _THINKING_BUDGET_TOKENS[thinking]
 
     return extra_body
 
 
 def thinking_model_settings(
-    thinking: ThinkingLevel | None, config: LlmConfig
+    thinking: ReasoningEffort | Literal[False], config: LlmConfig
 ) -> ModelSettings:
     """Model settings applying *thinking* and *max_tokens* across endpoints.
 
     Spec-compliant OpenAI servers receive the unified pydantic-ai
     ``thinking`` value as the top-level ``reasoning_effort`` field, remapped by
     :data:`_REASONING_EFFORT_OVERRIDES` to the level the model actually
-    implements.  The original generic effort independently selects a hard
-    reasoning token cap, preserving the distinction between levels that map to
-    the same native value.
+    implements.  The generic effort selects the hard reasoning token cap.
 
     Provider-specific request construction is selected by
     ``config.inference_provider``.  llama.cpp and vLLM receive their respective
     hard-budget field plus ``enable_thinking``, while OpenAI receives no extra
     body fields.
 
-    *thinking* of ``None`` omits every field so the server-side default
-    decides (the "auto" reasoning level).  ``config.max_tokens`` (resolved
-    per tier in :func:`resolve_llm_config`) is forwarded as the completion
-    cap whenever set, regardless of the thinking level.
+    *thinking* of ``False`` disables reasoning.  ``config.max_tokens``
+    (resolved per tier in :func:`resolve_llm_config`) is forwarded as the
+    completion cap whenever set, regardless of the thinking level.
     """
-    model_settings = ModelSettings()
+    model_settings = ModelSettings(
+        thinking=False
+        if thinking is False
+        else _map_reasoning_effort(config.model, thinking)
+    )
 
     if config.max_tokens is not None:
         model_settings["max_tokens"] = config.max_tokens
 
-    if thinking is not None:
-        model_settings["thinking"] = (
-            _map_reasoning_effort(config.model, thinking)
-            if isinstance(thinking, str)
-            else thinking
-        )
-        extra_body = _reasoning_extra_body(thinking, config.inference_provider)
-        if extra_body is not None:
-            model_settings["extra_body"] = extra_body
+    extra_body = _reasoning_extra_body(thinking, config.inference_provider)
+    if extra_body is not None:
+        model_settings["extra_body"] = extra_body
 
     return model_settings
 

@@ -15,13 +15,9 @@ export const options = {
     write: "Schreiben",
   },
   reasoningEffort: {
-    auto: "Automatisch",
-    none: "Keiner",
-    minimal: "Minimal",
     low: "Niedrig",
     medium: "Mittel",
     high: "Hoch",
-    xhigh: "Sehr hoch",
   },
   conversionPipeline: {
     auto: {

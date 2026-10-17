@@ -57,7 +57,6 @@ from ...humanize import format_bytes, pluralize
 from ...l10n import Localized
 from ...llm import (
     model_from_config,
-    resolve_thinking,
     thinking_model_settings,
 )
 from ...store import User
@@ -510,8 +509,7 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
     config = ChatRequestConfig.model_validate(await request.json())
 
     run_prefix = build_run_prefix(config, conversation)
-    thinking = resolve_thinking(config.reasoning_effort)
-    model_settings = thinking_model_settings(thinking, run_prefix.llm)
+    model_settings = thinking_model_settings(config.reasoning_effort, run_prefix.llm)
 
     try:
         # `from_request` is typed to return the base adapter with erased type

@@ -33,7 +33,12 @@ import {
   isChatBusy,
   recordChatError,
 } from "@/lib/chat/chat-utils";
-import { type AgentMode, type ConversationArchive, type ReasoningEffort } from "@/lib/types";
+import {
+  type AgentMode,
+  type ConversationArchive,
+  DEFAULT_REASONING_EFFORT,
+  type ReasoningEffort,
+} from "@/lib/types";
 import { conversationMutations, conversationQueries } from "@/queries/conversations";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
@@ -77,7 +82,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
 
   const [activeTab, setActiveTab] = useState<ChatTab>("chat");
   const [agentMode, setAgentMode] = useState<AgentMode>("interactive");
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("auto");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
 
   const buildRequestBody = useBuildRequestBody({ agentMode, reasoningEffort });
 

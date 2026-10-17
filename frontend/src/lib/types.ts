@@ -833,23 +833,11 @@ export const AGENT_MODES = ["interactive", "read", "write"] as const;
  */
 export type AgentMode = (typeof AGENT_MODES)[number];
 
-/** Selectable reasoning efforts: `auto`, `none`, and the 1:1 pydantic-ai levels. Labels live in `options.reasoningEffort`. */
-export const REASONING_EFFORTS = [
-  "auto",
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-] as const;
+/** Selectable reasoning efforts, in display order. Labels live in `options.reasoningEffort`. */
+export const REASONING_EFFORTS = ["low", "medium", "high"] as const;
 
-/**
- * Reasoning effort level for the LLM.
- *
- * Mirrors pydantic-ai's native effort levels plus the `auto` (a stable alias
- * for the deployed default effort) and `none` (disabled) sentinels. `auto` is
- * the default and resolves server-side to the deployed default effort, so that
- * default can be retargeted without a client change.
- */
+/** Reasoning effort level for the LLM. */
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+/** Mirrors the server default of `ChatRequestConfig.reasoning_effort`. */
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";

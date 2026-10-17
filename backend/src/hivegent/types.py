@@ -300,8 +300,8 @@ class ChatRequestConfig(AgentRunConfig):
     """
 
     reasoning_effort: ReasoningEffort = Field(
-        default="auto",
-        description="Reasoning effort level ('auto' resolves to the deployed default effort, 'none' disables thinking)",
+        default="medium",
+        description="Reasoning effort level",
     )
     trigger: Literal["submit-message", "regenerate-message"] = Field(
         default="submit-message",

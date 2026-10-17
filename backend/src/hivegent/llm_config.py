@@ -8,7 +8,6 @@ the converter registry.  That import cycle is why this module exists.
 from typing import Literal, Self
 
 from pydantic import BaseModel, PrivateAttr, model_validator
-from pydantic_ai.settings import ThinkingEffort
 
 from .config import InferenceProvider, reveal, settings
 from .security import require_safe_url_shape
@@ -16,13 +15,8 @@ from .security import require_safe_url_shape
 __all__ = ["LlmConfig", "LlmTier", "ReasoningEffort", "resolve_llm_config"]
 
 
-type ReasoningEffort = Literal["auto", "none"] | ThinkingEffort
-"""Reasoning effort accepted from the API.
-
-Combines pydantic-ai's native effort levels (``minimal``/``low``/``medium``/
-``high``/``xhigh``) with the ``auto`` (a stable alias for the deployed
-default effort) and ``none`` (disable thinking) sentinels.
-"""
+type ReasoningEffort = Literal["low", "medium", "high"]
+"""Reasoning effort accepted from the API, a subset of pydantic-ai's levels."""
 
 
 class LlmConfig(BaseModel):

@@ -63,7 +63,7 @@ Erreicht das Modell sein Kontextlimit, bietet ein Banner an, zu komprimieren und
 ## Den Assistenten anpassen
 
 - Persönlichkeit: Standard, Knapp, Ausführlich, Strukturiert oder eine eigene Systemnachricht.
-- Denkaufwand: von Keiner bis zu höheren Stufen oder Automatisch, ein Abwägen von Tiefe gegen Geschwindigkeit und Kosten.
+- Denkaufwand: Niedrig, Mittel (Standard) oder Hoch, ein Abwägen von Tiefe gegen Geschwindigkeit und Kosten.
 - Modus: Interaktiv fragt vor jeder Änderung im Arbeitsbereich, Schreiben ändert ohne Rückfrage, und Lesen erlaubt keine Änderungen.
 
 ## Gedächtnis

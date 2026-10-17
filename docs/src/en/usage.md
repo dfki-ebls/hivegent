@@ -63,7 +63,7 @@ If the model hits its context limit, a banner offers to compact and retry.
 ## Tuning the assistant
 
 - Personality: Default, Concise, Detailed, Structured, or a custom system message.
-- Reasoning effort: from None to higher levels, or Auto, trading depth against speed and cost.
+- Reasoning effort: Low, Medium (the default), or High, trading depth against speed and cost.
 - Mode: Interactive asks before each workspace change, Write applies changes without asking, and Read allows no changes.
 
 ## Memory
