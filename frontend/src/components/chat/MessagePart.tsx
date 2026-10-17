@@ -63,7 +63,8 @@ function ToolMessagePart({ part, toolData }: Omit<MessagePartProps, "reasoningDu
   // Any subagent tool renders its delegated run: the persisted transcript once it arrives, the live one before.
   const subagentSteps = isSubagentTranscript(info.metadata) ? info.metadata.steps : liveSubagent;
 
-  if (subagentSteps) return <SubagentTool toolName={info.toolName} part={tool} steps={subagentSteps} />;
+  if (subagentSteps)
+    return <SubagentTool toolName={info.toolName} part={tool} steps={subagentSteps} />;
 
   const handler = getToolHandler(info.toolName);
 

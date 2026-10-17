@@ -188,7 +188,9 @@ class ReadBinaryDocumentTool(AsyncPathTool[Batch[BinaryReadResult]]):
         """
         mode = self.binary_content_mode
         media_types = {item.key: vision_media_type(item.file_path) for item in files}
-        images = sum(_renders_images(media_type, mode) for media_type in media_types.values())
+        images = sum(
+            _renders_images(media_type, mode) for media_type in media_types.values()
+        )
 
         if self.max_images is not None and images > self.max_images:
             raise ToolRetry(

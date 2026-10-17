@@ -25,7 +25,10 @@ export function ChunkCard({ chunk, onClick }: { chunk: FetchedChunk; onClick: ()
 
   return (
     <GridCard
-      title={t(($) => $.documents.chunkSummary, { origin: chunkOriginLabel(chunk), position: label })}
+      title={t(($) => $.documents.chunkSummary, {
+        origin: chunkOriginLabel(chunk),
+        position: label,
+      })}
       onClick={onClick}
     >
       <ItemHeader className="justify-start">

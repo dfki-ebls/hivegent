@@ -10,11 +10,7 @@ import { ModeSelector } from "@/components/chat/composer/ModeSelector";
 import { ReasoningEffortSelector } from "@/components/chat/composer/ReasoningEffortSelector";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { WithTooltip } from "@/components/TooltipButton";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-} from "@/components/ui/input-group";
+import { InputGroup, InputGroupAddon, InputGroupButton } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import { keyPrefix } from "@/i18n";
@@ -162,11 +158,7 @@ export function Composer({
           onChange={(event) => setHasText(event.target.value.trim() !== "")}
           placeholder={isStreaming ? t(($) => $.steerPlaceholder) : t(($) => $.placeholder)}
           onKeyDown={(event) => {
-            if (
-              event.key === "Backspace" &&
-              event.currentTarget.value === "" &&
-              files.length > 0
-            ) {
+            if (event.key === "Backspace" && event.currentTarget.value === "" && files.length > 0) {
               event.preventDefault();
               setFiles((prev) => prev.slice(0, -1));
             }

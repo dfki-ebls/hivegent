@@ -359,7 +359,9 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
             data=data, formatted=(body or "(no matches)") + hint_suffix(hints)
         )
 
-    def _format_matches(self, matches: list[GrepMatch], full_lines: bool = False) -> str:
+    def _format_matches(
+        self, matches: list[GrepMatch], full_lines: bool = False
+    ) -> str:
         """Render *matches* with each document path once as a heading.
 
         Every line then carries only its number with ``:`` for matches and

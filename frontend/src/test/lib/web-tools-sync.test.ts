@@ -81,7 +81,13 @@ describe("syncReadDocumentOutput", () => {
   it("stores each read under its own path", () => {
     const markFullDocument = vi.fn<SyncOutputContext["markFullDocument"]>();
     const addChunk = vi.fn<SyncOutputContext["addChunk"]>();
-    const range = { start_line: 1, end_line: 2, total_lines: 2, content: "a\nb", content_hash: "h" };
+    const range = {
+      start_line: 1,
+      end_line: 2,
+      total_lines: 2,
+      content: "a\nb",
+      content_hash: "h",
+    };
     syncReadDocumentOutput(
       context({
         metadata: [

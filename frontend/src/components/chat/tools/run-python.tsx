@@ -73,7 +73,13 @@ function given(value: string | null | undefined): string | undefined {
 
 type ScriptSource = { code: string } | { error: string };
 
-function ScriptSourceView({ path, conversationId }: { path: string; conversationId: string | null }) {
+function ScriptSourceView({
+  path,
+  conversationId,
+}: {
+  path: string;
+  conversationId: string | null;
+}) {
   const [source, setSource] = useState<ScriptSource | null>(null);
 
   useEffect(() => {
@@ -208,7 +214,9 @@ function Output({ result }: { result: PythonResult }) {
 
   return (
     <>
-      {result.stdout && <ToolCode title={t(($) => $.printed)} code={result.stdout} language="ansi" />}
+      {result.stdout && (
+        <ToolCode title={t(($) => $.printed)} code={result.stdout} language="ansi" />
+      )}
       {result.result !== null && <ToolCode title={t(($) => $.returned)} code={result.result} />}
       {!result.stdout && result.result === null && <p>{t(($) => $.noOutput)}</p>}
       {result.changeset && <ChangesetOutcomeView changeset={result.changeset} />}

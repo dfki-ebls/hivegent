@@ -50,7 +50,9 @@ export function ToolParameters({ params }: { params: Record<string, unknown> }) 
 
   if (!code) return null;
 
-  return <ToolCode title={t(($) => $.chat.tools.sections.parameters)} code={code} language="yaml" />;
+  return (
+    <ToolCode title={t(($) => $.chat.tools.sections.parameters)} code={code} language="yaml" />
+  );
 }
 
 /**

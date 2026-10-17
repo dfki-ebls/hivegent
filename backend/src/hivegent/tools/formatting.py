@@ -120,7 +120,9 @@ def truncate_middle(
         return text
 
     def marker(head: str, left_out: int) -> str:
-        return note(head) if note is not None else f"[{left_out} characters left out here]"
+        return (
+            note(head) if note is not None else f"[{left_out} characters left out here]"
+        )
 
     # Two line breaks join the note to its head and tail.
     room = max_chars - len(marker(text, len(text))) - 2

@@ -258,7 +258,11 @@ class JobManager:
         return job.view()
 
     def notify_workspace_changed(
-        self, owner: str, changed: WorkspaceChanged, *, exclude_client: str | None = None
+        self,
+        owner: str,
+        changed: WorkspaceChanged,
+        *,
+        exclude_client: str | None = None,
     ) -> None:
         """Tell *owner*'s subscribers how the workspaces changed.
 

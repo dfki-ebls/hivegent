@@ -185,14 +185,18 @@ class _Stager:
         self.operations.append(Delete(path, self.fs.bases.get(path)))
         self.removed |= parts
 
-    def carry(self, entry: Entry, parts: dict[str, str], gone: set[str]) -> dict[str, str]:
+    def carry(
+        self, entry: Entry, parts: dict[str, str], gone: set[str]
+    ) -> dict[str, str]:
         """Stage one move of an entry a rename carried, returning where each part lands.
 
         *parts* maps every renamed part to its destination, and a part the program
         left alone follows them.
         """
         stem, primaries = _stem(entry), self._primaries(entry)
-        stems = {stem_path_from_reference(destination) for destination in parts.values()}
+        stems = {
+            stem_path_from_reference(destination) for destination in parts.values()
+        }
 
         if len(stems) != 1 or primaries & gone:
             listed = ", ".join(f"'{part}'" for part in sorted(primaries))
@@ -204,7 +208,9 @@ class _Stager:
             return {}
 
         new_stem = stems.pop()
-        lands = {part: new_stem + part[len(stem) :] for part in primaries | parts.keys()}
+        lands = {
+            part: new_stem + part[len(stem) :] for part in primaries | parts.keys()
+        }
         source = min(parts, key=lambda path: (not is_description_file(path), path))
         self.operations.append(Move(source, lands[source], self.fs.bases.get(source)))
 
@@ -252,7 +258,9 @@ class _Stager:
             if origin is not None and entry is None:
                 self.refusals.append(f"'{origin}' disappeared while the program ran.")
             elif entry is not None and entry.is_dir:
-                self.operations.append(Move(entry.canonical, key, fs.bases.get(entry.canonical)))
+                self.operations.append(
+                    Move(entry.canonical, key, fs.bases.get(entry.canonical))
+                )
             elif entry is not None:
                 moved.setdefault(_stem(entry), (entry, {}))[1][entry.canonical] = key
 
@@ -266,7 +274,8 @@ class _Stager:
         gone = [
             under
             for key, node in self.nodes.items()
-            if isinstance(node, Deleted | Ref) or (isinstance(node, Text) and node.origin)
+            if isinstance(node, Deleted | Ref)
+            or (isinstance(node, Text) and node.origin)
             if (under := self._under(key)) is not None
         ]
         gone_paths = {entry.canonical for entry in gone}
@@ -275,7 +284,9 @@ class _Stager:
         for entry, parts in moved.values():
             lands |= self.carry(entry, parts, gone_paths)
 
-        self.remove([entry for entry in gone if entry.is_dir or _stem(entry) not in moved])
+        self.remove(
+            [entry for entry in gone if entry.is_dir or _stem(entry) not in moved]
+        )
 
         for key, content, entry in texts:
             # Text written over a file is that file's, which a moved entry takes
@@ -290,7 +301,9 @@ class _Stager:
 
             self.write(target, content, base, names)
 
-        created = [key for key, node in self.nodes.items() if not isinstance(node, Deleted)]
+        created = [
+            key for key, node in self.nodes.items() if not isinstance(node, Deleted)
+        ]
 
         for key, node in self.nodes.items():
             if (
@@ -315,7 +328,9 @@ def _direct(fs: WorkspaceOS, nodes: dict[str, Node]) -> list[Operation[str]]:
         if isinstance(node, Ref | Text) and node.origin is not None
     }
     carried = set(origins.values())
-    operations: list[Operation[str]] = [Move(origin, key) for key, origin in origins.items()]
+    operations: list[Operation[str]] = [
+        Move(origin, key) for key, origin in origins.items()
+    ]
 
     for key, node in nodes.items():
         under = fs.lookup(key, below=True)
@@ -393,5 +408,6 @@ class ApplyChangesTool(AsyncTool[str]):
         report = "\n".join(reports)
 
         return ToolOutput(
-            data=report, formatted=f"Applied {count} {pluralize(count, 'change')}.\n{report}"
+            data=report,
+            formatted=f"Applied {count} {pluralize(count, 'change')}.\n{report}",
         )

@@ -265,7 +265,9 @@ function ToolsFieldSet() {
       {groups.map(([group, groupTools]) => (
         <FieldSet key={group} className="gap-3">
           <FieldLegend variant="label" className="capitalize">
-            {isCatalogKey(settings.dialog.toolGroups, group) ? t(($) => $.toolGroups[group]) : group}
+            {isCatalogKey(settings.dialog.toolGroups, group)
+              ? t(($) => $.toolGroups[group])
+              : group}
           </FieldLegend>
           {groupTools.map((tool) => (
             <Field key={tool.name} orientation="horizontal">
@@ -457,7 +459,11 @@ function McpServersFieldSet() {
   function test(server: McpServerEntry) {
     setResult(server, null);
     void testMcpServer(server)
-      .catch((e: unknown): McpTestResult => ({ ok: false, tool_count: null, error: errorMessage(e) }))
+      .catch((e: unknown): McpTestResult => ({
+        ok: false,
+        tool_count: null,
+        error: errorMessage(e),
+      }))
       .then((result) => setResult(server, result));
   }
 
@@ -492,7 +498,9 @@ function McpServersFieldSet() {
                   )}
                 </ItemContent>
                 <ItemActions>
-                  {result === null && <Spinner aria-label={tRoot(($) => $.common.states.loading)} />}
+                  {result === null && (
+                    <Spinner aria-label={tRoot(($) => $.common.states.loading)} />
+                  )}
                   {result?.ok && (
                     <Badge variant="secondary">
                       <CheckIcon data-icon="inline-start" />

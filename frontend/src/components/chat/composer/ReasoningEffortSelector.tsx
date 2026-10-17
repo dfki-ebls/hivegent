@@ -9,7 +9,11 @@ interface ReasoningEffortSelectorProps {
   onChange: (value: ReasoningEffort) => void;
 }
 
-export function ReasoningEffortSelector({ value, onChange, className }: ReasoningEffortSelectorProps) {
+export function ReasoningEffortSelector({
+  value,
+  onChange,
+  className,
+}: ReasoningEffortSelectorProps) {
   const { t } = useTranslation();
 
   return (

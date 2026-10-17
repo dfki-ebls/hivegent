@@ -5,11 +5,7 @@ export default {
   locales: ["en", "de"],
   extract: {
     input: ["src/**/*.{ts,tsx}"],
-    ignore: [
-      "src/components/ui/**",
-      "src/test/**",
-      "src/routeTree.gen.ts",
-    ],
+    ignore: ["src/components/ui/**", "src/test/**", "src/routeTree.gen.ts"],
     output: "src/i18n/locales/{{language}}/{{namespace}}.json",
   },
   lint: {

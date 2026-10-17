@@ -44,7 +44,10 @@ export function ChatLayout({ id, draft = false, onNewDraft }: ChatLayoutProps) {
         </div>
 
         <Sheet open={mobileDocumentsOpen} onOpenChange={setMobileDocumentsOpen}>
-          <SheetContent side="left" className="p-0 data-[side=left]:w-full data-[side=left]:sm:max-w-lg">
+          <SheetContent
+            side="left"
+            className="p-0 data-[side=left]:w-full data-[side=left]:sm:max-w-lg"
+          >
             <SheetHeader className="border-b">
               <SheetTitle>{t(($) => $.documents)}</SheetTitle>
               <SheetDescription className="sr-only">

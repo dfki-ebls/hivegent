@@ -42,7 +42,11 @@ function IndexPage() {
             login().catch(() => setIsSigningIn(false));
           }}
         >
-          {isSigningIn ? <Spinner data-icon="inline-start" /> : <LogInIcon data-icon="inline-start" />}
+          {isSigningIn ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <LogInIcon data-icon="inline-start" />
+          )}
           {t(($) => $.app.landing.signIn)}
         </Button>
         <Button

@@ -107,7 +107,11 @@ _FOLDING: dict[int, bool] = {}
 
 def _probe_folding(directory: Path) -> bool:
     for candidate in (directory, *directory.parents):
-        swapped = candidate.with_name(candidate.name.swapcase()) if candidate.name else candidate
+        swapped = (
+            candidate.with_name(candidate.name.swapcase())
+            if candidate.name
+            else candidate
+        )
 
         if swapped == candidate:
             continue
@@ -206,7 +210,11 @@ def respell(root: Path, local: str, listdir: Listdir | None = None) -> str:
     for part in PurePosixPath(local).parts:
         key = path_key(part, folded=True)
         spelled /= next(
-            (name for name in listdir(root / spelled) if path_key(name, folded=True) == key),
+            (
+                name
+                for name in listdir(root / spelled)
+                if path_key(name, folded=True) == key
+            ),
             part,
         )
 
@@ -237,7 +245,11 @@ class EntryPaths:
         >>> EntryPaths("a.tar", "a.tar.md", "a.tar.gz", None).at("b/c")
         EntryPaths(stem_path='b/c', description_path='b/c.md', original_path='b/c.gz', assets_dir=None)
         """
-        suffix = None if self.original_path is None else self.original_path[len(self.stem_path) :]
+        suffix = (
+            None
+            if self.original_path is None
+            else self.original_path[len(self.stem_path) :]
+        )
 
         return type(self)(
             stem_path=stem_path,

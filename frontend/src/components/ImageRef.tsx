@@ -10,7 +10,14 @@ import { ImageLoading } from "@/components/WorkspaceImage";
  * and `alt` is the optional caption. Fetches the image from the authenticated
  * document API and displays it as a `<figure>`.
  */
-export function ImageRef({ src, alt }: { src?: string; alt?: string; [attribute: string]: unknown }) {
+export function ImageRef({
+  src,
+  alt,
+}: {
+  src?: string;
+  alt?: string;
+  [attribute: string]: unknown;
+}) {
   const { t } = useTranslation();
   const { ref, url, error } = useWorkspaceAsset(src ?? null);
 

@@ -60,8 +60,7 @@ interface IndexedPart {
 
 type Block =
   /** *running* while the agent still works on the run, which nothing follows yet. */
-  | { kind: "steps"; parts: IndexedPart[]; running: boolean }
-  | ({ kind: "block" } & IndexedPart);
+  { kind: "steps"; parts: IndexedPart[]; running: boolean } | ({ kind: "block" } & IndexedPart);
 
 /** The parts of a reply, where each run of steps between two blocks forms one chain of thought. */
 function layoutBlocks(parts: ChatPart[], streaming: boolean): Block[] {
@@ -106,10 +105,7 @@ function AssistantMessage({ message, isLastMessage, streaming, retry }: Assistan
   const reasoningDurations = Object.values(message.metadata?.reasoningDurationsMs ?? {}).flat();
   let reasoningRank = 0;
   const renderPart = ({ part, index }: IndexedPart) => {
-    const durationMs =
-      part.type === "reasoning"
-        ? reasoningDurations[reasoningRank++]
-        : undefined;
+    const durationMs = part.type === "reasoning" ? reasoningDurations[reasoningRank++] : undefined;
 
     return (
       <MessagePart

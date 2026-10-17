@@ -1,9 +1,4 @@
-import {
-  CircleQuestionMarkIcon,
-  EyeIcon,
-  PencilIcon,
-  type LucideIcon,
-} from "lucide-react";
+import { CircleQuestionMarkIcon, EyeIcon, PencilIcon, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ComposerSelect } from "@/components/chat/composer/ComposerSelect";
 import { AGENT_MODES, type AgentMode } from "@/lib/types";

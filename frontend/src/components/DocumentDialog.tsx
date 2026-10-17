@@ -926,7 +926,9 @@ function DocumentDialogBody({
                           </span>
                         )}
                       </ItemTitle>
-                      <ItemDescription className="line-clamp-1 text-xs">{item.content}</ItemDescription>
+                      <ItemDescription className="line-clamp-1 text-xs">
+                        {item.content}
+                      </ItemDescription>
                     </ItemContent>
                   </SidebarItem>
                 );

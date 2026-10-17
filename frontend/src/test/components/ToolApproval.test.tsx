@@ -142,8 +142,7 @@ describe("tool approval", () => {
     ]);
 
     rerender(["call-4", "call-5"]);
-    expect(screen.getByLabelText("Note for all actions (optional)"))
-      .toHaveProperty("value", "");
+    expect(screen.getByLabelText("Note for all actions (optional)")).toHaveProperty("value", "");
     fireEvent.click(screen.getByRole("button", { name: "Deny all" }));
 
     expect(decide).toHaveBeenLastCalledWith([
@@ -192,7 +191,10 @@ describe("tool approval", () => {
   // A decision made while the last chunks drain is never dispatched by the SDK.
   it.each([
     [["call-1"], ["Approve", "Deny"]],
-    [["call-1", "call-2"], ["Approve all", "Deny all", "Submit decisions"]],
+    [
+      ["call-1", "call-2"],
+      ["Approve all", "Deny all", "Submit decisions"],
+    ],
   ])("blocks sending %j while streaming, with the reason", (ids, buttons) => {
     renderMessage(ids, { blockedReason: "Not right now." });
 

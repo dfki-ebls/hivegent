@@ -248,7 +248,9 @@ class HostCalls:
 
             except Exception as exc:
                 error = _program_error(name, exc)
-                preview = truncate_line(f"{type(error).__name__}: {error}", _PREVIEW_CHARS)
+                preview = truncate_line(
+                    f"{type(error).__name__}: {error}", _PREVIEW_CHARS
+                )
                 self.finished.append(HostCall(name, arguments, error=preview))
                 raise error from exc
 
@@ -321,7 +323,9 @@ def _keyword_only(factory: AsyncToolFactory[Any]) -> inspect.Signature:
     )
 
 
-def _host_function(factory: AsyncToolFactory[Any], tool: AsyncTool[Any]) -> _HostFunction:
+def _host_function(
+    factory: AsyncToolFactory[Any], tool: AsyncTool[Any]
+) -> _HostFunction:
     """Wrap a tool as the coroutine the sandbox calls and awaits.
 
     Keyword-only, which is what the rendered signatures declare and what the

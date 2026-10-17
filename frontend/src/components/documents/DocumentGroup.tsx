@@ -76,18 +76,16 @@ export function DocumentGroup({
           </NameButton>
         )}
         {contentChunks.length > 0 && (
-          <Badge variant="outline">{t(($) => $.documents.chunks, { count: contentChunks.length })}</Badge>
+          <Badge variant="outline">
+            {t(($) => $.documents.chunks, { count: contentChunks.length })}
+          </Badge>
         )}
         {featureFlags.documentMap && <DocumentMap segments={mapSegments} />}
       </div>
       <CollapsibleContent className="@container pb-2 pl-8">
         <div className="grid auto-rows-fr grid-cols-2 gap-2 @sm:grid-cols-3 @lg:grid-cols-4">
           {doc.image && (
-            <GridCard
-              title={doc.image.filePath}
-              className="p-0"
-              onClick={() => onImageClick(doc)}
-            >
+            <GridCard title={doc.image.filePath} className="p-0" onClick={() => onImageClick(doc)}>
               <AssetImage
                 filePath={doc.image.filePath}
                 wrapperClassName={contentChunks.length > 0 ? "size-full" : "aspect-square w-full"}

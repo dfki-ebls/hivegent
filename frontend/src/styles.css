@@ -139,6 +139,14 @@
 
 /* Tailwind v4 and shadcn/ui give controls the arrow cursor, while every one of them is clickable here.
    It stays unlayered, so it wins over the `cursor-default` utility of the menu rows. */
-:is(button, [role="button"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], [role="tab"]):not(:disabled, [data-disabled]) {
+:is(
+  button,
+  [role="button"],
+  [role="menuitem"],
+  [role="menuitemradio"],
+  [role="menuitemcheckbox"],
+  [role="option"],
+  [role="tab"]
+):not(:disabled, [data-disabled]) {
   cursor: pointer;
 }

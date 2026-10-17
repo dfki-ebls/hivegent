@@ -18,7 +18,13 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Progress, ProgressValue } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 

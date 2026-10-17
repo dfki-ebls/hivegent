@@ -430,7 +430,9 @@ def record_approvals(
         )
 
 
-def _stamp(message: ModelRequest, decisions: Mapping[str, ToolApprovalResponded]) -> None:
+def _stamp(
+    message: ModelRequest, decisions: Mapping[str, ToolApprovalResponded]
+) -> None:
     """Store *decisions* on the request carrying their calls' returns, the one form every decision takes."""
     if decisions:
         message.metadata = {
@@ -749,7 +751,10 @@ def abandon_pending_calls(prefix: Sequence[ModelMessage]) -> ModelRequest | None
     )
     _stamp(
         declined,
-        {call_id: ToolApprovalResponded(id=call_id, approved=False) for call_id in approvals},
+        {
+            call_id: ToolApprovalResponded(id=call_id, approved=False)
+            for call_id in approvals
+        },
     )
 
     return declined

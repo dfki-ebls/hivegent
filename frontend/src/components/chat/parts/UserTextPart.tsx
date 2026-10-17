@@ -13,7 +13,8 @@ interface UserTextPartProps {
 
 /** The user's text as a bubble, or the field that edits it. */
 export function UserTextPart({ text, isEditing, onCancelEdit, onSubmitEdit }: UserTextPartProps) {
-  if (isEditing) return <UserTextEditor text={text} onCancel={onCancelEdit} onSubmit={onSubmitEdit} />;
+  if (isEditing)
+    return <UserTextEditor text={text} onCancel={onCancelEdit} onSubmit={onSubmitEdit} />;
 
   return (
     <Bubble align="end" variant="muted">

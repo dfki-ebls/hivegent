@@ -184,11 +184,7 @@ export function Citation({ src, line }: CitationProps) {
           </Tooltip>
         );
       })}
-      <DocumentDialog
-        open={open && target === "document"}
-        onOpenChange={setOpen}
-        filename={src}
-      />
+      <DocumentDialog open={open && target === "document"} onOpenChange={setOpen} filename={src} />
       {typeof target === "number" && (
         <EvidenceDialog
           open={open}

@@ -224,8 +224,7 @@ function closeCall(part: ChatMessage["parts"][number]): ChatMessage["parts"][num
  */
 export function closeAbandonedCalls(messages: ChatMessage[]): ChatMessage[] {
   const isAbandoned = (message: ChatMessage, index: number) =>
-    index < messages.length - 1 &&
-    message.parts.some(isOpenPrompt);
+    index < messages.length - 1 && message.parts.some(isOpenPrompt);
 
   if (!messages.some(isAbandoned)) return messages;
 

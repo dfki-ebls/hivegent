@@ -76,7 +76,14 @@ describe("ask user", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
 
     expect(addToolOutput.mock.calls).toEqual([
-      [{ tool: "ask_user", toolCallId: "ask-1", state: "output-error", errorText: DISMISSED_ERROR }],
+      [
+        {
+          tool: "ask_user",
+          toolCallId: "ask-1",
+          state: "output-error",
+          errorText: DISMISSED_ERROR,
+        },
+      ],
     ]);
   });
 });

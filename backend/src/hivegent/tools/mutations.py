@@ -189,7 +189,9 @@ commits all of it at once.
 
 
 @contextmanager
-def mutation_errors(into: Callable[[str], Exception], suffix: str = "") -> Generator[None]:
+def mutation_errors(
+    into: Callable[[str], Exception], suffix: str = ""
+) -> Generator[None]:
     """Re-raise a refused mutation as *into* its detail, *suffix* appended as a sentence.
 
     The gateway refuses with an ``HTTPException`` and a route it cannot find with

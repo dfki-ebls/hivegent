@@ -71,7 +71,11 @@ export function ScopeDialogs({ ref, scope, onBulkDone }: ScopeDialogsProps) {
       onBulkDone();
       void remove(scope, pendingDelete.files, "entry");
     } else {
-      void remove(scope, [pendingDelete.path], pendingDelete.kind === "directory" ? "dir" : "entry");
+      void remove(
+        scope,
+        [pendingDelete.path],
+        pendingDelete.kind === "directory" ? "dir" : "entry",
+      );
     }
   };
 

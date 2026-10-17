@@ -1,6 +1,10 @@
 import type { ComponentProps, ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { type ChangesetSummary, ChangesetView, changeCount } from "@/components/chat/tools/changeset";
+import {
+  type ChangesetSummary,
+  ChangesetView,
+  changeCount,
+} from "@/components/chat/tools/changeset";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -83,7 +87,14 @@ interface PromptItemProps {
  * Something the agent asks the user, an approval or questions.
  * It asks rather than reports, so it stands outside the trace until it is answered.
  */
-export function PromptItem({ icon, label, title, description, actions, children }: PromptItemProps) {
+export function PromptItem({
+  icon,
+  label,
+  title,
+  description,
+  actions,
+  children,
+}: PromptItemProps) {
   return (
     <Item variant="outline" render={<fieldset />} aria-label={label} className="min-w-0">
       <ItemMedia variant="icon">{icon}</ItemMedia>

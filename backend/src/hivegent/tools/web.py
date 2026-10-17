@@ -391,9 +391,7 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
             identity=lambda page: page.url,
         )
 
-    async def _fetch_or_retry(
-        self, url: str, share: BatchShare
-    ) -> ToolOutput[WebPage]:
+    async def _fetch_or_retry(self, url: str, share: BatchShare) -> ToolOutput[WebPage]:
         """Fetch one page, turning every failure into a correctable refusal."""
         try:
             return await self._fetch(url, share)
@@ -479,6 +477,8 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
         if not content:
             return ToolOutput(data=page, formatted="(no readable text on this page)")
         header = f"{title} — {url}" if title else url
-        rendered = "\n".join(iter_annotated(content.splitlines(), 1, self.max_line_chars))
+        rendered = "\n".join(
+            iter_annotated(content.splitlines(), 1, self.max_line_chars)
+        )
         suffix = hint_suffix(["truncated"] if truncated else [])
         return ToolOutput(data=page, formatted=f"{header}\n{rendered}{suffix}")

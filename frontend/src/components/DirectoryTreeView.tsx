@@ -1,11 +1,4 @@
-import {
-  FileText,
-  Folder,
-  FolderOpen,
-  type LucideIcon,
-  Pencil,
-  Trash2,
-} from "lucide-react";
+import { FileText, Folder, FolderOpen, type LucideIcon, Pencil, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 

@@ -22,7 +22,13 @@ vi.mock("@/lib/feature-flags", () => ({
   },
 }));
 
-import { buildLlmConfig, getDirectories, getDocumentContent, getSettings, requiresConversion } from "@/lib/api";
+import {
+  buildLlmConfig,
+  getDirectories,
+  getDocumentContent,
+  getSettings,
+  requiresConversion,
+} from "@/lib/api";
 import { waitForBackendReady } from "@/lib/health";
 
 // authFetch gates every request on backend readiness; resolve the cached probe

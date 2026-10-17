@@ -41,7 +41,9 @@ class CompleteTool(AsyncTool[str]):
 
     injectable: ClassVar[bool] = True
     registered: ClassVar[bool] = False
-    sandbox_instructions: ClassVar[Localized[str] | None] = SANDBOX_COMPLETE_INSTRUCTIONS
+    sandbox_instructions: ClassVar[Localized[str] | None] = (
+        SANDBOX_COMPLETE_INSTRUCTIONS
+    )
 
     completion: Completion
 

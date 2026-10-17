@@ -110,7 +110,13 @@ function scalarControl(
         step={prop.type === "integer" ? 1 : undefined}
         onChange={(e) => {
           const v = e.target.value;
-          onChange(v === "" ? (prop.default ?? 0) : prop.type === "integer" ? parseInt(v, 10) : parseFloat(v));
+          onChange(
+            v === ""
+              ? (prop.default ?? 0)
+              : prop.type === "integer"
+                ? parseInt(v, 10)
+                : parseFloat(v),
+          );
         }}
       />
     );

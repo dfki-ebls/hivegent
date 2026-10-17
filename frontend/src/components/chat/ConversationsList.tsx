@@ -1,4 +1,11 @@
-import { CheckIcon, MessagesSquareIcon, PencilIcon, SparklesIcon, TrashIcon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  MessagesSquareIcon,
+  PencilIcon,
+  SparklesIcon,
+  TrashIcon,
+  XIcon,
+} from "lucide-react";
 import { type KeyboardEvent, type Ref, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { keyPrefix } from "@/i18n";
@@ -179,12 +186,7 @@ function ConversationItem({
           >
             {isGenerating ? <Spinner /> : <SparklesIcon />}
           </TooltipButton>
-          <TooltipButton
-            label={t(($) => $.delete)}
-            size="icon-xs"
-            destructive
-            onClick={onDelete}
-          >
+          <TooltipButton label={t(($) => $.delete)} size="icon-xs" destructive onClick={onDelete}>
             <TrashIcon />
           </TooltipButton>
         </ItemActions>
@@ -297,9 +299,7 @@ export function ConversationsList({
                 updatedAt={conversation.updated_at}
                 isActive={conversation.id === currentConversationId}
                 onSelect={() => onConversationSelect(conversation.id)}
-                onDelete={() =>
-                  deletion.show({ id: conversation.id, title: conversation.title })
-                }
+                onDelete={() => deletion.show({ id: conversation.id, title: conversation.title })}
                 onUpdateTitle={(title) => updateTitle(conversation.id, title)}
                 onGenerateTitle={() => handleGenerateTitle(conversation.id)}
               />

@@ -105,7 +105,7 @@ export function useApprovalRoundState(pending: readonly string[]): ApprovalRound
   if (round.ids !== ids) {
     setRound({
       ids,
-      key: ids.some((id) => round.ids.includes(id)) ? round.key : ids[0] ?? "",
+      key: ids.some((id) => round.ids.includes(id)) ? round.key : (ids[0] ?? ""),
     });
   }
 

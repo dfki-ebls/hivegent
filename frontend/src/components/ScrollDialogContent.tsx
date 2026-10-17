@@ -15,6 +15,9 @@ export function ScrollDialogContent({ className, ...props }: ComponentProps<type
 /** The scrolling body of a `ScrollDialogContent`, whose scrollbar sits at the dialog's edge. */
 export function DialogBody({ className, ...props }: ComponentProps<"div">) {
   return (
-    <div className={cn("-mx-6 flex min-h-0 flex-col gap-4 overflow-y-auto px-6", className)} {...props} />
+    <div
+      className={cn("-mx-6 flex min-h-0 flex-col gap-4 overflow-y-auto px-6", className)}
+      {...props}
+    />
   );
 }

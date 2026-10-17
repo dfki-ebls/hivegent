@@ -353,7 +353,9 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         written and every other change is staged as one changeset that
         `apply_changes` applies after the user approves it.
         """
-        source, canonical_script = await asyncio.to_thread(self._prepare, code, script_path)
+        source, canonical_script = await asyncio.to_thread(
+            self._prepare, code, script_path
+        )
         filesystem = self._filesystem()
         printed = CollectString()
         calls = HostCalls(CallBudget(self.max_host_calls))
@@ -395,7 +397,11 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         if changes is not None and self.commit is None:
             raise ToolRetry("This run keeps none of the changes a program makes.")
 
-        changeset = None if changes is None or self.commit is None else await self.commit(changes)
+        changeset = (
+            None
+            if changes is None or self.commit is None
+            else await self.commit(changes)
+        )
 
         return self._output(
             value,
@@ -405,7 +411,9 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
             calls=tuple(calls.finished),
         )
 
-    def _prepare(self, code: str | None, script_path: str | None) -> tuple[str, str | None]:
+    def _prepare(
+        self, code: str | None, script_path: str | None
+    ) -> tuple[str, str | None]:
         """Resolve the program to run and the canonical script it came from, off the event loop.
 
         Inline ``code`` answers to the same cap a stored script's read does,
@@ -415,7 +423,9 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         source, canonical_script = code or "", None
         if script_path is not None:
-            sp, local, absolute = resolve_file_or_retry(self.resolved_paths, script_path)
+            sp, local, absolute = resolve_file_or_retry(
+                self.resolved_paths, script_path
+            )
             canonical_script = sp.prefixed(local)
 
             if not is_python_script(canonical_script):

@@ -455,7 +455,8 @@ class WorkspaceOS(AbstractOS):
         sp, local, absolute = resolved
 
         if local and (
-            not entry_visible(sp, local, DEFAULT_EXCLUDE_DIRS) or is_reserved_path(local)
+            not entry_visible(sp, local, DEFAULT_EXCLUDE_DIRS)
+            or is_reserved_path(local)
         ):
             return None
 
@@ -488,7 +489,8 @@ class WorkspaceOS(AbstractOS):
         live = [
             PurePosixPath(key).name
             for key, node in self.nodes.items()
-            if not isinstance(node, Deleted) and str(PurePosixPath(key).parent) == parent
+            if not isinstance(node, Deleted)
+            and str(PurePosixPath(key).parent) == parent
         ]
 
         return [*live, *self.listdir(directory)]
@@ -739,7 +741,9 @@ class WorkspaceOS(AbstractOS):
         the text is in hand.
         """
         with translate_tool_retry(MemoryError):
-            check_read_budget(entry.canonical, entry.stat.st_size, self.max_document_chars)
+            check_read_budget(
+                entry.canonical, entry.stat.st_size, self.max_document_chars
+            )
 
         decoded = read_text_file(entry.absolute)
 
@@ -778,7 +782,11 @@ class WorkspaceOS(AbstractOS):
                     continue
 
                 relative = PurePosixPath(path).relative_to(entry.canonical)
-                prior = observed.parts if isinstance(observed, TreeStat) else ((".", observed),)
+                prior = (
+                    observed.parts
+                    if isinstance(observed, TreeStat)
+                    else ((".", observed),)
+                )
                 parts.update((str(relative / part), stat) for part, stat in prior)
 
             basis = TreeStat(tuple(sorted(parts.items())))
@@ -1117,7 +1125,9 @@ class WorkspaceOS(AbstractOS):
             case _:
                 pass
 
-    def _origin(self, source: str, node: Node | None, view: Text | Dir | Entry) -> str | None:
+    def _origin(
+        self, source: str, node: Node | None, view: Text | Dir | Entry
+    ) -> str | None:
         """The disk path whose entry a rename of *source* carries, if any."""
         match node:
             case Text(origin=None):
@@ -1151,7 +1161,10 @@ class WorkspaceOS(AbstractOS):
     @staticmethod
     def _check_rename(source: str, destination: str, *, is_dir: bool) -> None:
         """Refuse a rename that would change a document's extension."""
-        if not is_dir and PurePosixPath(source).suffix != PurePosixPath(destination).suffix:
+        if (
+            not is_dir
+            and PurePosixPath(source).suffix != PurePosixPath(destination).suffix
+        ):
             raise PermissionError(
                 f"'{source}' cannot be renamed to '{destination}': a document "
                 "keeps its extension when it moves. To change its format, write "

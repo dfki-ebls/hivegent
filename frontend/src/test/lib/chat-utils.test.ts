@@ -214,12 +214,8 @@ function asked(answered = false): ChatMessage {
 
 describe("shouldContinueRun", () => {
   it("continues once the user answered the questions the run ended on", () => {
-    expect(shouldContinueRun({ messages: [msg("user", "q"), asked()] })).toBe(
-      false,
-    );
-    expect(shouldContinueRun({ messages: [msg("user", "q"), asked(true)] })).toBe(
-      true,
-    );
+    expect(shouldContinueRun({ messages: [msg("user", "q"), asked()] })).toBe(false);
+    expect(shouldContinueRun({ messages: [msg("user", "q"), asked(true)] })).toBe(true);
   });
 
   it("does not resend a stopped step of server tools", () => {
@@ -228,7 +224,13 @@ describe("shouldContinueRun", () => {
       role: "assistant",
       parts: [
         { type: "step-start" },
-        { type: "tool-search", toolCallId: "s-1", state: "output-available", input: {}, output: "" },
+        {
+          type: "tool-search",
+          toolCallId: "s-1",
+          state: "output-available",
+          input: {},
+          output: "",
+        },
       ],
     };
 

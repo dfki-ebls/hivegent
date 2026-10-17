@@ -235,13 +235,18 @@ def test_what_a_program_may_not_change(workspace: Path) -> None:
     # An entry's payload is the workspace's to manage, so no program sees it.
     assert not mount.path_exists(_virtual("report.assets"))
     refusals: list[tuple[Callable[[], object], type[Exception]]] = [
-        (lambda: mount.path_write_text(_virtual("report.assets/a.md"), "x"), PermissionError),
+        (
+            lambda: mount.path_write_text(_virtual("report.assets/a.md"), "x"),
+            PermissionError,
+        ),
         (lambda: mount.path_write_text(_virtual("sheet.xlsx"), "x"), ValueError),
         (lambda: mount.path_write_text(_virtual("picture.png"), "x"), ValueError),
         (lambda: mount.path_write_bytes(_virtual("notes.md"), b"x"), ValueError),
         # A rename into `/tmp` copies the text, which a binary has none of.
         (
-            lambda: mount.path_rename(_virtual("picture.png"), PurePosixPath("/tmp/p.png")),
+            lambda: mount.path_rename(
+                _virtual("picture.png"), PurePosixPath("/tmp/p.png")
+            ),
             ValueError,
         ),
     ]
@@ -297,7 +302,9 @@ def test_a_write_into_new_directories_charges_only_the_write(workspace: Path) ->
     mount.limits = ChangesetLimits(max_operations=1, max_deletes=1, max_chars=100)
     _ = mount.path_write_text(_virtual("drafts/deep/new.txt"), "new")
 
-    assert stage_changes(mount) == Changeset((Write("~/drafts/deep/new.txt", "new", "create"),))
+    assert stage_changes(mount) == Changeset(
+        (Write("~/drafts/deep/new.txt", "new", "create"),)
+    )
 
 
 def test_tmp_directories_are_not_charged(workspace: Path) -> None:

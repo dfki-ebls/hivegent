@@ -40,6 +40,8 @@ describe("Citation", () => {
       </TooltipProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "Line 8" }).getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("button", { name: "Line 8" }).getAttribute("aria-disabled")).toBe(
+      "true",
+    );
   });
 });
