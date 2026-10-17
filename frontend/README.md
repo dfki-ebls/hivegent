@@ -1,117 +1,112 @@
 # Hivegent Frontend
 
-The client-side decisions that are not obvious from the code.
-The stack and the transport contracts are in [`../ARCHITECTURE.md`](../ARCHITECTURE.md), and everything about how history, approvals, and branches are stored is in [`../backend/README.md`](../backend/README.md).
+Client-side decisions that are not obvious from the code.
+The stack and transport are in [`../ARCHITECTURE.md`](../ARCHITECTURE.md), history, approval, and branch storage in [`../backend/README.md`](../backend/README.md).
 
 ## The client is not the source of chat history
 
-The backend owns conversation history as a message tree, so the client never echoes the whole conversation.
-`prepareSendMessagesRequest` in `src/hooks/chat/use-hivegent-chat.ts` sends only the new message (none for a regenerate) plus `trigger` and `messageId`, and the server loads the active-path prefix from its store and forks or appends under the node `messageId` addresses.
-History is hydrated on load from `GET /conversations/{id}/messages` (`use-conversation-history.ts`), where each `UIMessage.id` is the server's tree-node id.
+The backend owns history as a message tree.
+`prepareSendMessagesRequest` (`hooks/chat/use-hivegent-chat.ts`) sends only the new message (none for a regenerate) plus `trigger` and `messageId`.
+History loads from `GET /conversations/{id}/messages`, where each `UIMessage.id` is a tree-node id.
 
-A message sent in the current session starts out with a local SDK id instead, which addresses nothing server-side, so every turn returns the node id it stored the user message under in `X-Message-Id` and `onFinish` swaps it in (`adoptMessageNodeId`).
-The id is read off the response headers rather than the stream, so a turn the user stops or that errors still leaves an editable message behind.
-Adopting it re-keys that bubble and therefore remounts it; the alternative, translating ids at send time, would leave in-session ids differing from post-reload ones and is not worth that.
+A message sent in the current session starts with a local SDK id.
+Every turn returns the stored node id in `X-Message-Id`, and `onFinish` swaps it in (`adoptMessageNodeId`).
+It is read from the headers, so a stopped or failed turn still leaves an editable message.
 
-Submit, edit, regenerate, retry, and stop work end-to-end.
-Editing a message or regenerating a reply forks a sibling branch server-side and preserves the prior one, but the UI to navigate those branches is not built yet.
+Editing or regenerating forks a sibling branch server-side, but there is no UI to navigate branches yet.
 
 ## AI Elements are composed, not vendored
 
-The chat follows the shadcn/ui AI Elements patterns, composed in place from the generated components in `components/ui` (`MessageScroller`, `Message`, `Bubble`, `Trace`, `CodeBlock`, `Item`, `Questionnaire`, `InputGroup`, `Attachment`, `Marker`), rather than wrapping each pattern in a file of its own.
-Every generated component uses Base UI, so its triggers take a `render` element instead of `asChild`, and `npm run shadcnup` installs or refreshes every component of the registry.
+The chat composes the shadcn/ui AI Elements patterns in place from `components/ui` (`Message`, `Trace`, `CodeBlock`, `Item`, `Questionnaire`, ...).
+The components use Base UI, so triggers take a `render` element instead of `asChild`.
+`npm run shadcnup` installs or refreshes every registry component.
 
-A reply is a `Message` whose parts `partLayout` (`chat/MessagePart.tsx`) sorts into steps and blocks.
-Each run of steps (reasoning and tool calls) between two blocks is one Chain of Thought, a summary line that opens to the run's `Trace` while the agent works and closes once the reply moves on.
-Every step is a trace line that expands to its detail, so tools, reasoning, subagents, changesets and the steering queue all look and behave the same.
-A subagent follows the Subagent pattern, a line that opens to its task, its own nested trace and its report.
-A step that asks the user something, an approval or an `ask_user` question, is a block instead: an outline `Item` outside the trace until it is answered, after which the call goes back to being a line.
-Whether a line still runs depends on whether the chat streams into its message (`useMessageStreaming`), so a call the user stopped reads as stopped instead of shimmering forever.
+`partLayout` (`chat/MessagePart.tsx`) sorts a reply's parts into steps and blocks.
+Each run of steps between two blocks is one Chain of Thought that opens to its `Trace`.
+Every step is a trace line that expands to its detail, including subagents, changesets, and the steering queue.
+An approval or `ask_user` question is a block, an `Item` outside the trace, until it is answered.
+`useMessageStreaming` decides whether a line still runs, so a stopped call reads as stopped.
 
-Replies render with Streamdown, but its fenced code goes to the same `CodeBlock` as the tool lines (`MarkdownCode` in `chat/markdown/MarkdownText.tsx`), highlighted by the Shiki core with the JavaScript regex engine and the languages listed in `lib/highlighter.tsx`.
-That replaces `@streamdown/code`, whose full Shiki bundle emitted a chunk per language and the Oniguruma WASM.
-Mermaid fences and inline code keep Streamdown's own rendering, and the Mermaid plugin is imported on the first diagram, since Mermaid outweighs the rest of the chat.
+Replies render with Streamdown, but fenced code goes to the shared `CodeBlock` (`MarkdownCode` in `chat/markdown/MarkdownText.tsx`).
+It uses the Shiki core with the JavaScript regex engine and the languages in `lib/highlighter.tsx`, which avoids a chunk per language and the Oniguruma WASM.
+Mermaid is imported lazily on the first diagram.
 
-Workspace documents render with markdown-to-jsx, since Streamdown is too slow for converted documents of hundreds of pages, into plain elements styled by shadcn/typeset, vendored unchanged as `src/typeset.css` from `ui.shadcn.com/typeset.css` since it ships as no package.
-Replies keep Streamdown's own styles: it has no unstyled mode and its root spaces blocks with a utility that overrides every typeset margin, so typeset would mean replacing each of its elements.
+Workspace documents render with markdown-to-jsx, since Streamdown is too slow for documents of hundreds of pages.
+They are styled by shadcn/typeset, vendored unchanged as `src/typeset.css`.
+Replies keep Streamdown's own styles, since it has no unstyled mode.
 
 ## Chat settings ride on every request
 
-`prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request, rather than each call site attaching a body.
-The SDK issues the post-approval continuation itself, with only the options the decision was recorded with, so settings attached per call would leave that one request bare and resume the turn with the server's defaults: no document scope, no model override, no MCP servers.
+`prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request.
+The SDK issues the post-approval continuation itself, so per-call settings would resume that turn with server defaults.
 
 ## Tool approvals
 
-A decision lives only in the browser's memory until the resumed turn is persisted, and the SDK dispatches the continuation only if the chat happens to be idle when the decision is recorded — it never looks again.
-The buttons therefore stay disabled until the turn settles (the gate's `blockedReason` in `ChatSidebar.tsx`).
-Without that, a decision taken while the last chunks drained would be recorded, never sent, and leave the call dangling for the backend to close.
+The SDK dispatches a continuation only if the chat is idle when the decision is recorded.
+The buttons therefore stay disabled until the turn settles (`blockedReason` in `hooks/chat/use-tool-approval.ts`).
 
-The prompt itself is re-derived from stored history rather than stored as a decision, since a tool call with no result is an open approval.
-An approval the user overtakes by sending another message is declined on both sides: `chat-utils.closeAbandonedCalls` derives the denial over the live transcript while the backend closes the dangling call on the next request.
+The prompt is derived from stored history, since a tool call without a result is an open approval.
+An approval overtaken by a new message is declined on both sides: `chat-utils.closeAbandonedCalls` on the client, the backend on the next request.
 
-The protocol's approval request carries ids only, so the changeset summary the planner resolved for the prompt arrives as message metadata keyed by tool call id, live and after a reload alike.
-`ApprovalScope` provides it per message and `ToolCard` reads its own call's entry with `useApprovalMetadata(part, schema)`, which validates it with zod.
-Every approval that changes the workspace (a mutation tool or `apply_changes`) asks with that summary, so one `ChangesetView` (`components/chat/tools/changeset.tsx`) lists each change as a trace line that opens to its diff, and `run-python.tsx` reuses it to show what a program staged.
-A tool line reads a `/tmp` file through the same document route as a workspace one, passing the persisted conversation id that `ChatSidebar` provides through `useConversationId`, so a draft's `/tmp` script waits for its first turn to persist.
-Every gated call asks with the same `ApprovalPrompt` (`components/chat/tools/approval.tsx`): its input, the changeset, an optional note for the assistant, and approve and deny buttons, where a lone request is sent on click.
-Several requests of one response are the special case: the prompt buttons then only stage a choice (`aria-pressed`), and an `ApprovalBar` under the message adds a shared note, "Approve all" and "Deny all", and a submit that sends the staged choices once every call has one.
-`ApprovalScope` holds the staged state (`useApprovalRoundState`) keyed by request id, so a later round starts blank, and provides it to its prompts.
-The gate's `decide` takes the whole batch and records each decision in turn, and since the SDK continues only once the last one is in, that still sends a single continuation.
+The changeset summary arrives as message metadata keyed by tool call id, live and after a reload.
+`ApprovalScope` provides it, and `ToolCard` reads it with `useApprovalMetadata(part, schema)`.
+`ChangesetView` (`components/chat/tools/changeset.tsx`) lists each change as a line that opens to its diff, and `run-python.tsx` reuses it for staged programs.
+A `/tmp` file is read through the document route with the conversation id from `useConversationId`.
 
-A note travels as the decision's `reason`, which is the user's own text on both decisions: the backend words the refusal the model reads around it for a denial and appends it to the result of an approved call (see `../backend/README.md`), and records it so the resolved line shows it live and after a reload alike.
+Every gated call asks with `ApprovalPrompt` (`components/chat/tools/approval.tsx`): input, changeset, an optional note, approve and deny.
+A lone request is sent on click.
+For several requests in one response, the buttons only stage a choice, and an `ApprovalBar` adds a shared note, "Approve all", "Deny all", and a submit.
+`useApprovalRoundState` keys the staged state by request id, and `decide` records the whole batch, so the SDK sends one continuation.
+
+A note travels as the decision's `reason` for both approvals and denials, and the backend records it.
 
 ## Questions are answered in their prompt
 
-`ask_user` is a tool without a server-side body, so its prompt (`components/chat/tools/ask-user.tsx`) answers it with `addToolOutput` through the same gate as approvals, which keeps the buttons disabled while the turn settles.
-It composes the shadcn/ui `Questionnaire`, one step per question with a free-text answer beside the options and a note field, and sends every answer at once from the last step.
-The checked options of a question's field are its picks, and its text input carries the typed answer.
-`chat-utils.shouldContinueRun` resumes the run once the last step holds an answered question and nothing unsettled, rather than the SDK's `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
-A dismissal is an `output-error`, and a question the user overtakes with another message is dismissed on both sides, like an approval.
+`ask_user` has no server-side body, so its prompt (`components/chat/tools/ask-user.tsx`) answers with `addToolOutput` through the same gate as approvals.
+It composes the shadcn/ui `Questionnaire`, one step per question, and sends all answers from the last step.
+`chat-utils.shouldContinueRun` resumes the run, instead of `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
+A dismissal is an `output-error`, and an overtaken question is dismissed like an approval.
 
 ## Interface language
 
-All text lives in typed catalogs under `src/i18n/locales/{en,de}`, one namespace split into sections, read with the react-i18next selector API (`t(($) => $.chat.composer.placeholder)`).
-English is the source catalog whose literal types check keys and interpolation variables, and each German section is declared `satisfies Translation<typeof en>`, so a missing or extra key fails the type check instead of falling back at runtime.
-The catalogs are bundled statically: two small languages cost less than a lazy-loading round trip and nothing ever suspends.
+All text lives in typed catalogs under `src/i18n/locales/{en,de}`, read with the react-i18next selector API (`t(($) => $.chat.composer.placeholder)`).
+Each German section is declared `satisfies Translation<typeof en>`, so a missing or extra key fails the type check.
+Both catalogs are bundled statically.
 
-The browser alone decides the language: `LANGUAGE` is the first supported entry of `navigator.languages`, fixed at page load and never stored, so there is no picker and changing the browser language takes effect on the next load.
-`getAuthHeaders()` sends it as `Accept-Language` on every request, so the backend answers in the language the interface shows rather than renegotiating from the browser's own header.
-Dates, numbers, and sizes go through `@/i18n/format` rather than `toLocale*String()`, and `npm run i18n:lint` lists hardcoded JSX text.
+The language is the first supported entry of `navigator.languages`, fixed at page load, with no picker.
+`getAuthHeaders()` sends it as `Accept-Language` on every request.
+Dates, numbers, and sizes go through `@/i18n/format`, and `npm run i18n:lint` lists hardcoded JSX text.
 
 ## Moves and deletes are one request
 
-Every move, delete, and new directory, of one item or a whole selection, is one `applyChanges` request that the backend applies all or nothing.
-The store sends it through one helper: the affected rows spin until their scope reloads, every scope the returned `WorkspaceChanged` names refreshes, and a refusal is one error naming the offending path.
-A delete names whether it expects a document or a folder, so a stale view can never delete a folder in place of a document.
-Only bulk rechunk and reconvert are background jobs with progress in the job tray, since they convert and index.
+Every move, delete, and new directory is one `applyChanges` request that the backend applies all or nothing.
+Affected rows spin until their scope reloads, every scope in the returned `WorkspaceChanged` refreshes, and a refusal names the offending path.
+A delete states whether it expects a document or a folder, so a stale view cannot delete the wrong kind.
+Only rechunk and reconvert are background jobs, and both take a list of files.
 
 ## Kept paths follow every workspace change
 
-The chat's document filter, a scope's selection, and its open document dialog keep canonical or local paths, so one left at a stale path would silently stop hiding a document from the agent or point at nothing.
-They follow what the backend applied, never what a client sent, since the backend resolves a move into an existing folder and moves an entry with its original.
-Every change that never was a job says which scopes it touched and what it moved and deleted as one `WorkspaceChanged`, and `onWorkspaceChanged` in the jobs store is the one channel it reaches them through, fed by the `applyChanges` response that the documents store passes to `publishWorkspaceChanged` for the tab that asked, whose own feed skips the change, and by the feed's `workspace-changed` event for everything else, the agent, an MCP client, or another tab.
-The SPA always sends its client id, so each change arrives once, and its scopes refresh the trees the documents store has loaded.
-`followPath` in `lib/utils` drops a path at or below a deleted one, then carries one at or below a moved source over to its destination, all moves at once so swaps and chains land right, and the filter's `follow` and `useFollowedState`, behind the scope's selection and dialog, keep their state when nothing changed.
-Group members other than the one who acted get no feed event yet, so their kept paths do not follow.
+The document filter, a scope's selection, and its open document dialog keep paths that must follow what the backend applied.
+Every change arrives as one `WorkspaceChanged` through `onWorkspaceChanged` in the jobs store.
+It comes from the `applyChanges` response for the acting tab (via `publishWorkspaceChanged`) and from the feed's `workspace-changed` event for everything else.
+The SPA sends its client id, so each change arrives once.
+`followPath` in `lib/utils` drops paths under a deleted one and carries paths under a moved source to the destination, all moves at once.
+Group members other than the actor get no feed event yet.
 
 ## TODO: branch-navigation UI
 
-The active branch is always the newest leaf and the backend stores no selection pointer, so **branch navigation is ephemeral client view state, never persisted server-side.**
-Viewing an older branch just swaps the messages the client renders; the choice becomes durable only when the user _appends_ to that branch (continue, edit, or regenerate), because the appended chain is then the newest leaf the server already treats as active on the next load.
-So there is **no** `/branches/select` endpoint, no `set_active_leaf`, and no schema change — only a read-only projection plus telling the server where a turn continues from.
+Branch navigation is ephemeral client state.
+The newest leaf is always active, and a choice becomes durable only when the user appends to that branch.
+`GET /conversations/{id}/messages` already returns `metadata.branch = { branchCount, branchIndex, siblingIds }` on forking nodes.
 
-The backend already emits the navigation data: `GET /conversations/{id}/messages` returns `UIMessage`s whose forking nodes carry `metadata.branch = { branchCount, branchIndex, siblingIds }`.
+Backend, read-only and without schema changes:
 
-Backend additions, both read-only and with no new column:
+- Add `?branch={messageId}` to `GET /conversations/{id}/messages` to project the active path from a chosen leaf.
+- Let a chat request carry a continuation anchor, so `resolve_fork` forks at the viewed branch instead of the newest.
 
-- Give `GET /conversations/{id}/messages` an optional `?branch={messageId}` that anchors the active-path projection at a chosen leaf: descend the addressed node to its branch tip and walk up to the root (the same `_load_active_path` / `dump_messages_with_ids` path, just a different anchor). Without the param it returns the newest branch as today.
-- Let a turn continue a non-newest branch: the chat request carries the continuation anchor (the id of the last message in the client's current view) so `resolve_fork` forks there rather than at the global newest. Edit and regenerate keep their `messageId` semantics, and on the newest branch the anchor _is_ the newest leaf, so behaviour is unchanged.
+Frontend:
 
-Frontend steps:
-
-- Add `loadBranch(conversationId, messageId)` to `src/lib/api.ts` that GETs `/conversations/{id}/messages?branch={messageId}` and returns `UIMessage[]`.
-- Define a typed branch-metadata shape (e.g. in `src/lib/chat/`) and a guard that reads `message.metadata.branch`, which is `unknown` on `UIMessage`.
-- In `MessageBubble.tsx` (and `parts/UserTextPart.tsx` / `MessagePart.tsx` for placement), render a prev/next selector showing `branchIndex + 1` of `branchCount` whenever `branchCount > 1`, on both user bubbles (edit forks) and assistant bubbles (regenerate forks).
-- Wire the handlers in `ChatSidebar.tsx`: resolve the target sibling from `branch.siblingIds` plus the direction, call `loadBranch`, `setMessages` with the returned path, and clear the fetched-documents panel. Pure client view state, no server round-trip, disabled while streaming.
-- When the user continues, edits, or regenerates while viewing a branch, include the continuation anchor in the chat request so the new chain forks off that branch and becomes the newest.
-- Keep the selector a small presentational component bound to `branchIndex` / `branchCount` in the `MessageFooter`, since the fetch drives the alternatives rather than the component owning them.
+- Add `loadBranch(conversationId, messageId)` to `src/lib/api.ts` and a typed guard for `message.metadata.branch`.
+- Render a prev and next selector in `MessageFooter` when `branchCount > 1`, on user and assistant bubbles.
+- On selection, load the branch and `setMessages`, disabled while streaming.
+- Send the continuation anchor when the user continues, edits, or regenerates on a viewed branch.

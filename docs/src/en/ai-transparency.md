@@ -7,19 +7,18 @@ Conversation exports carry a signed statement that they contain AI-generated tex
 
 ## Verify text
 
-Select **Verify AI text** below the chat composer and paste the text to check.
-You can download a signed report containing the text hash, but not the text itself.
-Verify it, or the `provenance` field of an export, with the key published at `/api/transparency/jwks`, which needs no sign-in.
+Select **Verify AI text** below the chat composer and paste the text.
+You can download a signed report with the text hash, but not the text.
+Verify the report, or the `provenance` field of an export, with the public key at `/api/transparency/jwks`.
 Submitted text is not stored or logged.
 
-A positive result means that Hivegent's watermark was found.
-A negative result does not prove human authorship or exclude another AI system.
-Short or edited text may be inconclusive.
+A positive result means Hivegent's watermark was found.
+A negative result does not prove human authorship, and short or edited text may be inconclusive.
 
-Sign-in is required for the check.
-Qualified experts can request access through the operator contact shown in the verification dialog.
+The check requires sign-in.
+Qualified experts can request access through the operator contact in the verification dialog.
 
 ## Acceptable use
 
-Do not remove, forge, conceal, or use the detector to circumvent the watermark.
+Do not remove, forge, conceal, or circumvent the watermark.
 Keep a visible disclosure when sharing AI-generated text where its origin matters.

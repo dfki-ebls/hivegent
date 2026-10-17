@@ -1,137 +1,111 @@
 # Architecture
 
 How the pieces fit together, for people working on the code.
-For the user-facing view see [`docs/src/en/architecture.md`](docs/src/en/architecture.md); the design decisions behind each half live in [`backend/README.md`](backend/README.md) and [`frontend/README.md`](frontend/README.md).
+The user-facing view is [`docs/src/en/architecture.md`](docs/src/en/architecture.md), the design decisions live in [`backend/README.md`](backend/README.md) and [`frontend/README.md`](frontend/README.md).
 
-Hivegent is a React SPA over a FastAPI service, and the core workflow is retrieval-augmented chat over uploaded and processed documents.
-The frontend owns authentication, interaction, local state, and transport; the backend owns execution, storage, security, retrieval, and model integration, and is the composition root for all four.
+Hivegent is a React SPA over a FastAPI service for retrieval-augmented chat over uploaded documents.
+The frontend owns authentication, interaction, and local state.
+The backend owns execution, storage, security, retrieval, and model integration.
 
 ```mermaid
 flowchart LR
-    end_user[User]
-    frontend_spa[Frontend SPA: React + Vite + TanStack Router]
-    oidc_provider[OIDC Provider]
-    fastapi_backend[FastAPI Backend]
-    agent_runtime[Pydantic AI Agent Runtime]
-    toolsets[Built-in Toolsets]
-    external_mcp[External MCP Servers]
-    built_in_mcp[Built-in MCP Server]
-    retrieval[Retrieval: cbrkit + PostgreSQL/pgvector]
-    storage[Conversation and Memory Storage]
-    llm_provider[LLM Provider]
-
-    end_user --> frontend_spa
-    frontend_spa <--> oidc_provider
-    frontend_spa --> fastapi_backend
-    fastapi_backend --> agent_runtime
-    fastapi_backend --> built_in_mcp
-    agent_runtime --> toolsets
-    agent_runtime --> external_mcp
-    agent_runtime --> llm_provider
-    agent_runtime --> storage
-    toolsets --> retrieval
-    toolsets --> storage
+    user[User] --> spa[Frontend SPA]
+    spa <--> oidc[OIDC Provider]
+    spa --> api[FastAPI Backend]
+    mcp_client[MCP Client] --> mcp[MCP Server /mcp]
+    api --> agent[Pydantic AI Agent]
+    mcp --> toolsets
+    agent --> toolsets[Agent Toolsets]
+    agent --> external_mcp[External MCP Servers]
+    agent --> llm[LLM Provider]
+    toolsets --> db[PostgreSQL + pgvector]
 ```
 
 ## Frontend
 
-- React 19, TypeScript, and Vite as a client-side SPA.
-- TanStack Router for file-based routes and login-gated pages.
-- `oidc-spa` for browser-side OIDC authentication, with mock auth in development.
-- Vercel AI SDK for chat transport and streaming UI.
-- Zustand for client state and Zod for runtime boundary validation.
-- Tailwind CSS 4 and shadcn-style components for presentation.
-- The UI is organized around a chat workspace and a document workspace.
+- React 19, Vite, and TanStack Router, with `oidc-spa` for login and mock auth in development.
+- Vercel AI SDK for chat streaming, Zustand for state, and Zod at the boundaries.
+- Tailwind CSS 4 and shadcn/ui on Base UI.
 
 ## Backend
 
-- FastAPI as a single HTTP application, exposing authenticated REST, chat streaming, SSE progress, and a built-in MCP endpoint.
-- Pydantic and `pydantic-settings` for schemas and environment-driven configuration.
-- Authentication through OIDC bearer tokens or personal access tokens, with group membership read from the OIDC groups claim.
+- FastAPI exposes authenticated REST, chat streaming, SSE progress, and the MCP endpoint.
+- `pydantic-settings` reads configuration from `config.toml`, `HIVEGENT_*` env vars, and credential files.
+- Authentication uses OIDC bearer tokens, with groups and roles read from their claims.
 - Pydantic AI binds models, user-scoped dependencies, and toolsets into one runtime.
-- Uploads become recursive stem-based workspace entries whose markdown companions are chunked and indexed.
-- PostgreSQL with `pgvector` and cbrkit for dense, sparse, and hybrid retrieval, plus conversations and long-term memory.
-- Each user or group casebase lives under `data/workspace/<store_key>/`, keyed by the same `user:<id>` / `group:<id>` token that scopes SQL rows.
-- Each chat conversation owns a folder under `data/conversations/<conversation_id>/`, outside every workspace, holding the `tmp/` its agent run addresses as `/tmp` and writes without approval, where a tool result too large to show whole is saved under `/tmp/.tool-results/`, and the `changesets/` its programs staged for approval.
-- Every write, edit, move, delete, and new directory, from a route, a tool, or a program, is one changeset that one planner and executor (`workspace.changeset`) commits all or nothing over its roots, each answering for its own rules: a casebase workspace carries rows, indexing, announcements, and the approval a mode asks for item by item, while a conversation's `/tmp` is a folder written directly within its size cap.
-- The planner refuses a directory move carrying what the caller's document filter hides, and each commit is announced once on the feed as `workspace-changed`, with its scopes and what it moved and deleted, the same record the change routes return and every other inline mutation announces, which the SPA refreshes and follows through one channel together with its own responses.
-- A FastMCP server is mounted at `/mcp`, and external MCP servers can be connected.
+- PostgreSQL with `pgvector` and cbrkit provide dense, sparse, and hybrid retrieval, plus conversations and memory.
+- Each user or group workspace lives under `data/workspace/<store_key>/`, keyed by the same `user:<id>` or `group:<id>` token that scopes SQL rows.
+- Each conversation owns `data/conversations/<id>/`, outside every workspace.
+  Its `tmp/` is the agent's `/tmp`, writable without approval and holding oversized tool results under `/tmp/.tool-results/`.
+  Its `changesets/` holds what programs staged for approval.
+  The whole folder is swept after one idle TTL (`settings.conversations`, env `HIVEGENT_CONVERSATIONS__*`).
+- Every write, edit, move, delete, upload, and new directory is one changeset that `workspace.changeset` plans and commits all or nothing.
+  A workspace root carries rows, indexing, and per-item approval, while `/tmp` is written directly within its size cap.
+- Each commit is announced once on the job feed as `workspace-changed`, which the SPA follows to refresh its views.
+- The MCP server at `/mcp` (`mcp/adapter.py`) serves the agent's `explore`, `write`, and `subagent` toolsets.
+  Writes ask for confirmation through MCP elicitation.
+- Admins reset data with `POST /api/admin/reset/{target}`, and pipelines are listed at `GET /api/pipelines/{stage}`.
 
 ## Integration
 
-- Authenticated REST for CRUD on documents, conversations, and settings.
-- Vercel AI Data Stream Protocol for chat responses, Server-Sent Events for ingestion progress and workspace change notifications.
-- Bearer tokens from the browser OIDC session on every API and chat request.
-- Chat configuration (model overrides, reasoning effort, filters, tool settings) travels with each chat request and resolves into a user-scoped agent run.
-- Zod on the frontend and Pydantic on the backend keep request and response boundaries explicit.
-- The interface language (English or German) is the browser's, fixed at page load, and travels as `Accept-Language` on every request and selects the language of backend error details, job titles, and the agent's instructions, while labels of fixed option values such as pipelines live in the frontend catalog.
+- REST for documents, conversations, and settings.
+- Vercel AI Data Stream Protocol for chat, Server-Sent Events for job progress and workspace changes.
+- Chat configuration (model, reasoning effort, mode, document filters, tools) travels with each chat request.
+- The browser language (English or German) is sent as `Accept-Language` on every request.
+  It selects the language of backend errors, job titles, and the agent's instructions.
 
 ```mermaid
 sequenceDiagram
-    participant end_user as User
-    participant frontend_spa as Frontend SPA
-    participant oidc_provider as OIDC Provider
-    participant fastapi_backend as FastAPI Backend
+    participant spa as Frontend SPA
+    participant oidc as OIDC Provider
+    participant api as FastAPI Backend
     participant agent as Pydantic AI Agent
-    participant llm_provider as LLM Provider
+    participant llm as LLM Provider
 
-    end_user->>frontend_spa: Open app and submit a chat request
-    frontend_spa->>oidc_provider: Get or refresh access token
-    oidc_provider-->>frontend_spa: Bearer token
-    frontend_spa->>fastapi_backend: POST /api/conversations/{id}/chat with message and chat config
-    fastapi_backend->>fastapi_backend: Validate user and resolve accessible stores
-    fastapi_backend->>agent: Start run with toolsets, instructions, and user deps
-    agent->>llm_provider: Request response with retrieved context and tool results
-    llm_provider-->>agent: Structured response and tool calls
-    agent-->>fastapi_backend: Stream response events
-    fastapi_backend-->>frontend_spa: Vercel AI Data Stream response
-    frontend_spa-->>end_user: Incrementally render messages, tool output, and approvals
+    spa->>oidc: Get or refresh access token
+    oidc-->>spa: Bearer token
+    spa->>api: POST /api/conversations/{id}/chat
+    api->>agent: Start run with user deps and toolsets
+    agent->>llm: Request with context and tool results
+    llm-->>agent: Response and tool calls
+    agent-->>api: Stream events
+    api-->>spa: Vercel AI Data Stream
 ```
 
 ## Agent features
 
-Each feature bundles a toolset with the instructions that only make sense when it is active (`agents/capabilities.py`).
-A feature is withheld by the chat mode it declares, by a request's `disabled_tools`, or by the operator's `settings.tools.disabled`.
+Each feature bundles a toolset with its instructions (`agents/capabilities.py`).
+A feature is withheld by its chat mode, by a request's `disabled_tools`, or by `settings.tools.disabled`.
 
-| Feature        | Role                                                        | Tools                                                                                                              |
-| -------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `explore`      | Read-only access to documents, tables, JSON, and retrieval. | `list_documents`, `glob_documents`, `read_document`, `read_binary_document`, `query_table`, `jq`, `grep`, `search` |
-| `python`       | Python sandbox over a copy-on-write workspace mount.        | `run_python`                                                                                                       |
-| `subagent`     | Delegated exploration in a fresh context.                   | `explore`                                                                                                          |
-| `write`        | User-approved workspace mutation, `/tmp` in every mode.     | `write_document`, `edit_document`, `move_documents`, `delete_documents`, `apply_changes`                           |
-| `memory`       | Persistent cross-conversation memory (mutating modes only). | `save_memory`                                                                                                      |
-| `web`          | Direct web lookup and page retrieval.                       | `web_search`, `web_fetch`                                                                                          |
-| `conversation` | Access to persisted conversation history (off by default).  | `list_conversations`, `get_conversation`                                                                           |
-| `ask`          | Multiple-choice questions answered by the user.             | `ask_user`                                                                                                         |
+| Feature        | Role                                                        | Tools                                                                                            |
+| -------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `explore`      | Read-only access to documents, tables, JSON, and retrieval. | `list_documents`, `read_document`, `read_binary_document`, `query_table`, `jq`, `grep`, `search` |
+| `python`       | Monty sandbox, workspace writes are staged as a changeset.  | `run_python`                                                                                     |
+| `subagent`     | Delegated exploration in a fresh context.                   | `explore`                                                                                        |
+| `write`        | Approved workspace mutation, `/tmp` in every mode.          | `write_document`, `edit_document`, `move_documents`, `delete_documents`, `apply_changes`         |
+| `memory`       | Cross-conversation memory, mutating modes only.             | `save_memory`                                                                                    |
+| `web`          | Web search and fetch, off unless `tools.enable_web`.        | `web_search`, `web_fetch`                                                                        |
+| `conversation` | Conversation history, disabled by default.                  | `list_conversations`, `get_conversation`                                                         |
+| `ask`          | Multiple-choice questions for the user.                     | `ask_user`                                                                                       |
 
 ## Asset processing
 
-One recursive stem-based rule covers every upload.
-Markdown stays as `<stem>.md`; every other file keeps its original as `<stem>.<ext>` and gains a markdown companion `<stem>.md`.
-Convertible files may also produce `<stem>.assets/`, and every extracted child is processed the same way again.
-The app shows one logical entry per stem, indexes the markdown companions for retrieval, and keeps metadata outside the workspace.
-Generated image and asset-description markdown always uses chunking pipeline `none`.
+Every upload follows one recursive, stem-based rule.
+Markdown stays `<stem>.md`.
+Any other file keeps its original `<stem>.<ext>` and gains a markdown companion `<stem>.md`.
+Extracted children land in `<stem>.assets/` and are processed the same way.
+The app shows one entry per stem and indexes the markdown companions.
+Generated image descriptions are never chunked (pipeline `none`).
 
 ```mermaid
 flowchart LR
-    input[File from upload or collection]
-    decide{Markdown?}
-    markdown[Keep or normalize<br/><stem>.md]
-    asset[Keep original<br/><stem>.<ext><br/>and create<br/><stem>.md]
-    extracted{Extracted child files?}
-    recurse[Process each child file<br/>with the same rule]
-    metadata[Write one metadata file<br/>for the stem]
-    index[Embed + insert into<br/>chunks (one tx)]
-
-    input --> decide
-    decide -->|yes| markdown
-    decide -->|no| asset
-    asset --> extracted
-    extracted -->|yes| recurse
-    extracted -->|no| metadata
-    recurse --> metadata
-    markdown --> metadata
-    metadata --> index
+    input[Uploaded file] --> decide{Markdown?}
+    decide -->|yes| markdown[Keep <stem>.md]
+    decide -->|no| asset[Keep <stem>.<ext><br/>and create <stem>.md]
+    asset --> recurse[Process extracted children<br/>with the same rule]
+    asset --> index
+    recurse --> index
+    markdown --> index[Chunk, embed, and index]
 ```
 
-Which files become entries on their own, and which stay inert on disk until uploaded or reconverted, is the policy seam described in [`backend/README.md`](backend/README.md#what-becomes-a-document).
+Which files become entries on their own is described in [`backend/README.md`](backend/README.md#what-becomes-a-document).

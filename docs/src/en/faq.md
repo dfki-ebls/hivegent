@@ -4,83 +4,77 @@
 
 ### How is this different from ChatGPT?
 
-A plain chatbot answers only from what its model learned during training.
-Hivegent first searches your own documents and past conversations, then answers from them and cites the sources.
-It can also take several steps and use tools, so it can explore a question rather than answering in one shot.
+A plain chatbot answers from its training data.
+Hivegent searches your documents first, answers from them in several steps, and cites its sources.
 
 ### Where do my documents and data live?
 
-You host Hivegent yourself.
-Document files stay on your server's disk, and their index, your conversations, and the assistant's memory live in your own PostgreSQL database.
-The only data that leaves your infrastructure is what you send to the language model endpoint you configured.
+On your own server.
+Files stay on disk, and the index, conversations, and memory live in your PostgreSQL database.
+Only what you send to the configured language model leaves your infrastructure.
 
 ### Which languages are supported?
 
-This depends on how your deployment is configured.
-The assistant answers in whatever languages its configured language model handles, and document search and OCR cover the languages set by your operator.
-Mixed-language documents are no problem.
+Whatever your language model handles.
+Search and OCR cover the languages your operator configured, and mixed-language documents work.
 
 ### Which file formats can I upload?
 
-A wide range of common formats, including PDFs, office documents, web pages, e-books, images, and plain text or Markdown.
-The exact set depends on your deployment, and scanned PDFs are processed with OCR.
+PDFs, office documents, web pages, e-books, images, and plain text or Markdown, depending on your deployment.
+Scanned PDFs are processed with OCR.
 
 ## Using the assistant
 
 ### Why does it not show all of my documents?
 
-The assistant retrieves only the passages relevant to your question.
-A broad request like "list everything" cannot return useful results.
-Ask a specific question about a concrete topic instead.
+It retrieves only passages relevant to your question, so "list everything" gives poor results.
+Ask a specific question instead.
 
 ### The assistant cannot find a document I uploaded.
 
-- It may still be processing. Watch the job tray in the top bar and wait until it finishes.
-- Check that the document is in the right workspace and is not excluded from the current conversation.
-- Confirm the file format is supported and the file is not empty or password protected.
+- Wait until the job tray shows that processing has finished.
+- Check the workspace and that the document is not excluded from the conversation.
+- Check that the format is supported and the file is not empty or password protected.
 
 ### The answers are inaccurate.
 
-- Ask more precise questions and use wording that appears in your documents.
-- Make sure the right documents are present and included in the conversation.
-- Well-structured documents with clear headings give better results.
-- For a fresher answer, raise the reasoning effort or remove outdated documents.
+- Ask precise questions using wording from your documents.
+- Make sure the right documents are present and included.
+- Use well-structured documents with clear headings.
+- Raise the reasoning effort or remove outdated documents.
 
 ### Can the assistant use the web?
 
 Only if the operator enables web tools.
-By default the assistant answers from your indexed documents alone.
 
 ## Access and accounts
 
 ### How do I get access to shared documents?
 
-Group workspaces are controlled by your identity provider.
-An administrator adds you to a group, and you then get read or write access to that group's shared workspace.
+An administrator adds you to a group in your identity provider, which grants access to that group's workspace.
 
 ### Who can perform administrative actions?
 
-Only users whose login carries the `admin` role.
-Administrators can enable maintenance mode, reindex the workspace, and reset data.
+Users with the `admin` role.
+They can enable maintenance mode, reindex the workspace, and reset data.
 
 ## Operations
 
 ### Where do I configure the system?
 
-In the `config.toml` file and through `HIVEGENT_*` environment variables.
-See [Setup](setup.md) for the common settings.
+In `config.toml` and `HIVEGENT_*` environment variables, see [Setup](setup.md).
 
 ### How do I update?
 
 Pull the new image and recreate the containers.
-The backend applies any database migrations automatically on startup.
+Migrations run automatically on startup.
 
 ### High CPU or memory usage.
 
-This is normal during document processing, especially OCR on scanned PDFs, and when running a local language model.
-To reduce load, process fewer documents at once, use a GPU, or point at a hosted model endpoint.
+This is normal during document processing, especially OCR, and with a local model.
+Process fewer documents at once, use a GPU, or use a hosted model.
 
 ### When are local models worth it?
 
-It is a trade-off between cost, infrastructure, privacy, and model quality, since the strongest commercial models are only available through their hosted APIs.
 Local models keep all data on your infrastructure but need capable hardware.
+The strongest models are only available through hosted APIs.

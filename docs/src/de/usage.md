@@ -2,93 +2,77 @@
 
 ## Anmelden
 
-Öffnen Sie Hivegent im Browser und wählen Sie Anmelden.
-Sie werden zur Anmeldeseite Ihrer Organisation geleitet und nach erfolgreicher Anmeldung zur App zurückgebracht.
-Ihr Name und ein Menü für Einstellungen und Abmelden erscheinen in der oberen Leiste.
+Wählen Sie Anmelden und melden Sie sich mit dem Konto Ihrer Organisation an.
+Die obere Leiste zeigt dann Ihren Namen und ein Menü für Einstellungen und Abmelden.
 
 ## Mit Ihren Dokumenten chatten
 
-Der Chat-Arbeitsbereich funktioniert wie ein gewöhnliches Chat-Programm.
-
-1. Geben Sie Ihre Frage in das Eingabefeld am unteren Rand ein.
-2. Drücken Sie die Eingabetaste oder die Senden-Schaltfläche.
-3. Die Antwort erscheint darunter im Stream, und die genutzten Dokumente werden im Kontextbereich angezeigt.
-
-Im Hintergrund durchsucht der Agent Ihre Dokumente, liest die passenden Stellen und kann mehrere Schritte gehen, bevor er antwortet.
-Sie können weiter tippen, während er antwortet. Zusätzliche Nachrichten werden gesammelt und als nächste Runde gesendet, womit Sie eine lange Antwort lenken können.
+Geben Sie eine Frage ein und drücken Sie die Eingabetaste.
+Die Antwort erscheint im Stream, und die genutzten Dokumente werden im Kontextbereich angezeigt.
+Der Agent kann mehrere Schritte gehen, bevor er antwortet.
+Nachrichten, die Sie währenddessen senden, werden als nächste Runde eingereiht, womit Sie eine lange Antwort lenken können.
 
 ### Gute und schwache Fragen
 
 Stellen Sie konkrete Fragen zu bestimmten Themen.
 
 - Gut: "Was sagt unsere Datenschutzrichtlinie über Cookies?"
-- Gut: "Welche Installationsschritte beschreibt das Handbuch?"
-- Schwach: "Zeig mir alles" (zu allgemein)
-- Schwach: "Info" (zu vage)
+- Schwach: "Zeig mir alles" (zu allgemein) oder "Info" (zu vage).
 
 ## Quellen und Kontext
 
-Jede Antwort stützt sich auf Ihr Material, und der Kontextbereich zeigt die Dokumente und Stellen, die der Assistent herangezogen hat.
-Klicken Sie auf ein Dokument oder eine Stelle, um es zu öffnen und genau zu sehen, woher die Information stammt.
-So bleibt jede Antwort bis zu ihrer Quelle nachvollziehbar.
+Der Kontextbereich zeigt die Dokumente und Stellen hinter jeder Antwort.
+Klicken Sie darauf, um genau zu sehen, woher die Information stammt.
 
-Der Assistent durchsucht Ihre Dokumente auch dann, wenn er die Antwort bereits zu kennen glaubt.
-Er gibt eine Fundstelle wieder, ohne sie auszuschmücken.
-Deckt Ihr Material eine Frage nicht ab, sagt er das, statt stillschweigend aus allgemeinem Wissen zu antworten.
+Der Assistent durchsucht stets Ihre Dokumente und gibt wieder, was sie sagen, ohne auszuschmücken.
+Deckt Ihr Material eine Frage nicht ab, sagt er das.
 
 ## Mit Dokumenten arbeiten
 
-Im Dokumenten-Arbeitsbereich fügen Sie Ihr Material hinzu und ordnen es.
-
 ### Hochladen
 
-- Ziehen Sie Dateien, ganze Ordner oder ein ZIP-Archiv auf den Upload-Bereich, oder wählen Sie sie über den Dateidialog aus.
-- Hivegent wandelt jede Datei in durchsuchbaren Text um, teilt sie in Abschnitte und indexiert sie für den Abruf.
-- Eine Aufgabenleiste in der oberen Leiste zeigt den Fortschritt von Uploads und Verarbeitung.
+- Ziehen Sie Dateien, Ordner oder ein ZIP-Archiv auf den Upload-Bereich, oder nutzen Sie den Dateidialog.
+- Hivegent wandelt jede Datei in Text um, teilt sie in Abschnitte und indexiert sie.
+- Die Aufgabenleiste in der oberen Leiste zeigt den Fortschritt.
 
-Hivegent verarbeitet viele gängige Formate, darunter PDFs, Office-Dokumente, Webseiten, E-Books, Bilder sowie reinen Text und Markdown.
-Welche genau, hängt von Ihrer Bereitstellung ab.
-Sie können Markdown-Dokumente auch direkt im Browser erstellen und bearbeiten.
+Unterstützt werden unter anderem PDFs, Office-Dokumente, Webseiten, E-Books, Bilder sowie reiner Text und Markdown, je nach Bereitstellung.
+Markdown-Dokumente können Sie auch direkt im Browser erstellen und bearbeiten.
 
 ### Arbeitsbereiche und Zugriff
 
-Dokumente liegen in Bereichen, die im Dokumentenbereich angezeigt werden.
-
-- Ihre Dokumente ist Ihr privater Arbeitsbereich, den nur Sie lesen und schreiben können.
-- Gruppen-Arbeitsbereiche werden mit allen Mitgliedern einer Gruppe geteilt, mit Lese- oder Schreibzugriff je nach Mitgliedschaft.
+- Ihre Dokumente ist Ihr privater Arbeitsbereich.
+- Gruppen-Arbeitsbereiche werden mit einer Gruppe geteilt, mit Lese- oder Schreibzugriff je nach Mitgliedschaft.
 
 ### Dokumente verwalten
 
-Zu jedem Dokument können Sie es ansehen, das Original herunterladen, verschieben oder löschen.
-Sie können einzelne Dokumente auch in die aktuelle Unterhaltung einschließen oder daraus ausschließen, sodass der Assistent für eine Frage nur das gewünschte Material nutzt.
+Sie können jedes Dokument ansehen, herunterladen, verschieben oder löschen.
+Außerdem können Sie Dokumente in die aktuelle Unterhaltung einschließen oder daraus ausschließen.
 
 ## Unterhaltungen
 
-Frühere Unterhaltungen werden in der Seitenleiste mit Titel und Zeitstempel aufgeführt.
+Die Seitenleiste listet frühere Unterhaltungen auf.
 
-- Titel werden automatisch erzeugt und lassen sich direkt bearbeiten.
-- Wählen Sie eine Unterhaltung aus, um zu ihr zurückzukehren, oder löschen Sie eine nicht mehr benötigte.
-- Beginnen Sie jederzeit eine neue Unterhaltung über die entsprechende Schaltfläche.
-- Bearbeiten Sie eine Ihrer früheren Nachrichten oder lassen Sie eine Antwort neu erzeugen, um eine andere Richtung auszuprobieren.
+- Titel werden automatisch erzeugt und lassen sich bearbeiten.
+- Öffnen, löschen oder beginnen Sie Unterhaltungen jederzeit.
+- Bearbeiten Sie eine frühere Nachricht oder erzeugen Sie eine Antwort neu, um eine andere Richtung auszuprobieren.
 - Exportieren Sie eine Unterhaltung in eine Datei und importieren Sie sie später wieder.
 
-Wird eine Unterhaltung sehr lang, verdichten Sie mit Komprimieren den früheren Verlauf, damit er weiter in das Kontextfenster des Modells passt.
+Mit Komprimieren fassen Sie eine lange Unterhaltung zusammen, damit sie in den Kontext des Modells passt.
+Erreicht das Modell sein Kontextlimit, bietet ein Banner an, zu komprimieren und es erneut zu versuchen.
 
 ## Den Assistenten anpassen
 
-Zwei Bedienelemente steuern, wie der Assistent antwortet.
-
-- Persönlichkeit: wählen Sie Standard, Knapp, Ausführlich oder Strukturiert, oder geben Sie eine eigene Systemnachricht an.
-- Denkaufwand: von Automatisch über Keiner bis zu höheren Stufen, ein Abwägen von Tiefe gegen Geschwindigkeit und Kosten.
+- Persönlichkeit: Standard, Knapp, Ausführlich, Strukturiert oder eine eigene Systemnachricht.
+- Denkaufwand: von Keiner bis zu höheren Stufen oder Automatisch, ein Abwägen von Tiefe gegen Geschwindigkeit und Kosten.
+- Modus: Interaktiv fragt vor jeder Änderung im Arbeitsbereich, Schreiben ändert ohne Rückfrage, und Lesen erlaubt keine Änderungen.
 
 ## Gedächtnis
 
-Der Assistent kann sich nützliche Fakten über einzelne Unterhaltungen hinweg merken.
-Sie können das gesamte gespeicherte Gedächtnis jederzeit im Einstellungsdialog löschen.
+Der Assistent kann sich Fakten über Unterhaltungen hinweg merken.
+Im Einstellungsdialog können Sie das gesamte Gedächtnis jederzeit löschen.
 
 ## Über die Weboberfläche hinaus
 
-Fortgeschrittene Nutzer können dasselbe Backend ohne Browser erreichen.
-
-- MCP: wenn der Betreiber den MCP-Endpunkt aktiviert, können MCP-fähige Clients wie Code-Editoren oder andere Agenten einen Teil der Dokumentwerkzeuge von Hivegent nutzen. Sie verbinden sich mit der `/mcp`-URL und melden sich über dieselbe OIDC-Anmeldung an.
-- API und Kommandozeile: das Backend stellt eine REST-API bereit, und das mitgelieferte Kommandozeilenwerkzeug `hivegent` kann sich anmelden und Dokumente hochladen, auflisten, herunterladen oder löschen, etwa für Skripte.
+- MCP: wenn der Betreiber es aktiviert, verbinden sich MCP-Clients wie Editoren mit derselben Anmeldung über `/mcp`.
+  Sie können Dokumente suchen, lesen, erkunden und ändern, wobei jede Änderung zuerst zur Bestätigung angezeigt wird.
+- API und Kommandozeile: die REST-API und das Kommandozeilenwerkzeug `hivegent` können sich anmelden und Dokumente hochladen, auflisten, herunterladen oder löschen.
