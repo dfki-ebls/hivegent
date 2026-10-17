@@ -53,6 +53,14 @@ def _relation(index: int) -> str:
     return _RELATION if not index else f"{_RELATION}{index + 1}"
 
 
+_TABLE_FUNCTION = re.compile(r"\b(?:read|scan)_\w+", re.IGNORECASE)
+"""Polars SQL's table functions (``read_csv('/any/path')``), which read any file.
+
+Polars dispatches them by the identifier, quoted or not and in any case, so
+refusing the name keeps a query on the registered frames.
+"""
+
+
 _LEADING_ZERO = r"^[+-]?0\d"
 """Zero-padded digits are an identifier (a zip code, an EAN), not a number."""
 
@@ -652,6 +660,12 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         subject: int = 0,
     ) -> ToolOutput[TableResult]:
         """Run one query, or describe the *subject* table when there is none."""
+        if query is not None and _TABLE_FUNCTION.search(query):
+            raise ToolRetry(
+                "a query reads only the registered tables, so read_* and scan_* "
+                "table functions are not available"
+            )
+
         try:
             return self._query(sources, query, row_limit, subject)
 
@@ -769,9 +783,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         # One row past the limit is what separates "all of it" from "the first
         # N", without collecting the rest to find out.
         collected = frame.head(limit + 1).collect()
-        total = (
-            int(frame.select(pl.len()).collect().item()) if query is None else None
-        )
+        total = int(frame.select(pl.len()).collect().item()) if query is None else None
 
         frame_rows = collected.head(limit)
         columns = tuple(frame_rows.columns)
@@ -821,7 +833,9 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
             return (), "\n".join([*lines, "(no rows)"])
 
         width = min(len(columns), self.max_columns)
-        rows = tuple(tuple(_cell(value) for value in values) for values in frame.iter_rows())
+        rows = tuple(
+            tuple(_cell(value) for value in values) for values in frame.iter_rows()
+        )
         rendered = [
             f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
             for row in rows

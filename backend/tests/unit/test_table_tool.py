@@ -169,7 +169,10 @@ class TestQueryTableTool:
         out = await tool(["mixed.csv"])
 
         assert single(out.data).text_columns[0].name == "val"
-        assert (single(out.data).text_columns[0].parsed, single(out.data).text_columns[0].total) == (
+        assert (
+            single(out.data).text_columns[0].parsed,
+            single(out.data).text_columns[0].total,
+        ) == (
             3,
             4,
         )
@@ -311,6 +314,17 @@ class TestQueryTableTool:
         with pytest.raises(ToolRetry, match="region"):
             await tool(["sales.csv"], ["SELECT nope FROM t"])
 
+    @pytest.mark.parametrize(
+        "source", ["read_csv('sales.csv')", "\"READ_JSON\"('x.json')"]
+    )
+    async def test_table_functions_are_refused(
+        self, tmp_path: Path, source: str
+    ) -> None:
+        tool = QueryTableTool(paths=_sales_dir(tmp_path))
+
+        with pytest.raises(ToolRetry, match="table functions"):
+            await tool(["sales.csv"], [f"SELECT * FROM {source}"])
+
 
 def _quoted_dir(tmp_path: Path) -> Path:
     """A table whose first column name is not a bare SQL identifier."""
@@ -403,7 +417,10 @@ class TestMultipleTables:
 
         counted, failed = out.data
         assert isinstance(counted, TableResult)
-        assert (counted.query, counted.rows) == ("SELECT COUNT(*) AS n FROM t2", (("2",),))
+        assert (counted.query, counted.rows) == (
+            "SELECT COUNT(*) AS n FROM t2",
+            (("2",),),
+        )
         assert isinstance(failed, ItemFailure)
         assert failed.item == "SELECT nope FROM t"
 
