@@ -8,6 +8,7 @@ from .app import (
     user_agent,
 )
 from .capabilities import (
+    agent_tool,
     build_capabilities,
     check_tool_settings,
     collect_tool_schemas,
@@ -16,7 +17,6 @@ from .capabilities import (
 )
 from .common import ExploreTaskArg, MemoryContentArg, RunPrefix, UserDeps
 from .tools import (
-    SUBAGENT_CAPABILITIES,
     SubagentName,
     conversation_toolset,
     discard_unapproved_changes,
@@ -28,12 +28,12 @@ from .tools import (
 )
 
 __all__ = [
-    "SUBAGENT_CAPABILITIES",
     "ExploreTaskArg",
     "MemoryContentArg",
     "RunPrefix",
     "SubagentName",
     "UserDeps",
+    "agent_tool",
     "build_capabilities",
     "check_tool_settings",
     "collect_tool_schemas",

@@ -3,20 +3,21 @@
 import base64
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
+from dataclasses import replace
+from typing import Any, cast, override
 from urllib.parse import quote
 
 from fastmcp import FastMCP
 from fastmcp.dependencies import Depends
 from fastmcp.exceptions import ToolError
-from fastmcp.tools import Tool as FastMCPTool
-from fastmcp.tools import ToolResult
+from fastmcp.tools import FunctionTool, ToolResult
 from mcp.types import (
     BlobResourceContents,
     ContentBlock,
     EmbeddedResource,
     ImageContent,
     TextContent,
+    ToolAnnotations,
 )
 
 from .base import (
@@ -24,16 +25,21 @@ from .base import (
     Tool,
     ToolOutput,
     ToolSpec,
-    accept_scalar,
-    factory_tool_name,
+    lenient,
     translate_tool_retry,
 )
 from .formatting import truncate_middle
 
-__all__ = ["for_fastmcp", "output_schema", "register_mcp_tools", "wrap_tool_output"]
+__all__ = [
+    "OutputTool",
+    "attachment_block",
+    "for_fastmcp",
+    "register_mcp_tool",
+    "register_mcp_tools",
+]
 
 
-def _attachment_to_block(att: BinaryAttachment) -> ContentBlock:
+def attachment_block(att: BinaryAttachment) -> ContentBlock:
     """Map a framework-neutral attachment to an MCP content block."""
     encoded = base64.b64encode(att.data).decode("ascii")
     if att.media_type.startswith("image/"):
@@ -55,139 +61,118 @@ def _attachment_to_block(att: BinaryAttachment) -> ContentBlock:
     )
 
 
-def output_schema(data_type: Any) -> dict[str, Any] | None:
-    """The MCP output schema FastMCP derives for a tool's structured payload.
+class OutputTool(FunctionTool):
+    """A :class:`FunctionTool` whose function returns a :class:`ToolOutput`.
 
-    Asked of FastMCP rather than assembled here.  MCP requires an object at the
-    top, so a payload that is not one has to be wrapped, and the wrapping is a
-    convention with three parts: the ``result`` property, the
-    ``x-fastmcp-wrap-result`` marker :meth:`FunctionTool.convert_result` reads
-    back, and a ``$defs`` block hoisted to the document root because that is
-    where the ``#/$defs/...`` pointers inside it resolve.  Assembling that by
-    hand nested the definitions one level down and left every pointer dangling,
-    so the question goes to the one place that owns the answer.
-
-    The probe carries the annotation and nothing else, since the wrapper this
-    schema describes returns a :class:`ToolResult`, which is the very type
-    FastMCP suppresses schema generation for.
+    The function declares its payload type as its return type, so FastMCP
+    derives the output schema, and with it whether the payload is wrapped,
+    the way it does for any tool.  :meth:`convert_result` then hands FastMCP
+    only the payload and swaps in the text and attachments as the content,
+    which FastMCP would otherwise render from the payload.
     """
 
-    def probe() -> Any: ...
+    @override
+    def convert_result(self, raw_value: Any) -> ToolResult:
+        output = cast(ToolOutput[Any], raw_value)
+        blocks: list[ContentBlock] = [TextContent(type="text", text=output.text)]
+        blocks.extend(attachment_block(att) for att in output.attachments)
 
-    probe.__annotations__ = {"return": data_type}
-
-    return FastMCPTool.from_function(probe).output_schema
-
-
-def wrap_tool_output(
-    result: ToolOutput[Any],
-    spec: ToolSpec,
-    *,
-    wrap_data: bool,
-    max_chars: int | None = None,
-) -> ToolResult:
-    """Convert a :class:`ToolOutput` into an MCP :class:`ToolResult`.
-
-    Text is always emitted as a :class:`TextContent` block, its middle left
-    out past *max_chars* as an agent's tool return is, and binary attachments
-    follow as image/audio/resource blocks.  An MCP client has no ``/tmp`` of
-    this server's to read the rest from, so the structured content is what
-    stays whole.
-
-    The structured payload is serialised through the spec's own adapter, so it
-    matches the schema registered for the tool, and is wrapped exactly when
-    that schema says it is.  Returning a built :class:`ToolResult` is what
-    keeps the text and the attachments, which FastMCP would otherwise replace
-    with a rendering of the structured content, so the wrapping it does for a
-    raw return value is mirrored here rather than inherited.
-    """
-    text = result.text if max_chars is None else truncate_middle(result.text, max_chars)
-    blocks: list[ContentBlock] = [TextContent(type="text", text=text)]
-    blocks.extend(_attachment_to_block(att) for att in result.attachments)
-    data = spec.serialize_data(result.data)
-
-    return ToolResult(
-        content=blocks,
-        structured_content={"result": data} if wrap_data else data,
-        meta={"fastmcp": {"wrap_result": True}} if wrap_data else None,
-    )
+        return (
+            super().convert_result(output.data).model_copy(update={"content": blocks})
+        )
 
 
 def for_fastmcp(
     factory_provider: Callable[..., Tool[Any]],
     *,
-    spec: ToolSpec | None = None,
     max_chars: int | None = None,
-) -> Callable[..., ToolResult] | Callable[..., Awaitable[ToolResult]]:
+) -> Callable[..., ToolOutput[Any]] | Callable[..., Awaitable[ToolOutput[Any]]]:
     """Build a wrapper function whose signature FastMCP can introspect.
 
     The tool class is inferred from *factory_provider*'s return type
     annotation.  The provider's unbound parameters with ``Depends``
-    defaults are resolved by FastMCP at call time.
+    defaults are resolved by FastMCP at call time.  The wrapper is meant for
+    :class:`OutputTool`, so its return annotation is the payload type while
+    it returns the whole :class:`ToolOutput`.
 
     Args:
         factory_provider: Callable that returns a Tool instance.
             Must have a return annotation that is a ``Tool`` subclass.
-        spec: An already-derived contract, which :func:`register_mcp_tools`
-            passes so it can register the matching output schema without
-            deriving the contract twice.
         max_chars: The most text a return shows, unbounded for ``None``.
+            An MCP client has no ``/tmp`` of this server's to read the rest
+            from, so the structured content is what stays whole.
 
     Returns:
         A callable with rewritten signature, annotations, and docstring.
     """
-    contract = spec or ToolSpec.from_factory(factory_provider)
+    spec = ToolSpec.from_factory(factory_provider)
 
-    # Constant once the schema is derived, so the branch is settled here rather
-    # than re-answered on every call.
-    schema = output_schema(contract.data_type)
-    wrap_data = bool(schema and schema.get("x-fastmcp-wrap-result"))
-
-    # Append _tool_ as KEYWORD_ONLY with Depends default.
     tool_param = inspect.Parameter(
         "_tool_",
         inspect.Parameter.KEYWORD_ONLY,
         default=Depends(factory_provider),
         annotation=Any,
     )
-    # A bare item is accepted where a list is declared, as a model often sends
-    # one, while the published schema still asks for the list.
+    # Model-written arguments are repaired as an agent's are, while the
+    # published schema stays the declared one.
     params = [
-        param.replace(annotation=accept_scalar(param.annotation))
-        for param in contract.params
+        param.replace(annotation=lenient(param.annotation)) for param in spec.params
     ]
     new_sig = inspect.Signature(
         parameters=[*params, tool_param],
-        return_annotation=ToolResult,
+        return_annotation=spec.data_type,
     )
 
     new_annotations: dict[str, Any] = {
         "_tool_": Any,
         **{param.name: param.annotation for param in params},
-        "return": ToolResult,
+        "return": spec.data_type,
     }
+
+    def bounded(output: ToolOutput[Any]) -> ToolOutput[Any]:
+        if max_chars is None:
+            return output
+
+        return replace(output, formatted=truncate_middle(output.text, max_chars))
 
     # Surface a ToolRetry as a FastMCP ToolError so the message reaches the MCP
     # client instead of being masked as an internal error.
-    if contract.is_async:
+    if spec.is_async:
 
-        async def wrapper(**kwargs: Any) -> ToolResult:
+        async def wrapper(**kwargs: Any) -> ToolOutput[Any]:
             with translate_tool_retry(ToolError):
-                result = await kwargs.pop("_tool_")(**kwargs)
-                return wrap_tool_output(
-                    result, contract, wrap_data=wrap_data, max_chars=max_chars
-                )
+                return bounded(await kwargs.pop("_tool_")(**kwargs))
     else:
 
-        def wrapper(**kwargs: Any) -> ToolResult:
+        def wrapper(**kwargs: Any) -> ToolOutput[Any]:
             with translate_tool_retry(ToolError):
-                result = kwargs.pop("_tool_")(**kwargs)
-                return wrap_tool_output(
-                    result, contract, wrap_data=wrap_data, max_chars=max_chars
-                )
+                return bounded(kwargs.pop("_tool_")(**kwargs))
 
-    contract.apply_to(wrapper, new_sig, new_annotations)
+    spec.apply_to(wrapper, new_sig, new_annotations)
     return wrapper
+
+
+def register_mcp_tool(
+    app: FastMCP,
+    factory: Callable[..., Tool[Any]],
+    *,
+    max_chars: int,
+    annotations: ToolAnnotations | None = None,
+) -> None:
+    """Register one Tool factory on a FastMCP app.
+
+    The factory's return type annotation must be a ``Tool`` subclass.
+    The tool name and description are derived from the annotated class.
+
+    Args:
+        app: The FastMCP application.
+        factory: Factory callable for the tool.
+        max_chars: The most text one return shows.
+        annotations: Optional hints for the client, such as whether the tool
+            only reads or may destroy.
+    """
+    fn = for_fastmcp(factory, max_chars=max_chars)
+    app.add_tool(OutputTool.from_function(fn, annotations=annotations))
 
 
 def register_mcp_tools(
@@ -195,23 +180,15 @@ def register_mcp_tools(
     factories: Sequence[Callable[..., Tool[Any]]],
     *,
     max_chars: int,
+    annotations: ToolAnnotations | None = None,
 ) -> None:
-    """Register multiple Tool factories on a FastMCP app.
-
-    Each factory's return type annotation must be a ``Tool`` subclass.
-    The tool name and description are derived from the annotated class.
+    """Register multiple Tool factories on a FastMCP app with the same options.
 
     Args:
         app: The FastMCP application.
         factories: Sequence of factory callables.
         max_chars: The most text one return shows.
+        annotations: Optional hints applied to every tool.
     """
     for factory in factories:
-        spec = ToolSpec.from_factory(factory)
-        fn = for_fastmcp(factory, spec=spec, max_chars=max_chars)
-        app.tool(
-            fn,
-            name=factory_tool_name(fn),
-            description=fn.__doc__,
-            output_schema=output_schema(spec.data_type),
-        )
+        register_mcp_tool(app, factory, max_chars=max_chars, annotations=annotations)

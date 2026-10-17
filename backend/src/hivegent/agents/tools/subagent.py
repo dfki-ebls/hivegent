@@ -11,6 +11,7 @@ from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ToolReturn
+from pydantic_ai.tools import ToolDefinition
 
 from ...config import settings
 from ...l10n import DEFAULT_LANGUAGE
@@ -34,7 +35,6 @@ from .web import web_enabled, web_toolset
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "SUBAGENT_CAPABILITIES",
     "SubagentName",
     "explore",
     "run_subagent",
@@ -45,16 +45,14 @@ subagent_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 type SubagentName = Literal["documents", "conversations", "web"]
 
-# The shared registry mapping each subagent name to the capability that defines
-# it.  Public so every module that delegates to a subagent composes from the same
-# capabilities: the ``explore`` tool selects one by name, and the MCP exploration
-# endpoint reuses the ``documents`` subagent directly.  Each value is a
+# The registry mapping each subagent name to the capability that defines it,
+# which the ``explore`` tool selects by name.  Each value is a
 # self-contained capability a delegated run is composed from; the ``documents``
 # subagent *is* a document-exploration agent, so the explore toolset and its
 # system-prompt persona ride together, distinct from the main agent's bare
 # ``explore`` bundle.  A subagent answers the main agent rather than the user, so
 # its prompt is English whatever the interface language is.
-SUBAGENT_CAPABILITIES: dict[SubagentName, AbstractCapability[UserDeps]] = {
+_SUBAGENT_CAPABILITIES: dict[SubagentName, AbstractCapability[UserDeps]] = {
     "documents": Capability(
         id="explore-subagent",
         toolsets=[explore_toolset],
@@ -72,7 +70,7 @@ SUBAGENT_CAPABILITIES: dict[SubagentName, AbstractCapability[UserDeps]] = {
 # scope would delegate to an agent with no tools.  The scope argument's type
 # and description drop `web` in lockstep so the model is never offered it.
 if web_enabled:
-    SUBAGENT_CAPABILITIES["web"] = Capability(id="web", toolsets=[web_toolset])
+    _SUBAGENT_CAPABILITIES["web"] = Capability(id="web", toolsets=[web_toolset])
 
     type ExploreScope = SubagentName
 
@@ -273,7 +271,15 @@ async def run_subagent(
         return _subagent_result(tool_call_id, builder, result.output)
 
 
-@subagent_toolset.tool
+def _offer_explore(
+    ctx: RunContext[UserDeps], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    # A subagent runs on the main model, which nothing names without a server one
+    # or a client override.
+    return tool_def if _subagent_llm_config(ctx.deps).model else None
+
+
+@subagent_toolset.tool(prepare=_offer_explore)
 async def explore(
     ctx: RunContext[UserDeps],
     task: ExploreTaskArg,
@@ -286,4 +292,4 @@ async def explore(
     like surveying available documents, finding patterns across files,
     reviewing past conversations, or researching topics on the web.
     """
-    return await run_subagent(ctx, task, capability=SUBAGENT_CAPABILITIES[scope])
+    return await run_subagent(ctx, task, capability=_SUBAGENT_CAPABILITIES[scope])

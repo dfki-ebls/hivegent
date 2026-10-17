@@ -12,14 +12,17 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
+from pydantic_ai.exceptions import ModelRetry
 
 from ...agents import (
     UserDeps,
+    agent_tool,
     collect_tool_schemas,
     invoke_agent_tool,
 )
 from ...auth import require_admin
 from ...store import User
+from ...tools.pydantic_ai import unwrap_tool_output
 from ...types import ToolRunResult, ToolSchema
 
 __all__ = ["router"]
@@ -43,27 +46,36 @@ async def run_tool(
 ) -> ToolRunResult:
     """Invoke ``tool_name`` with ``args`` against the caller's own stores.
 
-    Validation and execution failures are returned as ``ToolRunResult`` with
-    ``ok=False`` and a message so they can be inspected in the console rather
-    than surfacing as opaque HTTP errors. An unknown tool name is a 404.
+    The call runs as an agent's does, its validator and write gate included,
+    in ``write`` mode, which the gate never asks about.  Validation and
+    execution failures are returned as ``ToolRunResult`` with ``ok=False`` and
+    a message so they can be inspected in the console rather than surfacing as
+    opaque HTTP errors. An unknown tool name is a 404.
     """
+    try:
+        tool = agent_tool(tool_name)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown tool: {tool_name}"
+        ) from exc
+
     deps = UserDeps(user=user, mode="write")
     text: str | None = None
     data: Any = None
     error: str | None = None
     ok = False
     start = time.perf_counter()
+
     try:
-        text, data = await invoke_agent_tool(tool_name, args, deps)
-        ok = True
-    except KeyError as exc:
-        raise HTTPException(
-            status_code=404, detail=f"Unknown tool: {tool_name}"
-        ) from exc
+        output = unwrap_tool_output(await invoke_agent_tool(tool, args, deps))
+        text, data, ok = output.text, output.data, True
     except ValidationError as exc:
         error = str(exc)
+    except ModelRetry as exc:
+        error = exc.message
     except Exception:  # noqa: BLE001 - surface any tool failure for debugging
         error = traceback.format_exc()
+
     return ToolRunResult(
         ok=ok,
         text=text,

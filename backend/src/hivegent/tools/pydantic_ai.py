@@ -1,19 +1,20 @@
 """Adapter utilities for registering Tool classes with pydantic-ai."""
 
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, cast
+from typing import Any, cast
 
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 from pydantic_ai import BinaryContent, FunctionToolset, RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ToolReturn
+from pydantic_ai.messages import ToolCallPart, ToolReturn
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ArgsValidatorFunc, ToolPrepareFunc
 from pydantic_ai.tools import Tool as PydanticTool
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .base import (
     BinaryAttachment,
@@ -21,8 +22,8 @@ from .base import (
     ToolFactory,
     ToolOutput,
     ToolSpec,
-    accept_scalar,
     factory_tool_name,
+    lenient,
     translate_tool_retry,
 )
 
@@ -33,36 +34,13 @@ __all__ = [
     "invoke_tool",
     "register_agent_tool",
     "register_agent_tools",
+    "run_context",
     "unwrap_tool_output",
     "wrap_tool_output",
 ]
 
 DATA_CHUNK_TYPE = "data-tool-output"
 """DataChunk type used to stream structured tool data to the frontend."""
-
-
-def _dequote_value(value: object) -> object:
-    """Strip surrounding double quotes from a string value.
-
-    llama.cpp's autoparser path does not constrain string content
-    (notably ``enum`` literals) at generation time, so some local
-    models emit arguments JSON-double-encoded — e.g. the value
-    ``\"files_with_matches\"`` instead of ``files_with_matches``.
-    Stripping bookend quotes before pydantic's strict validation lets
-    such values match their declared schema.  Non-strings and strings
-    without matching bookend quotes pass through unchanged.
-    """
-    if (
-        isinstance(value, str)
-        and len(value) >= 2
-        and value[0] == '"'
-        and value[-1] == '"'
-    ):
-        return value[1:-1]
-    return value
-
-
-_DEQUOTE_VALIDATOR = BeforeValidator(_dequote_value)
 
 
 def _binary_attachment_to_content(att: BinaryAttachment) -> BinaryContent:
@@ -157,7 +135,9 @@ def unwrap_tool_output(result: Any) -> UnwrappedOutput:
     """
     wrapped = isinstance(result, ToolReturn)
     value = result.return_value if wrapped else result
-    chunk = result.metadata if wrapped and isinstance(result.metadata, DataChunk) else None
+    chunk = (
+        result.metadata if wrapped and isinstance(result.metadata, DataChunk) else None
+    )
     data = chunk.data if chunk is not None else None
     display_only = isinstance(chunk, ToolOutputChunk) and chunk.display_only
 
@@ -212,10 +192,7 @@ def for_pydantic_ai[D](
 
     new_annotations: dict[str, Any] = {
         "ctx": ctx_annotation,
-        **{
-            n: accept_scalar(Annotated[h, _DEQUOTE_VALIDATOR])
-            for n, h in spec.annotations.items()
-        },
+        **{name: lenient(hint) for name, hint in spec.annotations.items()},
         "return": ToolReturn,
     }
 
@@ -302,32 +279,59 @@ def register_agent_tools[D](
         )
 
 
-async def invoke_tool[D](
-    tool: PydanticTool[D], args: dict[str, Any], deps: D
-) -> tuple[str | None, Any]:
-    """Validate ``args`` against ``tool``'s schema, run it, and unwrap the result.
+def run_context[D](
+    deps: D, *, usage_limits: UsageLimits | None = None
+) -> RunContext[D]:
+    """The context a tool is prepared and called with outside an agent run.
 
-    Runs the exact code path the agent uses, so stateful behaviour (e.g.
-    pgvector retrieval) is exercised identically.  The placeholder model on the
-    run context is never invoked: every tool that talks to an LLM builds its own
-    model from ``deps`` or settings.
+    The placeholder model is never invoked: every tool that talks to an LLM
+    builds its own model from ``deps`` or settings.
+
+    Args:
+        deps: The dependencies passed to the tool (e.g. ``UserDeps``).
+        usage_limits: The limits a subagent the tool runs is held to.
+    """
+    return RunContext(
+        deps=deps, model=TestModel(), usage=RunUsage(), usage_limits=usage_limits
+    )
+
+
+async def invoke_tool[D](
+    tool: PydanticTool[D],
+    args: Mapping[str, Any],
+    deps: D,
+    *,
+    approved: bool = False,
+    usage_limits: UsageLimits | None = None,
+) -> Any:
+    """Run ``tool`` as an agent run calls it, outside of one.
+
+    Goes through pydantic-ai's own :class:`ToolManager`, so the tool's
+    ``prepare`` hook, its schema, its ``args_validator``, and its timeout
+    apply exactly as in a run, with errors raised rather than turned into
+    retry prompts.
 
     Args:
         tool: The pydantic-ai tool to run.
         args: Raw argument mapping, validated against the tool's schema.
         deps: The dependencies passed to the tool (e.g. ``UserDeps``).
+        approved: Whether the user already approved this call.
+        usage_limits: The limits a subagent the tool runs is held to.
 
     Returns:
-        A ``(text, structured_data)`` pair.
+        The raw return value, taken apart by :func:`unwrap_tool_output`.
 
     Raises:
         pydantic.ValidationError: If ``args`` fail the tool's schema.
+        ModelRetry: If the tool or its validator refuses the arguments, or
+            its ``prepare`` hook withholds it.
+        ApprovalRequired: If the validator asks the user first.
     """
-    schema = tool.function_schema
-    validated = schema.validator.validate_python(args)
-    ctx = RunContext(
-        deps=deps, model=TestModel(), usage=RunUsage(), tool_name=tool.name
-    )
-    unwrapped = unwrap_tool_output(await schema.call(validated, ctx))
+    context = run_context(deps, usage_limits=usage_limits)
+    manager = await ToolManager(FunctionToolset[D]([tool])).for_run_step(context)
 
-    return unwrapped.text, unwrapped.data
+    return await manager.handle_call(
+        ToolCallPart(tool.name, dict(args)),
+        approved=approved,
+        wrap_validation_errors=False,
+    )

@@ -8,7 +8,6 @@ from typing import Annotated, Any, cast, override
 
 import pytest
 from fastmcp import FastMCP
-from fastmcp.tools import ToolResult
 from mcp.types import TextContent
 from pydantic import BaseModel, Field
 from pydantic_ai import FunctionToolset
@@ -27,11 +26,11 @@ from hivegent.tools.fastmcp import (
     for_fastmcp,
     register_mcp_tools,
 )
-from hivegent.tools.fastmcp import wrap_tool_output as wrap_fastmcp_output
 from hivegent.tools.pydantic_ai import (
     for_pydantic_ai,
     invoke_tool,
     register_agent_tools,
+    unwrap_tool_output,
     wrap_tool_output,
 )
 
@@ -281,16 +280,15 @@ class TestRegisterAgentTools:
         assert "sync_default" in toolset.tools
         assert "async_default" in toolset.tools
 
-
     async def test_a_bare_item_is_taken_as_a_one_item_list(self) -> None:
         """Models often send the item itself, which the schema still calls a list."""
         toolset: FunctionToolset[_Deps] = FunctionToolset()
         register_agent_tools(toolset, _Deps, [_list_default])
         tool = toolset.tools["list_default"]
 
-        _text, data = await invoke_tool(tool, {"queries": "a"}, _Deps())
+        result = await invoke_tool(tool, {"queries": "a"}, _Deps())
 
-        assert data == ["a"]
+        assert unwrap_tool_output(result).data == ["a"]
         schema = tool.function_schema.json_schema["properties"]["queries"]
         assert schema["type"] == "array"
 
@@ -350,10 +348,10 @@ class TestForFastMCP:
         fn = for_fastmcp(_async_mcp)
         assert inspect.iscoroutinefunction(fn)
 
-    def test_tool_output_return_rewritten_to_tool_result(self) -> None:
+    def test_the_return_annotation_is_the_payload(self) -> None:
         fn = for_fastmcp(_tool_output_mcp)
-        assert fn.__annotations__["return"] is ToolResult
-        assert inspect.signature(fn).return_annotation is ToolResult
+        assert fn.__annotations__["return"] == list[str]
+        assert inspect.signature(fn).return_annotation == list[str]
 
     async def test_structured_output_matches_the_registered_schema(self) -> None:
         app = FastMCP("test")
@@ -361,11 +359,7 @@ class TestForFastMCP:
         registered = await app.get_tool("tool_output_mcp")
         assert registered is not None
 
-        result = wrap_fastmcp_output(
-            ToolOutput(data=["match"], formatted="match"),
-            ToolSpec.from_factory(_tool_output_mcp),
-            wrap_data=True,
-        )
+        result = await app.call_tool("tool_output_mcp", {"query": "match"})
 
         assert registered.output_schema == {
             "type": "object",
@@ -398,6 +392,14 @@ class TestForFastMCP:
         result = await app.call_tool("list_mcp", {"queries": "a"})
 
         assert result.structured_content == {"result": ["a"]}
+
+    async def test_a_double_encoded_string_is_unquoted(self) -> None:
+        app = FastMCP("test")
+        register_mcp_tools(app, [_sync_mcp], max_chars=10_000)
+
+        result = await app.call_tool("sync_mcp", {"query": '"needle"'})
+
+        assert result.structured_content == {"result": "needle:5"}
 
     async def test_a_long_text_is_bounded(self) -> None:
         """A plain MCP tool has no spill, so the adapter cuts its text itself."""

@@ -97,10 +97,10 @@ asyncio_mode = "auto"
 # fields included, so `force_full_page_ocr` warns although nothing here sets it.
 filterwarnings = ["ignore:`force_full_page_ocr` is deprecated:DeprecationWarning"]
 
-[tool.ruff.lint.flake8-bugbear]
-# FastMCP declares dependencies through call expressions in argument defaults;
-# the signature *is* the injection point, so these are not mutable defaults.
-extend-immutable-calls = ["fastmcp.dependencies.CurrentAccessToken", "fastmcp.dependencies.Depends"]
+# Makes this file the ruff config wherever ruff runs from, so `nix fmt` at the
+# repository root sorts `hivegent` as first-party as a run from here does.
+[tool.ruff]
+src = ["src"]
 
 # The distribution is named for the artifact it ships, the import package for
 # the system it belongs to, so the module has to be named rather than derived.

@@ -28,13 +28,13 @@ marks every callable dynamic, which would move all of this guidance behind the
 cache boundary.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Self
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
-from pydantic_ai.tools import SystemPromptFunc, ToolDefinition
+from pydantic_ai.tools import SystemPromptFunc, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 
 from ..config import settings
@@ -60,6 +60,7 @@ from ..types import (
     ToolSchema,
     ToolsSpec,
 )
+from .app import turn_usage_limits
 from .approval import ApprovalNotes
 from .common import UserDeps, scope_instructions
 from .guards import IterationLimitWarner
@@ -82,9 +83,11 @@ __all__ = [
     "SHARED_INSTRUCTIONS",
     "Feature",
     "SharedInstructions",
+    "agent_tool",
     "build_capabilities",
     "check_tool_settings",
     "collect_tool_schemas",
+    "feature_tools",
     "invoke_agent_tool",
     "unlisted_tool_names",
 ]
@@ -376,6 +379,15 @@ def check_tool_settings() -> None:
         )
 
 
+def feature_tools() -> Iterator[tuple[str, Tool[UserDeps]]]:
+    """Every agent tool with the id of the feature it belongs to."""
+    return (
+        (feature.id, tool)
+        for feature in FEATURES
+        for tool in feature.toolset.tools.values()
+    )
+
+
 def collect_tool_schemas() -> list[ToolSchema]:
     """Collect each tool's metadata and the JSON Schema of its parameters.
 
@@ -390,40 +402,56 @@ def collect_tool_schemas() -> list[ToolSchema]:
     """
     return [
         ToolSchema(
-            name=name,
+            name=tool.name,
             description=tool.description or "",
-            group=feature.id,
+            group=feature_id,
             parameters=tool.function_schema.json_schema,
         )
-        for feature in FEATURES
-        for name, tool in feature.toolset.tools.items()
+        for feature_id, tool in feature_tools()
     ]
 
 
-async def invoke_agent_tool(
-    tool_name: str, args: dict[str, Any], deps: UserDeps
-) -> tuple[str | None, Any]:
-    """Validate ``args``, run ``tool_name`` with ``deps``, and unwrap the result.
-
-    Looks the tool up across every feature and runs it through the exact code
-    path the agent uses (see :func:`hivegent.tools.pydantic_ai.invoke_tool`),
-    in the default language like every agent tool call.
-
-    Args:
-        tool_name: Name of the tool to invoke.
-        args: Raw argument mapping, validated against the tool's schema.
-        deps: The dependencies passed to the tool (e.g. ``UserDeps``).
-
-    Returns:
-        A ``(text, structured_data)`` pair.
+def agent_tool(name: str) -> Tool[UserDeps]:
+    """The agent tool called *name*, looked up across every feature.
 
     Raises:
-        KeyError: If no tool named ``tool_name`` is registered.
-        pydantic.ValidationError: If ``args`` fail the tool's schema.
+        KeyError: If no tool named *name* is registered.
     """
-    for feature in FEATURES:
-        if tool := feature.toolset.tools.get(tool_name):
-            with use_language(DEFAULT_LANGUAGE):
-                return await invoke_tool(tool, args, deps)
+    if tool := next((tool for _, tool in feature_tools() if tool.name == name), None):
+        return tool
 
-    raise KeyError(tool_name)
+    raise KeyError(name)
+
+
+async def invoke_agent_tool(
+    tool: Tool[UserDeps],
+    args: Mapping[str, Any],
+    deps: UserDeps,
+    *,
+    approved: bool = False,
+) -> Any:
+    """Validate ``args`` and run ``tool`` with ``deps`` as one agent turn would.
+
+    Runs the tool through the exact code path the agent uses (see
+    :func:`hivegent.tools.pydantic_ai.invoke_tool`), held to a turn's usage
+    limits and in the default language like every agent tool call.
+
+    Args:
+        tool: The agent tool to invoke, as :func:`agent_tool` looks it up.
+        args: Raw argument mapping, validated against the tool's schema.
+        deps: The dependencies passed to the tool (e.g. ``UserDeps``).
+        approved: Whether the user already approved this call.
+
+    Returns:
+        The raw return value, taken apart by
+        :func:`hivegent.tools.pydantic_ai.unwrap_tool_output`.
+
+    Raises:
+        pydantic.ValidationError: If ``args`` fail the tool's schema.
+        ModelRetry: If the tool or its validator refuses the arguments.
+        ApprovalRequired: If the write gate asks the user first.
+    """
+    with use_language(DEFAULT_LANGUAGE):
+        return await invoke_tool(
+            tool, args, deps, approved=approved, usage_limits=turn_usage_limits
+        )

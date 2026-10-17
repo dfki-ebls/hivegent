@@ -1,3 +1,4 @@
+from fastmcp.tools import Tool as McpTool
 from pydantic import TypeAdapter
 from typing_extensions import TypeForm
 
@@ -22,6 +23,15 @@ from hivegent.tools.table import QueryTableTool, TableRowLimitArg
 
 def _description(annotation: TypeForm[object]) -> str | None:
     return TypeAdapter(annotation).json_schema().get("description")
+
+
+async def _mcp_tool(name: str) -> McpTool:
+    """The tool *name* as MCP serves it."""
+    tool = await mcp_app.get_tool(name)
+
+    assert tool is not None
+
+    return tool
 
 
 def test_agent_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
@@ -74,8 +84,7 @@ def test_agent_python_tool_describes_monty_constraints() -> None:
 
 
 async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
-    tool = await mcp_app.get_tool("grep")
-    assert tool is not None
+    tool = await _mcp_tool("grep")
 
     assert tool.description == tool_description(GrepTool)
     assert tool.parameters["properties"]["pattern"]["description"] == _description(
@@ -87,14 +96,11 @@ async def test_mcp_tool_reuses_canonical_docstring_and_alias_metadata() -> None:
 
 
 async def test_mcp_exposes_jq_named_by_the_document_reader() -> None:
-    tool = await mcp_app.get_tool("jq")
-
-    assert tool is not None
+    assert (await _mcp_tool("jq")).name == "jq"
 
 
 async def test_mcp_search_tool_uses_consistent_search_type_name() -> None:
-    tool = await mcp_app.get_tool("search")
-    assert tool is not None
+    tool = await _mcp_tool("search")
 
     assert "search_type" in tool.parameters["properties"]
     assert "type" not in tool.parameters["properties"]

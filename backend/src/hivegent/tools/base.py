@@ -85,7 +85,6 @@ __all__ = [
     "ToolOutput",
     "ToolRetry",
     "ToolSpec",
-    "accept_scalar",
     "addressable_roots",
     "batch_field",
     "canonical_local_path",
@@ -98,6 +97,7 @@ __all__ = [
     "factory_tool_name",
     "file_allowed",
     "is_in_excluded_dir",
+    "lenient",
     "match_scope",
     "missing_directory_retry",
     "near_miss_hint",
@@ -922,14 +922,33 @@ def _as_list(value: object) -> object:
 _AS_LIST = BeforeValidator(_as_list)
 
 
-def accept_scalar(annotation: Any) -> Any:
-    """Let a list argument also take one bare item, which models often send.
+def _dequote(value: object) -> object:
+    """Strip the bookend quotes of a string sent JSON-encoded twice.
 
-    Applied by the framework adapters that validate model-written arguments,
-    and only there: the schema still says list, so a caller following it is
-    never steered toward the scalar spelling.
+    >>> _dequote('"files_with_matches"'), _dequote("plain"), _dequote(3)
+    ('files_with_matches', 'plain', 3)
     """
-    return Annotated[annotation, _AS_LIST] if _is_list_type(annotation) else annotation
+    if isinstance(value, str) and len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1]
+
+    return value
+
+
+_DEQUOTE = BeforeValidator(_dequote)
+
+
+def lenient(annotation: Any) -> Any:
+    """The annotation a model-written argument is validated against.
+
+    Two slips models make are repaired first: a string JSON-encoded twice,
+    which llama.cpp's autoparser lets through unconstrained, and one bare item
+    sent where a list is declared.  Every runtime adapter applies it, and only
+    to validation: the published schema is unchanged, so a caller following it
+    is never steered toward either spelling.
+    """
+    dequoted = Annotated[annotation, _DEQUOTE]
+
+    return Annotated[dequoted, _AS_LIST] if _is_list_type(annotation) else dequoted
 
 
 @dataclass(slots=True, frozen=True)
@@ -999,7 +1018,9 @@ async def run_batch[I, R](
 
     count = len(unique)
     sharing = [name for name, item in unique.items() if shares is None or shares(item)]
-    split = {name: BatchShare(index, len(sharing)) for index, name in enumerate(sharing)}
+    split = {
+        name: BatchShare(index, len(sharing)) for index, name in enumerate(sharing)
+    }
 
     async def attempt(entry: tuple[str, I]) -> ToolOutput[R] | ItemFailure:
         name, item = entry
@@ -1265,8 +1286,8 @@ def tool_description(tool: type[Tool[Any]]) -> str | None:
 # `slots=True` is deliberately absent, and the derived members below are the
 # reason: `cached_property` stores into the instance `__dict__` a slotted class
 # does not have.  They have to be memoised somehow, since building one costs
-# ~250us and `argument_model` and `data_adapter` are read on every sandbox and
-# MCP call, and they have to be derived rather than stored beside the fields
+# ~250us and `argument_model` and `data_adapter` are read on every sandbox
+# call, and they have to be derived rather than stored beside the fields
 # they are a function of.
 # The slotted alternative is a `dict[str, Any]` memo field, which launders
 # every value through `Any` behind string keys no checker reads; slots buys

@@ -13,6 +13,7 @@ from ..auth import build_discovery_url, fetch_oidc_configuration
 from ..config import reveal, settings
 from ..l10n import DEFAULT_LANGUAGE
 from ..prompts import WORKSPACE_PATH_INSTRUCTIONS
+from .adapter import serve_agent_tools
 
 __all__ = ["mcp_app"]
 
@@ -45,10 +46,11 @@ if settings.mcp.enable and settings.auth.enable:
 
 # The path grammar every document argument speaks is stated once here, the way
 # ``WORKSPACE_PATH_INSTRUCTIONS`` states it once for an agent run, rather than
-# repeated in the description of each of the eight arguments that name a path.
+# repeated in the description of every argument that names a path.
 # An MCP client has no interface language, so it is served the default one.
 mcp_app = FastMCP(
     "Hivegent",
     auth=mcp_auth,
     instructions=WORKSPACE_PATH_INSTRUCTIONS[DEFAULT_LANGUAGE].strip(),
 )
+serve_agent_tools(mcp_app)

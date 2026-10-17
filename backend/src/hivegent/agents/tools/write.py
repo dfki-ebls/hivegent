@@ -83,7 +83,9 @@ __all__ = [
 _RERUN = "Run the program again to stage a fresh changeset."
 
 
-def _gateway(deps: UserDeps, paths: tuple[SearchPath, ...] | None = None) -> workspace.Gateway:
+def _gateway(
+    deps: UserDeps, paths: tuple[SearchPath, ...] | None = None
+) -> workspace.Gateway:
     """The gateway bound to the roots *paths* name with their filters, announcing to the run's user.
 
     *paths* default to every root the run may write.  A path's root is the
@@ -151,8 +153,7 @@ def _run_python_pointer(target: str) -> str:
     stored or repaired it is the one moment its canonical path is in hand, so
     the pointer rides the receipt rather than waiting for the instructions to
     be recalled a turn later: what it saves is the run that pastes the program
-    straight back in as inline ``code``.  Injected on this surface alone,
-    since the MCP one writes through the same tools and has no ``run_python``.
+    straight back in as inline ``code``.
     """
     if TMP_SCOPE.strip_prefix(target) is None or not is_python_script(target):
         return ""
@@ -194,7 +195,8 @@ async def validate_document_write(
 ) -> None:
     """Refuse a write the tool would refuse, then gate it."""
     await _gate(
-        ctx, lambda paths: write_changeset(paths, file_path, content, mode, expected_hash)
+        ctx,
+        lambda paths: write_changeset(paths, file_path, content, mode, expected_hash),
     )
 
 
@@ -206,7 +208,9 @@ async def validate_document_edit(
     **_rest: Any,
 ) -> None:
     """Refuse an edit the tool would refuse, then gate it with every replacement."""
-    await _gate(ctx, lambda paths: edit_changeset(paths, file_path, edits, expected_hash))
+    await _gate(
+        ctx, lambda paths: edit_changeset(paths, file_path, edits, expected_hash)
+    )
 
 
 async def validate_document_moves(
@@ -240,7 +244,9 @@ def program_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
 
 
 def _picked[T](items: Sequence[T], picks: Sequence[bool], pick: bool) -> tuple[T, ...]:
-    return tuple(item for item, picked in zip(items, picks, strict=True) if picked == pick)
+    return tuple(
+        item for item, picked in zip(items, picks, strict=True) if picked == pick
+    )
 
 
 def _conversation(deps: UserDeps) -> OwnedConversation:
@@ -279,11 +285,17 @@ def changeset_committer(deps: UserDeps) -> CommitChanges:
                 _ = await gateway.apply(Changeset(_picked(operations, gated, False)))
                 staged = Changeset(_picked(operations, gated, True))
 
-                return PendingChanges(await staging.stage(_conversation(deps), staged), summary)
+                return PendingChanges(
+                    await staging.stage(_conversation(deps), staged), summary
+                )
 
             applied = await gateway.apply(changeset)
 
-        return AppliedChanges(_picked(applied.reports, gated, True)) if any(gated) else None
+        return (
+            AppliedChanges(_picked(applied.reports, gated, True))
+            if any(gated)
+            else None
+        )
 
     return commit
 
@@ -350,12 +362,14 @@ async def discard_unapproved_changes(
             await staging.discard_staged(conversation, changeset_id)
 
 
-async def _offer_apply_changes(
+def _offer_apply_changes(
     ctx: RunContext[UserDeps], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
     # Only a mode that may write the workspaces stages a program's changes
     # there, and only in a conversation, whose changes they are.
-    return tool_def if ctx.deps.can_write and ctx.deps.conversation is not None else None
+    return (
+        tool_def if ctx.deps.can_write and ctx.deps.conversation is not None else None
+    )
 
 
 write_toolset: FunctionToolset[UserDeps] = FunctionToolset()

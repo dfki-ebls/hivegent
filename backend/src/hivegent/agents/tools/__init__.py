@@ -10,14 +10,13 @@ from .python import (
     python_toolset,
     sandbox_instructions,
 )
-from .subagent import SUBAGENT_CAPABILITIES, SubagentName, subagent_toolset
+from .subagent import SubagentName, subagent_toolset
 from .web import web_toolset
 from .write import discard_unapproved_changes, write_toolset
 
 __all__ = [
     "INJECTABLE_TOOL_NAMES",
     "SANDBOX_FUNCTION_NAMES",
-    "SUBAGENT_CAPABILITIES",
     "SubagentName",
     "ask_toolset",
     "conversation_toolset",
