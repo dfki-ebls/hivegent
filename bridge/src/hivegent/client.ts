@@ -18,6 +18,7 @@ interface ChatRequestBody {
   trigger: "submit-message";
   id: string;
   messages: UIMessage[];
+  mode: "read";
   reasoning_effort: string;
   tools: { disabled_tools: string[] };
 }
@@ -26,12 +27,15 @@ interface ChatRequestBody {
  * Build the minimal schema-valid request body for one new user turn. History is
  * server-authoritative, so only the newest message is sent; the top-level `id` is
  * required by the schema but ignored by hivegent (it uses the URL path id).
+ * The bot only answers questions, so it always runs in read mode, which keeps
+ * every workspace out of reach of the write tools whatever its grants allow.
  */
 export function buildRequestBody(text: string, opts: ChatRequestOptions): ChatRequestBody {
   return {
     trigger: "submit-message",
     id: randomUUID(),
     messages: [{ id: randomUUID(), role: "user", parts: [{ type: "text", text }] }],
+    mode: "read",
     reasoning_effort: opts.reasoningEffort,
     tools: { disabled_tools: opts.disabledTools },
   };

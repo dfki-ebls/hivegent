@@ -11,6 +11,7 @@ describe("buildRequestBody", () => {
 
     expect(body.trigger).toBe("submit-message");
     expect(typeof body.id).toBe("string");
+    expect(body.mode).toBe("read");
     expect(body.reasoning_effort).toBe("high");
     expect(body.tools).toEqual({
       disabled_tools: ["edit_document", "write_document", "save_memory"],
