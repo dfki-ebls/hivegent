@@ -7,7 +7,7 @@ whole reason there are two:
 
 - **Isolation** (:mod:`.isolation`) — a single-use process per call, killed by a
   wall-clock timeout on expiry or cancellation.  Use it for untrusted or
-  hang-prone native work with no warm-up to keep (currently pdfium paging).
+  hang-prone native work with no warm-up to keep (pdfium paging, video decoding).
 
 - **Pool** (:mod:`.pool`) — a persistent pool that loads its heavy engine once
   and keeps it warm.  Use it for expensive-to-load, reusable stages (conversion,

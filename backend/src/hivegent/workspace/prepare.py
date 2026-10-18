@@ -275,7 +275,7 @@ async def _prepare_video(
     """Prepare a video and its frame-based description for commit.
 
     The original is the entry's payload and the vision-generated markdown is
-    its searchable projection.  Frames are sampled via ffmpeg from a temp copy
+    its searchable projection.  Frames are sampled with OpenCV from a temp copy
     of the source (see :func:`~hivegent.converters.video.sample_video`), so the
     lock-free prepare never touches the live workspace entry.
     """

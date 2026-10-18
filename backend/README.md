@@ -441,6 +441,6 @@ Each call is kept as a bounded `HostCall` in `PythonResult.calls`, and a failed 
 ## Video and animated media
 
 Vision chat models over the OpenAI Chat Completions protocol accept no video, so animated media is represented as at most `MAX_FRAMES` evenly sampled, downscaled, timestamped still frames.
-Videos are sampled with `ffmpeg` (`converters.video.sample_video`) and animated GIF and WebP with Pillow (`sample_animated_image`), then captioned by `asset_processing.caption_frames` on the aux model into the `<stem>.md` description.
+Videos are sampled with OpenCV (`converters.video.sample_video`), whose wheel bundles an LGPL FFmpeg so no ffmpeg binary ships, and animated GIF and WebP with Pillow (`sample_animated_image`), then captioned by `asset_processing.caption_frames` on the aux model into the `<stem>.md` description.
 `read_binary_document` attaches the same frames (tagged `<path>#t=<ts>s`) instead of the container bytes, while static images pass through verbatim.
-Once pydantic-ai can send native video, the swap is local to `ReadBinaryDocumentTool._read_video` and `_read_animation`, `caption_frames`, and `converters/video.py` with `subprocesses/ffmpeg.py`.
+Once pydantic-ai can send native video, the swap is local to `ReadBinaryDocumentTool._read_video` and `_read_animation`, `caption_frames`, and `converters/video.py`.

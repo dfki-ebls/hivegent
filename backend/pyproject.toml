@@ -22,6 +22,7 @@ dependencies = [
   "markdownify>=1,<2",
   "nanoid>=2,<3",
   "openai>=3,<4",
+  "opencv-python-headless>=5,<6",
   "opentelemetry-exporter-otlp-proto-http>=1,<2",
   "opentelemetry-instrumentation-fastapi>=0.60b1",
   "pdf-inspector>=1,<2",
@@ -48,7 +49,7 @@ all = ["hivegent-backend[docling,pdf-oxide,semantic]"]
 # mineru = ["mineru[all]>=3,<4"]
 docling = ["docling>=2,<3", "tesserocr>=2,<3"]
 kreuzberg = ["kreuzberg>=4,<5"]
-markitdown = ["markitdown[all]>=0.1,<1"]
+markitdown = ["markitdown[docx,outlook,pdf,pptx,xls,xlsx]>=0.1,<1"]
 pdf-oxide = ["pdf_oxide>=0.3,<1"]
 semantic = ["chonkie[semantic]>=1,<2"]
 

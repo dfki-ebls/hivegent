@@ -10,18 +10,12 @@ Both are thin async façades: the pdfium work runs in a throwaway spawned
 worker (:mod:`hivegent.workers.pdf` via :func:`run_isolated`) because pdfium
 segfaults on some malformed PDFs and fonts, and the input here is untrusted.
 A worker crash surfaces as the same :class:`ValueError` an unreadable PDF
-raises, instead of taking the whole server down with it.
+raises (:func:`run_isolated_untrusted`), instead of taking the whole server
+down with it.
 """
 
-import logging
-from collections.abc import Callable
-
 from ..workers import pdf as worker
-from ..workers.isolation import (
-    WorkerCrashError,
-    WorkerTimeoutError,
-    run_isolated,
-)
+from ..workers.isolation import run_isolated_untrusted
 
 # Re-exported so callers keep a single import surface for PDF paging.
 parse_pages = worker.parse_pages
@@ -36,23 +30,6 @@ __all__ = [
 DEFAULT_MAX_PAGES = 16
 """Default upper bound of pages rasterised from one PDF."""
 
-logger = logging.getLogger(__name__)
-
-
-async def _isolate[T](func: Callable[..., T], *args: object) -> T:
-    """Run a pdfium worker call, mapping isolation failures to ``ValueError``.
-
-    Callers handle timeouts and native crashes through the same domain error
-    as other unreadable PDF failures.
-    """
-    try:
-        return await run_isolated(func, *args)
-
-    except WorkerTimeoutError as exc:
-        raise ValueError("PDF processing timed out") from exc
-    except WorkerCrashError as exc:
-        logger.exception("PDF worker crashed")
-        raise ValueError("PDF worker crashed while processing the document") from exc
 
 
 async def render_pdf_pages(
@@ -64,7 +41,7 @@ async def render_pdf_pages(
     for an invalid page spec, a page count above *max_pages*, an unreadable
     PDF, or a native crash in the render worker.
     """
-    return await _isolate(
+    return await run_isolated_untrusted("PDF", 
         worker.render_pages, pdf_bytes, spec, max_dimension, max_pages
     )
 
@@ -78,4 +55,4 @@ async def extract_pdf_pages(
     :class:`ValueError` for an invalid page spec, an unreadable PDF, or a
     native crash in the worker.
     """
-    return await _isolate(worker.extract_pages, pdf_bytes, spec)
+    return await run_isolated_untrusted("PDF", worker.extract_pages, pdf_bytes, spec)

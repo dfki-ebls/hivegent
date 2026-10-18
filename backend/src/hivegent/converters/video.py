@@ -3,8 +3,9 @@
 Vision chat models accept only still images, so animated media is
 represented as a bounded set of frames sampled evenly across the
 timeline, each downscaled to keep the request payload small.  Animated
-GIF/WebP images are decoded in-process with Pillow; container video
-formats go through ffmpeg (see :mod:`hivegent.subprocesses.ffmpeg`).
+GIF/WebP images are decoded with Pillow in-process, container video formats
+with OpenCV, whose wheel bundles an LGPL FFmpeg, in an isolated worker
+(:mod:`hivegent.workers.video`).
 """
 
 from dataclasses import dataclass
@@ -15,7 +16,8 @@ import PIL.Image
 from PIL import ImageSequence
 
 from ..imaging import pil_to_still_png
-from ..subprocesses.ffmpeg import extract_frame, probe_duration
+from ..workers import video as worker
+from ..workers.isolation import run_isolated_untrusted
 
 __all__ = [
     "FRAME_MAX_DIMENSION",
@@ -30,6 +32,7 @@ __all__ = [
 ]
 
 VIDEO_MEDIA_TYPES: dict[str, str] = {
+    ".avi": "video/x-msvideo",
     ".mp4": "video/mp4",
     ".webm": "video/webm",
     ".mov": "video/quicktime",
@@ -158,7 +161,7 @@ async def sample_video(
     max_frames: int = MAX_FRAMES,
     max_dimension: int = FRAME_MAX_DIMENSION,
 ) -> MediaSample:
-    """Sample frames evenly across a video file via ffmpeg.
+    """Sample frames evenly across a video file.
 
     Samples roughly one frame per second for short clips, capped at
     *max_frames* for longer material; timestamps sit at segment
@@ -173,21 +176,12 @@ async def sample_video(
         The sampled frames with their timeline positions.
 
     Raises:
-        SubprocessError: If ffprobe/ffmpeg cannot read the file.
-        ValueError: If the container reports no usable duration.
+        ValueError: If the video cannot be decoded or reports no usable duration.
     """
-    duration = await probe_duration(path)
-    count = max(1, min(max_frames, round(duration)))
-    # Extract serially: one ffmpeg per upload keeps CPU bounded when many
-    # users upload at once, which matters more than single-upload latency
-    # for an occasional format like video.
-    frames: list[SampledFrame] = []
-    for i in range(count):
-        timestamp = duration * (i + 0.5) / count
-        frames.append(
-            SampledFrame(
-                timestamp=timestamp,
-                data=await extract_frame(path, timestamp, max_dimension=max_dimension),
-            )
-        )
-    return MediaSample(frames=tuple(frames), duration=duration)
+    duration, frames = await run_isolated_untrusted(
+        "Video", worker.sample_frames, path, max_frames, max_dimension
+    )
+    return MediaSample(
+        frames=tuple(SampledFrame(timestamp=t, data=data) for t, data in frames),
+        duration=duration,
+    )

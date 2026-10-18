@@ -10,11 +10,13 @@ This is the single-use, timeout-supervised sibling of the persistent
 To adopt it for a new code path: put the crash-prone function in a
 dependency-light leaf module (see :mod:`hivegent.workers`) and call
 ``await run_isolated(func, *args)``; map the worker errors to whatever domain
-error the caller already handles.
+error the caller already handles, or use :func:`run_isolated_untrusted` where
+that is the ``ValueError`` of unreadable input.
 """
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from multiprocessing import get_context
@@ -25,7 +27,14 @@ from typing import cast
 from ..concurrency import shield_to_completion
 from ..config import settings
 
-__all__ = ["WorkerCrashError", "WorkerTimeoutError", "run_isolated"]
+__all__ = [
+    "WorkerCrashError",
+    "WorkerTimeoutError",
+    "run_isolated",
+    "run_isolated_untrusted",
+]
+
+logger = logging.getLogger(__name__)
 
 _worker_slots = asyncio.Semaphore(settings.isolation.max_workers)
 
@@ -189,3 +198,21 @@ async def run_isolated[T](
         raise outcome.error
 
     return outcome.value
+
+
+async def run_isolated_untrusted[T](
+    subject: str, func: Callable[..., T], *args: object
+) -> T:
+    """Run *func* via :func:`run_isolated` on untrusted *subject* input.
+
+    A timeout or native crash surfaces as the ``ValueError`` callers already
+    handle for unreadable input, so they need no worker-specific handling.
+    """
+    try:
+        return await run_isolated(func, *args)
+
+    except WorkerTimeoutError as exc:
+        raise ValueError(f"{subject} processing timed out") from exc
+    except WorkerCrashError as exc:
+        logger.exception("%s worker crashed", subject)
+        raise ValueError(f"{subject} worker crashed while processing the input") from exc

@@ -3,6 +3,8 @@
 from io import BytesIO
 from pathlib import Path
 
+import cv2
+import numpy as np
 import PIL.Image
 import pytest
 
@@ -11,7 +13,6 @@ from hivegent.converters.video import (
     sample_animated_image,
     sample_video,
 )
-from hivegent.subprocesses.base import run
 from hivegent.tools.base import SearchPath, ToolRetry
 from hivegent.tools.binary import BinaryRead, ReadBinaryDocumentTool
 from tests.helpers import single
@@ -52,29 +53,29 @@ def test_sample_animated_image_spans_timeline() -> None:
             assert img.format == "PNG"
 
 
-async def test_sample_video_via_ffmpeg(tmp_path: Path) -> None:
-    video = tmp_path / "clip.mp4"
-    await run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=duration=3:size=64x64:rate=4",
-            "-c:v",
-            "mpeg4",
-            video,
-        ]
+async def test_sample_video(tmp_path: Path) -> None:
+    video = tmp_path / "clip.avi"
+    writer = cv2.VideoWriter(
+        str(video), cv2.VideoWriter.fourcc(*"MJPG"), 4, (64, 64)
     )
+    for i in range(12):
+        writer.write(np.full((64, 64, 3), i * 20, dtype=np.uint8))
+    writer.release()
+
     sample = await sample_video(video, max_frames=8, max_dimension=48)
-    assert sample.duration == pytest.approx(3.0, abs=0.2)
+    assert sample.duration == pytest.approx(3.0)
     assert len(sample.frames) == 3
     for frame in sample.frames:
         with PIL.Image.open(BytesIO(frame.data)) as img:
             assert img.format == "PNG"
             assert max(img.size) <= 48
+
+
+async def test_sample_video_rejects_undecodable_file(tmp_path: Path) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00" * 16)
+    with pytest.raises(ValueError, match="duration"):
+        await sample_video(video)
 
 
 async def test_binary_tool_samples_animated_gif(tmp_path: Path) -> None:

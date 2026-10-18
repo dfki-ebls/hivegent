@@ -254,9 +254,6 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
                 ".png",
                 ".jpg",
                 ".jpeg",
-                ".wav",
-                ".mp3",
-                ".m4a",
                 ".msg",
             }
         ),

@@ -12,8 +12,6 @@
   writeShellApplication,
   symlinkJoin,
   coreutils,
-  exiftool,
-  ffmpeg-headless,
   jq,
   libreoffice,
   pandoc,
@@ -222,12 +220,8 @@ let
   # - poppler-utils (pdftotext): PDF text-recovery fallback for legacy PDFs whose
   #   fonts carry no ToUnicode CMap, which docling's backend dumps as raw glyph
   #   names — poppler reconstructs the text from the glyph-name convention.
-  # - ffmpeg: pydub audio decoding (markitdown audio converter, non-wav).
-  # - exiftool: optional audio metadata extraction in markitdown.
   # - libreofficeHeadless: docling docx→pdf conversion; Linux-only in nixpkgs.
   runtimeInputs = [
-    exiftool
-    ffmpeg-headless
     jq
     poppler-utils
     ripgrep
