@@ -108,13 +108,13 @@ def test_toml_config_overrides_defaults(
         encoding="utf-8",
     )
     monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(config))
-    monkeypatch.setenv("HIVEGENT_NETWORK__WEBFETCH_TIMEOUT_SECONDS", "7")
+    monkeypatch.setenv("HIVEGENT_NETWORK__WEB_TIMEOUT_SECONDS", "7")
 
     settings = Settings()
 
     assert settings.data_dir == Path("/srv/hivegent")
     assert settings.network.connect_timeout_seconds == 12.5
-    assert settings.network.webfetch_timeout_seconds == 7.0
+    assert settings.network.web_timeout_seconds == 7.0
     assert settings.limits.max_file_size_bytes == 50 * 1024 * 1024
 
 

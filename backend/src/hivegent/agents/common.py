@@ -19,6 +19,7 @@ from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, User, build_search_paths
 from ..tmp import tmp_search_path
+from ..tools import KnownUrls
 from ..tools.base import SearchPath, query_hint, resolve_accessible_file
 from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
@@ -158,6 +159,9 @@ class UserDeps:
     # The turn's `complete` calls, shared with its subagents, which `replace`
     # the deps and keep this object.
     completions: Completions = field(default_factory=Completions)
+    # The URLs `web_fetch` may open, seeded from the history by the chat path
+    # and shared with subagents the same way.
+    known_urls: KnownUrls = field(default_factory=KnownUrls)
     # Sink for live subagent transcript snapshots; set only on the chat path,
     # where the streaming response drains it (None elsewhere disables it).
     subagent_sink: asyncio.Queue[SubagentUpdate] | None = None

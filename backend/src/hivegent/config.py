@@ -669,12 +669,11 @@ class SecuritySettings(BaseModel):
     ``user_urls`` is the host policy applied to user-supplied endpoint
     URLs (user LLM ``base_url``, MCP server URLs).
     Its empty default denies every endpoint.
-    ``web_urls`` independently scopes what the model may browse with the web
-    tools, including search results, fetch targets, and redirect hops.
+    ``web_urls`` independently scopes what ``web_fetch`` may open, including
+    redirect hops, and its empty default leaves the tool unregistered.
+    ``*`` lets the model read any public page the user or a search named,
+    and a set of domains confines it to those.
     The two policies do not inherit from each other.
-    The default web allow list covers every Wikipedia language edition, which
-    is the curated corpus returned by the default search engine.
-    When the web allow list is empty, the web tools are not registered.
 
     CORS, security headers, rate limiting, and body-size caps are
     enforced by the Caddy reverse proxy, not here.
@@ -683,7 +682,7 @@ class SecuritySettings(BaseModel):
     egress_proxy_url: str = DEFAULT_EGRESS_PROXY_URL
     expose_api_docs: bool = False
     user_urls: UrlPolicySettings = UrlPolicySettings()
-    web_urls: UrlPolicySettings = UrlPolicySettings(allow_hosts=["wikipedia.org"])
+    web_urls: UrlPolicySettings = UrlPolicySettings()
 
     def user_policy(self) -> UrlPolicy:
         """Resolve the policy for user-supplied endpoint URLs."""
@@ -697,9 +696,11 @@ class SecuritySettings(BaseModel):
 class ToolsSettings(BaseModel):
     """Operator control over which of the agent's tools reach the model.
 
-    ``enable_web`` gates the ``web_search`` and ``web_fetch`` tools (which
-    also need a ``security.web_urls`` policy to take effect); it is off by
-    default, so the model answers from the indexed documents alone.
+    ``search_url`` is the metasearch service ``web_search`` queries, of the
+    kind ``search_backend`` names, and the tool is only registered while it is
+    set, as ``web_fetch`` is only while ``security.web_urls`` allows a host.
+    It is an operator endpoint, reached with the trusted client, so it may
+    name a host in ``network.unix_sockets``.
 
     ``disabled`` names individual tools to withhold, sharing both the word and
     the effect with a chat request's ``disabled_tools``: the schema
@@ -743,7 +744,8 @@ class ToolsSettings(BaseModel):
     is the position ``defer_loading`` was removed for leaving it in.
     """
 
-    enable_web: bool = False
+    search_backend: Literal["searxng", "openserp"] = "searxng"
+    search_url: str | None = None
     disabled: list[str] = ["list_conversations", "get_conversation"]
     sandbox_only: list[str] = []
 
@@ -998,22 +1000,20 @@ class NetworkSettings(BaseModel):
     """Outbound HTTP client and web-tool tunables.
 
     ``connect_timeout_seconds`` applies to every outbound request made
-    through the shared HTTP client (LLM, embeddings, MCP, JWKS).  The
-    ``webfetch_*`` knobs only apply to the ``web_fetch`` agent tool:
+    through the shared HTTP client (LLM, embeddings, MCP, JWKS).
+    ``web_timeout_seconds`` bounds each ``web_search`` query and each
+    ``web_fetch`` download as a whole, so a server trickling bytes cannot hold
+    a turn.  The ``webfetch_*`` knobs only apply to the ``web_fetch`` agent tool:
     ``webfetch_max_response_bytes`` caps how many raw bytes are
     downloaded per page, ``webfetch_max_chars`` caps the extracted text
     handed to the model, ``webfetch_max_line_chars`` truncates each
     numbered line so a data-URI or minified line cannot flood the
-    context.  ``web_search`` queries the official
-    Wikipedia API directly — no scraping, so no bot detection or rate
-    limits — and only ever returns ``wikipedia.org`` links, matching the
-    default ``web_urls`` allow list.  The model picks the Wikipedia edition
-    per call, and ``websearch_default_edition`` is the one it searches when
-    it names none (e.g. ``en`` → en.wikipedia.org, ``de`` → de.wikipedia.org).
+    context, and ``webfetch_fast_extraction`` skips trafilatura's backup
+    extractors, saving CPU per page at the cost of some recall.
     ``contact_email`` is the operator address put in
-    the web tools' ``User-Agent`` (as Wikimedia's policy asks, so traffic
-    questions reach a human); it falls back to the package author when
-    unset.  ``web_keepalive_seconds`` is how long the web tools' client keeps
+    the ``web_fetch`` ``User-Agent``, so traffic questions reach a human; it
+    falls back to the package author when unset.  ``web_keepalive_seconds`` is
+    how long the ``web_fetch`` client keeps
     an idle connection, long enough to outlast the model request between two
     tool calls of one turn.  The per-model-request timeout lives on ``LlmSettings``
     (``request_timeout_seconds``), not here.
@@ -1025,13 +1025,13 @@ class NetworkSettings(BaseModel):
     """
 
     connect_timeout_seconds: float = 5.0
-    webfetch_timeout_seconds: float = 10.0
+    web_timeout_seconds: float = 20.0
     webfetch_max_response_bytes: int = 5_000_000
     webfetch_max_chars: int = 100_000
     webfetch_max_line_chars: int = 2000
+    webfetch_fast_extraction: bool = False
     webfetch_max_redirects: int = 5
     web_keepalive_seconds: float = 60.0
-    websearch_default_edition: str = "en"
     contact_email: str = ""
     unix_sockets: dict[str, Path] = {}
 

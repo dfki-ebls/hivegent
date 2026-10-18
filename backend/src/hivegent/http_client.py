@@ -69,17 +69,14 @@ async def _open_clients() -> AsyncGenerator[_Clients]:
             trust_env=False,
             mounts=_unix_socket_mounts(),
         ),
-        # Redirects are followed for both web tools: every hop is checked
-        # by the request hook and the egress proxy, so a search that lands
-        # on a redirecting Wikipedia language alias resolves rather than
-        # failing. The hop limit is client-level in HTTPX either way.
+        # Redirects are followed for fetched pages: every hop is checked by
+        # the request hook and the egress proxy, so a moved page resolves
+        # rather than failing. The hop limit is client-level in HTTPX, while
+        # the tools bound each request as a whole.
         "web": create_safe_async_client(
             policy=settings.security.web_policy(),
             proxy_url=settings.security.egress_proxy_url,
-            timeout=httpx2.Timeout(
-                timeout=network.webfetch_timeout_seconds,
-                connect=network.connect_timeout_seconds,
-            ),
+            timeout=timeout,
             follow_redirects=True,
             max_redirects=network.webfetch_max_redirects,
             keepalive_expiry=network.web_keepalive_seconds,

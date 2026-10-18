@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
+from itertools import chain
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -26,6 +27,7 @@ from ... import conversation_files
 from ...agents import (
     UserDeps,
     discard_unapproved_changes,
+    record_known_urls,
     title_agent,
     turn_usage_limits,
     user_agent,
@@ -569,6 +571,8 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
         if declined is not None:
             fork_id = await append_branch(conversation, fork_id, [declined])
             prefix = [*prefix, declined]
+
+    record_known_urls(deps.known_urls, chain(prefix, adapter.messages))
 
     # Reserve the node id the new user message will be persisted under, so the
     # client can address it for an edit without waiting for a reload.  Only a

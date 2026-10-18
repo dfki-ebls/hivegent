@@ -5,7 +5,6 @@ import type { SyncOutput } from "@/lib/chat/tool-part";
 /** One search of the backend ``web_search`` tool's payload. */
 const WebSearchResultsSchema = z.object({
   query: z.string(),
-  edition: z.string(),
   hits: z.array(z.object({ title: z.string(), href: z.string(), body: z.string() })),
 });
 

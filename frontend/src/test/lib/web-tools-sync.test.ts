@@ -55,7 +55,6 @@ describe("syncWebSearchOutput", () => {
         metadata: [
           {
             query: "jura e7",
-            edition: "en",
             hits: [
               { title: "Manual", href: "https://example.com/manual", body: "snippet" },
               { title: "No link", href: "", body: "x" },

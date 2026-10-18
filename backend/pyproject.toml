@@ -19,7 +19,6 @@ dependencies = [
   "httpx2>=2,<3",
   "joserfc>=1,<2",
   "logfire>=5,<6",
-  "lxml>=6,<7",
   "markdownify>=1,<2",
   "nanoid>=2,<3",
   "openai>=3,<4",
@@ -34,6 +33,7 @@ dependencies = [
   "pypdfium2>=5,<6",
   "sentence_transformers>=6,<7",
   "sqlalchemy[asyncio]>=2,<3",
+  "trafilatura>=2,<3",
   "typer>=0.20,<1",
   "uvicorn[standard]>=0.40,<1",
 ]

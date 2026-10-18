@@ -1,11 +1,23 @@
 """Unit tests for the web search/fetch tools and the URL policy."""
 
+import re
+from dataclasses import asdict
 from typing import Any
 
 import httpx2
 import pytest
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from hivegent import security
+from hivegent.agents.tools import web as agent_web
+from hivegent.agents.tools.web import record_known_urls
 from hivegent.config import SecuritySettings, UrlPolicySettings
 from hivegent.security import (
     UrlPolicy,
@@ -13,7 +25,19 @@ from hivegent.security import (
     require_safe_external_url,
 )
 from hivegent.tools.base import ItemFailure, ToolRetry
-from hivegent.tools.web import WebFetch, WebSearch, WikipediaSearch, build_user_agent
+from hivegent.tools.pydantic_ai import DATA_CHUNK_TYPE
+from hivegent.tools.web import (
+    KnownUrls,
+    OpenserpBackend,
+    SearchBackend,
+    SearxngBackend,
+    WebFetch,
+    WebQuery,
+    WebSearch,
+    WebSearchHit,
+    WebSearchResults,
+    build_user_agent,
+)
 from tests.helpers import single
 
 #: Permits every host, so a fetch test opts out of policy enforcement.
@@ -109,118 +133,142 @@ class TestUrlPolicy:
             require_safe_external_url("https://example.com", "url", policy=UrlPolicy())
 
 
-def _search_response(*titles_and_snippets: tuple[str, str]) -> dict[str, Any]:
-    """A MediaWiki ``list=search`` JSON body for the given hits."""
-    return {
-        "query": {
-            "search": [
-                {"title": title, "snippet": snippet}
-                for title, snippet in titles_and_snippets
-            ]
-        }
-    }
+def _search_tool(
+    handler: Any, backend: SearchBackend | None = None
+) -> WebSearch:
+    """Build a WebSearch whose trusted client is backed by a mock transport."""
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+
+    return WebSearch(
+        client=client,
+        backend=backend or SearxngBackend(_SEARCH_URL),
+        known_urls=KnownUrls(),
+        timeout_seconds=10.0,
+    )
+
+
+_SEARCH_URL = "http://127.0.0.1:8888"
+
+
+def _result(url: str, title: str = "", content: str = "") -> dict[str, Any]:
+    """One result of a SearXNG JSON response."""
+    return {"url": url, "title": title, "content": content}
 
 
 class TestWebSearch:
-    """Wikipedia API call, result shaping, and failure surfacing."""
+    """SearXNG API call, result shaping, and failure surfacing."""
 
-    async def test_results_are_shaped_from_the_configured_edition(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_results_are_shaped_and_deduplicated(self) -> None:
         def handler(request: httpx2.Request) -> httpx2.Response:
-            # The configured default picks the edition when the call names none.
-            assert request.url.host == "de.wikipedia.org"
-            assert request.url.params["srsearch"] == "ChatGPT"
-            # The configured operator User-Agent is sent on the request.
-            assert request.headers["user-agent"] == "hivegent-test (+mailto:a@b.org)"
-            return httpx2.Response(
-                200,
-                json=_search_response(
-                    ("ChatGPT", 'a <span class="searchmatch">ChatGPT</span> bot'),
-                    ("GPT-4", "a language model"),
-                ),
-            )
+            params = request.url.params
+            assert request.url.path == "/search"
+            assert params["format"] == "json"
 
-        out = await WebSearch(
-            client=_web_client(
-                monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
-            ),
-            default_edition="de",
-            user_agent="hivegent-test (+mailto:a@b.org)",
-        )([WikipediaSearch("ChatGPT")])
-        hits = single(out.data).hits
+            if params["q"] == "jura e7":
+                assert params["categories"] == "news"
+                assert params["language"] == "de"
+                assert params["time_range"] == "week"
+                results = [
+                    {
+                        **_result("https://a.example/manual", "Manual", " a\n  b "),
+                        "publishedDate": "2026-10-17T08:00:00",
+                    },
+                    _result("javascript:alert(1)", "Unsafe"),
+                ]
+            else:
+                # Unset filters are left to the instance's defaults.
+                assert "language" not in params
+                assert "time_range" not in params
+                results = [
+                    _result("https://a.example/manual", "Manual"),
+                    _result("https://b.example/", "Other"),
+                ]
 
-        assert [hit.href for hit in hits] == [
-            "https://de.wikipedia.org/wiki/ChatGPT",
-            "https://de.wikipedia.org/wiki/GPT-4",
-        ]
-        # The highlighted snippet HTML is reduced to plain text.
-        assert hits[0].body == "a ChatGPT bot"
-        assert "[1] ChatGPT (https://de.wikipedia.org/wiki/ChatGPT)" in out.text
+            return httpx2.Response(200, json={"results": results})
 
-    async def test_call_picks_the_edition(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def handler(request: httpx2.Request) -> httpx2.Response:
-            assert request.url.host == "fr.wikipedia.org"
-            return httpx2.Response(200, json=_search_response(("Paris", "")))
-
-        client = _web_client(
-            monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
-        )
-        out = await WebSearch(client=client)([WikipediaSearch("Paris", edition="fr")])
-
-        assert single(out.data).hits[0].href == "https://fr.wikipedia.org/wiki/Paris"
-
-    async def test_an_article_two_searches_find_is_listed_once(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def handler(request: httpx2.Request) -> httpx2.Response:
-            if request.url.host == "xx.wikipedia.org":
-                return httpx2.Response(404)
-
-            hits = {"Paris": [("Paris", "")], "France": [("France", ""), ("Paris", "")]}
-
-            return httpx2.Response(
-                200, json=_search_response(*hits[request.url.params["srsearch"]])
-            )
-
-        client = _web_client(
-            monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
-        )
-        out = await WebSearch(client=client)(
+        tool = _search_tool(handler)
+        out = await tool(
             [
-                WikipediaSearch("Paris"),
-                WikipediaSearch("France"),
-                WikipediaSearch("Paris", edition="xx"),
+                WebQuery("jura e7", "news", "de", "week"),
+                WebQuery("jura"),
+                WebQuery("jura", "news"),
             ]
         )
+        first, second, third = out.data
 
-        paris, france, failed = out.data
-        assert not isinstance(paris, ItemFailure)
-        assert not isinstance(france, ItemFailure)
-        assert [hit.title for hit in paris.hits] == ["Paris"]
-        assert [hit.title for hit in france.hits] == ["France"]
-        assert "1 article already listed above" in out.text
-        assert isinstance(failed, ItemFailure)
-
-    async def test_api_failure_raises_tool_retry(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def handler(request: httpx2.Request) -> httpx2.Response:
-            return httpx2.Response(503)
-
-        client = _web_client(
-            monkeypatch, handler, UrlPolicy(allow_hosts=("wikipedia.org",))
+        assert not isinstance(first, ItemFailure)
+        assert not isinstance(second, ItemFailure)
+        # Only fetchable links survive, and whitespace is collapsed.
+        assert first.hits == (
+            WebSearchHit("Manual", "https://a.example/manual", "a b", "2026-10-17"),
         )
+        # A page an earlier search found is not listed again.
+        assert [hit.href for hit in second.hits] == ["https://b.example/"]
+        assert "1 page already listed above" in out.text
+        # The same query with other filters is a search of its own.
+        assert not isinstance(third, ItemFailure)
+        assert "==> jura [news] <==" in out.text
+        assert "published 2026-10-17" in out.text
+        # Every listed result may be fetched next.
+        assert "https://a.example/manual" in tool.known_urls
+        assert "https://b.example/" in tool.known_urls
+
+    async def test_openserp_megasearch_is_translated(self) -> None:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            params = request.url.params
+            assert request.url.path == "/mega/search"
+            assert (params["text"], params["limit"]) == ("jura", "3")
+            assert (params["lang"], params["region"]) == ("DE", "AT")
+            assert re.fullmatch(r"\d{8}\.\.\d{8}", params["date"])
+
+            return httpx2.Response(
+                200,
+                json={
+                    "results": [
+                        {"url": "https://a.example/", "title": "A", "snippet": "s"}
+                    ],
+                    "meta": {"engines_failed": ["google"]},
+                },
+            )
+
+        out = await _search_tool(handler, OpenserpBackend(_SEARCH_URL))(
+            [WebQuery("jura", language="de-AT", time_range="month")], max_results=3
+        )
+
+        assert single(out.data).hits == (WebSearchHit("A", "https://a.example/", "s"),)
+
+    async def test_api_failure_raises_tool_retry(self) -> None:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(400)
+
         with pytest.raises(ToolRetry, match="web search failed"):
-            await WebSearch(client=client)([WikipediaSearch("anything")])
+            await _search_tool(handler)([WebQuery("anything", language="xx")])
+
+    async def test_unresponsive_engines_are_reported(self) -> None:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
+                200,
+                json={"results": [], "unresponsive_engines": [["brave", "CAPTCHA"]]},
+            )
+
+        with pytest.raises(ToolRetry, match="brave: CAPTCHA"):
+            await _search_tool(handler)([WebQuery("anything")])
 
 
-HTML = b"""
-<html><head><title>Test Page</title><script>var x = 1;</script></head>
-<body><h1>Hello</h1><p>World</p><script>tracking();</script></body></html>
+_ARTICLE = b"An article needs a few hundred characters to count as main content. " * 5
+HTML = (
+    b"""
+<html><head><title>Test Page | Site</title><script>var x = 1;</script>
+<meta property="article:published_time" content="2026-10-17T08:00:00Z"></head>
+<body><nav><a href="/home">Home</a> <a href="/about">About</a></nav>
+<article><h1>Hello</h1>
+<p>World, see the <a href="/docs/guide">guide</a> for the details.</p>
+<p>"""
+    + _ARTICLE
+    + b"""</p></article>
+<footer>Cookie banner</footer><script>tracking();</script></body></html>
 """
+)
 
 
 def _fetch_tool(
@@ -233,10 +281,17 @@ def _fetch_tool(
     """Build a WebFetch whose pooled client is backed by a mock transport.
 
     ``max_redirects`` binds the client, not the tool, because HTTPX accepts
-    redirect settings only there.
+    redirect settings only there.  The pages the tests ask for are known, as if
+    the user had named them.
     """
     client = _web_client(monkeypatch, handler, policy, max_redirects)
-    return WebFetch(client=client, **kwargs)
+    known = KnownUrls()
+    known.add(*(f"https://example.com/{path}" for path in _PATHS))
+
+    return WebFetch(client=client, known_urls=known, timeout_seconds=10.0, **kwargs)
+
+
+_PATHS = ("start", "final", "gone", "img", "big", "page", "loop", "index")
 
 
 class TestWebFetch:
@@ -255,12 +310,20 @@ class TestWebFetch:
         tool = _fetch_tool(monkeypatch, handler)
         out = await tool(["https://example.com/start"])
 
-        assert single(out.data).url == "https://example.com/final"
-        assert single(out.data).title == "Test Page"
-        assert "# Hello" in single(out.data).content
-        assert "tracking" not in single(out.data).content
+        page = single(out.data)
+        # A link on the fetched page may be fetched next.
+        assert "https://example.com/docs/guide" in tool.known_urls
+        assert page.url == "https://example.com/final"
+        assert (page.title, page.published) == ("Hello", "2026-10-17")
+        assert "# Hello" in page.content
+        # Links resolve against the final URL, so the model can follow them.
+        assert "[guide](https://example.com/docs/guide)" in page.content
+        # Scripts and the page around the article are dropped.
+        for boilerplate in ("tracking", "About", "Cookie banner"):
+            assert boilerplate not in page.content
         # Formatted output numbers every content line for citations.
-        assert "\nTest Page — https://example.com/final\n1: " in out.text
+        header = "Hello (https://example.com/final), published 2026-10-17"
+        assert f"\n{header}\n1: " in out.text
 
     async def test_pages_fail_alone_and_a_page_is_shown_once(
         self, monkeypatch: pytest.MonkeyPatch
@@ -356,5 +419,69 @@ class TestWebFetch:
             return httpx2.Response(302, headers={"location": "/loop"})
 
         tool = _fetch_tool(monkeypatch, handler, max_redirects=3)
-        with pytest.raises(ToolRetry, match="too many redirects"):
+        with pytest.raises(ToolRetry, match="redirects"):
             await tool(["https://example.com/loop"])
+
+
+class TestKnownUrls:
+    """Only URLs from the user or the web tools may be fetched."""
+
+    async def test_links_of_a_link_list_can_be_followed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        items = "".join(f'<li><a href="/p_{i}">Page {i}</a></li>' for i in range(5))
+        html = f"<html><body><h1>Docs</h1><ul>{items}</ul></body></html>"
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
+                200, content=html.encode(), headers={"content-type": "text/html"}
+            )
+
+        tool = _fetch_tool(monkeypatch, handler)
+        out = await tool(["https://example.com/index"])
+
+        assert "[Page 3](https://example.com/p_3)" in single(out.data).content
+        assert "https://example.com/p_3" in tool.known_urls
+
+    async def test_unknown_url_is_refused_without_a_request(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            raise AssertionError("an unknown URL must not be requested")
+
+        tool = _fetch_tool(monkeypatch, handler)
+
+        with pytest.raises(ToolRetry, match="not appeared in the conversation"):
+            await tool(["https://example.com/start?secret=1"])
+
+    def test_history_counts_only_user_and_web_tool_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(agent_web, "_fetch_enabled", True)
+        known = KnownUrls()
+        hit = WebSearchHit("A", "https://hit.example/", "")
+        record_known_urls(
+            known,
+            [
+                ModelRequest(parts=[UserPromptPart("read https://user.example/a.")]),
+                ModelResponse(parts=[TextPart("https://model.example/leak")]),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            "web_search",
+                            "[1] A (https://hit.example/)",
+                            metadata=DataChunk(
+                                type=DATA_CHUNK_TYPE,
+                                data=[asdict(WebSearchResults("a", (hit,)))],
+                            ),
+                        ),
+                        ToolReturnPart("run_python", "https://program.example/"),
+                    ]
+                ),
+            ],
+        )
+
+        assert "https://user.example/a" in known
+        assert "https://hit.example/" in known
+        assert "https://model.example/leak" not in known
+        assert "https://program.example/" not in known

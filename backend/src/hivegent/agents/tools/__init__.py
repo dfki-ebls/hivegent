@@ -11,7 +11,7 @@ from .python import (
     sandbox_instructions,
 )
 from .subagent import SubagentName, subagent_toolset
-from .web import web_toolset
+from .web import record_known_urls, web_toolset
 from .write import discard_unapproved_changes, write_toolset
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "explore_toolset",
     "memory_toolset",
     "python_toolset",
+    "record_known_urls",
     "sandbox_instructions",
     "subagent_toolset",
     "web_toolset",
