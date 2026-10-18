@@ -54,10 +54,6 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4",
-    "@tanstack/devtools-vite": "^0.8",
-    "@tanstack/react-devtools": "^0",
-    "@tanstack/react-query-devtools": "^5",
-    "@tanstack/react-router-devtools": "^1",
     "@tanstack/router-plugin": "^1",
     "@testing-library/dom": "^10",
     "@testing-library/react": "^16",

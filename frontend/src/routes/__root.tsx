@@ -1,8 +1,5 @@
-import { TanStackDevtools } from "@tanstack/react-devtools";
 import { useQuery } from "@tanstack/react-query";
-import { ReactQueryDevtoolsPanel } from "@tanstack/react-query-devtools";
 import { createRootRoute, Outlet } from "@tanstack/react-router";
-import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { Header } from "@/components/Header";
@@ -33,19 +30,6 @@ function RootComponent() {
         <main className="flex-1 overflow-y-auto">
           <Outlet />
         </main>
-        <TanStackDevtools
-          config={{ position: "bottom-left" }}
-          plugins={[
-            {
-              name: "Tanstack Router",
-              render: <TanStackRouterDevtoolsPanel />,
-            },
-            {
-              name: "Tanstack Query",
-              render: <ReactQueryDevtoolsPanel />,
-            },
-          ]}
-        />
       </div>
     </AppErrorBoundary>
   );
