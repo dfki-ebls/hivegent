@@ -95,6 +95,7 @@ export const settings = {
   },
   account: {
     title: "Account",
+    description: "Manage the data of your account and, as an admin, the whole deployment.",
     done: "{{action}}: Done",
     failed: "{{action}}: Failed",
     noUsers: "No users have left a footprint yet.",

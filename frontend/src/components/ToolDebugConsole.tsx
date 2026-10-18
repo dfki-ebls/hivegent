@@ -23,6 +23,7 @@ import { useIsAdmin } from "@/queries/settings";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorAlert } from "@/components/ErrorAlert";
 import { HighlightedCode } from "@/components/HighlightedCode";
+import { PageHeader } from "@/components/PageHeader";
 import { isJsonSchema, type JsonSchema, SchemaForm } from "@/components/SchemaForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -164,10 +165,11 @@ export function ToolDebugConsole() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 flex-col gap-1 border-b px-6 py-4">
-        <h1 className="text-2xl font-semibold">{t(($) => $.title)}</h1>
-        <p className="text-sm text-muted-foreground">{t(($) => $.description)}</p>
-      </div>
+      <PageHeader
+        title={t(($) => $.title)}
+        description={t(($) => $.description)}
+        className="shrink-0 border-b px-6 py-4"
+      />
 
       {/* Body: one scroll region on mobile, two independent columns on desktop. */}
       <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">

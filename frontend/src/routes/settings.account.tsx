@@ -12,7 +12,6 @@ import {
   RotateCcwIcon,
   ShieldAlertIcon,
   Trash2Icon,
-  UserCogIcon,
   UserXIcon,
   UsersIcon,
   WrenchIcon,
@@ -21,18 +20,17 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PageHeader } from "@/components/PageHeader";
 import { TooltipButton } from "@/components/TooltipButton";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Field,
   FieldContent,
   FieldDescription,
-  FieldGroup,
   FieldLabel,
   FieldLegend,
-  FieldSeparator,
   FieldSet,
-  FieldTitle,
 } from "@/components/ui/field";
 import {
   Item,
@@ -42,7 +40,7 @@ import {
   ItemGroup,
   ItemTitle,
 } from "@/components/ui/item";
-import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { useDialogTarget } from "@/hooks/use-dialog-target";
@@ -108,14 +106,16 @@ interface SectionProps {
 
 function Section({ icon: Icon, title, description, destructive, children }: SectionProps) {
   return (
-    <FieldSet>
-      <FieldLegend className={cn("flex items-center gap-2", destructive && "text-destructive")}>
-        <Icon className="size-4" />
-        {title}
-      </FieldLegend>
-      {description && <FieldDescription>{description}</FieldDescription>}
-      {children}
-    </FieldSet>
+    <Card className={cn(destructive && "ring-destructive/30 dark:ring-destructive/40")}>
+      <CardHeader>
+        <CardTitle className={cn("flex items-center gap-2", destructive && "text-destructive")}>
+          <Icon className="size-4" />
+          {title}
+        </CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
+      </CardHeader>
+      <CardContent className="flex flex-col gap-6">{children}</CardContent>
+    </Card>
   );
 }
 
@@ -233,19 +233,17 @@ function TargetList<T extends { id: string }>({
   destructive,
   onSelect,
 }: TargetListProps<T>) {
-  const { t } = useTranslation();
-
   return (
     <FieldSet className="gap-3">
       <FieldLegend variant="label">{label}</FieldLegend>
       {loading ? (
-        <Spinner aria-label={t(($) => $.common.states.loading)} />
+        <Skeleton className="h-16 rounded-2xl" />
       ) : items.length === 0 ? (
         <FieldDescription>{emptyLabel}</FieldDescription>
       ) : (
         <ItemGroup className="max-h-64 overflow-y-auto">
           {items.map((item) => (
-            <Item key={item.id} variant="outline" size="xs">
+            <Item key={item.id} variant="outline" size="sm">
               <ItemContent className="min-w-0">
                 <ItemTitle className="break-all">{item.id}</ItemTitle>
                 <ItemDescription>{meta(item)}</ItemDescription>
@@ -253,7 +251,7 @@ function TargetList<T extends { id: string }>({
               <ItemActions>
                 <TooltipButton
                   label={actionLabel}
-                  variant={destructive ? "destructive" : "ghost"}
+                  destructive={destructive}
                   onClick={() => onSelect(item)}
                 >
                   <Icon />
@@ -290,11 +288,8 @@ function AdminSections({ onSelect }: { onSelect: SelectAction }) {
   return (
     <>
       <MaintenanceSection />
-      <FieldSeparator />
       <ImpersonationSection users={otherUsers} loading={loading} />
-      <FieldSeparator />
       <UserDangerZone onSelect={onSelect} />
-      <FieldSeparator />
       <AdminDangerZone
         onSelect={onSelect}
         users={otherUsers}
@@ -321,20 +316,18 @@ function MaintenanceSection() {
 
   return (
     <Section icon={WrenchIcon} title={t(($) => $.title)}>
-      <FieldLabel htmlFor="maintenance-mode">
-        <Field orientation="horizontal" data-disabled={enabled === undefined}>
-          <FieldContent>
-            <FieldTitle>{t(($) => $.label)}</FieldTitle>
-            <FieldDescription>{t(($) => $.description)}</FieldDescription>
-          </FieldContent>
-          <Switch
-            id="maintenance-mode"
-            checked={enabled ?? false}
-            disabled={enabled === undefined}
-            onCheckedChange={(next) => toggle.mutate(next)}
-          />
-        </Field>
-      </FieldLabel>
+      <Field orientation="horizontal" data-disabled={enabled === undefined}>
+        <FieldContent>
+          <FieldLabel htmlFor="maintenance-mode">{t(($) => $.label)}</FieldLabel>
+          <FieldDescription>{t(($) => $.description)}</FieldDescription>
+        </FieldContent>
+        <Switch
+          id="maintenance-mode"
+          checked={enabled ?? false}
+          disabled={enabled === undefined}
+          onCheckedChange={(next) => toggle.mutate(next)}
+        />
+      </Field>
     </Section>
   );
 }
@@ -494,15 +487,10 @@ function AccountPage() {
   });
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-8 px-4 py-8">
-      <h1 className="flex items-center gap-3 text-2xl font-semibold">
-        <UserCogIcon className="size-6" />
-        {t(($) => $.title)}
-      </h1>
+    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-8">
+      <PageHeader title={t(($) => $.title)} description={t(($) => $.description)} />
 
-      <FieldGroup>
-        {isAdmin ? <AdminSections onSelect={show} /> : <UserDangerZone onSelect={show} />}
-      </FieldGroup>
+      {isAdmin ? <AdminSections onSelect={show} /> : <UserDangerZone onSelect={show} />}
 
       <ConfirmDialog
         open={open}
