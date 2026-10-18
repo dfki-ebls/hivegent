@@ -57,6 +57,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preInstall
     mv book $out
     cp assets/redirect.html $out/index.html
+    cp ${../LICENSE} $out/LICENSE
     runHook postInstall
   '';
 

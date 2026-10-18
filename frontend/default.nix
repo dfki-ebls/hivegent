@@ -37,6 +37,7 @@ buildNpmPackage (finalAttrs: {
 
     mkdir -p "$out"
     cp -r "dist/." "$out"
+    cp ${../LICENSE} $out/LICENSE
 
     runHook postInstall
   '';
