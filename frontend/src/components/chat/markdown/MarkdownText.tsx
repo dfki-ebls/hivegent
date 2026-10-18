@@ -52,8 +52,34 @@ function MarkdownCode(props: ComponentProps<"code"> & ExtraProps) {
   );
 }
 
-const REASONING_COMPONENTS: Components = { code: MarkdownCode };
-const TEXT_COMPONENTS: Components = { code: MarkdownCode, cite: Citation, imgref: ImageRef };
+type Element = NonNullable<ExtraProps["node"]>;
+
+/** Elements whose rendering is block content: Streamdown's image wrapper and `ImageRef`'s figure. */
+const BLOCK_TAGS = new Set(["img", "imgref"]);
+
+function holdsBlock(node: Element): boolean {
+  return node.children.some(
+    (child) => child.type === "element" && (BLOCK_TAGS.has(child.tagName) || holdsBlock(child)),
+  );
+}
+
+/** A `<p>` cannot hold block content, so a paragraph with an image becomes a `<div>`. */
+function MarkdownParagraph(props: ComponentProps<"p"> & ExtraProps) {
+  const { node, ...rest } = props;
+
+  if (node && holdsBlock(node)) {
+    return <div {...rest} />;
+  }
+
+  return <defaultComponents.p {...props} />;
+}
+
+const REASONING_COMPONENTS: Components = { code: MarkdownCode, p: MarkdownParagraph };
+const TEXT_COMPONENTS: Components = {
+  ...REASONING_COMPONENTS,
+  cite: Citation,
+  imgref: ImageRef,
+};
 const TEXT_ALLOWED_TAGS = { cite: ["src", "line"], imgref: ["src", "alt"] };
 
 /** An assistant reply, with its citations and image references rendered inline. */
