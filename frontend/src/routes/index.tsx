@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DocsLink } from "@/components/DocsLink";
+import { LicensesLink } from "@/components/LicensesLink";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
 import { ChatLayout } from "@/components/ChatLayout";
@@ -11,6 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useOidc } from "@/oidc";
 import { PRODUCT_NAME } from "@/lib/utils";
+
+const LINK_BUTTON_PROPS = {
+  variant: "ghost",
+  size: "sm",
+  className: "text-muted-foreground",
+  nativeButton: false,
+} as const;
 
 export const Route = createFileRoute("/")({
   component: IndexPage,
@@ -49,13 +57,10 @@ function IndexPage() {
           )}
           {t(($) => $.app.landing.signIn)}
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground"
-          nativeButton={false}
-          render={<DocsLink />}
-        />
+        <div className="flex flex-wrap justify-center gap-1">
+          <Button {...LINK_BUTTON_PROPS} render={<DocsLink />} />
+          <Button {...LINK_BUTTON_PROPS} render={<LicensesLink />} />
+        </div>
       </div>
     </div>
   );

@@ -2,7 +2,6 @@
 @import "tw-animate-css";
 @import "katex/dist/katex.min.css";
 @import "./shadcn.css";
-@import "@fontsource-variable/inter";
 @import "./typeset.css";
 
 @source "../node_modules/streamdown/dist/*.js";

@@ -89,6 +89,12 @@ The language is the first supported entry of `navigator.languages`, fixed at pag
 `getAuthHeaders()` sends it as `Accept-Language` on every request.
 Dates, numbers, and sizes go through `@/i18n/format`, and `npm run i18n:lint` lists hardcoded JSX text.
 
+## Licenses ship with the bundle
+
+Every browser receives a copy of the bundle, so the licenses travel with it.
+The Nix build adds the project's own as `LICENSE`, and Vite's `build.license` writes the bundled packages' to `licenses.txt`, linked from the landing page and the user menu.
+It walks the JS module graph, so CSS has to be imported from JS to be listed, like the Inter font in `main.tsx`.
+
 ## Moves and deletes are one request
 
 Every move, delete, and new directory is one `applyChanges` request that the backend applies all or nothing.

@@ -3,6 +3,7 @@ import { BugIcon, LogOutIcon, UserCogIcon, UserIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useOidc } from "@/oidc";
 import { DocsLink } from "@/components/DocsLink";
+import { LicensesLink } from "@/components/LicensesLink";
 import { JobTray } from "@/components/JobTray";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
@@ -61,6 +62,7 @@ function UserMenu() {
             {t(($) => $.app.userMenu.account)}
           </DropdownMenuItem>
           <DropdownMenuItem render={<DocsLink />} />
+          <DropdownMenuItem render={<LicensesLink />} />
           {isAdmin && (
             <DropdownMenuItem render={<Link to="/debug" />}>
               <BugIcon />

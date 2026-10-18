@@ -18,6 +18,8 @@ export default defineConfig({
   ],
   build: {
     chunkSizeWarningLimit: 5000,
+    // Served next to `index.html`, the notices that the bundled packages require.
+    license: { fileName: "licenses.txt" },
   },
   server: {
     proxy: {

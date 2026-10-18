@@ -6,6 +6,7 @@ export const app = {
     fallbackName: "Benutzer:in",
     account: "Account",
     documentation: "Dokumentation",
+    licenses: "Lizenzen",
     toolDebugger: "Tool-Debugger",
     signOut: "Abmelden",
   },
