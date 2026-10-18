@@ -210,7 +210,7 @@ dockerTools.streamLayeredImage {
   ];
   # dinit reads descriptions read-only from the store (no writable scan dir). The
   # only writable state is the control socket under /run; /tmp (world-writable)
-  # backs libreoffice/docling and Caddy temporary files. `chown` needs the fakeroot
+  # backs docling and Caddy temporary files. `chown` needs the fakeroot
   # of `fakeRootCommands` (plain `extraCommands` runs without it) so the /data
   # volume initialises owned by the runtime user.
   fakeRootCommands = ''

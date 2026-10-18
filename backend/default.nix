@@ -9,11 +9,7 @@
   pyproject-build-systems,
   makeBinaryWrapper,
   autoAddDriverRunpath,
-  writeShellApplication,
-  symlinkJoin,
-  coreutils,
   jq,
-  libreoffice,
   pandoc,
   poppler-utils,
   ripgrep,
@@ -184,35 +180,6 @@ let
     package = pythonSet.hivegent-backend;
   };
 
-  # docling renders embedded VML/EMF/WMF images by shelling out to LibreOffice
-  # per image, all sharing one profile under $HOME.  Under the systemd unit
-  # $HOME is a persistent StateDirectory, so a `.~lock` left by a crashed or
-  # killed run survives restarts and makes every later conversion abort —
-  # docling then silently drops the image.  Give each invocation a private,
-  # throwaway profile (cleaned up on exit) so runs never collide or inherit a
-  # stale lock; $HOME is untouched, keeping the fontconfig cache persistent.
-  #
-  # docling resolves the binary as `which("libreoffice") or which("soffice")`,
-  # so `libreoffice` is the canonical wrapper name (probed first, ahead of any
-  # bare `libreoffice` later on the unit's PATH), with `soffice` a symlinked
-  # alias for callers using that name.
-  libreofficeWrapper = writeShellApplication {
-    name = "libreoffice";
-    runtimeInputs = [ coreutils ];
-    text = ''
-      profile="$(mktemp -d)"
-      trap 'rm -rf "$profile"' EXIT
-      ${lib.getExe libreoffice} -env:UserInstallation="file://$profile" "$@"
-    '';
-  };
-  libreofficeHeadless = symlinkJoin {
-    name = "libreoffice-headless";
-    paths = [ libreofficeWrapper ];
-    postBuild = ''
-      ln -s libreoffice "$out/bin/soffice"
-    '';
-  };
-
   # - jq, poppler-utils, ripgrep: used by `hivegent/subprocesses/` wrappers.
   # - pandoc is left out: it links the GPL-2.0-only texmath and skylighting,
   #   which the flake could not serve as source under GPL-3.0 (`nix/notices.nix`).
@@ -220,13 +187,11 @@ let
   # - poppler-utils (pdftotext): PDF text-recovery fallback for legacy PDFs whose
   #   fonts carry no ToUnicode CMap, which docling's backend dumps as raw glyph
   #   names — poppler reconstructs the text from the glyph-name convention.
-  # - libreofficeHeadless: docling docx→pdf conversion; Linux-only in nixpkgs.
   runtimeInputs = [
     jq
     poppler-utils
     ripgrep
   ]
-  ++ lib.optionals stdenv.hostPlatform.isLinux [ libreofficeHeadless ]
   ++ lib.optionals torchCompile [
     gcc
     openssl
@@ -250,18 +215,12 @@ app.overrideAttrs (oldAttrs: {
   # models would make every PDF conversion die in the enrichment stage
   # (TorchInductor cannot codegen).
   #
-  # DBUS_SESSION_BUS_ADDRESS: docling shells out to LibreOffice, whose nixpkgs
-  # wrapper otherwise starts a private D-Bus daemon under `/run/user/$UID` —
-  # unwritable for an unprivileged/DynamicUser service (no logind session), and
-  # fatal to the conversion.  Headless conversion needs no session bus.
-  #
   # `--set-default` keeps every env var overridable from the unit or shell.
   postFixup = (oldAttrs.postFixup or "") + ''
     wrapProgram "$out/bin/hivegent" \
       --prefix PATH : ${lib.makeBinPath runtimeInputs} \
       --set-default TESSDATA_PREFIX ${tessdata} \
       --set-default DOCLING_INFERENCE_COMPILE_TORCH_MODELS ${if torchCompile then "1" else "0"} \
-      --set-default DBUS_SESSION_BUS_ADDRESS "disabled:" \
       --set-default LOGFIRE_IGNORE_NO_CONFIG 1
   '';
   passthru = (oldAttrs.passthru or { }) // {

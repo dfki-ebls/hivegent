@@ -2,16 +2,13 @@
 
 from dataclasses import dataclass, field
 from functools import lru_cache
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import PIL.Image
 import PIL.PngImagePlugin
-from docling.backend.msword_backend import MsWordDocumentBackend
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.document import InputDocument
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
     TesseractOcrOptions,
@@ -104,30 +101,6 @@ PIL.PngImagePlugin.MAX_TEXT_CHUNK = 32 * 1024 * 1024  # ty: ignore[invalid-assig
 PIL.PngImagePlugin.MAX_TEXT_MEMORY = 64 * 1024 * 1024
 
 
-class _MsWordBackend(MsWordDocumentBackend):
-    """Word backend honoring the ``conversion.libreoffice_images`` setting.
-
-    Docling's Word backend rasterizes embedded vector/legacy images it cannot
-    decode with Pillow (DrawingML, VML, EMF, WMF) by cold-starting LibreOffice
-    once per image and rendering the result through a throwaway PDF.  Those
-    ``soffice`` cold-starts run serially and dominate conversion time on
-    image-heavy documents, so they stay off unless the setting enables them.
-    When disabled, marking the DOCX->PDF converter as resolved-but-absent makes
-    docling take its own "no converter available" branch, degrading such images
-    to placeholders instead of spawning a subprocess apiece.
-
-    This is not a docling pipeline option (the Word backend has no options
-    object), so it is applied by the backend itself rather than through
-    :class:`DoclingConverterConfig`.
-    """
-
-    def __init__(self, in_doc: InputDocument, path_or_stream: BytesIO | Path) -> None:
-        super().__init__(in_doc, path_or_stream)
-        if not settings.conversion.libreoffice_images:
-            self.docx_to_pdf_converter_init = True
-            self.display_drawingml_warning = False
-
-
 __all__ = ["DoclingConverter", "DoclingConverterConfig"]
 
 
@@ -191,17 +164,15 @@ def _build_converter(config: DoclingConverterConfig) -> DoclingDocumentConverter
     """
     converter = DoclingDocumentConverter(allowed_formats=list(_ALLOWED_FORMATS))
     # Start from default format options (which include the correct backend
-    # and pipeline_cls) and only override pipeline_options -- plus, for DOCX,
-    # the backend that honors the LibreOffice image-rendering setting.
+    # and pipeline_cls) and only override pipeline_options.
     for fmt in converter.format_to_options:
         default = converter.format_to_options[fmt]
         opts = config.pdf_options if fmt in _PDF_FORMATS else config.convert_options
         if fmt in _PDF_FORMATS:
             opts = opts.model_copy(update={"generate_picture_images": True})
-        overrides: dict[str, Any] = {"pipeline_options": opts}
-        if fmt is InputFormat.DOCX:
-            overrides["backend"] = _MsWordBackend
-        converter.format_to_options[fmt] = default.model_copy(update=overrides)
+        converter.format_to_options[fmt] = default.model_copy(
+            update={"pipeline_options": opts}
+        )
     return converter
 
 

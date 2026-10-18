@@ -912,17 +912,9 @@ class ConversionSettings(BaseModel):
     skip); the threads/batch tunables live in the top-level
     :class:`ComputeSettings`, shared with embeddings and chunkers, and
     device placement is owned by the process environment (see there).
-
-    ``libreoffice_images`` lets docling's Office backend rasterize embedded
-    vector/legacy images it cannot decode with Pillow (DrawingML, VML, EMF,
-    WMF) by cold-starting LibreOffice once per image and rendering the result
-    through a throwaway PDF.  Those ``soffice`` invocations run serially and
-    dominate conversion time on image-heavy documents, so it defaults off and
-    such images degrade to placeholders.
     """
 
     ocr: OcrSettings = OcrSettings()
-    libreoffice_images: bool = False
 
 
 class LimitsSettings(BaseModel):

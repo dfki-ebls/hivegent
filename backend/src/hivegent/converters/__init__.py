@@ -65,21 +65,15 @@ class ConversionPipeline(StrEnum):
     """A conversion pipeline, or the name of a recovery fallback.
 
     Most members are selectable pipelines that map to a converter in the
-    registry.  A few (LibreOffice, poppler) are recovery *fallbacks*: not
-    selectable or routable, so they have no registry entry and exist only to
-    name the fallback that recovered a conversion (see
-    :mod:`hivegent.converters.fallbacks`).
+    registry.  Poppler is a recovery *fallback* instead: not selectable or
+    routable, so it has no registry entry and exists only to name the fallback
+    that recovered a conversion (see :mod:`hivegent.converters.fallbacks`).
     """
 
     AUTO = "auto"
     LLM = "llm"
     MARKER = "marker"
     DOCLING = "docling"
-    # Names the LibreOffice text fallback when it recovers a conversion, not a
-    # selectable pipeline (see converters.fallbacks), so it has no registry entry.
-    LIBREOFFICE = "libreoffice"
-    # Names the poppler fallback that recovers garbled glyph-name PDF text,
-    # likewise not a selectable pipeline.
     POPPLER = "poppler"
     MINERU = "mineru"
     PANDOC = "pandoc"

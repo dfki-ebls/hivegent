@@ -36,8 +36,8 @@ in
       default = null;
       extraDescription = ''
         Provides `bin/hivegent`. The wrapper must already contain every CLI
-        tool the backend invokes via subprocesses (jq, pandoc, ripgrep,
-        libreoffice). Defaults to the `backend` package of the hivegent flake
+        tool the backend invokes via subprocesses (jq, poppler, ripgrep).
+        Defaults to the `backend` package of the hivegent flake
         for the host platform.
       '';
     };

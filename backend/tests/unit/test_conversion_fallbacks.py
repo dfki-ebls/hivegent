@@ -15,7 +15,7 @@ def _registry(recovered: str | None) -> tuple[Fallback, ...]:
 
     return (
         Fallback(
-            pipeline=ConversionPipeline.LIBREOFFICE,
+            pipeline=ConversionPipeline.ANYDOC,
             suffixes=frozenset({".docx"}),
             trigger=lambda outcome: isinstance(outcome, Exception),
             recover=recover,
@@ -32,12 +32,12 @@ def _registry(recovered: str | None) -> tuple[Fallback, ...]:
 async def test_dispatches_by_suffix_and_trigger(tmp_path: Path) -> None:
     registry = _registry("# recovered")
 
-    # Office suffix + raised error -> the LibreOffice entry.
+    # Office suffix + raised error -> the anydoc entry.
     office = await recover_conversion(
         tmp_path / "a.docx", ".docx", RuntimeError("boom"), registry=registry
     )
     assert office is not None
-    assert office.pipeline is ConversionPipeline.LIBREOFFICE
+    assert office.pipeline is ConversionPipeline.ANYDOC
 
     # PDF suffix + degraded (but successful) result -> the poppler entry.
     pdf = await recover_conversion(

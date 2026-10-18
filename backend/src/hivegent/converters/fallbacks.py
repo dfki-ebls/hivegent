@@ -4,7 +4,7 @@ Docling is the default AUTO converter for binary formats, but some documents
 defeat it in ways worth recovering rather than dropping to a plain-text stub:
 
 - Office files whose embedded parts docling loads too strictly (it *raises*);
-  LibreOffice opens them leniently and we recover their text.
+  anydoc reads them leniently and we recover their text.
 - Legacy PDFs with no ToUnicode CMap, where docling's glyph-id backend *succeeds*
   but emits raw glyph names (``/G56/G6F``...); poppler reconstructs the text from
   the glyph-name convention.
@@ -23,8 +23,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import ConversionPipeline
+from .anydoc import AnydocConverter
 from .base import ConversionResult
-from .libreoffice import OFFICE_FALLBACK_SUFFIXES, recover_office_markdown
+from .formats import ANYDOC_EXTENSIONS, DOCLING_EXTENSIONS
 from .poppler import is_pdf_text_garbled, recover_pdf_markdown
 
 __all__ = ["Fallback", "Recovery", "recover_conversion"]
@@ -68,14 +69,26 @@ def _garbled_pdf(outcome: ConversionOutcome) -> bool:
     )
 
 
+async def _recover_with_anydoc(source: Path) -> str | None:
+    """Recover *source*'s text with anydoc, without the images that failed."""
+    try:
+        result = await AnydocConverter()(source)
+    except Exception:  # noqa: BLE001
+        # Input anydoc cannot parse either keeps the primary failure.
+        return None
+
+    return result.markdown.strip() or None
+
+
 # Order matters only when two fallbacks could claim the same suffix; today's two
 # are disjoint (Office suffixes vs. ``.pdf``), so the first match always applies.
 _FALLBACKS: tuple[Fallback, ...] = (
     Fallback(
-        pipeline=ConversionPipeline.LIBREOFFICE,
-        suffixes=OFFICE_FALLBACK_SUFFIXES,
+        pipeline=ConversionPipeline.ANYDOC,
+        # What docling converts first, as AUTO sends anydoc's own formats to it.
+        suffixes=ANYDOC_EXTENSIONS & DOCLING_EXTENSIONS,
         trigger=lambda outcome: isinstance(outcome, Exception),
-        recover=recover_office_markdown,
+        recover=_recover_with_anydoc,
     ),
     Fallback(
         pipeline=ConversionPipeline.POPPLER,
