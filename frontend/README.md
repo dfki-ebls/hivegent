@@ -20,6 +20,7 @@ Editing or regenerating forks a sibling branch server-side, but there is no UI t
 The chat composes the shadcn/ui AI Elements patterns in place from `components/ui` (`Message`, `Trace`, `CodeBlock`, `Item`, `Questionnaire`, ...).
 The components use Base UI, so triggers take a `render` element instead of `asChild`.
 `npm run shadcnup` installs or refreshes every registry component.
+The CLI's Base UI variants and animations are vendored unchanged as `src/shadcn.css`, so refresh it alongside from the URL in its header.
 
 `partLayout` (`chat/MessagePart.tsx`) sorts a reply's parts into steps and blocks.
 Each run of steps between two blocks is one Chain of Thought that opens to its `Trace`.
