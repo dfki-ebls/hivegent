@@ -196,7 +196,7 @@ _COERCIONS = (
     _Coercion(
         pl.Datetime(), lambda text: text.str.to_datetime(strict=False), guard=_DATETIME
     ),
-    _Coercion(pl.Boolean(), _boolean, guard=r"(?i)^(true|false)$"),
+    _Coercion(pl.Boolean(), _boolean),
 )
 """Tried in order, so the narrowest dtype that fits every value wins."""
 
@@ -527,27 +527,16 @@ def _load(path: Path, file_path: str, sheet: str | None, *, decode: bool) -> _So
     if suffix not in DELIMITED_SUFFIXES:
         return _load_excel(path, file_path, sheet)
 
-    if not decode:
-        return _Source(
-            frame=pl.scan_csv(
-                path,
-                separator=DELIMITERS[suffix],
-                infer_schema=False,
-            ),
-            file_path=file_path,
-            report_complete=False,
-        )
-
-    decoded = read_text_or_retry(path, file_path)
+    decoded = read_text_or_retry(path, file_path) if decode else None
 
     return _Source(
-        frame=pl.read_csv(
-            decoded.text.encode(),
+        frame=pl.scan_csv(
+            path if decoded is None else decoded.text.encode(),
             separator=DELIMITERS[suffix],
             infer_schema=False,
-        ).lazy(),
+        ),
         file_path=file_path,
-        source_encoding=decoded.source_encoding,
+        source_encoding=None if decoded is None else decoded.source_encoding,
         report_complete=False,
     )
 
