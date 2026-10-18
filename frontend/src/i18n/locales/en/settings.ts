@@ -4,6 +4,14 @@ export const settings = {
     title: "Settings",
     description:
       "Configure your LLM provider and assistant settings. These settings are stored locally in your browser.",
+    provider: {
+      label: "LLM Provider",
+      description: "Which models answer and which endpoint serves them.",
+    },
+    assistant: {
+      label: "Assistant",
+      description: "How the assistant behaves in every chat.",
+    },
     model: {
       label: "Model",
       description: "The main model to use for chat. Leave empty to use the server default.",
@@ -74,6 +82,7 @@ export const settings = {
       clientId: "Client ID",
       clientSecret: "Client Secret",
       scopes: "Scopes (optional, space-separated)",
+      newServer: "New Server",
       addServer: "Add Server",
     },
     clear: "Clear",

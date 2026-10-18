@@ -10,7 +10,7 @@ import {
   SettingsIcon,
   TrashIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { i18n, isCatalogKey, keyPrefix } from "@/i18n";
@@ -71,6 +71,25 @@ const OPTIONS_T = keyPrefix(($) => $.options);
 /** The column classes by the count of the enabled columns, spelled out for Tailwind to see. */
 const GRID_COLS = ["lg:grid-cols-1", "lg:grid-cols-2", "lg:grid-cols-3"];
 
+/** A titled section of the dialog, the same for every column. */
+function Section({
+  legend,
+  description,
+  children,
+}: {
+  legend: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <FieldSet>
+      <FieldLegend>{legend}</FieldLegend>
+      <FieldDescription>{description}</FieldDescription>
+      {children}
+    </FieldSet>
+  );
+}
+
 interface ConfirmButtonProps {
   icon: LucideIcon;
   label: string;
@@ -92,7 +111,7 @@ function ConfirmButton({ icon: Icon, label, title, description, onConfirm }: Con
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+      <Button variant="outline" onClick={() => setOpen(true)}>
         <Icon data-icon="inline-start" />
         {label}
       </Button>
@@ -169,7 +188,7 @@ function OverrideFields() {
   ];
 
   return (
-    <FieldGroup>
+    <Section legend={t(($) => $.provider.label)} description={t(($) => $.provider.description)}>
       {fields.map(({ key, type, label, description, placeholder }) => (
         <Field key={key}>
           <FieldLabel htmlFor={`settings-${key}`}>{label}</FieldLabel>
@@ -183,7 +202,7 @@ function OverrideFields() {
           <FieldDescription>{description}</FieldDescription>
         </Field>
       ))}
-    </FieldGroup>
+    </Section>
   );
 }
 
@@ -201,7 +220,10 @@ function PersonalityFields() {
   }));
 
   return (
-    <FieldGroup>
+    <Section
+      legend={t(($) => $.assistant.label)}
+      description={t(($) => $.assistant.description)}
+    >
       <Field>
         <FieldLabel htmlFor="settings-personality">{t(($) => $.personality.label)}</FieldLabel>
         <OptionSelect
@@ -228,7 +250,7 @@ function PersonalityFields() {
           <FieldDescription>{t(($) => $.customSystemMessage.description)}</FieldDescription>
         </Field>
       )}
-    </FieldGroup>
+    </Section>
   );
 }
 
@@ -246,9 +268,7 @@ function ToolsFieldSet() {
   const groups = [...Map.groupBy(tools, (tool) => tool.group)];
 
   return (
-    <FieldSet>
-      <FieldLegend>{t(($) => $.tools.label)}</FieldLegend>
-      <FieldDescription>{t(($) => $.tools.description)}</FieldDescription>
+    <Section legend={t(($) => $.tools.label)} description={t(($) => $.tools.description)}>
       {groups.map(([group, groupTools]) => (
         <FieldSet key={group} className="gap-3">
           <FieldLegend variant="label" className="capitalize">
@@ -271,7 +291,7 @@ function ToolsFieldSet() {
           ))}
         </FieldSet>
       ))}
-    </FieldSet>
+    </Section>
   );
 }
 
@@ -328,7 +348,8 @@ function McpServerForm() {
   }
 
   return (
-    <FieldGroup className="gap-4 rounded-2xl border p-4">
+    <FieldSet className="gap-3">
+      <FieldLegend variant="label">{t(($) => $.mcp.newServer)}</FieldLegend>
       <Field orientation="horizontal">
         <Input
           aria-label={t(($) => $.mcp.url)}
@@ -349,7 +370,6 @@ function McpServerForm() {
         <FieldLabel htmlFor="mcp-auth">{t(($) => $.mcp.auth)}</FieldLabel>
         <OptionSelect
           id="mcp-auth"
-          size="sm"
           value={draft.auth}
           options={authModes}
           onChange={(auth) => update({ auth })}
@@ -375,6 +395,7 @@ function McpServerForm() {
               />
               <TooltipButton
                 label={t(($) => $.mcp.removeHeader)}
+                size="icon"
                 destructive
                 onClick={() => update({ headers: draft.headers.filter((_, ii) => ii !== i) })}
               >
@@ -384,7 +405,7 @@ function McpServerForm() {
           ))}
           <Button
             variant="outline"
-            size="xs"
+            size="sm"
             className="self-start"
             onClick={() => update({ headers: [...draft.headers, { key: "", value: "" }] })}
           >
@@ -428,7 +449,7 @@ function McpServerForm() {
         <PlusIcon data-icon="inline-start" />
         {t(($) => $.mcp.addServer)}
       </Button>
-    </FieldGroup>
+    </FieldSet>
   );
 }
 
@@ -447,7 +468,7 @@ function McpServerItem({ server, onRemove }: { server: McpServerEntry; onRemove:
       : null;
 
   return (
-    <Item variant="outline" size="xs">
+    <Item variant="outline" size="sm">
       {(Object.keys(server.headers).length > 0 || server.oauth2) && (
         <ItemMedia variant="icon">
           <LockIcon />
@@ -490,9 +511,7 @@ function McpServersFieldSet() {
   const removeMcpServer = useSettingsStore((s) => s.removeMcpServer);
 
   return (
-    <FieldSet>
-      <FieldLegend>{t(($) => $.mcp.label)}</FieldLegend>
-      <FieldDescription>{t(($) => $.mcp.description)}</FieldDescription>
+    <Section legend={t(($) => $.mcp.label)} description={t(($) => $.mcp.description)}>
 
       {servers.length > 0 && (
         <ItemGroup>
@@ -508,7 +527,7 @@ function McpServersFieldSet() {
       )}
 
       <McpServerForm />
-    </FieldSet>
+    </Section>
   );
 }
 
@@ -560,7 +579,7 @@ export function SettingsDialog() {
             />
           </div>
           {featureFlags.llmSpec && (
-            <Button variant="outline" size="sm" onClick={reset}>
+            <Button variant="outline" onClick={reset}>
               <RotateCcwIcon data-icon="inline-start" />
               {t(($) => $.resetDefaults)}
             </Button>
