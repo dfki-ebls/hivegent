@@ -54,7 +54,13 @@ if (rootElement && !rootElement.innerHTML) {
   root.render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider attribute="class" enableSystem disableTransitionOnChange>
+        {/* index.html applies the theme before first paint, so the provider's own script stays an inert data block. */}
+        <ThemeProvider
+          attribute="class"
+          enableSystem
+          disableTransitionOnChange
+          scriptProps={{ type: "application/json" }}
+        >
           <TooltipProvider>
             <BootstrapGate>
               <OidcInitializationGate>
