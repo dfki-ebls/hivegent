@@ -68,6 +68,7 @@ export const documents = {
     description: "Configure options for the {{pipeline}} pipeline.",
     showAdvanced: "Show advanced JSON",
     hideAdvanced: "Hide advanced JSON",
+    advancedJson: "Advanced JSON",
     invalidJson: "Invalid JSON",
     resetDefaults: "Reset to defaults",
   },

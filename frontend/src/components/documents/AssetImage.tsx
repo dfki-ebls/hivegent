@@ -2,7 +2,6 @@ import { useTranslation } from "react-i18next";
 
 import { useWorkspaceAsset } from "@/hooks/use-workspace-asset";
 import { cn } from "@/lib/utils";
-import { Skeleton } from "@/components/ui/skeleton";
 
 interface AssetImageProps {
   /** Canonical workspace path of the image. */
@@ -32,7 +31,7 @@ export function AssetImage({ filePath, alt, className, wrapperClassName }: Asset
       ) : url ? (
         <img src={url} alt={alt ?? filePath} className={cn("block", className)} />
       ) : (
-        <Skeleton className="absolute inset-0 rounded-[inherit]" />
+        <span className="absolute inset-0 animate-pulse rounded-[inherit] bg-muted" />
       )}
     </span>
   );

@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
-import { basename, errorMessage, isWebUrl } from "@/lib/utils";
+import { basename, cn, errorMessage, isWebUrl } from "@/lib/utils";
 import {
   buildAuxLlmConfig,
   formatTarget,
@@ -203,7 +203,7 @@ function SidebarItem({
       size="xs"
       aria-current={active}
       onClick={onClick}
-      className="aria-[current=true]:bg-muted"
+      className={cn(active && "bg-muted")}
     >
       {children}
     </ItemButton>
@@ -682,6 +682,7 @@ function DocumentDialogBody({
             {isEditingAssetDescription ? (
               <>
                 <Textarea
+                  aria-label={t(($) => $.documents.dialog.descriptionHeading)}
                   value={assetDescriptionDraft}
                   onChange={(e) => setAssetDescriptionDraft(e.target.value)}
                   className="min-h-36 font-mono text-sm"

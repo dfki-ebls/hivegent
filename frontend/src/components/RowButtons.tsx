@@ -1,5 +1,5 @@
 import { ChevronRight, Scissors } from "lucide-react";
-import type { ComponentProps } from "react";
+import { type ComponentProps, useId } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
@@ -46,7 +46,11 @@ export function NameButton({ className, children, ...props }: ComponentProps<typ
   );
 }
 
-/** An `Item` that is one button as a whole, such as a selectable card or sidebar entry. */
+/**
+ * An `Item` that is one button as a whole, such as a selectable card or sidebar entry.
+ * A button may only hold phrasing content, so it is stretched over the item and named by
+ * the item's content rather than wrapping it.
+ */
 export function ItemButton({
   variant,
   size,
@@ -54,14 +58,26 @@ export function ItemButton({
   children,
   ...props
 }: ComponentProps<"button"> & Pick<ComponentProps<typeof Item>, "variant" | "size">) {
+  const labelId = useId();
+
   return (
     <Item
       variant={variant}
       size={size}
-      className={cn("text-left hover:bg-muted", className)}
-      render={<button type="button" {...props} />}
+      className={cn(
+        "relative hover:bg-muted has-focus-visible:border-ring has-focus-visible:ring-[3px] has-focus-visible:ring-ring/50",
+        className,
+      )}
     >
-      {children}
+      <button
+        type="button"
+        aria-labelledby={labelId}
+        className="absolute inset-0 z-10 rounded-[inherit] outline-none"
+        {...props}
+      />
+      <div id={labelId} className="contents">
+        {children}
+      </div>
     </Item>
   );
 }

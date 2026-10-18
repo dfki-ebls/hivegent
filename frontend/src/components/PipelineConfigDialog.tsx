@@ -151,6 +151,7 @@ function PipelineConfigForm({
             <CollapsibleContent>
               <Field data-invalid={jsonError !== null} className="mt-2">
                 <Textarea
+                  aria-label={t(($) => $.documents.pipelineConfig.advancedJson)}
                   value={advancedJson}
                   aria-invalid={jsonError !== null}
                   onChange={(e) => handleAdvancedChange(e.target.value)}
