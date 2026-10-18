@@ -45,12 +45,13 @@ def test_docling_extension_snapshot_matches_upstream() -> None:
     # this is what stops the copy from silently drifting.
     from docling.datamodel.base_models import FormatToExtensions
 
+    from hivegent.converters.docling import _ALLOWED_FORMATS
     from hivegent.converters.formats import DOCLING_EXTENSIONS
 
     # Casefolded on both sides: match_file_extension lowercases before lookup,
     # and upstream spells a few entries in mixed case (".Rmd").
     upstream = {
-        f".{ext}".casefold() for exts in FormatToExtensions.values() for ext in exts
+        f".{ext}".casefold() for fmt in _ALLOWED_FORMATS for ext in FormatToExtensions[fmt]
     }
 
     assert DOCLING_EXTENSIONS == upstream

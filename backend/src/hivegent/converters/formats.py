@@ -6,7 +6,9 @@ from pathlib import PurePath
 from .base import IMAGE_MEDIA_TYPES
 
 __all__ = [
+    "ANYDOC_EXTENSIONS",
     "DOCLING_EXTENSIONS",
+    "KREUZBERG_MARKUP_EXTENSIONS",
     "LLM_MEDIA_TYPES",
     "PANDOC_EXTENSIONS",
     "PANDOC_FORMAT_OVERRIDES",
@@ -89,34 +91,81 @@ PANDOC_SANDBOX_INCOMPATIBLE = frozenset({".docx", ".pptx", ".xlsx", ".epub", ".o
 PANDOC_EXTENSIONS = frozenset(PANDOC_FORMAT_OVERRIDES) | PANDOC_SANDBOX_INCOMPATIBLE
 PLAIN_TEXT_EXTENSIONS = frozenset({".json", ".text", ".txt", ".xml"})
 
+# https://github.com/firecrawl/anydoc#supported-formats, minus ``.pdf`` (see
+# AnydocConverter's docstring for why).  It reads templates by their content.
+# AUTO prefers docling where both apply, so anydoc takes the legacy Office, RTF
+# and OpenDocument formats docling is not given (see `docling.py`).
+ANYDOC_EXTENSIONS = frozenset(
+    {
+        ".csv",
+        ".doc",
+        ".docm",
+        ".docx",
+        ".dot",
+        ".epub",
+        ".odp",
+        ".ods",
+        ".odt",
+        ".otp",
+        ".ots",
+        ".ott",
+        ".pot",
+        ".pps",
+        ".ppsm",
+        ".ppsx",
+        ".ppt",
+        ".pptm",
+        ".pptx",
+        ".rtf",
+        ".xls",
+        ".xlsb",
+        ".xlsm",
+        ".xlsx",
+        ".xlt",
+    }
+)
+
+# Markup kreuzberg reads natively, which AUTO converts with it.
+KREUZBERG_MARKUP_EXTENSIONS = frozenset(
+    {
+        ".djot",
+        ".docbook",
+        ".fb2",
+        ".ipynb",
+        ".jats",
+        ".opml",
+        ".org",
+        ".rst",
+        ".tsv",
+        ".typ",
+        ".typst",
+    }
+)
+
 # Stable application contract derived from Docling's FormatToExtensions, copied
-# rather than imported so routing stays dependency-free.
+# rather than imported so routing stays dependency-free, minus the formats it
+# cannot read with what the project ships (see `docling.py`).
 # https://github.com/docling-project/docling/blob/main/docling/datamodel/base_models.py
 DOCLING_EXTENSIONS = frozenset(
     {
-        ".aac",
         ".adoc",
         ".afp",
         ".asc",
         ".asciidoc",
-        ".avi",
         ".bmp",
         ".boxnote",
         ".csv",
         ".dclg",
         ".dclg.xml",
         ".dclx",
-        ".doc",
         ".docm",
         ".docx",
-        ".dot",
         ".dotm",
         ".dotx",
         ".ebc",
         ".ebcdic",
         ".eml",
         ".epub",
-        ".flac",
         ".gif",
         ".htm",
         ".html",
@@ -125,40 +174,24 @@ DOCLING_EXTENSIONS = frozenset(
         ".json",
         ".key",
         ".latex",
-        ".m4a",
         ".markdown",
         ".md",
         ".mht",
         ".mhtml",
-        ".mkv",
-        ".mov",
-        ".mp3",
-        ".mp4",
         ".msg",
         ".numbers",
         ".nxml",
-        ".odp",
-        ".ods",
-        ".odt",
-        ".ogg",
-        ".otp",
-        ".ots",
-        ".ott",
         ".pages",
         ".pdf",
         ".png",
-        ".pot",
         ".potm",
         ".potx",
-        ".pps",
         ".ppsm",
         ".ppsx",
-        ".ppt",
         ".pptm",
         ".pptx",
         ".qmd",
         ".rmd",
-        ".rtf",
         ".tar.gz",
         ".tex",
         ".text",
@@ -166,15 +199,11 @@ DOCLING_EXTENSIONS = frozenset(
         ".tiff",
         ".txt",
         ".vtt",
-        ".wav",
-        ".webm",
         ".webp",
         ".xbrl",
         ".xhtml",
-        ".xls",
         ".xlsm",
         ".xlsx",
-        ".xlt",
         ".xltm",
         ".xltx",
         ".xml",

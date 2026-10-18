@@ -132,7 +132,8 @@ let
               ];
             })
           ]
-          ++ runtimeInputs;
+          ++ runtimeInputs
+          ++ [ pandoc ];
           dontConfigure = true;
           buildPhase = ''
             runHook preBuild
@@ -214,7 +215,10 @@ let
     '';
   };
 
-  # - jq, pandoc, poppler-utils, ripgrep: used by `hivegent/subprocesses/` wrappers.
+  # - jq, poppler-utils, ripgrep: used by `hivegent/subprocesses/` wrappers.
+  # - pandoc is left out: it links the GPL-2.0-only texmath and skylighting,
+  #   which the flake could not serve as source under GPL-3.0 (`nix/notices.nix`).
+  #   Its converter stays, tested against the binary but unavailable in builds.
   # - poppler-utils (pdftotext): PDF text-recovery fallback for legacy PDFs whose
   #   fonts carry no ToUnicode CMap, which docling's backend dumps as raw glyph
   #   names — poppler reconstructs the text from the glyph-name convention.
@@ -225,7 +229,6 @@ let
     exiftool
     ffmpeg-headless
     jq
-    pandoc
     poppler-utils
     ripgrep
   ]

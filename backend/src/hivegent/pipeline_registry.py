@@ -1,5 +1,6 @@
 """Typed lazy loading shared by processing pipeline registries."""
 
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
@@ -38,9 +39,13 @@ class PipelineConfigInfo:
 
 
 @cache
-def _dependencies_available(dependencies: tuple[str, ...]) -> bool:
-    """Return whether registered top-level dependency modules are installed."""
-    return all(find_spec(dependency) is not None for dependency in dependencies)
+def _requirements_available(
+    dependencies: tuple[str, ...], executables: tuple[str, ...]
+) -> bool:
+    """Return whether registered top-level modules and executables are installed."""
+    return all(find_spec(name) is not None for name in dependencies) and all(
+        shutil.which(name) is not None for name in executables
+    )
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -49,11 +54,12 @@ class PipelineRegistration[T: NamedPipeline]:
 
     loader: Callable[[], PipelineImplementation[T]]
     dependencies: tuple[str, ...] = ()
+    executables: tuple[str, ...] = ()
 
     @property
     def available(self) -> bool:
-        """Return whether the pipeline's declared dependencies are installed."""
-        return _dependencies_available(self.dependencies)
+        """Return whether the pipeline's declared modules and executables are installed."""
+        return _requirements_available(self.dependencies, self.executables)
 
     def load(self, expected_name: str) -> PipelineImplementation[T]:
         """Load the registered implementation and validate its persisted name.

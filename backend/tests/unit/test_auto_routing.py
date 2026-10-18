@@ -36,6 +36,10 @@ from hivegent.workspace import prepare
         # Structured text keeps its richer converter.
         ("data.csv", ConversionPipeline.DOCLING),
         ("archive.tar.gz", ConversionPipeline.DOCLING),
+        ("report.docx", ConversionPipeline.DOCLING),
+        # Office formats docling is not given go to anydoc.
+        ("letter.doc", ConversionPipeline.ANYDOC),
+        ("sheet.ods", ConversionPipeline.ANYDOC),
         # An unclaimed extension (and a name with none at all) falls back to
         # plain-text, which decides from the content rather than the name.
         ("laws2", ConversionPipeline.PLAIN_TEXT),
@@ -75,7 +79,9 @@ def test_auto_priority_members_declare_their_routing_extensions() -> None:
         assert converters._CONVERTERS[pipeline].auto_extensions
 
 
-def test_auto_uses_next_available_converter(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_uses_next_available_converter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def unavailable() -> PipelineImplementation[converters.DocumentConverter]:
         raise ImportError("docling unavailable")
 
@@ -88,7 +94,28 @@ def test_auto_uses_next_available_converter(monkeypatch: pytest.MonkeyPatch) -> 
 
     converter = get_converter(ConversionPipeline.AUTO, filename="data.csv")
 
-    assert converter.name == ConversionPipeline.PANDOC.value
+    assert converter.name == ConversionPipeline.ANYDOC.value
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("notes.rst", ConversionPipeline.KREUZBERG),
+        ("paper.typ", ConversionPipeline.KREUZBERG),
+        ("page.textile", ConversionPipeline.PLAIN_TEXT),
+    ],
+)
+def test_auto_routes_markup_to_kreuzberg(
+    monkeypatch: pytest.MonkeyPatch, filename: str, expected: ConversionPipeline
+) -> None:
+    registration = converters._CONVERTERS[ConversionPipeline.KREUZBERG]
+    monkeypatch.setitem(
+        converters._CONVERTERS,
+        ConversionPipeline.KREUZBERG,
+        replace(registration, dependencies=()),
+    )
+
+    assert resolve_auto_pipeline(filename) is expected
 
 
 def test_auto_accepts_undeclared_extension() -> None:

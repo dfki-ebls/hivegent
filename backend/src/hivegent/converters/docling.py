@@ -156,6 +156,24 @@ class DoclingConverterConfig(BaseModel):
 
 # Formats that use the threaded PDF pipeline options.
 _PDF_FORMATS = frozenset({InputFormat.PDF, InputFormat.IMAGE, InputFormat.METS_GBS})
+# Formats docling reads only through what the project does not ship: audio and
+# video through a Whisper backend (videos are sampled into frames instead, see
+# `converters.video`), and legacy Office, RTF and OpenDocument through
+# LibreOffice or odfdo (anydoc reads those instead).
+_UNSHIPPED_FORMATS = frozenset(
+    {
+        InputFormat.AUDIO,
+        InputFormat.VIDEO,
+        InputFormat.DOC,
+        InputFormat.RTF,
+        InputFormat.PPT,
+        InputFormat.XLS,
+        InputFormat.ODT,
+        InputFormat.ODS,
+        InputFormat.ODP,
+    }
+)
+_ALLOWED_FORMATS = tuple(fmt for fmt in InputFormat if fmt not in _UNSHIPPED_FORMATS)
 
 
 # Bounded low: each cached converter holds its own resident layout/table
@@ -171,7 +189,7 @@ def _build_converter(config: DoclingConverterConfig) -> DoclingDocumentConverter
     option fields such as ``picture_description_options`` to their base
     class, which docling's pipeline cannot consume.
     """
-    converter = DoclingDocumentConverter()
+    converter = DoclingDocumentConverter(allowed_formats=list(_ALLOWED_FORMATS))
     # Start from default format options (which include the correct backend
     # and pipeline_cls) and only override pipeline_options -- plus, for DOCX,
     # the backend that honors the LibreOffice image-rendering setting.

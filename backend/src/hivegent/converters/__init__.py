@@ -23,7 +23,9 @@ from .base import (
     is_markdown_suffix,
 )
 from .formats import (
+    ANYDOC_EXTENSIONS,
     DOCLING_EXTENSIONS,
+    KREUZBERG_MARKUP_EXTENSIONS,
     LLM_MEDIA_TYPES,
     PANDOC_EXTENSIONS,
     PANDOC_SANDBOX_INCOMPATIBLE,
@@ -195,10 +197,12 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         loader=_load_llm,
         extensions=frozenset(LLM_MEDIA_TYPES),
     ),
+    # An explicit choice only, never AUTO's: the Nix builds leave pandoc out,
+    # so AUTO would route differently in development and production.
     ConversionPipeline.PANDOC: _ConverterRegistration(
         loader=_load_pandoc,
         extensions=PANDOC_EXTENSIONS,
-        auto_extensions=PANDOC_EXTENSIONS,
+        executables=("pandoc",),
     ),
     # Marker only converts PDFs. The provider registry lives in
     # marker.providers.registry but has no public format listing API.
@@ -300,37 +304,15 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
                 ".gz",
                 ".7z",
             }
-        ),
+        )
+        | KREUZBERG_MARKUP_EXTENSIONS,
+        auto_extensions=KREUZBERG_MARKUP_EXTENSIONS,
         dependencies=("kreuzberg",),
     ),
-    # https://github.com/firecrawl/anydoc#supported-formats, minus ``.pdf``
-    # (see AnydocConverter's docstring for why).
     ConversionPipeline.ANYDOC: _ConverterRegistration(
         loader=_load_anydoc,
-        extensions=frozenset(
-            {
-                ".doc",
-                ".docx",
-                ".docm",
-                ".ppt",
-                ".pps",
-                ".pot",
-                ".pptx",
-                ".pptm",
-                ".ppsx",
-                ".ppsm",
-                ".xls",
-                ".xlsx",
-                ".xlsm",
-                ".xlsb",
-                ".odt",
-                ".ods",
-                ".odp",
-                ".rtf",
-                ".epub",
-                ".csv",
-            }
-        ),
+        extensions=ANYDOC_EXTENSIONS,
+        auto_extensions=ANYDOC_EXTENSIONS,
     ),
     ConversionPipeline.PDF_INSPECTOR: _ConverterRegistration(
         loader=_load_pdf_inspector,
@@ -361,7 +343,8 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
 _AUTO_PRIORITY: tuple[ConversionPipeline, ...] = (
     ConversionPipeline.PLAIN_TEXT,
     ConversionPipeline.DOCLING,
-    ConversionPipeline.PANDOC,
+    ConversionPipeline.ANYDOC,
+    ConversionPipeline.KREUZBERG,
 )
 _AUTO_EXTENSIONS = frozenset(
     extension
