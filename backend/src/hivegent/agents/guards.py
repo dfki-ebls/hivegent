@@ -82,6 +82,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_core import to_json
 
+from ..db.conversations import prompt_items
 from ..humanize import format_bytes, pluralize
 from ..l10n import DEFAULT_LANGUAGE, Language, Localized, current_language, use_language
 from ..tmp import save_result
@@ -162,8 +163,8 @@ def _image_list(part: ModelRequestPart) -> Sequence[Any]:
     if isinstance(part, ToolReturnPart):
         return part.content_items()
 
-    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-        return part.content
+    if isinstance(part, UserPromptPart):
+        return prompt_items(part)
 
     return ()
 

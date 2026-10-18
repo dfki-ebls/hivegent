@@ -33,7 +33,9 @@ from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    TextContent,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
@@ -77,6 +79,8 @@ __all__ = [
     "load_conversation_summary",
     "owned_conversation",
     "owned_conversations",
+    "prompt_items",
+    "prompt_text",
     "remove_conversation",
     "resolve_fork",
     "set_conversation_title",
@@ -217,19 +221,37 @@ def is_user_request(msg: ModelMessage) -> bool:
     )
 
 
+def prompt_items(part: UserPromptPart) -> Sequence[UserContent]:
+    """The items of a user prompt, a bare text being its only one."""
+    return (part.content,) if isinstance(part.content, str) else part.content
+
+
+def prompt_text(item: UserContent) -> str | None:
+    """The text of a user prompt item, ``None`` for an attachment."""
+    if isinstance(item, str):
+        return item
+
+    if isinstance(item, TextContent):
+        return item.content
+
+    return None
+
+
 def extract_title(messages: Sequence[ModelMessage]) -> str | None:
-    """Pull a one-line title from the first user prompt, if any."""
-    for msg in messages:
-        for part in msg.parts:
-            if not isinstance(part, UserPromptPart) or not isinstance(
-                part.content, str
-            ):
-                continue
-            text = part.content.strip()
-            if not text:
-                continue
-            first_line = text.split("\n", 1)[0]
+    """Pull a one-line title from the first user prompt text, if any."""
+    texts = (
+        prompt_text(item)
+        for msg in messages
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in prompt_items(part)
+    )
+
+    for text in texts:
+        if text and text.strip():
+            first_line = text.strip().split("\n", 1)[0]
             return first_line if len(first_line) <= 100 else first_line[:97] + "..."
+
     return None
 
 

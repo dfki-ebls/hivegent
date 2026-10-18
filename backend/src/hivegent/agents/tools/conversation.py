@@ -16,6 +16,8 @@ from ...db.conversations import (
     ConversationData,
     ConversationSummary,
     owned_conversation,
+    prompt_items,
+    prompt_text,
 )
 from ...db.conversations import (
     list_conversations as _list_conversations,
@@ -65,14 +67,10 @@ def _render_parts(message: ModelMessage) -> Iterator[str]:
     """
     for part in message.parts:
         match part:
-            case UserPromptPart(content=content):
-                text = (
-                    content
-                    if isinstance(content, str)
-                    else "\n".join(
-                        item if isinstance(item, str) else "[attachment]"
-                        for item in content
-                    )
+            case UserPromptPart():
+                text = "\n".join(
+                    "[attachment]" if (line := prompt_text(item)) is None else line
+                    for item in prompt_items(part)
                 )
                 yield f"user:\n{text.strip()}"
 

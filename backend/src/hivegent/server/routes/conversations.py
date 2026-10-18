@@ -50,6 +50,8 @@ from ...db.conversations import (
     load_conversation,
     load_conversation_summary,
     owned_conversation,
+    prompt_items,
+    prompt_text,
     resolve_fork,
     set_conversation_title,
 )
@@ -443,8 +445,8 @@ def _attached_items(messages: Sequence[ModelMessage]) -> Iterator[UserContent]:
             continue
 
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                yield from (i for i in part.content if not isinstance(i, str))
+            if isinstance(part, UserPromptPart):
+                yield from (i for i in prompt_items(part) if prompt_text(i) is None)
 
 
 def _accept_attachment(item: UserContent) -> None:
