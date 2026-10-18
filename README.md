@@ -10,7 +10,7 @@ The Nix flake carries the whole environment, including PostgreSQL with `pgvector
 
 ```sh
 nix develop          # dev shell for the backend, frontend, and bridge
-nix run .#hivegent   # full dev stack: database, backend, frontend, egress proxy
+nix run .#hivegent   # full dev stack: database, backend, frontend, egress proxy, SearXNG
 nix flake check      # everything CI runs
 ```
 

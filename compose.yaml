@@ -1,8 +1,8 @@
 # Full example deployment of Hivegent with an OIDC provider (Rauthy).
 #
 # The all-in-one app image (backend + Caddy proxy/SPA) comes from this repo's Nix
-# flake; the database is the upstream pgvector image and the IdP is the upstream
-# Rauthy image. Build and push the flake image (per platform) with:
+# flake; the database is the upstream pgvector image, web search the upstream
+# SearXNG image, and the IdP is the upstream Rauthy image. Build and push the flake image (per platform) with:
 #
 #   nix build .#packages.x86_64-linux.docker
 #   ./result | gzip --fast | skopeo copy docker-archive:/dev/stdin \
@@ -92,12 +92,28 @@ services:
     # via its restart policy, and the proxy waits on the backend instead.
     restart: unless-stopped
 
+  # Web search for the agent. Drop this service and `tools.search_url` below
+  # to run without web search, or swap in OpenSERP (`karust/openserp`,
+  # `serve -a 0.0.0.0 -p 7000`) with `tools.search_backend = "openserp"`.
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      # Signs cookies, which the JSON API never hands out. DEMO ONLY, generate
+      # your own (`openssl rand -hex 32`) for any real deployment.
+      SEARXNG_SECRET: ChangeMeSearxngSecretAtLeast32Chars
+    configs:
+      - source: searxng-settings
+        target: /etc/searxng/settings.yml
+    restart: unless-stopped
+
   hivegent:
     image: ghcr.io/dfki-ebls/hivegent:latest
     depends_on:
       postgresql:
         condition: service_healthy
       rauthy:
+        condition: service_started
+      searxng:
         condition: service_started
     extra_hosts:
       # Resolve the public issuer host to the Docker host so the backend fetches
@@ -167,3 +183,21 @@ configs:
       [auth]
       issuer = "http://auth.localhost:8081/auth/v1"
       audience = ["hivegent-*"]
+
+      # Enables web search through the SearXNG service.
+      [tools]
+      search_url = "http://searxng:8080"
+
+      # Enables web fetch for every public page the user or a search named.
+      [security.web_urls]
+      allow_hosts = ["*"]
+
+  searxng-settings:
+    content: |
+      use_default_settings: true
+      search:
+        # Hivegent is the only client, so only the JSON API is served.
+        formats: [json]
+      server:
+        limiter: false
+        public_instance: false

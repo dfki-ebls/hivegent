@@ -22,6 +22,7 @@ let
   package =
     if cfg.torchCompile then cfg.package.override { enableTorchCompile = true; } else cfg.package;
   egressProxy = cfg.egressProxy.package.onLoopback cfg.egressProxy.port;
+  searxPort = config.services.searx.settings.server.port or 8888;
 in
 {
   options.services.hivegent = {
@@ -206,6 +207,21 @@ in
         on.
       '';
     };
+
+    searxng.createLocally = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Whether to point Hivegent's web tools at the local `services.searx`,
+        adding `json` to its `search.formats`. Under
+        `services.searx.configureUwsgi`, set `settings.tools.search_url` to
+        the uWSGI listener yourself.
+
+        Requires `services.searx.enable = true` with a secret key, e.g. a
+        `SEARXNG_SECRET` from `services.searx.environmentFile` — this option
+        only wires Hivegent *into* an existing SearXNG, it does not turn one on.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable (
@@ -216,6 +232,10 @@ in
             assertion = cfg.postgresql.createLocally -> config.services.postgresql.enable;
             message =
               "`services.hivegent.postgresql.createLocally` requires " + "`services.postgresql.enable = true`.";
+          }
+          {
+            assertion = cfg.searxng.createLocally -> config.services.searx.enable;
+            message = "`services.hivegent.searxng.createLocally` requires `services.searx.enable = true`.";
           }
         ];
 
@@ -347,6 +367,19 @@ in
         systemd.services.hivegent = {
           after = [ "postgresql.target" ];
           requires = [ "postgresql.target" ];
+        };
+      })
+
+      (lib.mkIf cfg.searxng.createLocally {
+        services.hivegent.settings.tools.search_url = lib.mkDefault "http://127.0.0.1:${toString searxPort}";
+        # Merged with the formats the host serves its own users.
+        services.searx.settings.search.formats = [ "json" ];
+
+        # Search is optional to the app, so a failed SearXNG fails the
+        # `web_search` calls rather than the backend.
+        systemd.services.hivegent = {
+          after = [ "searx.service" ];
+          wants = [ "searx.service" ];
         };
       })
     ]

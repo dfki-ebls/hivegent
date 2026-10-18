@@ -7,6 +7,7 @@
     let
       smokescreen = config.packages.smokescreen;
       egressProxy = smokescreen.onLoopback smokescreen.defaultPort;
+      searxngPort = 8888;
     in
     {
       process-compose.hivegent = {
@@ -21,6 +22,16 @@
           listen_addresses = "";
           socketDir = "data/db";
         };
+        # The HTML interface stays on beside the JSON API the backend reads, so
+        # engine results can be checked in a browser.
+        services.searxng.searxng = {
+          enable = true;
+          port = searxngPort;
+          settings.search.formats = [
+            "html"
+            "json"
+          ];
+        };
         settings.processes = {
           backend = {
             depends_on.db.condition = "process_healthy";
@@ -32,7 +43,11 @@
             '';
             # The dev stack owns the proxy port, so it also states the URL
             # rather than relying on the backend's compiled-in default.
-            environment = [ "HIVEGENT_SECURITY__EGRESS_PROXY_URL=${egressProxy.url}" ];
+            environment = [
+              "HIVEGENT_SECURITY__EGRESS_PROXY_URL=${egressProxy.url}"
+              "HIVEGENT_TOOLS__SEARCH_URL=http://127.0.0.1:${toString searxngPort}"
+              ''HIVEGENT_SECURITY__WEB_URLS__ALLOW_HOSTS=["*"]''
+            ];
             # FastAPI only serves once lifespan startup (migrations, reconcile)
             # finishes, so a healthy probe means the backend is ready for traffic.
             # Cadence mirrors the NixOS deployment's `/api/health` check (Caddy's
