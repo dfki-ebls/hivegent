@@ -449,8 +449,8 @@ Work out arithmetic, dates, sorting, and counting with the run_python tool rathe
 It earns the call most when an answer spans more documents than it will quote from, since one program reads, filters, and counts across all of them at once.
 A program opens a document by the same full workspace path every tool result spells, so `open('~/notes.md')` is the document you searched, and it may open a path it discovers as it runs.
 Write anything past a few lines to a `/tmp` `.py` file and run its `script_path`, so a runtime error costs one edit_document and a rerun rather than a retyped program, and keep inline `code` for throwaways.
-Monty is a subset of Python, not a CPython environment: no numpy or pandas, no class inheritance, no `glob` or `fnmatch` (recurse with `iterdir`, which returns entries in path order), and only part of the standard library, which names a module it lacks in the error, so try the import rather than working around one that would have worked.
-The mount is most of what a program needs, so reach for it rather than for a tool: `open` and `iterdir` are the read tools, `re` is grep, and `json` is jq (parse with `json.loads(open(path).read())`, since the module has `loads` and `dumps` and no file-reading `load`).
+Monty is a subset of Python, not a CPython environment: no numpy or pandas, and only part of the standard library and the language, which names what it lacks in the error, so try a module or construct rather than working around one that would have worked.
+The mount is most of what a program needs, so reach for it rather than for a tool: `open` and `iterdir` are the read tools (recurse with `iterdir`, which returns entries in path order), `re` is grep, and `json` is jq (parse with `json.loads(open(path).read())`).
 Anything beyond that a program can call is declared to you as a function, and there is nothing else: what is not declared and not in the list above, the program does without.
 `/tmp` is mounted at the same path every tool spells it, and no other absolute path exists, so park intermediates and the state a later call needs there.
 The environment is a shell's: the working directory and `PWD` are `/workspace`, `HOME` is `/workspace/~`, `TMPDIR` is `/tmp`, and `USER` names the user.
@@ -474,8 +474,8 @@ Erledige Rechnungen, Datumsberechnungen, Sortieren und Zählen mit dem Tool run_
 Am meisten lohnt sich der Aufruf, wenn eine Antwort mehr Dokumente umfasst, als sie zitieren wird, denn ein Programm liest, filtert und zählt über alle zugleich.
 Ein Programm öffnet ein Dokument über denselben vollständigen Pfad im Arbeitsbereich, den jedes Tool-Ergebnis nennt, `open('~/notes.md')` ist also das Dokument, das du durchsucht hast, und es darf auch Pfade öffnen, die es während der Ausführung entdeckt.
 Schreib alles, was über ein paar Zeilen hinausgeht, in eine `.py`-Datei unter `/tmp` und führe deren `script_path` aus, damit ein Laufzeitfehler nur ein edit_document und einen neuen Lauf kostet statt eines neu getippten Programms, und nutze inline `code` nur für Wegwerfcode.
-Monty ist eine Teilmenge von Python, keine CPython-Umgebung: kein numpy oder pandas, keine Klassenvererbung, kein `glob` oder `fnmatch` (rekursiere mit `iterdir`, das Einträge in Pfadreihenfolge liefert) und nur ein Teil der Standardbibliothek. Ein fehlendes Modul wird im Fehler genannt, probiere den Import also aus, statt ein Modul zu umgehen, das funktioniert hätte.
-Das eingebundene Dateisystem ist das meiste, was ein Programm braucht, greif also darauf zurück statt auf ein Tool: `open` und `iterdir` sind die Lese-Tools, `re` ist grep und `json` ist jq (parse mit `json.loads(open(path).read())`, denn das Modul hat `loads` und `dumps`, aber kein dateilesendes `load`).
+Monty ist eine Teilmenge von Python, keine CPython-Umgebung: kein numpy oder pandas und nur ein Teil der Standardbibliothek und der Sprache. Was fehlt, wird im Fehler genannt, probiere ein Modul oder Konstrukt also aus, statt etwas zu umgehen, das funktioniert hätte.
+Das eingebundene Dateisystem ist das meiste, was ein Programm braucht, greif also darauf zurück statt auf ein Tool: `open` und `iterdir` sind die Lese-Tools (rekursiere mit `iterdir`, das Einträge in Pfadreihenfolge liefert), `re` ist grep und `json` ist jq (parse mit `json.loads(open(path).read())`).
 Alles darüber hinaus, was ein Programm aufrufen kann, ist dir als Funktion deklariert, und sonst gibt es nichts: Was weder deklariert ist noch in der Liste oben steht, muss das Programm ohne auskommen.
 `/tmp` ist unter demselben Pfad eingebunden, den jedes Tool nennt, und sonst gibt es keinen absoluten Pfad, lege Zwischenergebnisse und den Zustand, den ein späterer Aufruf braucht, also dort ab.
 Die Umgebung ist die einer Shell: Arbeitsverzeichnis und `PWD` sind `/workspace`, `HOME` ist `/workspace/~`, `TMPDIR` ist `/tmp`, und `USER` nennt die Benutzer:in.
@@ -495,14 +495,13 @@ Dasselbe gilt für jeden Wert, den du nicht parsen kannst: Melde ihn und frag na
 Du musst diese Werte nicht selbst bemerken, und ein Programm sollte nicht darauf vertrauen, dass es das getan hat: query_table meldet jede Spalte, die es nicht vollständig parsen konnte, samt einer Stichprobe der Werte im zurückgegebenen Ergebnis (`text_columns` in jedem Eintrag von `tables`). Lies dieses Feld, bevor du aus einer Spalte rechnest, und halte bei dem an, was es nennt, so wie du eine Zeilenanzahl prüfen würdest. Ein `try/except`, das einen nicht parsebaren Wert in `None` verwandelt, ist eine Entscheidung über die Messwerte der Benutzer:in, stillschweigend getroffen und in der Ausgabe unsichtbar.
 """,
 )
-"""No module list, deliberately.
+"""No list of what Monty supports, deliberately.
 
-Monty implements a subset of the standard library that only Monty knows, and it
-offers no ``importlib``, ``sys.modules``, or ``dir`` to enumerate it from
-inside, so any list here is a copy that goes stale on the next release: the one
-that used to stand here advertised ``functools``, which Monty does not have, for
-as long as nobody tried it.  A failed import names the module it wanted, which
-is the same correction a stale list would have needed anyway.
+Monty implements a subset of the standard library and the language that grows
+with every release, and it offers no ``importlib``, ``sys.modules``, or ``dir``
+to enumerate it from inside, so any list here is a copy that goes stale.  A
+failure names the module or construct it lacks, which is the same correction a
+stale list would have needed anyway.
 """
 
 
