@@ -137,6 +137,19 @@ def _quoting_hint(columns: Sequence[str]) -> str:
     )
 
 
+def _message(exc: pl.exceptions.PolarsError) -> str:
+    """Polars' message as a sentence, without the plan dump nothing acts on.
+
+    >>> _message(pl.exceptions.SQLInterfaceError(
+    ...     "unsupported function 'instr'\\n\\nResolved plan until failure:\\n\\nDF"
+    ... ))
+    "unsupported function 'instr'."
+    """
+    text = str(exc).partition("Resolved plan until failure:")[0].rstrip()
+
+    return text if text.endswith((".", "?", "!")) else f"{text}."
+
+
 def _naming(values: Sequence[str]) -> str:
     """Spell the values a column could not parse, when any were sampled.
 
@@ -243,11 +256,11 @@ TableQueriesArg = Annotated[
         'GROUP BY region ORDER BY total DESC". Each runs on its own over the '
         "tables loaded once, so ask every question of them in one call. "
         "Supports the usual aggregates, WHERE, HAVING, ORDER BY, CTEs, window "
-        "functions, joins, and `SHOW TABLES`. It is Polars' dialect and not a "
-        "database's, so a function it refuses is named in the error and may "
-        "exist under another spelling worth trying. Omit the queries to get "
-        "each table's columns, their types, the row count, and a few sample "
-        "rows, which is the cheap first call. Numbers and dates are already "
+        "functions, joins, and `SHOW TABLES`. Polars SQL follows PostgreSQL, so "
+        "write PostgreSQL spellings, and a function it refuses is named in the "
+        "error and may exist under another name worth trying. Omit the queries "
+        "to get each table's columns, their types, the row count, and a few "
+        "sample rows, which is the cheap first call. Numbers and dates are already "
         "typed as such, so cast only a column still shown as String."
     ),
 ]
@@ -588,10 +601,10 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         without queries first to learn each table's columns, their types, and
         the row count.
 
-        The dialect is Polars SQL, not a database's: it covers the usual
+        The dialect is Polars SQL, which follows PostgreSQL: it covers the usual
         aggregates, WHERE, GROUP BY, HAVING, ORDER BY, CTEs, window functions,
         and joins, but a function it lacks is refused by name and often exists
-        under another, so read the refusal and try Polars' spelling rather than
+        under another, so read the refusal and try another spelling rather than
         abandoning the query.  ``SHOW TABLES`` lists what is registered.
         """
         resolved: list[tuple[str, Path]] = []
@@ -681,7 +694,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
                 return _coerce(_load(absolute, file_path, sheet, decode=True))
 
         except pl.exceptions.PolarsError as exc:
-            raise ToolRetry(f"could not read the table: {exc}") from exc
+            raise ToolRetry(f"could not read the table: {_message(exc)}") from exc
 
     def _failure(
         self,
@@ -690,8 +703,9 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         query: str | None,
     ) -> str:
         """Explain a failed query, naming the columns a cast would rescue."""
+        message = _message(exc)
         detail = (
-            f"query failed: {exc} The tables are named "
+            f"query failed: {message} The tables are named "
             f"{', '.join(_relation(index) for index in range(len(sources)))}; "
             "call without queries to see their columns and types, or run "
             "`SHOW TABLES`."
@@ -701,16 +715,17 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         # sheet names its columns with spaces, units, and parentheses; the
         # schema listing already spells them quoted, so name one of its own.
         # A refused *function* is the dialect instead, and worth saying so:
-        # Polars SQL is not a database's, and a run that reads "unsupported
+        # Polars SQL only follows PostgreSQL, and a run that reads "unsupported
         # function" as "SQL cannot do this" leaves for Python over a spelling.
         if isinstance(
             exc, pl.exceptions.SQLInterfaceError | pl.exceptions.SQLSyntaxError
         ):
             dialect = (
-                " This is the Polars SQL dialect rather than a database's, so a "
-                "function it refuses may exist under another name — try Polars' "
-                "own spelling before giving up on the query."
-                if "unsupported function" in str(exc).lower()
+                " Polars SQL follows PostgreSQL but lacks some of its functions, "
+                "so a refused one may exist under another name, as PostgreSQL "
+                "or Polars' expression API spells it. Try that before giving up "
+                "on the query."
+                if "unsupported function" in message.lower()
                 else ""
             )
 

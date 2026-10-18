@@ -316,7 +316,8 @@ Vision calls of the upload pipeline run on the tool-free `llm.complete` agent, s
 
 `query_table` runs Polars SQL against the original CSV, TSV, Parquet, or Excel file, since a row-per-line projection wastes context and clips trailing columns.
 Files are addressed positionally as `t`, `t2`, `t3`, so no path is interpolated into SQL, every file is registered so `SHOW TABLES` works, and omitting the query returns the first table's schema.
-The dialect is named Polars SQL in the description and in failures, which say another function name may exist, since there is no function registry to vendor.
+The dialect is named Polars SQL and anchored to PostgreSQL, which it follows upstream, so one word sets the model's priors on quoting, casts, and function names.
+Failures say another function name may exist, since there is no function registry to vendor, and drop the resolved plan Polars appends, which a model cannot act on.
 
 Every text column whose values all parse as a number, date, datetime, or boolean is retyped before the query, and a single zero-padded value marks an identifier and vetoes numeric typing.
 A column that falls short is reported as a `TextColumn` with the parsed share and a sample of unparsed values, scoped to the columns the query touched and led by the worst shortfall.
