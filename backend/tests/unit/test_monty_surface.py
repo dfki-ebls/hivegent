@@ -89,8 +89,7 @@ class _Search(AsyncTool[list[Hit]]):
     ) -> ToolOutput[list[Hit]]:
         """Find matching records.
 
-        A second paragraph the stub must leave out, since the tool list already
-        carries the full description.
+        A second paragraph the stub keeps for a tool the model may not call.
         """
         if not query:
             raise ToolRetry("give me a query")
@@ -118,7 +117,7 @@ def _wrap(_deps: None) -> _Wrap:
 
 def _surface(*factories: Callable[[None], AsyncTool[Any]]) -> MontySurface:
     """The surface of *factories*, each built from no deps."""
-    return monty_surface({factory: factory(None) for factory in factories})
+    return monty_surface({factory: factory(None) for factory in factories}, frozenset())
 
 
 @pytest.fixture()
@@ -146,6 +145,18 @@ class TestStub:
 
         assert "Find matching records." in stubs
         assert "second paragraph" in stubs
+
+    def test_points_at_a_listed_tool_instead_of_repeating_it(self) -> None:
+        """The model read a listed tool's documentation, so only its records stay."""
+        declared = monty_declarations([_search], frozenset({"search"}))
+
+        assert (
+            "async def search(*, query: str, limit: int = 5) -> list[Hit]:" in declared
+        )
+        assert "Your search tool" in declared
+        assert "Find matching records." not in declared
+        assert "What to look for." not in declared
+        assert "class Hit(TypedDict):" in declared
 
     def test_a_tuple_is_a_list_and_a_defaulted_field_is_not_required(self) -> None:
         stubs = _surface(_wrap).stubs
@@ -188,7 +199,7 @@ def test_declarations_are_rendered_without_building_runtime_tools() -> None:
     def unavailable(_deps: None) -> _Search:
         raise AssertionError("a runtime tool was built")
 
-    assert "async def unavailable" in monty_declarations([unavailable])
+    assert "async def unavailable" in monty_declarations([unavailable], frozenset())
 
 
 class TestGate:

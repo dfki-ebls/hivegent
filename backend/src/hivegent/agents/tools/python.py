@@ -178,6 +178,16 @@ def _live(deps: UserDeps) -> tuple[_SandboxFunction, ...]:
     )
 
 
+def _listed() -> frozenset[str]:
+    """The functions the model also holds as tools, documented there.
+
+    A withheld one is never rendered, so only ``sandbox_only`` is left to rule
+    out.  It holds because every mode offering ``python`` offers the features
+    these tools belong to.
+    """
+    return INJECTABLE_TOOL_NAMES.difference(settings.tools.sandbox_only)
+
+
 def sandbox_surface(ctx: RunContext[UserDeps]) -> MontySurface:
     """Build the host functions and stub for the tools this run may call.
 
@@ -198,7 +208,9 @@ def sandbox_surface(ctx: RunContext[UserDeps]) -> MontySurface:
     """
     live = _live(ctx.deps)
 
-    return monty_surface({function.factory: function.build(ctx) for function in live})
+    return monty_surface(
+        {function.factory: function.build(ctx) for function in live}, _listed()
+    )
 
 
 def sandbox_instructions(ctx: RunContext[UserDeps]) -> str:
@@ -215,7 +227,9 @@ def sandbox_instructions(ctx: RunContext[UserDeps]) -> str:
     while the declarations stay English like every other tool schema.
     """
     live = _live(ctx.deps)
-    declarations = monty_declarations([function.factory for function in live])
+    declarations = monty_declarations(
+        [function.factory for function in live], _listed()
+    )
 
     if not declarations:
         return ""

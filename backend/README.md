@@ -416,6 +416,7 @@ A program receives the whole structured `data` channel as plain dicts and lists 
 ### Declarations and the type check
 
 `monty_surface` builds the declarations the model reads (`sandbox_api_instructions`, composed per run) and the sandbox takes as `type_check_stubs`, rendered by pydantic-ai's `FunctionSignature` from the argument and serialization-mode return schemas.
+A function the model also holds as a tool is declared with its signature and result records but a one-line pointer for its description and arguments, which it already read in the tool list, so `query_table` and `search` are not documented twice per request.
 The stubs add one untyped `open` line, since `open` is host-provided and a hand-typed handle would reject programs the interpreter accepts.
 `settings.sandbox.type_check` is on by default, and `SANDBOX_TYPE_CHECK_INSTRUCTIONS` is added only where it is on.
 

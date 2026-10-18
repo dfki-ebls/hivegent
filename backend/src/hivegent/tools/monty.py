@@ -261,26 +261,61 @@ class HostCalls:
         return call
 
 
-def _definition(factory: AsyncToolFactory[Any]) -> ToolDefinition:
+def _undescribed(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """*schema* without the parameter descriptions the renderer lists as ``Args``.
+
+    >>> _undescribed({"properties": {"q": {"type": "string", "description": "x"}}})
+    {'properties': {'q': {'type': 'string'}}}
+    """
+    properties: Mapping[str, Mapping[str, Any]] = schema.get("properties", {})
+
+    return {
+        **schema,
+        "properties": {
+            name: {key: value for key, value in field.items() if key != "description"}
+            for name, field in properties.items()
+        },
+    }
+
+
+def _definition(
+    factory: AsyncToolFactory[Any], listed: frozenset[str]
+) -> ToolDefinition:
     """Describe one tool the way the renderer wants it.
 
     A :class:`ToolDefinition` rather than a bare ``FunctionSignature``, since it
     is what pairs the name and description with the two schemas and caches the
     signature built from them, which is one invariant this module then does not
     have to keep by hand.
+
+    A tool named in *listed* is one the model also holds in its tool list, whose
+    description and arguments it already read there, so they are pointed at
+    rather than repeated.  The result records stay, since the tool list has no
+    return schema.
     """
     spec = ToolSpec.from_factory(factory)
 
+    if spec.name in listed:
+        parameters = _undescribed(spec.parameters_json_schema)
+        description = (
+            f"Your {spec.name} tool, whose description and arguments apply here."
+        )
+    else:
+        parameters = spec.parameters_json_schema
+        description = spec.description
+
     return ToolDefinition(
         name=spec.name,
-        parameters_json_schema=spec.parameters_json_schema,
-        description=spec.description,
+        parameters_json_schema=parameters,
+        description=description,
         return_schema=spec.data_json_schema,
     )
 
 
 @cache
-def _rendered(factories: tuple[AsyncToolFactory[Any], ...]) -> tuple[str, str]:
+def _rendered(
+    factories: tuple[AsyncToolFactory[Any], ...], listed: frozenset[str]
+) -> tuple[str, str]:
     """The catalog and the stubs for these tools, rendered once per process.
 
     Cached because rendering is a pure function of the tools: a factory is a
@@ -290,7 +325,7 @@ def _rendered(factories: tuple[AsyncToolFactory[Any], ...]) -> tuple[str, str]:
     call, for perhaps fifty milliseconds a turn of schema building that
     produced the same bytes each time.
     """
-    definitions = [_definition(factory) for factory in factories]
+    definitions = [_definition(factory, listed) for factory in factories]
     signatures = [definition.function_signature for definition in definitions]
     conflicting = FunctionSignature.get_conflicting_type_names(signatures)
     declared = FunctionSignature.render_type_definitions(signatures, conflicting)
@@ -347,23 +382,26 @@ def _host_function(
     return call
 
 
-def monty_declarations(factories: Sequence[AsyncToolFactory[Any]]) -> str:
+def monty_declarations(
+    factories: Sequence[AsyncToolFactory[Any]], listed: frozenset[str]
+) -> str:
     """What the model is shown for *factories*, rendered without building one.
 
     All the prompt needs, and asking for it never runs a factory: the rendering
     is a pure function of the tools, while a built tool is bound to one run's
-    dependencies.
+    dependencies.  *listed* names the tools the model also holds in its tool list.
     """
     if not factories:
         return ""
 
-    declarations, _ = _rendered(tuple(factories))
+    declarations, _ = _rendered(tuple(factories), listed)
 
     return declarations
 
 
 def monty_surface(
     tools: Mapping[AsyncToolFactory[Any], AsyncTool[Any]],
+    listed: frozenset[str],
 ) -> MontySurface:
     """Build the host functions and both renderings for *tools*.
 
@@ -371,12 +409,13 @@ def monty_surface(
     caller decides what a factory is handed: the run's deps for most, the run
     itself for one that spends its usage.  A tool is built once for the whole
     program rather than per call, since a program may call one many times and
-    the fields a factory wires up do not change between them.
+    the fields a factory wires up do not change between them.  *listed* is as
+    for :func:`monty_declarations`.
     """
     if not tools:
         return MontySurface()
 
-    declarations, stubs = _rendered(tuple(tools))
+    declarations, stubs = _rendered(tuple(tools), listed)
 
     return MontySurface(
         functions={
