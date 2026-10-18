@@ -51,7 +51,7 @@ audience = ["hivegent-*"]
 - `auth.audience`: accepted token audiences.
   `hivegent-*` accepts every Hivegent client.
 
-Common extras are `HIVEGENT_TOOLS__ENABLE_WEB=true` for web search, `HIVEGENT_EMBEDDING__MODEL` for the embedding model, and `HIVEGENT_MCP__ENABLE=true` for the MCP endpoint.
+Common extras are `HIVEGENT_TOOLS__SEARCH_URL` for web search, `HIVEGENT_SECURITY__WEB_URLS__ALLOW_HOSTS='["*"]'` for web fetch, `HIVEGENT_EMBEDDING__MODEL` for the embedding model, and `HIVEGENT_MCP__ENABLE=true` for the MCP endpoint.
 
 `tools.disabled` withholds tools from the model by the names `GET /api/debug/tools` lists.
 It defaults to `["list_conversations", "get_conversation"]`, since sub-agents already reach past conversations.
@@ -63,6 +63,13 @@ User-provided LLM and MCP URLs stay disabled until their hosts are listed under 
 An entry permits the domain and its subdomains, and `"*"` permits any public host.
 These requests and all model-controlled web requests pass through the bundled Smokescreen proxy, which rejects private and reserved addresses.
 Operator-configured URLs such as `llm.base_url` connect directly.
+
+Web search needs a metasearch service, which Hivegent does not ship, the same way it leaves PostgreSQL to you.
+SearXNG is the default backend: `compose.yaml` runs its upstream image, and the NixOS option `services.hivegent.searxng.createLocally` wires in the host's `services.searx`.
+OpenSERP works as well with `tools.search_backend = "openserp"`, though it searches the general web only and reports no publication dates.
+Point `tools.search_url` at the service, otherwise `web_search` stays hidden, and for SearXNG list `json` under its `search.formats`.
+`web_fetch` is enabled separately by `[security.web_urls] allow_hosts`, where `"*"` permits any public page the user or a search named and a list of domains confines it.
+A URL the model writes itself is refused, so instructions planted on a page cannot carry conversation data out in a link.
 
 To reach an operator endpoint over a unix socket, map its host name under `[network.unix_sockets]`, for example `HIVEGENT_NETWORK__UNIX_SOCKETS='{"llmhop": "/run/llmhop/default.sock"}'`.
 `llm.base_url = "http://llmhop/v1"` then connects to the socket.

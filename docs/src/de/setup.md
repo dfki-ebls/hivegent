@@ -51,7 +51,7 @@ audience = ["hivegent-*"]
 - `auth.audience`: die akzeptierten Token-Zielgruppen.
   `hivegent-*` akzeptiert jeden Hivegent-Client.
 
-Häufige Ergänzungen sind `HIVEGENT_TOOLS__ENABLE_WEB=true` für die Websuche, `HIVEGENT_EMBEDDING__MODEL` für das Embedding-Modell und `HIVEGENT_MCP__ENABLE=true` für den MCP-Endpunkt.
+Häufige Ergänzungen sind `HIVEGENT_TOOLS__SEARCH_URL` für die Websuche, `HIVEGENT_SECURITY__WEB_URLS__ALLOW_HOSTS='["*"]'` für den Web-Abruf, `HIVEGENT_EMBEDDING__MODEL` für das Embedding-Modell und `HIVEGENT_MCP__ENABLE=true` für den MCP-Endpunkt.
 
 `tools.disabled` hält Werkzeuge vom Modell fern, benannt wie in `GET /api/debug/tools`.
 Voreingestellt ist `["list_conversations", "get_conversation"]`, da Unteragenten frühere Unterhaltungen bereits erreichen.
@@ -63,6 +63,13 @@ Von Benutzern angegebene LLM- und MCP-URLs bleiben deaktiviert, bis ihre Hosts u
 Ein Eintrag erlaubt die Domain und ihre Subdomains, `"*"` erlaubt jeden öffentlichen Host.
 Diese Anfragen und alle vom Modell gesteuerten Web-Anfragen laufen durch den mitgelieferten Smokescreen-Proxy, der private und reservierte Adressen ablehnt.
 Vom Betreiber konfigurierte URLs wie `llm.base_url` verbinden sich direkt.
+
+Die Websuche braucht einen Metasuchdienst, den Hivegent nicht mitliefert, so wie es auch PostgreSQL Ihnen überlässt.
+SearXNG ist das voreingestellte Backend: `compose.yaml` startet dessen offizielles Image, und die NixOS-Option `services.hivegent.searxng.createLocally` bindet das `services.searx` des Hosts ein.
+OpenSERP funktioniert ebenfalls mit `tools.search_backend = "openserp"`, durchsucht allerdings nur das allgemeine Web und meldet kein Veröffentlichungsdatum.
+Setzen Sie `tools.search_url` auf den Dienst, sonst bleibt `web_search` verborgen, und tragen Sie bei SearXNG `json` unter `search.formats` ein.
+`web_fetch` wird getrennt über `[security.web_urls] allow_hosts` aktiviert, wobei `"*"` jede öffentliche Seite erlaubt, die der Benutzer oder eine Suche genannt hat, und eine Liste von Domains den Abruf auf diese beschränkt.
+Eine URL, die das Modell selbst schreibt, wird abgelehnt, damit auf einer Seite platzierte Anweisungen keine Gesprächsdaten in einem Link hinausschleusen können.
 
 Um einen Betreiber-Endpunkt über einen Unix-Socket zu erreichen, ordnen Sie seinen Hostnamen unter `[network.unix_sockets]` zu, etwa mit `HIVEGENT_NETWORK__UNIX_SOCKETS='{"llmhop": "/run/llmhop/default.sock"}'`.
 `llm.base_url = "http://llmhop/v1"` verbindet sich dann mit dem Socket.

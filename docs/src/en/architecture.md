@@ -12,8 +12,10 @@ flowchart TD
     agent["Agent runtime<br/>(Pydantic AI + tools)"]
     db[("PostgreSQL + pgvector")]
     llm["Language model<br/>(OpenAI-compatible)"]
+    search["Web search<br/>(SearXNG or OpenSERP, optional)"]
     egress["Outbound proxy<br/>(Smokescreen)"]
     external["User-selected<br/>LLM, MCP, and web hosts"]
+    engines["Public search engines"]
 
     user --> browser
     browser <-->|Login| oidc
@@ -22,6 +24,8 @@ flowchart TD
     backend --> agent
     agent --> llm
     agent --> egress
+    agent --> search
+    search --> engines
     egress --> external
     backend --> db
 ```
@@ -38,6 +42,7 @@ flowchart TD
 - Language model: any OpenAI-compatible endpoint, hosted or local.
 - Outbound proxy: Smokescreen carries every user or model-chosen connection and rejects private and reserved addresses.
   Operator-configured services connect directly.
+- Web search: an optional SearXNG or OpenSERP instance, run beside Hivegent like the database, which queries public search engines for the agent.
 
 ## Interfaces
 
@@ -48,5 +53,5 @@ flowchart TD
 ## Deployment
 
 The container image bundles the backend, the frontend, the Caddy inbound proxy, and the Smokescreen outbound proxy.
-A typical deployment runs three containers: Hivegent, PostgreSQL, and the identity provider.
+A typical deployment runs three containers: Hivegent, PostgreSQL, and the identity provider, plus a search service such as SearXNG for web search.
 See [Setup](setup.md).
