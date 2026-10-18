@@ -269,11 +269,11 @@ Guidelines:
 WORKSPACE_PATH_INSTRUCTIONS: Localized[str] = Localized(
     en="""
 Every document lives in a workspace and is addressed by its full path: `~/...` for your personal workspace, `@<group>/...` for a shared group workspace.
-There is no working directory and no default workspace, so a path without one of these prefixes names nothing — always pass tools the full path, exactly as their results spell it.
+A path without one of these prefixes is read as relative to `~`, but prefer passing tools the full path, exactly as their results spell it.
 """,
     de="""
 Jedes Dokument liegt in einem Arbeitsbereich und wird über seinen vollständigen Pfad angesprochen: `~/...` für deinen persönlichen Arbeitsbereich, `@<group>/...` für den gemeinsamen Arbeitsbereich einer Gruppe.
-Es gibt kein Arbeitsverzeichnis und keinen Standard-Arbeitsbereich, ein Pfad ohne eines dieser Präfixe bezeichnet also nichts. Übergib Tools immer den vollständigen Pfad, genau so, wie ihre Ergebnisse ihn schreiben.
+Ein Pfad ohne eines dieser Präfixe wird relativ zu `~` gelesen, übergib Tools aber bevorzugt den vollständigen Pfad, genau so, wie ihre Ergebnisse ihn schreiben.
 """,
 )
 

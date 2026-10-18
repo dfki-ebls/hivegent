@@ -381,7 +381,8 @@ def resolve_search_path(
     """Find the :class:`SearchPath` matching a possibly-prefixed filename.
 
     A scope prefix is matched against each path's :attr:`SearchPath.scope`.
-    An unprefixed filename falls back to the first scopeless path.
+    An unprefixed filename falls back to the first path that claims it anyway,
+    a scopeless one or one whose scope it implies.
 
     The filename is folded to NFC here, the single funnel every path-taking
     tool passes through, so a decomposed spelling still resolves to the
@@ -399,7 +400,15 @@ def resolve_search_path(
     match = match_scope(paths, filename)
     if match is not None and match[1]:
         return match
-    return next(((sp, filename) for sp in paths if sp.scope is None), None)
+
+    return next(
+        (
+            (sp, filename)
+            for sp in paths
+            if sp.scope is None or sp.scope.implies(filename)
+        ),
+        None,
+    )
 
 
 def scope_paths(

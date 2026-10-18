@@ -60,6 +60,7 @@ from ..config import normalize_unicode
 from ..converters import BINARY_WRITE_REASON, writes_as_text
 from ..entries import (
     ContentStat,
+    Listdir,
     TreeStat,
     is_assets_dir,
     is_below,
@@ -227,6 +228,20 @@ class ChangesetLimits:
     max_operations: int
     max_deletes: int
     max_chars: int
+
+
+def _resolve(
+    paths: tuple[SearchPath, ...], canonical: str, listdir: Listdir
+) -> tuple[SearchPath, str, Path] | None:
+    """:func:`resolve_accessible_file` without the relative shorthand for ``~``.
+
+    A program's relative path is relative to :data:`WORKSPACE_MOUNT`, which
+    lists the workspaces, so a path no root claims names nothing here.
+    """
+    if match_scope(paths, canonical) is None:
+        return None
+
+    return resolve_accessible_file(paths, canonical, listdir)
 
 
 def _root_hint(paths: tuple[SearchPath, ...]) -> str:
@@ -447,7 +462,7 @@ class WorkspaceOS(AbstractOS):
         resolved = (
             (root, "", root.path)
             if root is not None
-            else resolve_accessible_file(self.paths, canonical, self.listdir)
+            else _resolve(self.paths, canonical, self.listdir)
         )
         if resolved is None:
             return None
@@ -505,7 +520,7 @@ class WorkspaceOS(AbstractOS):
         if self._root(canonical) is not None:
             return canonical
 
-        resolved = resolve_accessible_file(self.paths, canonical, self._names)
+        resolved = _resolve(self.paths, canonical, self._names)
 
         return None if resolved is None else resolved[0].prefixed(resolved[1])
 
@@ -808,7 +823,7 @@ class WorkspaceOS(AbstractOS):
         resolved = (
             None
             if canonical == "."
-            else resolve_accessible_file(self.writable, canonical, self._names)
+            else _resolve(self.writable, canonical, self._names)
         )
 
         if resolved is None:

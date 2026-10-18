@@ -78,8 +78,8 @@ Deleting only a text original's `<stem>.md` by hand does not retire the entry, s
 
 ### Paths
 
-There is no working directory.
-A document path is always full and prefixed by its workspace (`~` personal, `@<group>` group), and a path naming no known root is refused with the roots named (`tools.base.workspace_root_hint`).
+A document path is prefixed by its workspace (`~` personal, `@<group>` group), and a relative path is shorthand for one under `~` (`Scope.implies`), while filter arguments without a prefix still span every workspace.
+A path leading with `/`, `~`, or `@` that names no known root is refused with the roots named (`tools.base.workspace_root_hint`), so an unknown group is never written under `~`.
 The grammar is stated once per surface (`WORKSPACE_PATH_INSTRUCTIONS`, also the FastMCP `instructions`), and messages always render canonical paths (`workspace.paths._shown`, `store.scope.render`).
 
 Access derives from the request's `User` alone (`User.store`, `User.group_stores`), and `UserDeps` holds that `User` rather than stores, so no route, run, or subagent can reach a workspace the token does not grant.

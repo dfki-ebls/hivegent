@@ -110,7 +110,12 @@ async def test_writes_to_the_addressed_workspace(
 
     assert (await tool("@team/notes/a.md", "hi")).data == "written"
     assert (await tool("~/notes/a.md", "hi")).data == "written"
-    assert routed == [("group:team", "notes/a.md"), ("user:u", "notes/a.md")]
+    assert (await tool("notes/b.md", "hi")).data == "written"
+    assert routed == [
+        ("group:team", "notes/a.md"),
+        ("user:u", "notes/a.md"),
+        ("user:u", "notes/b.md"),
+    ]
 
 
 async def test_tmp_is_written_directly_and_a_program_there_is_pointed_at_run_python(
@@ -164,16 +169,16 @@ async def test_tmp_refuses_what_would_outgrow_it(
     _ = await tool("/tmp/b.txt", "34")
 
 
-async def test_unprefixed_path_is_refused_with_the_roots_named(
+async def test_unknown_root_is_refused_with_the_roots_named(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
-    """Nothing is implied by context, so the refusal says what to write instead."""
+    """A sigil-led path is never read as relative, so it cannot land under ``~``."""
     tool = _write_document(deps)
 
     with pytest.raises(
         ToolRetry, match=r"addresses ~, @team, /tmp; give the full path"
     ):
-        await tool("notes/a.md", "hi")
+        await tool("@nope/a.md", "hi")
 
     assert routed == []
 

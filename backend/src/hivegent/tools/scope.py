@@ -33,6 +33,13 @@ class Scope(Protocol):
         """
         ...
 
+    def implies(self, raw: str) -> bool:
+        """Whether an unprefixed *raw* is shorthand for a path under this scope.
+
+        Consulted only after no scope claimed *raw* by its prefix.
+        """
+        ...
+
 
 @dataclass(slots=True, frozen=True)
 class PrefixScope:
@@ -59,3 +66,7 @@ class PrefixScope:
         tag = f"{self.prefix}/"
 
         return raw[len(tag) :] if raw.startswith(tag) else None
+
+    def implies(self, raw: str) -> bool:
+        """A fixed prefix is never implied."""
+        return False

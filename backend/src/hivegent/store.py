@@ -104,6 +104,23 @@ class WorkspaceScope:
         """Return *raw*'s local part if it addresses this scope, else ``None``."""
         return PrefixScope(self.prefix).strip_prefix(raw)
 
+    def implies(self, raw: str) -> bool:
+        """Whether a relative *raw* is shorthand for a path under the personal workspace.
+
+        Anything leading with a scope sigil or ``/`` is not, so an unknown group
+        or an absolute path is still refused rather than written under ``~``.
+
+        >>> WorkspaceScope().implies("notes/a.md"), WorkspaceScope().implies("@team/a.md")
+        (True, False)
+        >>> WorkspaceScope("team").implies("notes/a.md")
+        False
+        """
+        return (
+            self.group_id is None
+            and bool(raw)
+            and not raw.startswith(("/", USER_PREFIX, GROUP_PREFIX))
+        )
+
     @classmethod
     def parse(cls, raw: str) -> tuple[Self, str]:
         """Parse a canonical path into ``(scope, local)`` at a trust boundary.
