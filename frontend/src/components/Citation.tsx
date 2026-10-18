@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { ExtraProps } from "streamdown";
 import { DocumentDialog } from "@/components/DocumentDialog";
+import { DialogBody, ScrollDialogContent } from "@/components/ScrollDialogContent";
 import { Button } from "@/components/ui/button";
 import {
   CodeBlock,
@@ -12,7 +13,6 @@ import {
 } from "@/components/ui/code-block";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
@@ -98,14 +98,14 @@ function EvidenceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-3xl">
+      <ScrollDialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{filename}</DialogTitle>
           <DialogDescription>
             {t(($) => $.evidenceDescription, { position: chunkPositionLabel(position) })}
           </DialogDescription>
         </DialogHeader>
-        <div className="-mx-6 flex min-h-0 flex-col gap-4 overflow-y-auto px-6">
+        <DialogBody>
           {evidence.map(({ chunk, startLine, text }) => (
             <CodeBlock key={chunk.id} size="sm">
               <CodeBlockHeader>
@@ -118,8 +118,8 @@ function EvidenceDialog({
               </CodeBlockContent>
             </CodeBlock>
           ))}
-        </div>
-      </DialogContent>
+        </DialogBody>
+      </ScrollDialogContent>
     </Dialog>
   );
 }

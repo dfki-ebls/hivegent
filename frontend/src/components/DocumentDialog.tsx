@@ -26,6 +26,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { AssetImage } from "@/components/documents/AssetImage";
 import { EmptyState, LoadingState } from "@/components/EmptyState";
 import { ItemButton } from "@/components/RowButtons";
+import { ScrollDialogContent } from "@/components/ScrollDialogContent";
 import { TooltipButton } from "@/components/TooltipButton";
 import { WorkspaceImage } from "@/components/WorkspaceImage";
 import { WorkspaceMarkdown } from "@/components/WorkspaceMarkdown";
@@ -45,7 +46,6 @@ import { Button } from "@/components/ui/button";
 import { CodeBlock, CodeBlockContent, CodeBlockHeader } from "@/components/ui/code-block";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -277,13 +277,13 @@ export function DocumentDialog({ open, onOpenChange, ...props }: DocumentDialogP
   // target) starts from fresh state instead of resetting it in an effect.
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[85dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+      <ScrollDialogContent className="h-[90dvh] gap-0 overflow-hidden p-0 sm:max-w-5xl">
         <DocumentDialogBody
           key={props.chunk?.id ?? props.filename}
           onOpenChange={onOpenChange}
           {...props}
         />
-      </DialogContent>
+      </ScrollDialogContent>
     </Dialog>
   );
 }

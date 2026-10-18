@@ -11,12 +11,12 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 import type { PipelineKind } from "@/lib/types";
+import { DialogBody, ScrollDialogContent } from "@/components/ScrollDialogContent";
 import { TooltipButton } from "@/components/TooltipButton";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -68,7 +68,7 @@ export function PipelineConfigDialog({
       >
         <SettingsIcon />
       </DialogTrigger>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
+      <ScrollDialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {t(($) => $.documents.pipelineConfig.title[pipelineType], { pipeline: pipelineLabel })}
@@ -78,7 +78,7 @@ export function PipelineConfigDialog({
           </DialogDescription>
         </DialogHeader>
         <PipelineConfigForm {...form} onDone={() => setOpen(false)} />
-      </DialogContent>
+      </ScrollDialogContent>
     </Dialog>
   );
 }
@@ -139,7 +139,7 @@ function PipelineConfigForm({
 
   return (
     <>
-      <div className="flex flex-col gap-4">
+      <DialogBody>
         <SchemaForm schema={schema} values={values} onChange={handleFormChange} />
         {hasSchema && (
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
@@ -162,7 +162,7 @@ function PipelineConfigForm({
             </CollapsibleContent>
           </Collapsible>
         )}
-      </div>
+      </DialogBody>
       <DialogFooter>
         <Button
           variant="outline"

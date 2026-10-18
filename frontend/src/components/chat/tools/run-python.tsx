@@ -13,10 +13,10 @@ import {
 import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { ToolCode, ToolOutputResult } from "@/components/chat/tools/display";
 import { ErrorAlert } from "@/components/ErrorAlert";
+import { ScrollDialogContent } from "@/components/ScrollDialogContent";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
@@ -125,13 +125,13 @@ function ScriptFile({ path }: { path: string }) {
           >
             {t(($) => $.viewSource)}
           </DialogTrigger>
-          <DialogContent className="flex h-[min(85vh,56rem)] flex-col sm:max-w-4xl">
+          <ScrollDialogContent className="h-[min(90dvh,56rem)] sm:max-w-4xl">
             <DialogHeader>
               <DialogTitle className="font-mono">{path}</DialogTitle>
               <DialogDescription>{t(($) => $.sourceDescription)}</DialogDescription>
             </DialogHeader>
             <ScriptSourceView path={path} conversationId={conversationId} />
-          </DialogContent>
+          </ScrollDialogContent>
         </Dialog>
       </ItemActions>
     </Item>

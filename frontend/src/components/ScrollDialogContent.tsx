@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 export function ScrollDialogContent({ className, ...props }: ComponentProps<typeof DialogContent>) {
   return (
     <DialogContent
-      className={cn("max-h-[90dvh] grid-rows-[auto_minmax(0,1fr)_auto]", className)}
+      className={cn("flex max-h-[90dvh] flex-col", className)}
       {...props}
     />
   );

@@ -117,12 +117,12 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
 
         <DialogFooter>
           {result && (
-            <Button variant="outline" size="sm" className="sm:mr-auto" onClick={downloadReport}>
+            <Button variant="outline" className="sm:mr-auto" onClick={downloadReport}>
               <DownloadIcon data-icon="inline-start" />
               {t(($) => $.download)}
             </Button>
           )}
-          <Button size="sm" onClick={() => detection.mutate(text)} disabled={!text.trim() || checking}>
+          <Button onClick={() => detection.mutate(text)} disabled={!text.trim() || checking}>
             {checking ? (
               <Spinner data-icon="inline-start" />
             ) : (
