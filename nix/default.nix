@@ -80,6 +80,7 @@
             smokescreen
             docs
             ;
+          docker = config.packages.docker or null;
         };
         release-env = pkgs.buildEnv {
           name = "release-env";

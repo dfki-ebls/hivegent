@@ -11,6 +11,7 @@
 # the NixOS systemd unit (`nixos/service.nix`).
 {
   lib,
+  callPackage,
   dockerTools,
   writeText,
   linkFarm,
@@ -189,6 +190,11 @@ let
   serviceDir = linkFarm "hivegent-dinit.d" (
     lib.mapAttrs (svcName: attrs: writeText svcName (toService attrs)) services
   );
+
+  notices = callPackage ./notices.nix {
+    inherit (backend) version;
+    inherit (backend.meta) license;
+  };
 in
 dockerTools.streamLayeredImage {
   inherit name tag;
@@ -200,6 +206,7 @@ dockerTools.streamLayeredImage {
     tzdata
     dockerTools.caCertificates
     dockerTools.fakeNss
+    notices
   ];
   # dinit reads descriptions read-only from the store (no writable scan dir). The
   # only writable state is the control socket under /run; /tmp (world-writable)
@@ -225,6 +232,15 @@ dockerTools.streamLayeredImage {
       "/run/dinitctl"
     ];
     WorkingDir = dataDir;
+    # The license is Hivegent's own, as the OCI spec reads it, while the
+    # third-party ones are in /usr/share/doc/hivegent/NOTICE.
+    Labels = {
+      "org.opencontainers.image.title" = "Hivegent";
+      "org.opencontainers.image.description" = backend.meta.description;
+      "org.opencontainers.image.version" = backend.version;
+      "org.opencontainers.image.licenses" = backend.meta.license.spdxId;
+      "org.opencontainers.image.vendor" = "DFKI";
+    };
     ExposedPorts."${toString httpPort}/tcp" = { };
     Volumes.${dataDir} = { };
     Healthcheck = {
@@ -241,6 +257,13 @@ dockerTools.streamLayeredImage {
       Retries = 5;
     };
   };
+  # Packages the image runs that are referenced only by store path, which the
+  # SBOM cannot reach through the derivation (`nix/sbom.nix`).
+  passthru.runtimeInputs = [
+    caddy
+    dinit
+    curlMinimal
+  ];
   meta = {
     description = "Hivegent container with inbound and outbound proxies";
     maintainers = with lib.maintainers; [ mirkolenz ];

@@ -14,6 +14,8 @@
   bridge,
   smokescreen,
   docs,
+  # The Linux-only image, or `null` where it cannot be built.
+  docker,
 }:
 let
   buildSbom = pkgs.callPackage ./sbom { inherit cyclonedx-spec; };
@@ -128,10 +130,25 @@ let
       # license nor the name the ecosystem knows the package by.
       excludes = map (package: lib.escapeRegex package.outPath) backend.venvPackages;
     };
-    "components/frontend.cdx.json" = bombon.buildBom (npmSbom frontend) { };
+    # A bundle ships what its build inlines, and an SPA declares that as dev
+    # dependencies too (Tailwind and its CSS imports, Vite's runtime helpers), so
+    # the frontend keeps them. The bridge runs from its pruned `node_modules`.
+    "components/frontend.cdx.json" = bombon.buildBom (bombon.passthruVendoredSbom.npm frontend {
+      inherit pkgs;
+      includeBuildtimeDependencies = true;
+    }) { };
     "components/bridge.cdx.json" = bombon.buildBom (npmSbom bridge) { };
     "components/smokescreen.cdx.json" = bombon.buildBom (goSbom smokescreen) { };
     "components/docs.cdx.json" = bombon.buildBom docs { };
+  }
+  // lib.optionalAttrs (docker != null) {
+    # The image itself, whose runtime closure bombon reads from the derivation.
+    # It describes only the store paths it can reach through `drvAttrs`, which
+    # leaves out the components above with documents of their own and the
+    # packages the image names only by store path, its `runtimeInputs`.
+    "components/image.cdx.json" = bombon.buildBom docker {
+      extraPaths = docker.runtimeInputs;
+    };
   };
 in
 buildSbom {
