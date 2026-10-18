@@ -33,7 +33,7 @@ It uses the Shiki core with the JavaScript regex engine and the languages in `li
 Mermaid is imported lazily on the first diagram.
 
 Workspace documents render with markdown-to-jsx, since Streamdown is too slow for documents of hundreds of pages.
-They are styled by shadcn/typeset, vendored unchanged as `src/typeset.css`.
+They are styled by shadcn/typeset, vendored unchanged as `src/typeset.css`, so refresh it from the URL in its header.
 Replies keep Streamdown's own styles, since it has no unstyled mode.
 
 ## Server state lives in TanStack Query, client state in Zustand
