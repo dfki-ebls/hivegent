@@ -9,3 +9,4 @@
 - [KI-Transparenz](ai-transparency.md)
 - [Fehlerbehebung](troubleshooting.md)
 - [FAQ](faq.md)
+- [Ergänzende Nutzungsbedingungen](terms.md)

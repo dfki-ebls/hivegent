@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { NewTabLink } from "@/components/NewTabLink";
 
-/** Link to the third-party notices that `build.license` emits next to `index.html`. */
+/** Link to the license, additional terms, and third-party notices that `build.license` emits next to `index.html`. */
 export function LicensesLink(props: ComponentProps<"a">) {
   const { t } = useTranslation();
 

@@ -1,0 +1,112 @@
+# Ergänzende Nutzungsbedingungen Hivegent
+
+## § 1 Geltungsbereich und Verhältnis zur MIT-Lizenz
+
+(1) Diese ergänzenden Nutzungsbedingungen der Deutsches Forschungszentrum für Künstliche Intelligenz GmbH (DFKI), Trippstadter Str. 122, 67663 Kaiserslautern, gelten für die Bereitstellung der im Forschungsprojekt RAISE entwickelten Software Hivegent einschließlich Dokumentation durch das DFKI und die Anwendung durch den Nutzer.
+Nutzer ist jede natürliche oder juristische Person, die die Software herunterlädt, installiert oder verwendet.
+
+(2) Die Software wird quelloffen und unentgeltlich unter der MIT-Lizenz bereitgestellt.
+Die nachfolgenden Bestimmungen umfassen eine Einordnung nach der Verordnung (EU) 2024/1689 (KI-Verordnung/AI-Act) und ergänzen die Gewährleistungs- und Haftungsregelungen der MIT-Lizenz.
+Zwingende gesetzliche Vorschriften bleiben unberührt.
+
+(3) Diese Nutzungsbedingungen lassen die Rechte des Nutzers aus der MIT-Lizenz unberührt.
+Zusätzliche Beschränkungen der Nutzung, Bearbeitung oder Weitergabe werden nicht begründet.
+Bei Widersprüchen geht die MIT-Lizenz im Umfang des Widerspruchs vor und im Übrigen bleiben diese Nutzungsbedingungen wirksam.
+
+(4) Abweichende, entgegenstehende oder ergänzende Bedingungen des Nutzers werden nicht Vertragsbestandteil.
+
+## § 2 Gegenstand und bekannte Einschränkungen
+
+(1) Hivegent ist ein im Forschungsumfeld entwickeltes Framework für Retrieval-Augmented Generation und darauf aufbauende Assistenzanwendungen.
+Die Bereitstellung erfolgt im Rahmen des gemeinnützigen Forschungsauftrags des DFKI und unentgeltlich.
+
+(2) KI-generierte Inhalte und Empfehlungen sind nicht notwendig vollständig oder fehlerfrei.
+Sie können unzutreffende Aussagen enthalten, auch wenn Dokumente und Quellen herangezogen werden.
+Eine fachliche Überprüfung vor ihrer Verwendung wird empfohlen.
+Die Software ersetzt keine organisatorischen oder rechtlichen Schutzmaßnahmen des Nutzers.
+
+## § 3 Einordnung nach dem AI-Act
+
+(1) Für die im RAISE-Projekt beschriebenen RAG- und Assistenzfunktionen liegt nach Einschätzung des DFKI zum gegenwärtigen Zeitpunkt weder eine verbotene Praktik im Sinne des Art. 5 Abs. 1 der Verordnung (EU) 2024/1689 (KI-Verordnung/AI-Act) noch ein Hochrisiko-KI-System im Sinne des Art. 6 Abs. 1 oder 2 in Verbindung mit Anhang I oder III vor.
+Diese Einordnung beruht auf der vorliegenden Projektbeschreibung und gilt nicht für davon abweichende Funktionen oder Einsatzfelder.
+
+(2) Die Open-Source-Bereitstellung führt nicht zu einer pauschalen Ausnahme vom AI-Act.
+Insbesondere bleiben die Rückausnahmen für Hochrisiko-KI-Systeme und Systeme nach Art. 5 oder 50 gemäß Art. 2 Abs. 12 zu beachten.
+
+(3) Ändert der Nutzer die Software, ihre Zweckbestimmung oder ihren Einsatzbereich oder bindet er sie in eigene Systeme oder Verarbeitungsvorgänge ein, ist er für die hieraus folgende regulatorische Neubewertung und die Einhaltung der Pflichten nach dem AI-Act in eigener Verantwortung zuständig.
+Eine Zusicherung zur AI-Act-Konformität eigener Konfigurationen oder Anwendungen des Nutzers gibt das DFKI nicht ab.
+Eigene gesetzliche Pflichten des DFKI bleiben unberührt.
+
+(4) Bei interaktiven oder generativen Anwendungen ist insbesondere Art. 50 AI-Act zu beachten, soweit dessen Voraussetzungen erfüllt sind.
+Diese Nutzungsbedingungen ersetzen weder erforderliche Informationen in der Anwendung noch eine erforderliche maschinenlesbare Kennzeichnung der Ausgaben.
+
+## § 4 Gewährleistung und Beschaffenheit
+
+(1) Die Software wird im vorliegenden Zustand ("as is") und ohne jede Zusicherung einer bestimmten Beschaffenheit, Eignung für einen bestimmten Zweck, Vollständigkeit, Richtigkeit, Verfügbarkeit, Fehlerfreiheit oder Schutzrechtsfreiheit bereitgestellt.
+
+(2) Das DFKI schuldet keine Aktualisierung, Wartung, Pflege, Weiterentwicklung oder Unterstützung der Software und keine bestimmte Verfügbarkeit.
+Etwaige bereitgestellte Aktualisierungen erfolgen freiwillig.
+
+(3) Eine Garantie oder freiwillige verschuldensunabhängige Beschaffenheitshaftung übernimmt das DFKI nicht.
+Öffentliche Äußerungen, Projektbeschreibungen oder Dokumentationen stellen für sich genommen keine Garantie oder Beschaffenheitsvereinbarung dar.
+
+## § 5 Haftungsbeschränkung
+
+(1) Das DFKI haftet unbeschränkt für Schäden aus schuldhaften Verletzungen des Lebens, des Körpers oder der Gesundheit sowie für Schäden, die auf Vorsatz oder grober Fahrlässigkeit des DFKI, seiner gesetzlichen Vertreter oder Erfüllungsgehilfen beruhen.
+
+(2) Bei einfacher Fahrlässigkeit haftet das DFKI nur bei Verletzung einer wesentlichen Vertragspflicht (Kardinalpflicht), deren Erfüllung die ordnungsgemäße Durchführung überhaupt erst ermöglicht und auf deren Einhaltung der Nutzer regelmäßig vertrauen darf.
+In diesem Fall ist die Haftung auf den bei Bereitstellung vorhersehbaren, vertragstypischen Schaden begrenzt.
+
+(3) Im Übrigen ist die Haftung des DFKI für einfache Fahrlässigkeit ausgeschlossen.
+Dies gilt insbesondere für mittelbare Schäden, Folgeschäden, entgangenen Gewinn, Datenverlust und Betriebsunterbrechung, soweit gesetzlich zulässig.
+
+(4) Die Haftung wegen arglistig verschwiegener Mängel und aufgrund zwingender gesetzlicher Vorschriften, insbesondere nach dem Produkthaftungsgesetz, bleibt unberührt.
+
+(5) Soweit die Haftung des DFKI ausgeschlossen oder beschränkt ist, gilt dies auch für die persönliche Haftung der Organe, gesetzlichen Vertreter, Mitarbeiter und Erfüllungsgehilfen des DFKI hinsichtlich ihrer Tätigkeit für das DFKI.
+
+## § 6 Open-Source-, Drittkomponenten und vorbestehende Rechte
+
+(1) Für gesondert lizenzierte Drittkomponenten, Modelle, Datensätze und Dienste gelten die jeweiligen Lizenz- und Nutzungsbedingungen der Rechteinhaber.
+Der Nutzer ist für deren Einhaltung bei eigener Nutzung, Bearbeitung oder Verbreitung selbst verantwortlich.
+Die MIT-Lizenz von Hivegent erstreckt sich nicht automatisch auf diese Bestandteile.
+Eine eigene Gewährleistung oder Haftung des DFKI für Drittkomponenten ist ausgeschlossen.
+Die gesetzliche Haftung des DFKI für eigene Pflichtverletzungen sowie die Haftungsbeschränkung nach § 5 bleiben unberührt.
+
+(2) Vorbestehende Rechte des DFKI (Background IP) sowie Rechte Dritter bleiben unberührt.
+Eine Nutzungsrechtseinräumung erfolgt ausschließlich im Umfang der MIT-Lizenz; eine darüber hinausgehende Übertragung von Rechten findet nicht statt.
+
+(3) Die MIT-Lizenz räumt keine Marken- oder Kennzeichenrechte des DFKI ein.
+Die Nutzung von Marken, Logos und Kennzeichen des DFKI über gesetzlich zulässige Nutzungen hinaus bedarf der vorherigen Zustimmung des DFKI in Textform.
+
+(4) Forschungs-, Lehr-, Publikations- und Demonstrationsrechte des DFKI bleiben uneingeschränkt erhalten.
+
+## § 7 Datenschutz und Eigenverantwortung des Nutzers
+
+(1) Der Nutzer setzt die Software in eigener Verantwortung und auf eigenes Risiko ein.
+Er hat insbesondere die in diesen Bedingungen genannten Einschränkungen zu beachten und die Ausgaben vor ihrer Verwendung zu prüfen.
+
+(2) Der Nutzer stellt das DFKI von Ansprüchen Dritter frei, die auf einer ihm zurechenbaren rechtswidrigen oder bestimmungswidrigen Nutzung der Software oder der Nichteinhaltung von Drittlizenzbedingungen beruhen, soweit er dies zu vertreten hat.
+
+(3) Der Nutzer ist für die rechtmäßige Eingabe und weitere Verarbeitung von Daten in seinem eigenen Verantwortungsbereich verantwortlich.
+Er muss die jeweils geltenden Datenschutzvorschriften und sonstigen rechtlichen Anforderungen beachten.
+Eigene gesetzliche Pflichten des DFKI bleiben unberührt.
+
+## § 8 Bereitstellung und Beendigung
+
+(1) Das DFKI kann die Bereitstellung der Software jederzeit einstellen, ändern oder einzelne Funktionen anpassen.
+Ein Anspruch auf fortgesetzte Bereitstellung besteht nicht.
+
+(2) Bereits eingeräumte Rechte aus der MIT-Lizenz an einer bezogenen Version bleiben hiervon unberührt.
+
+## § 9 Schlussbestimmungen
+
+(1) Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts und der Verweisungsnormen des internationalen Privatrechts.
+Zwingende verbraucherschützende Bestimmungen des Staates, in dem ein als Verbraucher handelnder Nutzer seinen gewöhnlichen Aufenthalt hat, bleiben unberührt.
+
+(2) Ist der Nutzer ein Kaufmann i.S.d. HGB, eine juristische Person des öffentlichen Rechts oder öffentlich-rechtliches Sondervermögen, ist ausschließlicher Gerichtsstand für alle sich aus dem Vertragsverhältnis ergebenden Streitigkeiten Kaiserslautern.
+Für alle anderen Nutzer gilt der gesetzliche Gerichtsstand.
+
+(3) Sollten einzelne Bestimmungen dieser Nutzungsbedingungen unwirksam oder undurchführbar sein oder werden, bleibt die Wirksamkeit der übrigen Bestimmungen unberührt.
+Anstelle der unwirksamen oder undurchführbaren Bestimmung gilt die gesetzliche Regelung.
+
+(4) Maßgeblich ist die deutsche Fassung dieser Nutzungsbedingungen.

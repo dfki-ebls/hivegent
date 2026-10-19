@@ -9,3 +9,4 @@
 - [AI transparency](ai-transparency.md)
 - [Troubleshooting](troubleshooting.md)
 - [FAQ](faq.md)
+- [Additional terms](terms.md)

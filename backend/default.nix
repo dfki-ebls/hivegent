@@ -112,11 +112,23 @@ let
         ];
       }
     );
-    hivegent-backend = prev.hivegent-backend.overrideAttrs (old: {
+    # `license-files` in `pyproject.toml` reaches the repo-level license
+    # and additional terms through symlinks,
+    # so the build source must span both for them to resolve.
+    hivegent-backend = prev.hivegent-backend.overrideAttrs (finalAttrs: old: {
+      src = lib.fileset.toSource {
+        root = ../.;
+        fileset = lib.fileset.unions [
+          ./.
+          ../LICENSE
+          ../TERMS
+        ];
+      };
+      sourceRoot = "${finalAttrs.src.name}/backend";
       passthru = lib.recursiveUpdate (old.passthru or { }) {
         tests.pytest = stdenv.mkDerivation {
           name = "${final.hivegent-backend.name}-pytest";
-          inherit (final.hivegent-backend) src;
+          inherit (final.hivegent-backend) src sourceRoot;
           nativeBuildInputs = [
             cacert
             (mkVenv "hivegent-test-env" {

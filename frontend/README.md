@@ -95,7 +95,8 @@ Dates, numbers, and sizes go through `@/i18n/format`, and `npm run i18n:lint` li
 ## Licenses ship with the bundle
 
 Every browser receives a copy of the bundle, so the licenses travel with it.
-The Nix build adds the project's own as `LICENSE`, and Vite's `build.license` writes the bundled packages' to `licenses.txt`, linked from the landing page and the user menu.
+Vite's `build.license` writes the bundled packages' notices to `licenses.txt`, linked from the landing page and the user menu.
+A plugin in `vite.config.ts` prefixes it with the project's license and additional terms from the repo root, the latter in their canonical German version.
 It walks the JS module graph, so CSS has to be imported from JS to be listed, like the Inter font in `main.tsx`.
 
 ## Moves and deletes are one request

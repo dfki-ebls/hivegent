@@ -1,4 +1,4 @@
-# License notices shipped in the image.
+# License notices and additional terms shipped in the image.
 {
   stdenv,
   linkFarm,
@@ -14,9 +14,10 @@ let
 in
 linkFarm "hivegent-notices-${version}" {
   "${doc}/LICENSE" = ../LICENSE;
+  "${doc}/TERMS" = ../TERMS;
   "usr/share/licenses" = "${spdx-license-list-data.text}/text";
   "${doc}/NOTICE" = writeText "NOTICE" ''
-    Hivegent ${version} is licensed under the ${license.fullName} in LICENSE.
+    Hivegent ${version} is licensed under the ${license.fullName} in LICENSE, with additional terms in TERMS.
     Third-party components and their licenses are listed in the SBOM:
       ${repo}/releases/download/v${version}/hivegent-${version}.cdx.json
     License texts are in /usr/share/licenses, the *.dist-info directories, and the web app at /licenses.txt.

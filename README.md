@@ -27,4 +27,4 @@ nix flake check      # everything CI runs
 
 ## License
 
-See [`LICENSE`](LICENSE).
+See the [license](LICENSE) and the [additional terms](TERMS).

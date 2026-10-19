@@ -31,6 +31,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     fileset = lib.fileset.unions [
       ./.
       ../assets/logo.svg
+      ../TERMS
     ];
   };
   sourceRoot = "${finalAttrs.src.name}/docs";
@@ -58,6 +59,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     mv book $out
     cp assets/redirect.html $out/index.html
     cp ${../LICENSE} $out/LICENSE
+    cp ${../TERMS} $out/TERMS
     runHook postInstall
   '';
 

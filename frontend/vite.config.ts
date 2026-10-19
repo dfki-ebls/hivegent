@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
@@ -15,10 +16,30 @@ export default defineConfig({
     oidcSpa(),
     viteReact(),
     tailwindcss(),
+    {
+      name: "hivegent-notices",
+      generateBundle: {
+        order: "post",
+        handler(_, bundle) {
+          const notices = bundle["licenses.txt"];
+
+          if (notices?.type !== "asset") {
+            throw new Error("Missing generated license notices");
+          }
+
+          notices.source = [
+            readFileSync(new URL("../LICENSE", import.meta.url), "utf8"),
+            readFileSync(new URL("../TERMS", import.meta.url), "utf8"),
+            notices.source,
+          ].join("\n\n");
+        },
+      },
+    },
   ],
   build: {
     chunkSizeWarningLimit: 5000,
-    // Served next to `index.html`, the notices that the bundled packages require.
+    // Served next to `index.html`, the notices that the bundled packages require,
+    // prefixed with the license and additional terms by the plugin above.
     license: { fileName: "licenses.txt" },
   },
   server: {

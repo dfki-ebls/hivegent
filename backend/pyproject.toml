@@ -5,6 +5,7 @@ description = "Agentic system for non-expert users to interact with LLMs guided 
 readme = "README.md"
 requires-python = ">=3.13,<4"
 license = "MIT"
+license-files = ["LICENSE", "TERMS"]
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
   "alembic>=1,<2",

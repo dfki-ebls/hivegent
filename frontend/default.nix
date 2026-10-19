@@ -14,13 +14,15 @@ buildNpmPackage (finalAttrs: {
   VITE_DOCS_URL = docsUrl;
 
   # The canonical logo lives at the repo-level `assets/` and is symlinked into
-  # `public/`, so the build source must span both directories for the symlink
-  # to resolve in the sandbox.
+  # `public/`, and `vite.config.ts` reads the repo-level license
+  # and additional terms, so the build source must span the repo root.
   src = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [
       ./.
       ../assets/logo.svg
+      ../LICENSE
+      ../TERMS
     ];
   };
   sourceRoot = "${finalAttrs.src.name}/frontend";
@@ -37,7 +39,6 @@ buildNpmPackage (finalAttrs: {
 
     mkdir -p "$out"
     cp -r "dist/." "$out"
-    cp ${../LICENSE} $out/LICENSE
 
     runHook postInstall
   '';

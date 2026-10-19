@@ -19,6 +19,12 @@ buildNpmPackage (finalAttrs: {
     runHook postCheck
   '';
 
+  # npm pack skips symlinks, so the license and additional terms are copied in directly.
+  postInstall = ''
+    cp ${../LICENSE} "$out/lib/node_modules/hivegent-bridge/LICENSE"
+    cp ${../TERMS} "$out/lib/node_modules/hivegent-bridge/TERMS"
+  '';
+
   meta = {
     description = "Multi-platform chat bridge exposing the hivegent backend via the Vercel Chat SDK";
     mainProgram = "hivegent-bridge";
