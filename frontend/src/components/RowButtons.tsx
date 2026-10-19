@@ -11,9 +11,10 @@ import { Item } from "@/components/ui/item";
 /**
  * Fades a row action in while its `group/row` row is hovered or holds focus,
  * and keeps the hidden action from catching clicks.
+ * A touch screen cannot hover, so there the action always shows.
  */
 export const REVEAL_ON_HOVER =
-  "pointer-events-none opacity-0 transition-opacity group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100";
+  "pointer-events-none opacity-0 transition-opacity group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100";
 
 /** The chevron that expands or collapses a row, also usable as a `CollapsibleTrigger` render. */
 export function ExpandButton({
