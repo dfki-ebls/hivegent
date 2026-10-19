@@ -4,14 +4,20 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { TraceStep } from "@/components/chat/TraceStep";
-import { ToolCard, toolLineState } from "@/components/chat/tools/ToolCard";
+import { ToolCard } from "@/components/chat/tools/ToolCard";
 import { ToolCode } from "@/components/chat/tools/display";
 import { ToolIcon } from "@/components/chat/tools/icons";
 import { Badge } from "@/components/ui/badge";
 import { Trace } from "@/components/ui/trace";
 import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
 import type { SubagentStep } from "@/lib/chat/subagent";
-import { prettyPrint, type ToolPart, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
+import {
+  prettyPrint,
+  type ToolPart,
+  toolDisplayName,
+  toolInput,
+  toolLineState,
+} from "@/lib/chat/tool-part";
 
 function describeStep(t: TFunction, step: SubagentStep): { icon: ReactNode; label: string } {
   switch (step.kind) {

@@ -9,6 +9,34 @@ import type { AddChunk, AddImage, MarkFullDocument } from "@/stores/fetched-docu
 
 export type ToolPart = ToolUIPart | DynamicToolUIPart;
 
+interface LineState {
+  status?: "running" | "error";
+  label?: keyof typeof chat.tools.status;
+}
+
+const RUNNING: LineState = { status: "running", label: "running" };
+
+/** How a call's line reads, where a call that never finished was stopped once the chat stops streaming. */
+export function toolLineState(part: ToolPart, streaming: boolean): LineState {
+  switch (part.state) {
+    case "input-streaming":
+    case "input-available":
+      return streaming ? RUNNING : { status: "error", label: "stopped" };
+    case "approval-requested":
+      return { label: "awaitingApproval" };
+    case "approval-responded":
+      if (!part.approval.approved) return { label: "denied" };
+
+      return streaming ? RUNNING : { label: "approved" };
+    case "output-available":
+      return part.preliminary && streaming ? RUNNING : {};
+    case "output-error":
+      return { status: "error", label: "failed" };
+    case "output-denied":
+      return { label: "denied" };
+  }
+}
+
 /** Everything a tool handler may draw on to persist what its call captured. */
 export interface SyncOutputContext {
   input: Record<string, unknown> | undefined;

@@ -4,9 +4,9 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChatPart } from "@/components/chat/MessagePart";
 import { TraceStepCollapsible } from "@/components/chat/TraceStep";
-import { toolLineState } from "@/components/chat/tools/ToolCard";
 import { Spinner } from "@/components/ui/spinner";
 import { Trace } from "@/components/ui/trace";
+import { toolLineState } from "@/lib/chat/tool-part";
 import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
 
 const STATUS_ICONS = { running: <Spinner />, error: <CircleAlertIcon /> };

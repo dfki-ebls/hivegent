@@ -1,42 +1,13 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { TraceStepCollapsible, type TraceStepStatus } from "@/components/chat/TraceStep";
+import { TraceStepCollapsible } from "@/components/chat/TraceStep";
 import { ApprovalDecision, ApprovalPrompt } from "@/components/chat/tools/approval";
 import { ChangesetSummarySchema, ChangesetView } from "@/components/chat/tools/changeset";
 import { ToolError, ToolParameters } from "@/components/chat/tools/display";
 import { ToolIcon } from "@/components/chat/tools/icons";
 import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
 import { useApprovalMetadata } from "@/hooks/chat/use-tool-approval";
-import type { chat } from "@/i18n/locales/en/chat";
-import { type ToolPart, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
-
-interface LineState {
-  status?: TraceStepStatus;
-  label?: keyof typeof chat.tools.status;
-}
-
-const RUNNING: LineState = { status: "running", label: "running" };
-
-/** How a call's line reads, where a call that never finished was stopped once the chat stops streaming. */
-export function toolLineState(part: ToolPart, streaming: boolean): LineState {
-  switch (part.state) {
-    case "input-streaming":
-    case "input-available":
-      return streaming ? RUNNING : { status: "error", label: "stopped" };
-    case "approval-requested":
-      return { label: "awaitingApproval" };
-    case "approval-responded":
-      if (!part.approval.approved) return { label: "denied" };
-
-      return streaming ? RUNNING : { label: "approved" };
-    case "output-available":
-      return part.preliminary && streaming ? RUNNING : {};
-    case "output-error":
-      return { status: "error", label: "failed" };
-    case "output-denied":
-      return { label: "denied" };
-  }
-}
+import { type ToolPart, toolDisplayName, toolInput, toolLineState } from "@/lib/chat/tool-part";
 
 interface ToolCardProps {
   toolName: string;

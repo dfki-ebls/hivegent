@@ -3,7 +3,6 @@ import type { FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { TraceStepCollapsible } from "@/components/chat/TraceStep";
 import { PromptItem } from "@/components/chat/tools/approval";
-import { toolLineState } from "@/components/chat/tools/ToolCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,7 +32,13 @@ import {
   type AskQuestion,
   DISMISSED_ERROR,
 } from "@/lib/chat/ask-user";
-import { type ToolPart, parseJson, toolDisplayName, toolInputAs } from "@/lib/chat/tool-part";
+import {
+  type ToolPart,
+  parseJson,
+  toolDisplayName,
+  toolInputAs,
+  toolLineState,
+} from "@/lib/chat/tool-part";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.ask);
 
