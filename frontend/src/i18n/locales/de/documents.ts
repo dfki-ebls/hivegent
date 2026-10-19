@@ -31,7 +31,6 @@ export const documents = {
     stopExcluding: "Nicht mehr vom Chat ausschließen",
   },
   manager: {
-    personal: "~ (Persönlich)",
     searchPlaceholder: "Dokumente durchsuchen …",
     droppedItems: "Abgelegte Objekte",
   },

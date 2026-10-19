@@ -29,7 +29,6 @@ export const documents = {
     stopExcluding: "Stop excluding from chat",
   },
   manager: {
-    personal: "~ (Personal)",
     searchPlaceholder: "Search documents …",
     droppedItems: "Dropped items",
   },

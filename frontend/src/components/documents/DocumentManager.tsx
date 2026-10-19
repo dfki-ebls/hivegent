@@ -21,6 +21,7 @@ import type { PipelineSpec } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 import { documentMutations } from "@/queries/documents";
 import { useServerSettings } from "@/queries/settings";
+import { useUserName } from "@/hooks/use-user-name";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
   type UploadOptions,
@@ -36,6 +37,7 @@ import { UploadArea } from "@/components/documents/UploadArea";
 
 export function DocumentManager() {
   const { t } = useTranslation();
+  const userName = useUserName();
   const overrides = useSettingsStore((s) => s.overrides);
   const conversionPipeline = useSettingsStore((s) => s.conversionPipeline);
   const chunkingPipeline = useSettingsStore((s) => s.chunkingPipeline);
@@ -259,7 +261,7 @@ export function DocumentManager() {
       <div className="flex flex-col gap-1 px-4 pb-4">
         <ScopeSection
           scope={PERSONAL_SCOPE}
-          label={t(($) => $.documents.manager.personal)}
+          label={userName}
           canWrite
           defaultOpen
           searchQuery={searchQuery}

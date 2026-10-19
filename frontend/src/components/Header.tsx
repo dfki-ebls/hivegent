@@ -8,6 +8,7 @@ import { JobTray } from "@/components/JobTray";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
 import { useIsAdmin } from "@/queries/settings";
+import { useUserName } from "@/hooks/use-user-name";
 import { PRODUCT_NAME } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,21 +26,13 @@ function UserMenu() {
   const { t } = useTranslation();
   const oidc = useOidc();
   const isAdmin = useIsAdmin();
+  const userName = useUserName();
 
   if (!oidc.isUserLoggedIn) {
     return null;
   }
 
   const { decodedIdToken, logout } = oidc;
-  const fullName = [decodedIdToken.given_name, decodedIdToken.family_name]
-    .filter(Boolean)
-    .join(" ");
-  const userName =
-    fullName ||
-    decodedIdToken.name ||
-    decodedIdToken.preferred_username ||
-    decodedIdToken.email ||
-    t(($) => $.app.userMenu.fallbackName);
 
   return (
     <DropdownMenu>
