@@ -41,6 +41,8 @@
     "react-i18next": "^17",
     "shiki": "^4",
     "streamdown": "^2",
+    "tailwindcss": "^4",
+    "tw-animate-css": "^1",
     "zod": "^4",
     "zustand": "^5"
   },
@@ -54,8 +56,6 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
     "jsdom": "^30",
-    "tailwindcss": "^4",
-    "tw-animate-css": "^1",
     "typescript": "^7",
     "vite": "^8",
     "vitest": "^5"

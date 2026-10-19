@@ -130,13 +130,9 @@ let
       # license nor the name the ecosystem knows the package by.
       excludes = map (package: lib.escapeRegex package.outPath) backend.venvPackages;
     };
-    # A bundle ships what its build inlines, and an SPA declares that as dev
-    # dependencies too (Tailwind and its CSS imports, Vite's runtime helpers), so
-    # the frontend keeps them. The bridge runs from its pruned `node_modules`.
-    "components/frontend.cdx.json" = bombon.buildBom (bombon.passthruVendoredSbom.npm frontend {
-      inherit pkgs;
-      includeBuildtimeDependencies = true;
-    }) { };
+    # The frontend declares what its bundle inlines as runtime dependencies,
+    # Tailwind's CSS imports included. The bridge runs from its pruned `node_modules`.
+    "components/frontend.cdx.json" = bombon.buildBom (npmSbom frontend) { };
     "components/bridge.cdx.json" = bombon.buildBom (npmSbom bridge) { };
     "components/smokescreen.cdx.json" = bombon.buildBom (goSbom smokescreen) { };
     "components/docs.cdx.json" = bombon.buildBom docs { };
