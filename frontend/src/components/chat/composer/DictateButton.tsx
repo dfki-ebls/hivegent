@@ -31,7 +31,6 @@ const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
 const canRecord = "MediaRecorder" in window && "mediaDevices" in navigator;
 
 interface DictateButtonProps {
-  disabled: boolean;
   onText: (text: string) => void;
   /** Transcribes a recording where the browser cannot recognize speech itself. */
   transcribe?: (audio: Blob) => Promise<string>;
@@ -41,7 +40,7 @@ interface DictateButtonProps {
  * Dictates into the draft, with the browser's speech recognition or a recording,
  * and renders nothing where neither can run.
  */
-export function DictateButton({ disabled, onText, transcribe }: DictateButtonProps) {
+export function DictateButton({ onText, transcribe }: DictateButtonProps) {
   const { t } = useTranslation();
   const [listening, setListening] = useState(false);
   // A failed transcription raises the mutation toast, the draft stays as it was.
@@ -109,7 +108,7 @@ export function DictateButton({ disabled, onText, transcribe }: DictateButtonPro
         size="icon-sm"
         variant={listening ? "destructive" : "ghost"}
         aria-pressed={listening}
-        disabled={(disabled && !listening) || transcription.isPending}
+        disabled={transcription.isPending}
         onClick={toggle}
       >
         {transcription.isPending ? <Spinner /> : listening ? <SquareIcon /> : <MicIcon />}

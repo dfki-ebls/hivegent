@@ -181,11 +181,7 @@ export function Composer({
               <ImagePlusIcon />
             </InputGroupButton>
           </WithTooltip>
-          <DictateButton
-            disabled={status !== "ready"}
-            transcribe={onAudioRecorded}
-            onText={dictate}
-          />
+          <DictateButton transcribe={onAudioRecorded} onText={dictate} />
           <SettingsDialog />
           <ReasoningEffortSelector
             value={reasoningEffort}
