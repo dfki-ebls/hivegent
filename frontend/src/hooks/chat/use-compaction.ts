@@ -52,7 +52,8 @@ export function useCompaction({
       });
     },
     onSuccess: async ({ new_conversation_id }, { id: compactedId, retryLastMessage }) => {
-      const open = () => navigate({ to: "/conversations/$id", params: { id: new_conversation_id } });
+      const open = () =>
+        navigate({ to: "/conversations/$id", params: { id: new_conversation_id } });
 
       // The user moved on while it ran, so offer the result instead of switching.
       if (activeIdRef.current !== compactedId) {
@@ -61,7 +62,10 @@ export function useCompaction({
           type: "success",
           title: i18n.t(($) => $.chat.compaction.compacted),
           description: i18n.t(($) => $.chat.compaction.compactedDescription),
-          actionProps: { children: i18n.t(($) => $.common.actions.open), onClick: () => void open() },
+          actionProps: {
+            children: i18n.t(($) => $.common.actions.open),
+            onClick: () => void open(),
+          },
         });
 
         return;

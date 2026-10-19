@@ -129,12 +129,7 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       if (existing?.image?.filePath === image.filePath) return state;
 
       const newDocs = new Map(state.documents);
-      newDocs.set(
-        filename,
-        existing
-          ? { ...existing, image }
-          : { filename, chunkIds: [], image },
-      );
+      newDocs.set(filename, existing ? { ...existing, image } : { filename, chunkIds: [], image });
       return { documents: newDocs };
     }),
 

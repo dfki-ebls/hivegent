@@ -86,7 +86,9 @@ describe("useFetchedDocumentsStore", () => {
     });
 
     it("records the line count the backend reported", () => {
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "a\nb\nc\n", "read", "s1", 3);
+      useFetchedDocumentsStore
+        .getState()
+        .markFullDocument("report.md", "a\nb\nc\n", "read", "s1", 3);
 
       expect(useFetchedDocumentsStore.getState().documents.get("report.md")!.totalLines).toBe(3);
     });
