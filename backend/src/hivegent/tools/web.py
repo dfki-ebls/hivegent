@@ -5,7 +5,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr
 from functools import lru_cache
 from importlib.metadata import metadata
@@ -398,7 +398,7 @@ class OpenserpBackend(SearchBackend):
     @override
     def params(self, search: WebQuery, max_results: int) -> dict[str, str | None]:
         language, _, region = (search.language or "").partition("-")
-        today = date.today()
+        today = datetime.now(UTC).date()
         days = _TIME_RANGE_DAYS[search.time_range] if search.time_range else None
         since = (
             f"{today - timedelta(days=days):%Y%m%d}..{today:%Y%m%d}" if days else None
