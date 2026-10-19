@@ -1,19 +1,30 @@
+import type { FileUIPart } from "ai";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 export interface SteeringMessage {
   id: string;
   text: string;
+  files: FileUIPart[];
 }
 
-export function useSteeringQueue(isStreaming: boolean, onDrain: (text: string) => void) {
+export function useSteeringQueue(
+  isStreaming: boolean,
+  onDrain: (text: string, files: FileUIPart[]) => void,
+) {
   const [queue, setQueue] = useState<SteeringMessage[]>([]);
   const prevStreamingRef = useRef(isStreaming);
 
   const drain = useEffectEvent(() => {
     if (queue.length === 0) return;
     setQueue([]);
-    onDrain(queue.map((m) => m.text).join("\n\n"));
+    onDrain(
+      queue
+        .map((m) => m.text)
+        .filter(Boolean)
+        .join("\n\n"),
+      queue.flatMap((m) => m.files),
+    );
   });
 
   useEffect(() => {
@@ -22,10 +33,10 @@ export function useSteeringQueue(isStreaming: boolean, onDrain: (text: string) =
     if (wasStreaming && !isStreaming) drain();
   }, [isStreaming]);
 
-  const enqueue = useCallback((text: string) => {
+  const enqueue = useCallback((text: string, files: FileUIPart[]) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    setQueue((prev) => [...prev, { id: nanoid(), text: trimmed }]);
+    if (!trimmed && files.length === 0) return;
+    setQueue((prev) => [...prev, { id: nanoid(), text: trimmed, files }]);
   }, []);
 
   return { queue, enqueue };

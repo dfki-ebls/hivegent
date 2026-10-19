@@ -358,7 +358,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
           <SteeringQueue queue={steeringQueue} />
           <Composer
             onSubmit={(text, files) => {
-              if (isStreaming) enqueueSteering(text);
+              if (isStreaming) enqueueSteering(text, files);
               else void handleSendMessage(text, files);
             }}
             status={status}

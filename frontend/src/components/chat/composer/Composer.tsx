@@ -32,7 +32,7 @@ function readDataUrl(file: File): Promise<string> {
 }
 
 interface ComposerProps {
-  onSubmit: (text: string, files?: FileUIPart[]) => void;
+  onSubmit: (text: string, files: FileUIPart[]) => void;
   status: ChatStatus;
   onStop: () => void;
   isStreaming: boolean;

@@ -19,7 +19,16 @@ export function SteeringQueue({ queue }: { queue: SteeringMessage[] }) {
       >
         <Trace>
           {queue.map((msg) => (
-            <TraceStep key={msg.id} icon={<CircleIcon />} title={msg.text} />
+            <TraceStep
+              key={msg.id}
+              icon={<CircleIcon />}
+              title={
+                msg.text ||
+                msg.files
+                  .map((file) => file.filename ?? t(($) => $.chat.messages.attachedImage))
+                  .join(", ")
+              }
+            />
           ))}
         </Trace>
       </TraceStepCollapsible>
