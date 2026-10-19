@@ -9,6 +9,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import { ProcessingTrace } from "@/components/chat/ChainOfThought";
 import { ChatError } from "@/components/chat/ChatError";
 import { CompactionBanner } from "@/components/chat/CompactionBanner";
 import { ContextLimitBanner } from "@/components/chat/ContextLimitBanner";
@@ -20,15 +21,14 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Spinner } from "@/components/ui/spinner";
 import { keyPrefix } from "@/i18n";
 import {
   type ChatMessage,
   isChatBusy,
   isContextLengthError,
+  isProcessing,
   lastUserIndex,
-  showThinkingLoader,
 } from "@/lib/chat/chat-utils";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.messages);
@@ -73,6 +73,7 @@ export function MessageList({
 }: MessageListProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const contextLimitReached = isContextLengthError(chatError);
+  const processing = isProcessing(messages, status);
   // Only the turn the user sent last anchors: when one item swaps for another, the scroller
   // jumps to the first anchor it never scrolled to, the oldest message of a loaded conversation.
   const anchorIndex = lastUserIndex(messages);
@@ -124,6 +125,7 @@ export function MessageList({
                   message={message}
                   isLastMessage={index === messages.length - 1}
                   status={status}
+                  processing={processing && index === messages.length - 1}
                   editingId={editingId}
                   onSetEditing={onSetEditing}
                   onCancelEdit={onCancelEdit}
@@ -132,14 +134,10 @@ export function MessageList({
                 />
               </MessageScrollerItem>
             ))}
-            {showThinkingLoader(messages, status) && (
+            {/* A reply carries its own processing line, so this one stands in until the reply starts. */}
+            {processing && messages.at(-1)?.role === "user" && (
               <MessageScrollerItem>
-                <Marker render={<output />}>
-                  <MarkerIcon>
-                    <Spinner />
-                  </MarkerIcon>
-                  <MarkerContent className="shimmer">{t(($) => $.thinking)}</MarkerContent>
-                </Marker>
+                <ProcessingTrace />
               </MessageScrollerItem>
             )}
             {contextLimitReached && (

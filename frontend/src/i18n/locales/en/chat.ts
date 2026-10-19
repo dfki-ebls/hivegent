@@ -25,7 +25,6 @@ export const chat = {
     submitEdit: "Submit",
     editLabel: "Edit message",
     attachedImage: "Attached image",
-    thinking: "Thinking …",
   },
   reasoning: {
     thinking: "Thinking …",
@@ -36,6 +35,7 @@ export const chat = {
     took_one: "Took {{count}} step",
     took_other: "Took {{count}} steps",
     failed: "{{count}} failed",
+    processing: "Processing …",
   },
   contextLimit: {
     title: "Context limit reached",

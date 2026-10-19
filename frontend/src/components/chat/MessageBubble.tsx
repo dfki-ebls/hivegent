@@ -3,7 +3,7 @@ import { CheckIcon, CopyIcon, PencilIcon, RefreshCcwIcon } from "lucide-react";
 import { Fragment, memo, type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApprovalScope } from "@/components/chat/ApprovalScope";
-import { ChainOfThought } from "@/components/chat/ChainOfThought";
+import { ChainOfThought, ProcessingStep, ProcessingTrace } from "@/components/chat/ChainOfThought";
 import { type ChatPart, MessagePart, partLayout } from "@/components/chat/MessagePart";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
 import { UserTextPart } from "@/components/chat/parts/UserTextPart";
@@ -90,13 +90,25 @@ interface AssistantMessageProps {
   message: ChatMessage;
   isLastMessage: boolean;
   streaming: boolean;
+  /** Whether the model works while nothing on screen says so, which a processing line tells. */
+  processing: boolean;
   /** The action that runs the turn again once it is done, after the last text part. */
   retry: ReactNode;
 }
 
-/** A reply, where each text part offers to copy it once the reply is done. */
-function AssistantMessage({ message, isLastMessage, streaming, retry }: AssistantMessageProps) {
+/**
+ * A reply, where each text part offers to copy it once the reply is done.
+ * The processing line closes a running chain of thought, or starts where the next one would.
+ */
+function AssistantMessage({
+  message,
+  isLastMessage,
+  streaming,
+  processing,
+  retry,
+}: AssistantMessageProps) {
   const blocks = layoutBlocks(message.parts, streaming);
+  const processingInTrace = processing && blocks.at(-1)?.kind === "steps";
   const lastText = blocks.findLastIndex(
     (block) => block.kind === "block" && block.part.type === "text",
   );
@@ -134,6 +146,7 @@ function AssistantMessage({ message, isLastMessage, streaming, retry }: Assistan
                   running={block.running}
                 >
                   {block.parts.map(renderPart)}
+                  {processingInTrace && index === blocks.length - 1 && <ProcessingStep />}
                 </ChainOfThought>
               ) : (
                 <Fragment key={block.index}>
@@ -149,6 +162,7 @@ function AssistantMessage({ message, isLastMessage, streaming, retry }: Assistan
             )}
           </ApprovalScope>
         </MessageStreamingProvider>
+        {processing && !processingInTrace && <ProcessingTrace />}
         {lastText === -1 && retry && <MessageFooter className="px-0">{retry}</MessageFooter>}
       </MessageContent>
     </Message>
@@ -159,6 +173,8 @@ interface MessageBubbleProps {
   message: ChatMessage;
   isLastMessage: boolean;
   status: ChatStatus;
+  /** Whether the model works on this reply while nothing on screen says so. */
+  processing?: boolean;
   editingId: string | null;
   onSetEditing: (id: string) => void;
   onCancelEdit: () => void;
@@ -174,6 +190,7 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   isLastMessage,
   status,
+  processing = false,
   editingId,
   onSetEditing,
   onCancelEdit,
@@ -233,6 +250,7 @@ export const MessageBubble = memo(function MessageBubble({
       message={message}
       isLastMessage={isLastMessage}
       streaming={streaming}
+      processing={processing}
       retry={
         isLastMessage &&
         status === "ready" && (

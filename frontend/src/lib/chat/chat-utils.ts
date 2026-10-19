@@ -7,27 +7,30 @@ import {
   isToolUIPart,
 } from "ai";
 import { ASK_USER_PART, DISMISSED_ERROR } from "@/lib/chat/ask-user";
+import { toolLineState } from "@/lib/chat/tool-part";
 
 /** Whether a chat request is waiting for or receiving model output. */
 export function isChatBusy(status: ChatStatus): boolean {
   return status === "submitted" || status === "streaming";
 }
 
-/**
- * Whether to show the standalone "thinking" loader below the conversation.
- *
- * The model is busy while the request is `submitted` (no output yet) or
- * `streaming`. A separate loader is redundant while text or reasoning streams,
- * since that content visibly grows on screen, so it is suppressed then. This
- * keeps the loader visible during the gap after a tool call, where the stream
- * stays open with no visible output until the model starts its next block.
- */
-export function showThinkingLoader(messages: UIMessage[], status: ChatStatus): boolean {
-  const last = messages.at(-1)?.parts.at(-1);
-  const streamingOutput =
-    (last?.type === "text" || last?.type === "reasoning") && last.state === "streaming";
+/** Whether *part* visibly works on screen, as text that grows or a call whose line spins. */
+function isPartRunning(part: ChatMessage["parts"][number]): boolean {
+  if (isToolUIPart(part)) return toolLineState(part, true).status === "running";
 
-  return isChatBusy(status) && !streamingOutput;
+  return (part.type === "text" || part.type === "reasoning") && part.state === "streaming";
+}
+
+/**
+ * Whether the turn shows a "processing" line, since nothing on screen says the model works.
+ *
+ * That is the wait for the first token and the gap after a step, where the
+ * stream stays open with no visible output until the model starts its next block.
+ */
+export function isProcessing(messages: ChatMessage[], status: ChatStatus): boolean {
+  const last = messages.at(-1)?.parts.at(-1);
+
+  return isChatBusy(status) && !(last && isPartRunning(last));
 }
 
 /** Concatenate text from all text parts of a message (or part list). */

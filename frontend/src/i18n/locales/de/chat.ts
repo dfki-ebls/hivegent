@@ -28,7 +28,6 @@ export const chat = {
     submitEdit: "Senden",
     editLabel: "Nachricht bearbeiten",
     attachedImage: "Angehängtes Bild",
-    thinking: "Denkt nach …",
   },
   reasoning: {
     thinking: "Denkt nach …",
@@ -39,6 +38,7 @@ export const chat = {
     took_one: "{{count}} Schritt ausgeführt",
     took_other: "{{count}} Schritte ausgeführt",
     failed: "{{count}} fehlgeschlagen",
+    processing: "Wird verarbeitet …",
   },
   contextLimit: {
     title: "Kontextlimit erreicht",

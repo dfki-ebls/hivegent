@@ -9,7 +9,7 @@ import {
   isContextLengthError,
   recordChatError,
   shouldContinueRun,
-  showThinkingLoader,
+  isProcessing,
 } from "@/lib/chat/chat-utils";
 
 const image: ChatMessage["parts"][number] = {
@@ -44,33 +44,30 @@ describe("isContextLengthError", () => {
   });
 });
 
-describe("showThinkingLoader", () => {
-  it("shows the loader while waiting for the first token", () => {
-    expect(showThinkingLoader(assistant([]), "submitted")).toBe(true);
+describe("isProcessing", () => {
+  const call = { type: "dynamic-tool", toolName: "search", toolCallId: "1", input: {} } as const;
+
+  it("shows while waiting for the first token", () => {
+    expect(isProcessing(assistant([]), "submitted")).toBe(true);
   });
 
-  it("keeps the loader visible in the gap after a tool call", () => {
-    const parts: ChatMessage["parts"] = [
-      {
-        type: "dynamic-tool",
-        toolName: "search",
-        toolCallId: "1",
-        state: "output-available",
-        input: {},
-        output: {},
-      },
-    ];
-    expect(showThinkingLoader(assistant(parts), "streaming")).toBe(true);
+  it("shows in the gap after a tool call", () => {
+    expect(
+      isProcessing(assistant([{ ...call, state: "output-available", output: {} }]), "streaming"),
+    ).toBe(true);
   });
 
-  it("hides the loader while text is actively streaming", () => {
+  it("hides while text streams or a call runs", () => {
     const parts: ChatMessage["parts"] = [{ type: "text", text: "hi", state: "streaming" }];
-    expect(showThinkingLoader(assistant(parts), "streaming")).toBe(false);
+    expect(isProcessing(assistant(parts), "streaming")).toBe(false);
+    expect(isProcessing(assistant([{ ...call, state: "input-available" }]), "streaming")).toBe(
+      false,
+    );
   });
 
-  it("hides the loader once the turn is ready", () => {
+  it("hides once the turn is ready", () => {
     const parts: ChatMessage["parts"] = [{ type: "text", text: "done", state: "done" }];
-    expect(showThinkingLoader(assistant(parts), "ready")).toBe(false);
+    expect(isProcessing(assistant(parts), "ready")).toBe(false);
   });
 });
 

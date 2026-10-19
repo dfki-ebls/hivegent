@@ -27,6 +27,7 @@ Each run of steps between two blocks is one Chain of Thought that opens to its `
 Every step is a trace line that expands to its detail, including subagents, changesets, and the steering queue.
 An approval or `ask_user` question is a block, an `Item` outside the trace, until it is answered.
 `useMessageStreaming` decides whether a line still runs, so a stopped call reads as stopped.
+While nothing on screen shows the model working, a "Processing" line closes the running trace or stands where the next one starts (`isProcessing`).
 Only the last user message is a scroll anchor, since the scroller jumps to the first anchor it never scrolled to whenever one item swaps for another.
 
 Replies render with Streamdown, but fenced code goes to the shared `CodeBlock` (`MarkdownCode` in `chat/markdown/MarkdownText.tsx`).
@@ -42,7 +43,6 @@ Replies keep Streamdown's own styles, since it has no unstyled mode.
 Every fetched resource is a `queryOptions` factory in `src/queries`, keyed under a scope that `Register` restricts, and every mutation that changes one names the keys it affects in `meta.invalidates`.
 The mutation cache refetches those before the mutation settles and raises a toast on failure unless the mutation renders it (`meta.inlineError`) or has its own `onError`, so components neither refetch by hand nor copy server data into state.
 Zustand keeps what the browser owns: settings, overrides, chunks the model read, and dialog state.
-The composer store holds the draft, its attachments, mode, and effort, so they survive the remount when a draft becomes the conversation it minted.
 The composer store holds the draft, its attachments, mode, and effort, so they survive the remount when a draft becomes the conversation it minted.
 
 Two stores still hold server data, since neither fits a query: the jobs store is fed by the event stream, and the upload queue tracks progress of requests in flight.
