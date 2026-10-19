@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
-import { basename, cn, errorMessage, isWebUrl } from "@/lib/utils";
+import { basename, centerInScroller, cn, errorMessage, isWebUrl } from "@/lib/utils";
 import { buildAuxLlmConfig, formatTarget } from "@/lib/api";
 import { documentMutations, documentQueries } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -150,11 +150,13 @@ function FileMetaBadges({
   );
 }
 
-/** The origin and position badges of a fetched chunk. */
+/** The origin and position badges of a fetched chunk, where a long search query wraps. */
 function ChunkBadges({ chunk }: { chunk: ContentChunk }) {
   return (
     <>
-      <Badge variant="outline">{chunk.originLabel}</Badge>
+      <Badge variant="outline" className="h-auto justify-start whitespace-normal wrap-anywhere">
+        {chunk.originLabel}
+      </Badge>
       <Badge variant="secondary">{chunk.badge}</Badge>
     </>
   );
@@ -427,13 +429,8 @@ function DocumentDialogBody({
     isInitialScrollRef.current = false;
     // Single rAF to let the code block settle.
     requestAnimationFrame(() => {
-      // Center chunks that fit, but anchor the start of chunks taller than
-      // the viewport so their beginning stays visible instead of being
-      // centered (which would push the start off the top).
       const viewport = node.closest<HTMLElement>('[data-slot="code-block-content"]');
-      const overflows =
-        viewport != null && node.getBoundingClientRect().height > viewport.clientHeight;
-      node.scrollIntoView({ behavior, block: overflows ? "start" : "center" });
+      if (viewport) centerInScroller(node, viewport, behavior);
     });
   }, []);
 
@@ -570,7 +567,7 @@ function DocumentDialogBody({
               <div className="flex flex-col gap-4 p-4">
                 {contentModel.chunks.map((item) => (
                   <CodeBlock key={item.id} size="sm">
-                    <CodeBlockHeader>
+                    <CodeBlockHeader className="flex-wrap">
                       <ChunkBadges chunk={item} />
                     </CodeBlockHeader>
                     <CodeBlockContent wrap>{item.content}</CodeBlockContent>
@@ -976,7 +973,7 @@ function DocumentDialogBody({
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {activeChunk?.originLabel && (
-            <div className="flex items-center gap-2 border-b px-4 py-2">
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
               <ChunkBadges chunk={activeChunk} />
             </div>
           )}
