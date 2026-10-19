@@ -11,7 +11,7 @@ import { type KeyboardEvent, type Ref, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { keyPrefix } from "@/i18n";
 import { buildAuxLlmConfig } from "@/lib/api";
-import { cn, errorMessage } from "@/lib/utils";
+import { centerInScroller, cn, errorMessage } from "@/lib/utils";
 import { conversationMutations, conversationQueries } from "@/queries/conversations";
 import { useSettingsStore } from "@/stores/settings-store";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -82,10 +82,7 @@ function TitleEditor({ value, onChange, onSave, onCancel }: TitleEditorProps) {
 function centerInList(button: HTMLButtonElement | null): void {
   const row = button?.closest<HTMLElement>("[data-slot=item]");
   const list = row?.parentElement?.parentElement;
-  if (!row || !list) return;
-
-  const offset = row.getBoundingClientRect().top - list.getBoundingClientRect().top;
-  list.scrollTop += offset - (list.clientHeight - row.offsetHeight) / 2;
+  if (row && list) centerInScroller(row, list);
 }
 
 interface ConversationItemProps {

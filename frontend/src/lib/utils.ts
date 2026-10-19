@@ -165,6 +165,23 @@ export function formatWebUrl(url: string): string {
   }
 }
 
+/**
+ * Scroll *container* so *element* sits centered in it, or starts at its top when taller.
+ * Unlike `scrollIntoView`, it leaves every other ancestor alone, so no clipping one shifts.
+ */
+export function centerInScroller(
+  element: HTMLElement,
+  container: HTMLElement,
+  behavior: ScrollBehavior = "auto",
+): void {
+  const box = element.getBoundingClientRect();
+  const top = box.top - container.getBoundingClientRect().top + container.scrollTop;
+  container.scrollTo({
+    top: top - Math.max(0, (container.clientHeight - box.height) / 2),
+    behavior,
+  });
+}
+
 export const isAbortError = (err: unknown): boolean =>
   err instanceof DOMException && err.name === "AbortError";
 
