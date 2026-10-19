@@ -51,7 +51,9 @@ def test_docling_extension_snapshot_matches_upstream() -> None:
     # Casefolded on both sides: match_file_extension lowercases before lookup,
     # and upstream spells a few entries in mixed case (".Rmd").
     upstream = {
-        f".{ext}".casefold() for fmt in _ALLOWED_FORMATS for ext in FormatToExtensions[fmt]
+        f".{ext}".casefold()
+        for fmt in _ALLOWED_FORMATS
+        for ext in FormatToExtensions[fmt]
     }
 
     assert DOCLING_EXTENSIONS == upstream

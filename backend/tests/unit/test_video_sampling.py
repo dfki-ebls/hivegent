@@ -55,9 +55,7 @@ def test_sample_animated_image_spans_timeline() -> None:
 
 async def test_sample_video(tmp_path: Path) -> None:
     video = tmp_path / "clip.avi"
-    writer = cv2.VideoWriter(
-        str(video), cv2.VideoWriter.fourcc(*"MJPG"), 4, (64, 64)
-    )
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter.fourcc(*"MJPG"), 4, (64, 64))
     for i in range(12):
         writer.write(np.full((64, 64, 3), i * 20, dtype=np.uint8))
     writer.release()

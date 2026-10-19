@@ -319,9 +319,7 @@ _THINKING_BUDGET_TOKENS: Mapping[ReasoningEffort, int] = {
 # after any ``<org>/``).  Levels a model does not implement, such as Qwen3.8's
 # missing ``high``, are mapped onto the nearest one it does, while the budget
 # above stays keyed on the generic level.
-_REASONING_EFFORT_OVERRIDES: Mapping[
-    str, Mapping[ReasoningEffort, ThinkingEffort]
-] = {
+_REASONING_EFFORT_OVERRIDES: Mapping[str, Mapping[ReasoningEffort, ThinkingEffort]] = {
     "qwen3.8": {"high": "xhigh"},
 }
 

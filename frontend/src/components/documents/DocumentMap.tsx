@@ -18,7 +18,10 @@ export function DocumentMap({ filename, chunks, totalLines, className }: Documen
   const spans = readSpans(chunks);
   // Only partial spans need a length, so a document without any never asks.
   const needsLength = totalLines === undefined && spans !== "whole" && spans.length > 0;
-  const { data: indexedLines } = useQuery({ ...documentQueries.lineCount(filename), enabled: needsLength });
+  const { data: indexedLines } = useQuery({
+    ...documentQueries.lineCount(filename),
+    enabled: needsLength,
+  });
   const segments = documentReadMap(spans, totalLines ?? indexedLines);
 
   if (segments.length === 0) return null;

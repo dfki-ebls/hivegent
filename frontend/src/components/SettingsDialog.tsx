@@ -220,10 +220,7 @@ function PersonalityFields() {
   }));
 
   return (
-    <Section
-      legend={t(($) => $.assistant.label)}
-      description={t(($) => $.assistant.description)}
-    >
+    <Section legend={t(($) => $.assistant.label)} description={t(($) => $.assistant.description)}>
       <Field>
         <FieldLabel htmlFor="settings-personality">{t(($) => $.personality.label)}</FieldLabel>
         <OptionSelect
@@ -512,7 +509,6 @@ function McpServersFieldSet() {
 
   return (
     <Section legend={t(($) => $.mcp.label)} description={t(($) => $.mcp.description)}>
-
       {servers.length > 0 && (
         <ItemGroup>
           {servers.map((server) => (

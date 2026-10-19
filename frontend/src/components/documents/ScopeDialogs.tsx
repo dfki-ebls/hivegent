@@ -87,7 +87,12 @@ export function ScopeDialogs({ ref, scope, onBulkDone }: ScopeDialogsProps) {
     if (!pendingRename) return;
 
     const { path } = pendingRename;
-    move.mutate({ scope, paths: [path], destScope: scope, destination: () => parentDir(path) + name });
+    move.mutate({
+      scope,
+      paths: [path],
+      destScope: scope,
+      destination: () => parentDir(path) + name,
+    });
   };
 
   return (

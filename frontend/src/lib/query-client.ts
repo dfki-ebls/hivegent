@@ -54,7 +54,10 @@ export function createQueryClient(): QueryClient {
         return client.invalidateQueries(
           invalidates === "all"
             ? undefined
-            : { predicate: (query) => invalidates.some((queryKey) => matchQuery({ queryKey }, query)) },
+            : {
+                predicate: (query) =>
+                  invalidates.some((queryKey) => matchQuery({ queryKey }, query)),
+              },
         );
       },
       // A mutation with its own `onError` reports the failure itself.

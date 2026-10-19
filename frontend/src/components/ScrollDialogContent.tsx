@@ -4,12 +4,7 @@ import { cn } from "@/lib/utils";
 
 /** Dialog content whose header and footer stay put while the body between them scrolls. */
 export function ScrollDialogContent({ className, ...props }: ComponentProps<typeof DialogContent>) {
-  return (
-    <DialogContent
-      className={cn("flex max-h-[90dvh] flex-col", className)}
-      {...props}
-    />
-  );
+  return <DialogContent className={cn("flex max-h-[90dvh] flex-col", className)} {...props} />;
 }
 
 /** The scrolling body of a `ScrollDialogContent`, whose scrollbar sits at the dialog's edge. */

@@ -371,7 +371,8 @@ in
       })
 
       (lib.mkIf cfg.searxng.createLocally {
-        services.hivegent.settings.tools.search_url = lib.mkDefault "http://127.0.0.1:${toString searxPort}";
+        services.hivegent.settings.tools.search_url =
+          lib.mkDefault "http://127.0.0.1:${toString searxPort}";
         # Merged with the formats the host serves its own users.
         services.searx.settings.search.formats = [ "json" ];
 

@@ -215,4 +215,6 @@ async def run_isolated_untrusted[T](
         raise ValueError(f"{subject} processing timed out") from exc
     except WorkerCrashError as exc:
         logger.exception("%s worker crashed", subject)
-        raise ValueError(f"{subject} worker crashed while processing the input") from exc
+        raise ValueError(
+            f"{subject} worker crashed while processing the input"
+        ) from exc

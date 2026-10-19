@@ -1,12 +1,7 @@
 import type { ChatMessage } from "@/lib/chat/chat-utils";
 import { z } from "zod";
 
-import type {
-  AgentRunConfig,
-  McpServerEntry,
-  ToolsPayload,
-  ToolsSpec,
-} from "@/lib/types";
+import type { AgentRunConfig, McpServerEntry, ToolsPayload, ToolsSpec } from "@/lib/types";
 import {
   AdminMaintenanceStateSchema,
   type AdminOverview,

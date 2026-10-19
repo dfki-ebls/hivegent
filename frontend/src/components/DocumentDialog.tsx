@@ -16,14 +16,7 @@ import { useTranslation } from "react-i18next";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
-import {
-  basename,
-  centerInScroller,
-  cn,
-  errorMessage,
-  isWebUrl,
-  previewText,
-} from "@/lib/utils";
+import { basename, centerInScroller, cn, errorMessage, isWebUrl, previewText } from "@/lib/utils";
 import { buildAuxLlmConfig, formatTarget } from "@/lib/api";
 import { documentMutations, documentQueries } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";

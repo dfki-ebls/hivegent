@@ -209,7 +209,13 @@ export function DocumentManager() {
       // or the entry and its chunk count drift apart.
       const markdownName = filename.replace(/\.md$/i, "") + ".md";
       const { scope, local } = splitScopePath(canonicalPath(targetDir, markdownName));
-      await write({ scope, paths: [local], content, chunking: pipelineSpec.chunking, mode: "create" });
+      await write({
+        scope,
+        paths: [local],
+        content,
+        chunking: pipelineSpec.chunking,
+        mode: "create",
+      });
     },
     [targetDir, pipelineSpec, write],
   );

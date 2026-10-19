@@ -22,11 +22,7 @@ import {
   treeDocuments,
 } from "@/lib/utils";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
-import {
-  documentMutations,
-  documentQueries,
-  useMutatingPaths,
-} from "@/queries/documents";
+import { documentMutations, documentQueries, useMutatingPaths } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
 import { DirectoryTreeView, TreeRow, type TreeRowDnd } from "@/components/DirectoryTreeView";
 import { DocumentDialog } from "@/components/DocumentDialog";

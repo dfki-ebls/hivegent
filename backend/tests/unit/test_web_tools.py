@@ -133,9 +133,7 @@ class TestUrlPolicy:
             require_safe_external_url("https://example.com", "url", policy=UrlPolicy())
 
 
-def _search_tool(
-    handler: Any, backend: SearchBackend | None = None
-) -> WebSearch:
+def _search_tool(handler: Any, backend: SearchBackend | None = None) -> WebSearch:
     """Build a WebSearch whose trusted client is backed by a mock transport."""
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
 

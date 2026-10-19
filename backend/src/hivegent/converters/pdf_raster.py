@@ -31,7 +31,6 @@ DEFAULT_MAX_PAGES = 16
 """Default upper bound of pages rasterised from one PDF."""
 
 
-
 async def render_pdf_pages(
     pdf_bytes: bytes, spec: str | None, max_dimension: int, max_pages: int
 ) -> tuple[tuple[bytes, ...], tuple[int, ...]]:
@@ -41,8 +40,8 @@ async def render_pdf_pages(
     for an invalid page spec, a page count above *max_pages*, an unreadable
     PDF, or a native crash in the render worker.
     """
-    return await run_isolated_untrusted("PDF", 
-        worker.render_pages, pdf_bytes, spec, max_dimension, max_pages
+    return await run_isolated_untrusted(
+        "PDF", worker.render_pages, pdf_bytes, spec, max_dimension, max_pages
     )
 
 

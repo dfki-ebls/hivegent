@@ -400,7 +400,9 @@ class OpenserpBackend(SearchBackend):
         language, _, region = (search.language or "").partition("-")
         today = date.today()
         days = _TIME_RANGE_DAYS[search.time_range] if search.time_range else None
-        since = f"{today - timedelta(days=days):%Y%m%d}..{today:%Y%m%d}" if days else None
+        since = (
+            f"{today - timedelta(days=days):%Y%m%d}..{today:%Y%m%d}" if days else None
+        )
 
         return {
             "text": search.query,
@@ -414,8 +416,7 @@ class OpenserpBackend(SearchBackend):
     def parse(self, content: bytes) -> SearchPage:
         payload = _OpenserpResponse.model_validate_json(content)
         hits = (
-            _hit(result.url, result.title, result.snippet)
-            for result in payload.results
+            _hit(result.url, result.title, result.snippet) for result in payload.results
         )
 
         return SearchPage(
@@ -521,7 +522,9 @@ class WebSearch(AsyncTool[Batch[WebSearchResults]]):
             async with asyncio.timeout(self.timeout_seconds):
                 response = await self.client.get(
                     self.backend.url,
-                    params={key: value for key, value in params.items() if value is not None},
+                    params={
+                        key: value for key, value in params.items() if value is not None
+                    },
                 )
 
             response.raise_for_status()
@@ -631,7 +634,10 @@ def _inline_links(tree: HtmlElement, url: str) -> tuple[str, ...]:
         except httpx2.InvalidURL:
             continue
 
-        if target.scheme not in ("http", "https") or target.copy_with(fragment=None) == page:
+        if (
+            target.scheme not in ("http", "https")
+            or target.copy_with(fragment=None) == page
+        ):
             continue
 
         link = str(target)
@@ -812,7 +818,9 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
             )
         else:
             title, published = "", None
-            content = body.decode(response.encoding or "utf-8", errors="replace").strip()
+            content = body.decode(
+                response.encoding or "utf-8", errors="replace"
+            ).strip()
             links = _spelled_urls(content, "://")
 
         max_chars = share.of(self.max_chars)
