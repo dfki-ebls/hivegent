@@ -27,6 +27,7 @@ import {
   type ChatMessage,
   isChatBusy,
   isContextLengthError,
+  lastUserIndex,
   showThinkingLoader,
 } from "@/lib/chat/chat-utils";
 
@@ -72,6 +73,9 @@ export function MessageList({
 }: MessageListProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const contextLimitReached = isContextLengthError(chatError);
+  // Only the turn the user sent last anchors: when one item swaps for another, the scroller
+  // jumps to the first anchor it never scrolled to, the oldest message of a loaded conversation.
+  const anchorIndex = lastUserIndex(messages);
 
   if (isLoadingHistory) {
     return (
@@ -113,7 +117,7 @@ export function MessageList({
               <MessageScrollerItem
                 key={messageKey(message.id)}
                 messageId={message.id}
-                scrollAnchor={message.role === "user"}
+                scrollAnchor={index === anchorIndex}
                 className="[content-visibility:visible]"
               >
                 <MessageBubble
