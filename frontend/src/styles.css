@@ -149,3 +149,11 @@
 ):not(:disabled, [data-disabled]) {
   cursor: pointer;
 }
+
+/* Without scroll-driven animations the vendored scroll fades show at every edge,
+   even where nothing scrolls, and wash out the first and last items of a row. */
+@supports not (animation-timeline: scroll()) {
+  [class*="scroll-fade"] {
+    --scroll-fade-mask: none;
+  }
+}
