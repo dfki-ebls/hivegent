@@ -183,13 +183,14 @@ export const MessageBubble = memo(function MessageBubble({
   const { t } = useTranslation();
   const streaming = isLastMessage && isChatBusy(status);
   const editing = editingId === message.id;
+
   if (message.role === "user") {
     const text = joinTextParts(message.parts) ?? "";
     const canCopy = text.trim() !== "" && !editing;
     const images = message.parts.flatMap((part) =>
       part.type === "file" && part.mediaType.startsWith("image/") ? [part] : [],
     );
-    const canEdit = (status === "ready" || status === "error") && !editing;
+    const canEdit = !isChatBusy(status) && !editing;
 
     return (
       <Message align="end">

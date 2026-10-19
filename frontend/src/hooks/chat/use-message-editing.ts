@@ -1,10 +1,12 @@
 import type { ChatStatus } from "ai";
 import { useCallback, useState } from "react";
+import { isChatBusy } from "@/lib/chat/chat-utils";
 
+/** The message the user edits, dropped once a turn runs, while a failed turn stays editable. */
 export function useMessageEditing(status: ChatStatus) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  if (status !== "ready" && editingId !== null) {
+  if (isChatBusy(status) && editingId !== null) {
     setEditingId(null);
   }
 
