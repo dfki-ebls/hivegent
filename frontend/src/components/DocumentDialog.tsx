@@ -16,7 +16,14 @@ import { useTranslation } from "react-i18next";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
-import { basename, centerInScroller, cn, errorMessage, isWebUrl } from "@/lib/utils";
+import {
+  basename,
+  centerInScroller,
+  cn,
+  errorMessage,
+  isWebUrl,
+  previewText,
+} from "@/lib/utils";
 import { buildAuxLlmConfig, formatTarget } from "@/lib/api";
 import { documentMutations, documentQueries } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -162,6 +169,17 @@ function ChunkBadges({ chunk }: { chunk: ContentChunk }) {
   );
 }
 
+/** The index each line of *content* starts at, so line positions resolve without splitting it per chunk. */
+function lineStarts(content: string): number[] {
+  const starts = [0];
+
+  for (let i = content.indexOf("\n"); i !== -1; i = content.indexOf("\n", i + 1)) {
+    starts.push(i + 1);
+  }
+
+  return starts;
+}
+
 /** A scrolling pane with a centered image above its description. */
 function ImagePane({ image, children }: { image: ReactNode; children?: ReactNode }) {
   return (
@@ -221,52 +239,58 @@ function DescriptionHeading({ actions }: { actions?: ReactNode }) {
   );
 }
 
+type RangeResolver = (chunk: FetchedChunk) => { start: number; end: number } | null;
+
 /**
- * Resolve a chunk's character range within ``fullContent``.
+ * Resolve chunk character ranges within ``fullContent``, indexing its lines once for every chunk.
  *
  * Prefers exact character offsets from the backend (semantic-search
  * chunks carry these) so highlights don't round up to whole lines.
  * Falls back to line numbers, then to a text search.
  */
-function resolveChunkRange(
-  fullContent: string,
-  chunk: FetchedChunk,
-): { start: number; end: number } | null {
-  if (
-    chunk.startIndex !== undefined &&
-    chunk.endIndex !== undefined &&
-    chunk.endIndex > chunk.startIndex &&
-    chunk.endIndex <= fullContent.length
-  ) {
-    return { start: chunk.startIndex, end: chunk.endIndex };
-  }
+function chunkRangeResolver(fullContent: string): RangeResolver {
+  const starts = lineStarts(fullContent);
 
-  const position = chunk.position;
-  const [startLine, endLine] = isLinePosition(position) ? lineBounds(position) : [0, 0];
+  return (chunk) => {
+    if (
+      chunk.startIndex !== undefined &&
+      chunk.endIndex !== undefined &&
+      chunk.endIndex > chunk.startIndex &&
+      chunk.endIndex <= fullContent.length
+    ) {
+      return { start: chunk.startIndex, end: chunk.endIndex };
+    }
 
-  if (startLine >= 1) {
-    const lines = fullContent.split("\n");
-    if (startLine > lines.length) return null;
-    const e = Math.min(endLine, lines.length);
-    let start = 0;
-    for (let i = 0; i < startLine - 1; i++) start += lines[i].length + 1;
-    let end = start + lines[startLine - 1].length;
-    for (let i = startLine; i < e; i++) end += lines[i].length + 1;
-    return { start, end };
-  }
+    const position = chunk.position;
+    const [startLine, endLine] = isLinePosition(position) ? lineBounds(position) : [0, 0];
 
-  if (!chunk.content) return null;
-  const idx = fullContent.indexOf(chunk.content);
-  return idx >= 0 ? { start: idx, end: idx + chunk.content.length } : null;
+    if (startLine >= 1) {
+      if (startLine > starts.length) return null;
+      const last = Math.min(endLine, starts.length);
+
+      return {
+        start: starts[startLine - 1],
+        end: last < starts.length ? starts[last] - 1 : fullContent.length,
+      };
+    }
+
+    if (!chunk.content) return null;
+    const idx = fullContent.indexOf(chunk.content);
+
+    return idx >= 0 ? { start: idx, end: idx + chunk.content.length } : null;
+  };
 }
 
-function fetchedContentChunk(chunk: FetchedChunk, content: string | null): ContentChunk {
+function fetchedContentChunk(
+  chunk: FetchedChunk,
+  resolveRange: RangeResolver | null,
+): ContentChunk {
   return {
     id: chunk.id,
     content: chunk.content,
     badge: chunkPositionLabel(chunk.position),
     isFullDocument: chunk.position.type === "full_document",
-    range: content ? resolveChunkRange(content, chunk) : null,
+    range: resolveRange?.(chunk) ?? null,
     originLabel: chunkOriginLabel(chunk),
   };
 }
@@ -361,6 +385,13 @@ function DocumentDialogBody({
   const managedLoading = chunksQuery.isLoading;
   const isLoading = contentQuery.isLoading;
 
+  const fetchedContent = isManagedMode ? null : (storedFullContent ?? contentQuery.data ?? null);
+  // Indexed once per document text, since every tool output reruns the content model below.
+  const resolveRange = useMemo(
+    () => (fetchedContent ? chunkRangeResolver(fetchedContent) : null),
+    [fetchedContent],
+  );
+
   const contentModel = useMemo<ContentModel>(() => {
     if (isManagedMode) {
       return {
@@ -384,14 +415,13 @@ function DocumentDialogBody({
       };
     }
 
-    const content = storedFullContent ?? contentQuery.data ?? null;
     const document = filename ? documents.get(filename) : undefined;
     const fetched = document ? chunksForDocument(document, chunks) : [];
     if (chunk && !fetched.some((item) => item.id === chunk.id)) fetched.push(chunk);
 
     return {
-      content,
-      chunks: sortChunks(fetched).map((item) => fetchedContentChunk(item, content)),
+      content: fetchedContent,
+      chunks: sortChunks(fetched).map((item) => fetchedContentChunk(item, resolveRange)),
       loading: isLoading,
       error: null,
       assetsDir: null,
@@ -409,7 +439,8 @@ function DocumentDialogBody({
     chunks,
     documents,
     filename,
-    storedFullContent,
+    fetchedContent,
+    resolveRange,
     t,
   ]);
 
@@ -420,9 +451,9 @@ function DocumentDialogBody({
       : null;
   const activeAsset = view.mode === "asset" ? (assetsData?.assets[view.index] ?? null) : null;
 
-  // Scroll the highlight into view when its DOM element mounts. The span
-  // is keyed by the active chunk identifier (see renderChunkHighlight), so
-  // each chunk switch remounts it and re-fires this callback.
+  // Scroll the highlight into view when its DOM element mounts. The mark
+  // is keyed by the active chunk identifier, so each chunk switch remounts
+  // it and re-fires this callback.
   const highlightRef = useCallback((node: HTMLElement | null) => {
     if (!node) return;
     const behavior = isInitialScrollRef.current ? "instant" : "smooth";
@@ -738,18 +769,29 @@ function DocumentDialogBody({
 
     if (activeChunk.range) {
       const { start, end } = activeChunk.range;
+      // Whole lines are marked as one block, which paints and measures as a single box
+      // however many thousand lines it spans, and whose own break replaces the newlines around it.
+      const wholeLines =
+        (start === 0 || fullContent[start - 1] === "\n") &&
+        (end === fullContent.length || fullContent[end] === "\n");
+      const gap = wholeLines ? 1 : 0;
+      const before = fullContent.slice(0, Math.max(0, start - gap));
+      const after = fullContent.slice(end + gap);
 
       return (
         <TextPane>
-          <span className="text-muted-foreground">{fullContent.slice(0, start)}</span>
+          <span className="text-muted-foreground">{before}</span>
           <mark
             key={activeChunk.id}
             ref={highlightRef}
-            className="rounded-sm bg-primary/15 box-decoration-clone text-foreground"
+            className={cn(
+              "rounded-sm bg-primary/15 text-foreground",
+              wholeLines ? "block" : "box-decoration-clone",
+            )}
           >
             {fullContent.slice(start, end)}
           </mark>
-          <span className="text-muted-foreground">{fullContent.slice(end)}</span>
+          <span className="text-muted-foreground">{after}</span>
         </TextPane>
       );
     }
@@ -826,7 +868,7 @@ function DocumentDialogBody({
                         )}
                       </ItemTitle>
                       <ItemDescription className="line-clamp-1 text-xs">
-                        {item.content}
+                        {previewText(item.content)}
                       </ItemDescription>
                     </ItemContent>
                   </SidebarItem>

@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 
 import { type FetchedChunk, chunkOriginLabel, chunkPositionLabel } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, previewText } from "@/lib/utils";
 import { ItemButton } from "@/components/RowButtons";
 import { Badge } from "@/components/ui/badge";
 import { ItemDescription, ItemHeader } from "@/components/ui/item";
@@ -36,7 +36,7 @@ export function ChunkCard({ chunk, onClick }: { chunk: FetchedChunk; onClick: ()
         <span className="min-w-0 truncate text-xs text-muted-foreground">{label}</span>
       </ItemHeader>
       <ItemDescription className="line-clamp-3 text-xs break-words">
-        {chunk.content.trim()}
+        {previewText(chunk.content)}
       </ItemDescription>
     </GridCard>
   );

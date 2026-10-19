@@ -166,6 +166,14 @@ export function formatWebUrl(url: string): string {
 }
 
 /**
+ * The start of *text* that a line-clamped preview can show, so the preview
+ * never lays out the thousands of lines of a long chunk it hides anyway.
+ */
+export function previewText(text: string, maxChars = 300): string {
+  return text.trimStart().slice(0, maxChars);
+}
+
+/**
  * Scroll *container* so *element* sits centered in it, or starts at its top when taller.
  * Unlike `scrollIntoView`, it leaves every other ancestor alone, so no clipping one shifts.
  */
