@@ -23,10 +23,32 @@ let
 
   # An ecosystem that vendors its dependencies into a single derivation needs a
   # tool of its own to describe them; bombon merges whatever a package carries
-  # in the `bombonVendoredSbom` passthru, and ships the npm producer as is.
+  # in the `bombonVendoredSbom` passthru, and ships the npm producer.
   # The two below it does not: they run over the built package rather than
   # rebuilding it, and write their document to `$sbom`.
-  npmSbom = package: bombon.passthruVendoredSbom.npm package { inherit pkgs; };
+  #
+  # `npm sbom --omit dev` also drops a runtime dependency that a dev dependency
+  # shares (npm/cli#7909), so the tree is pruned the way `buildNpmPackage` does
+  # instead and then described in full.
+  npmSbom =
+    package:
+    let
+      described = bombon.passthruVendoredSbom.npm package {
+        inherit pkgs;
+        includeBuildtimeDependencies = true;
+      };
+    in
+    described.overrideAttrs (old: {
+      passthru = old.passthru // {
+        bombonVendoredSbom = old.passthru.bombonVendoredSbom.overrideAttrs (vendored: {
+          buildPhase = ''
+            npm prune --omit=dev --no-save $npmFlags
+            npm pkg delete devDependencies
+          ''
+          + vendored.buildPhase;
+        });
+      };
+    });
 
   withVendoredSbom =
     package: env: command:
