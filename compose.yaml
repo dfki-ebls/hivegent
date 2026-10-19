@@ -201,3 +201,7 @@ configs:
       server:
         limiter: false
         public_instance: false
+      # The default Tor engines fail to load without a Tor proxy.
+      engines:
+        - { name: ahmia, inactive: true }
+        - { name: torch, inactive: true }

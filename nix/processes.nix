@@ -27,10 +27,23 @@
         services.searxng.searxng = {
           enable = true;
           port = searxngPort;
-          settings.search.formats = [
-            "html"
-            "json"
-          ];
+          settings = {
+            search.formats = [
+              "html"
+              "json"
+            ];
+            # The default Tor engines fail to load without a Tor proxy.
+            engines = [
+              {
+                name = "ahmia";
+                inactive = true;
+              }
+              {
+                name = "torch";
+                inactive = true;
+              }
+            ];
+          };
         };
         settings.processes = {
           backend = {
