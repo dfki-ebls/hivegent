@@ -17,10 +17,7 @@ import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
 import { basename, cn, errorMessage, isWebUrl } from "@/lib/utils";
-import {
-  buildAuxLlmConfig,
-  formatTarget,
-} from "@/lib/api";
+import { buildAuxLlmConfig, formatTarget } from "@/lib/api";
 import { documentMutations, documentQueries } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
 import { AssetImage } from "@/components/documents/AssetImage";
@@ -347,7 +344,10 @@ function DocumentDialogBody({
     ...documentQueries.content(filename, conversationId),
     enabled: needsContent,
   });
-  const chunksQuery = useQuery({ ...documentQueries.chunks(filename), enabled: wantsManagedChunks });
+  const chunksQuery = useQuery({
+    ...documentQueries.chunks(filename),
+    enabled: wantsManagedChunks,
+  });
   // Loaded on the first switch to the assets tab
   // (404 when the document has none → tab stays hidden via assets_dir)
   const assetsQuery = useQuery({
@@ -796,10 +796,7 @@ function DocumentDialogBody({
         </SidebarItem>
 
         {hasAssets ? (
-          <Tabs
-            value={sidebarTab}
-            onValueChange={(value) => setSidebarTab(value as SidebarTab)}
-          >
+          <Tabs value={sidebarTab} onValueChange={(value) => setSidebarTab(value as SidebarTab)}>
             <TabsList className="w-full">
               <TabsTrigger value="chunks">{t(($) => $.documents.dialog.chunksTab)}</TabsTrigger>
               <TabsTrigger value="assets">{t(($) => $.documents.dialog.assetsTab)}</TabsTrigger>
@@ -930,12 +927,7 @@ function DocumentDialogBody({
                   </Button>
                 )}
                 {onRechunk && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onRechunk}
-                    disabled={rechunking}
-                  >
+                  <Button variant="outline" size="sm" onClick={onRechunk} disabled={rechunking}>
                     {rechunking ? (
                       <Spinner aria-hidden data-icon="inline-start" />
                     ) : (
