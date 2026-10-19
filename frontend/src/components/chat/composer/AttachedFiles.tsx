@@ -1,4 +1,3 @@
-import type { FileUIPart } from "ai";
 import { XIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -10,11 +9,7 @@ import {
   AttachmentTitle,
 } from "@/components/ui/attachment";
 import { InputGroupAddon } from "@/components/ui/input-group";
-
-export interface ComposerFile {
-  id: string;
-  part: FileUIPart;
-}
+import type { ComposerFile } from "@/stores/composer-store";
 
 interface AttachedFilesProps {
   files: ComposerFile[];

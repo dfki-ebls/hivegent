@@ -1,8 +1,8 @@
 import type { ChatStatus, FileUIPart } from "ai";
 import { ArrowUpIcon, ImagePlusIcon, SquareIcon } from "lucide-react";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { AttachedFiles, type ComposerFile } from "@/components/chat/composer/AttachedFiles";
+import { AttachedFiles } from "@/components/chat/composer/AttachedFiles";
 import { ChatTextarea } from "@/components/chat/composer/ChatTextarea";
 import { DictateButton } from "@/components/chat/composer/DictateButton";
 import { DocumentFilterBadges } from "@/components/chat/composer/DocumentFilterBadges";
@@ -15,8 +15,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import { keyPrefix } from "@/i18n";
 import { formatFileSize } from "@/i18n/format";
-import type { AgentMode, ReasoningEffort } from "@/lib/types";
 import { selectAttachmentLimits, useServerSettings } from "@/queries/settings";
+import { type ComposerFile, useComposerStore } from "@/stores/composer-store";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.composer);
 
@@ -36,27 +36,20 @@ interface ComposerProps {
   status: ChatStatus;
   onStop: () => void;
   isStreaming: boolean;
-  agentMode: AgentMode;
-  onAgentModeChange: (value: AgentMode) => void;
-  reasoningEffort: ReasoningEffort;
-  onReasoningEffortChange: (value: ReasoningEffort) => void;
   onAudioRecorded?: (audio: Blob) => Promise<string>;
 }
 
 /**
  * The message field with its attachments and settings.
- * The draft lives in the uncontrolled textarea and only whether it is blank in state,
- * so typing re-renders neither the message list nor the composer's own controls.
+ * The draft lives in the uncontrolled textarea, mirrored to the composer store so it outlives
+ * the remount when a draft becomes a conversation, and the composer subscribes only to whether
+ * it is blank, so typing re-renders neither the message list nor the composer's own controls.
  */
 export function Composer({
   onSubmit,
   status,
   onStop,
   isStreaming,
-  agentMode,
-  onAgentModeChange,
-  reasoningEffort,
-  onReasoningEffortChange,
   onAudioRecorded,
 }: ComposerProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
@@ -64,11 +57,23 @@ export function Composer({
   // route all gate on one table: a file the model could not read is refused
   // here rather than after a round trip.
   const limits = useServerSettings(selectAttachmentLimits);
-  const [hasText, setHasText] = useState(false);
-  const [files, setFiles] = useState<ComposerFile[]>([]);
+  const files = useComposerStore((state) => state.files);
+  const agentMode = useComposerStore((state) => state.agentMode);
+  const reasoningEffort = useComposerStore((state) => state.reasoningEffort);
+  const hasText = useComposerStore((state) => state.text.trim() !== "");
+  const { text, setText, setFiles, setFocused, setAgentMode, setReasoningEffort, clearDraft } =
+    useComposerStore.getState();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canSend = hasText || files.length > 0;
+
+  // Runs before the field leaves the DOM, while it can still tell whether it has focus.
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (useComposerStore.getState().focused) textarea?.focus();
+
+    return () => setFocused(document.activeElement === textarea);
+  }, [setFocused]);
 
   /** Attach the images among *incoming* that the limits allow, saying why any other is refused. */
   const attach = async (incoming: File[]) => {
@@ -120,8 +125,7 @@ export function Composer({
       files.map((file) => file.part),
     );
     event.currentTarget.reset();
-    setHasText(false);
-    setFiles([]);
+    clearDraft();
   };
 
   const dictate = (spoken: string) => {
@@ -129,7 +133,7 @@ export function Composer({
     if (!textarea) return;
 
     textarea.value = textarea.value ? `${textarea.value} ${spoken}` : spoken;
-    setHasText(textarea.value.trim() !== "");
+    setText(textarea.value);
   };
 
   return (
@@ -154,7 +158,8 @@ export function Composer({
         />
         <ChatTextarea
           ref={textareaRef}
-          onChange={(event) => setHasText(event.target.value.trim() !== "")}
+          defaultValue={text}
+          onChange={(event) => setText(event.target.value)}
           placeholder={isStreaming ? t(($) => $.steerPlaceholder) : t(($) => $.placeholder)}
           onKeyDown={(event) => {
             if (event.key === "Backspace" && event.currentTarget.value === "" && files.length > 0) {
@@ -184,10 +189,10 @@ export function Composer({
           <SettingsDialog />
           <ReasoningEffortSelector
             value={reasoningEffort}
-            onChange={onReasoningEffortChange}
+            onChange={setReasoningEffort}
             className="ml-auto"
           />
-          <ModeSelector value={agentMode} onChange={onAgentModeChange} />
+          <ModeSelector value={agentMode} onChange={setAgentMode} />
           {/* Enter still submits while streaming, which steers the running turn. */}
           <InputGroupButton
             type={isStreaming ? "button" : "submit"}

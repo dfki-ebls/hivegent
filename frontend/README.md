@@ -41,6 +41,7 @@ Replies keep Streamdown's own styles, since it has no unstyled mode.
 Every fetched resource is a `queryOptions` factory in `src/queries`, keyed under a scope that `Register` restricts, and every mutation that changes one names the keys it affects in `meta.invalidates`.
 The mutation cache refetches those before the mutation settles and raises a toast on failure unless the mutation renders it (`meta.inlineError`) or has its own `onError`, so components neither refetch by hand nor copy server data into state.
 Zustand keeps what the browser owns: settings, overrides, chunks the model read, and dialog state.
+The composer store holds the draft, its attachments, mode, and effort, so they survive the remount when a draft becomes the conversation it minted.
 
 Two stores still hold server data, since neither fits a query: the jobs store is fed by the event stream, and the upload queue tracks progress of requests in flight.
 Every workspace change the feed reports refetches the workspace queries (`syncWorkspaceQueries`).
