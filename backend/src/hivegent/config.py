@@ -1096,6 +1096,9 @@ class Settings(BaseSettings):
     db: DatabaseSettings = DatabaseSettings()
 
     data_dir: Path = Path("data")
+    # The operator's explicit consent to the additional terms in `TERMS`,
+    # without which the server refuses to start.
+    accept_terms: bool = False
 
 
 settings = Settings()

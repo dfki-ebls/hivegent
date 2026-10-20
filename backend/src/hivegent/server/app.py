@@ -264,6 +264,13 @@ def create_app() -> FastAPI:
     keeps only domain logic, auth, and observability.
     """
     configure_logging()
+
+    if not settings.accept_terms:
+        raise ValueError(
+            "Read the additional terms of use (TERMS) and accept them "
+            "by setting HIVEGENT_ACCEPT_TERMS=true."
+        )
+
     _validate_auth_settings()
     install_probe_access_filter()
 

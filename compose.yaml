@@ -122,6 +122,9 @@ services:
     environment:
       # Caddy's listen address — read by the proxy, not the backend's TOML.
       HIVEGENT_SITE_ADDRESS: ":8080"
+      # Set to "true" to accept the additional terms of use (TERMS in the
+      # repository), the backend refuses to start otherwise.
+      HIVEGENT_ACCEPT_TERMS: "false"
     configs:
       # The backend reads its TOML config from here (HIVEGENT_CONFIG_FILE);
       # `HIVEGENT_*` env vars still override individual keys.

@@ -15,6 +15,12 @@ from hivegent.server.operations import enforce_upload_size
 from hivegent.workspace.paths import file_too_large
 
 
+@pytest.fixture(autouse=True)
+def accepted_terms(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept the additional terms so ``create_app`` reaches the auth checks."""
+    monkeypatch.setattr(settings, "accept_terms", True)
+
+
 def test_safe_async_client_requires_egress_proxy() -> None:
     """An untrusted client cannot silently fall back to direct networking."""
     with pytest.raises(ValueError, match="egress proxy"):
@@ -99,6 +105,15 @@ def test_enforce_upload_size_rejects_over_limit() -> None:
 
     assert exc_info.value.status_code == 413
     assert "File too large" in str(exc_info.value.detail)
+
+
+def test_terms_require_explicit_acceptance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The server must not start before the operator accepts the additional terms."""
+    from hivegent.server.app import create_app
+
+    monkeypatch.setattr(settings, "accept_terms", False)
+    with pytest.raises(ValueError, match="HIVEGENT_ACCEPT_TERMS"):
+        create_app()
 
 
 def test_auth_disabled_requires_explicit_opt_in(

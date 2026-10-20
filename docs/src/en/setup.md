@@ -4,6 +4,10 @@ Hivegent ships as one container image, `ghcr.io/dfki-ebls/hivegent`.
 A typical deployment runs three containers with Docker Compose: Hivegent, PostgreSQL, and an OIDC identity provider.
 The repository's `compose.yaml` is a ready-to-run example with Rauthy.
 
+> **Additional terms of use:** Hivegent is provided under the MIT license and the DFKI's [additional terms of use](terms.md).
+> By downloading, installing, or using the software, you accept the additional terms.
+> Please read them in full beforehand, the German version is authoritative.
+
 ## Prerequisites
 
 - Docker with Compose, or Podman.
@@ -13,9 +17,10 @@ The repository's `compose.yaml` is a ready-to-run example with Rauthy.
 ## Quick start
 
 1. Copy `compose.yaml` into an empty directory.
-2. Set the language model and the OIDC issuer as described below.
-3. Run `docker compose up -d`, the first start takes a few minutes.
-4. Open <http://localhost:8080>.
+2. Read the [additional terms of use](terms.md) and accept them by setting `HIVEGENT_ACCEPT_TERMS` to `true`, Hivegent does not start otherwise.
+3. Set the language model and the OIDC issuer as described below.
+4. Run `docker compose up -d`, the first start takes a few minutes.
+5. Open <http://localhost:8080>.
 
 ## Configuration
 

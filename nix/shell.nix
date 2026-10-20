@@ -36,6 +36,7 @@ mkShell {
   '';
 
   # === Backend (HIVEGENT_* pydantic settings + Python/OCR toolchain) ===
+  HIVEGENT_ACCEPT_TERMS = "1";
   HIVEGENT_AUTH__ENABLE = "0";
   HIVEGENT_AUTH__ALLOW_DISABLED = "1";
   HIVEGENT_LOGFIRE__ENABLE = "0";
