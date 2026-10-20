@@ -27,6 +27,7 @@ Each run of steps between two blocks is one Chain of Thought that opens to its `
 Every step is a trace line that expands to its detail, including subagents, changesets, and the steering queue.
 An approval or `ask_user` question is a block, an `Item` outside the trace, until it is answered.
 `useMessageStreaming` decides whether a line still runs, so a stopped call reads as stopped.
+A failed or stopped step is routine for an agent, so its line stays muted and only says so, with the error in its detail, while red is left to errors that end the run.
 While nothing on screen shows the model working, a "Processing" line closes the running trace or stands where the next one starts (`isProcessing`).
 Only the last user message is a scroll anchor, since the scroller jumps to the first anchor it never scrolled to whenever one item swaps for another.
 

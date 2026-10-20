@@ -83,5 +83,5 @@ export function ToolOutputResult({ part }: { part: ToolPart }) {
 export function ToolError({ message }: { message: string }) {
   const { t } = useTranslation();
 
-  return <ToolCode title={t(($) => $.common.states.error)} code={message} variant="destructive" />;
+  return <ToolCode title={t(($) => $.common.states.error)} code={message} />;
 }

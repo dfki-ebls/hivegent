@@ -10,7 +10,9 @@ import type { AddChunk, AddImage, MarkFullDocument } from "@/stores/fetched-docu
 export type ToolPart = ToolUIPart | DynamicToolUIPart;
 
 interface LineState {
-  status?: "running" | "error";
+  status?: "running";
+  /** Whether the call failed or was stopped, which an agent routinely recovers from. */
+  failed?: boolean;
   label?: keyof typeof chat.tools.status;
 }
 
@@ -21,7 +23,7 @@ export function toolLineState(part: ToolPart, streaming: boolean): LineState {
   switch (part.state) {
     case "input-streaming":
     case "input-available":
-      return streaming ? RUNNING : { status: "error", label: "stopped" };
+      return streaming ? RUNNING : { failed: true, label: "stopped" };
     case "approval-requested":
       return { label: "awaitingApproval" };
     case "approval-responded":
@@ -31,7 +33,7 @@ export function toolLineState(part: ToolPart, streaming: boolean): LineState {
     case "output-available":
       return part.preliminary && streaming ? RUNNING : {};
     case "output-error":
-      return { status: "error", label: "failed" };
+      return { failed: true, label: "failed" };
     case "output-denied":
       return { label: "denied" };
   }

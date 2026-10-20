@@ -247,7 +247,7 @@ export function AskUserTool({ part }: { part: ToolPart }) {
     <TraceStepCollapsible
       icon={<MessageCircleQuestionIcon />}
       title={title}
-      status={part.state === "output-error" ? undefined : status}
+      status={status}
       description={description}
     >
       {questions && answers && <AskSummary questions={questions} answers={answers} />}

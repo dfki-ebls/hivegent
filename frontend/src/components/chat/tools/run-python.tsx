@@ -173,6 +173,8 @@ function ChangesetOutcomeView({ changeset }: { changeset: ChangesetOutcome }) {
 /** The functions the program called on the host, a nested line that opens to each call and its result. */
 function HostCalls({ calls }: { calls: HostCall[] }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
+  const { t: tRoot } = useTranslation();
+  const failed = calls.filter((call) => call.error !== null).length;
   const lines = calls.map(
     (call) =>
       `${call.function}(${call.arguments}) → ${
@@ -184,7 +186,7 @@ function HostCalls({ calls }: { calls: HostCall[] }) {
     <TraceStepCollapsible
       icon={<SquareFunctionIcon />}
       title={t(($) => $.hostCalls, { count: calls.length })}
-      status={calls.some((call) => call.error !== null) ? "error" : undefined}
+      description={failed > 0 && tRoot(($) => $.chat.steps.failed, { count: failed })}
     >
       <ToolCode code={lines.join("\n")} />
     </TraceStepCollapsible>

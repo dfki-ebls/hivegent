@@ -1,5 +1,5 @@
 import { isToolUIPart } from "ai";
-import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
+import { CircleCheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChatPart } from "@/components/chat/MessagePart";
@@ -9,18 +9,12 @@ import { Trace } from "@/components/ui/trace";
 import { toolLineState } from "@/lib/chat/tool-part";
 import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
 
-const STATUS_ICONS = { running: <Spinner />, error: <CircleAlertIcon /> };
-
 /** The line that says the model works while nothing else on screen does, a step of the trace it sits in. */
 export function ProcessingStep() {
   const { t } = useTranslation();
 
   return (
-    <TraceStep
-      icon={STATUS_ICONS.running}
-      title={t(($) => $.chat.steps.processing)}
-      status="running"
-    />
+    <TraceStep icon={<Spinner />} title={t(($) => $.chat.steps.processing)} status="running" />
   );
 }
 
@@ -43,27 +37,27 @@ interface ChainOfThoughtProps {
 
 /**
  * A run of steps as one summary line that opens to them.
+ * Failed steps are routine for an agent, so the line counts them without alarming.
  * It opens while the agent works and closes once the reply moves on, unless the user toggled it.
  */
 export function ChainOfThought({ steps, running, children }: ChainOfThoughtProps) {
   const { t } = useTranslation();
   const streaming = useMessageStreaming();
   const failed = steps.filter(
-    (part) => isToolUIPart(part) && toolLineState(part, streaming).status === "error",
+    (part) => isToolUIPart(part) && toolLineState(part, streaming).failed,
   ).length;
-  const status = running ? "running" : failed > 0 ? "error" : undefined;
 
   return (
     <Trace>
       <TraceStepCollapsible
-        icon={status ? STATUS_ICONS[status] : <CircleCheckIcon />}
+        icon={running ? <Spinner /> : <CircleCheckIcon />}
         title={
           running
             ? t(($) => $.common.states.working)
             : t(($) => $.chat.steps.took, { count: steps.length })
         }
-        status={status}
-        description={status === "error" && t(($) => $.chat.steps.failed, { count: failed })}
+        status={running ? "running" : undefined}
+        description={!running && failed > 0 && t(($) => $.chat.steps.failed, { count: failed })}
         autoOpen={running}
         keepMounted
       >
