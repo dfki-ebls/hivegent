@@ -112,6 +112,7 @@ The refusal (`converters.BINARY_WRITE_REASON`) comes from `tools.mutations.resol
 Every served and shown media type comes from `converters.formats.media_type`, derived from the path rather than stored.
 It asks Python's built-in table with the declared image, video, and LLM tables and the formats documents embed laid over it, never the host registry, since that one differs between machines and mislabels source files.
 The document routes serve a file as plain text when its type is unknown or textual and it decodes, and anything else under its own type as a `nosniff` attachment, so an SVG reaches an `<img>` as an image but never renders in a tab.
+The client previews any original whose type is an image or a video, an SVG included although it is indexed as text.
 
 A whole write to a delimited file is checked against its header width by `tools.mutations.check_delimited_rows`, with the separator from `converters.DELIMITERS`, the table `query_table` reads with too.
 Edits are not checked, since they change a file they did not build.

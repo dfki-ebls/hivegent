@@ -16,16 +16,23 @@ import { useTranslation } from "react-i18next";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
-import { basename, centerInScroller, cn, errorMessage, isWebUrl, previewText } from "@/lib/utils";
+import {
+  basename,
+  centerInScroller,
+  cn,
+  errorMessage,
+  isWebUrl,
+  parentDir,
+  previewText,
+} from "@/lib/utils";
 import { buildAuxLlmConfig, formatTarget } from "@/lib/api";
 import { documentMutations, documentQueries } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
-import { AssetImage } from "@/components/documents/AssetImage";
+import { AssetMedia, isPreviewable } from "@/components/documents/AssetMedia";
 import { EmptyState, LoadingState } from "@/components/EmptyState";
 import { ItemButton } from "@/components/RowButtons";
 import { ScrollDialogContent } from "@/components/ScrollDialogContent";
 import { TooltipButton } from "@/components/TooltipButton";
-import { WorkspaceImage } from "@/components/WorkspaceImage";
 import { WorkspaceMarkdown } from "@/components/WorkspaceMarkdown";
 import {
   type ChunkedDocumentResponse,
@@ -114,7 +121,8 @@ interface ContentModel {
   loading: boolean;
   error: string | null;
   assetsDir: string | null;
-  image: { path: string; mime: string | null } | null;
+  /** The original, when the browser can show it inline above its description. */
+  preview: { path: string; mime: string } | null;
   metadata: ChunkedDocumentResponse | null;
 }
 
@@ -173,12 +181,31 @@ function lineStarts(content: string): number[] {
   return starts;
 }
 
-/** A scrolling pane with a centered image above its description. */
-function ImagePane({ image, children }: { image: ReactNode; children?: ReactNode }) {
+/** A scrolling pane with a centered image or video above its description. */
+function MediaPane({
+  filePath,
+  mediaType,
+  alt,
+  children,
+}: {
+  filePath: string;
+  mediaType?: string | null;
+  alt: string;
+  children?: ReactNode;
+}) {
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="flex flex-col gap-4 p-4">
-        <div className="flex justify-center">{image}</div>
+        <div className="flex justify-center">
+          <AssetMedia
+            key={filePath}
+            filePath={filePath}
+            mediaType={mediaType}
+            alt={alt}
+            wrapperClassName="min-h-32 min-w-32 rounded-xl border"
+            className="max-h-[70dvh] w-auto max-w-full object-contain"
+          />
+        </div>
         {children}
       </div>
     </ScrollArea>
@@ -220,7 +247,7 @@ function SidebarItem({
   );
 }
 
-/** Image views (an uploaded image, an extracted asset) title their description alike. */
+/** Media views (an uploaded image or video, an extracted asset) title their description alike. */
 function DescriptionHeading({ actions }: { actions?: ReactNode }) {
   const { t } = useTranslation();
 
@@ -400,9 +427,11 @@ function DocumentDialogBody({
         loading: isLoading || managedLoading,
         error: chunksQuery.error && errorMessage(chunksQuery.error),
         assetsDir: managedData?.assets_dir ?? null,
-        image:
-          managedData?.entry_kind === "image" && managedData.original_path
-            ? { path: managedData.original_path, mime: managedData.mime ?? null }
+        // Keyed on the original's media type rather than the entry kind, so an SVG
+        // indexed as text previews like a captioned raster image.
+        preview:
+          managedData?.original_path && isPreviewable(managedData.mime)
+            ? { path: managedData.original_path, mime: managedData.mime }
             : null,
         metadata: managedData,
       };
@@ -418,11 +447,12 @@ function DocumentDialogBody({
       loading: isLoading,
       error: null,
       assetsDir: null,
-      image: null,
+      preview: image ? { path: image.filePath, mime: image.mediaType } : null,
       metadata: null,
     };
   }, [
     chunk,
+    image,
     isLoading,
     isManagedMode,
     contentQuery.data,
@@ -479,13 +509,12 @@ function DocumentDialogBody({
     onSuccess: () => onOpenChange(false),
   });
 
-  // An uploaded image is a single image whose whole caption is one chunk, so we
-  // render it like an extracted asset (image + caption + file metadata) and drop
-  // the chunk/asset sidebar entirely.
-  const imageEntry = contentModel.image;
+  // An uploaded image or video is shown like an extracted asset (the media, its
+  // description, and file metadata), which drops the chunk/asset sidebar entirely.
+  const preview = contentModel.preview;
   const hasAssets = contentModel.assetsDir != null;
   const hasSidebar =
-    isNew || imageEntry
+    isNew || (isManagedMode && preview)
       ? false
       : isManagedMode
         ? contentModel.loading || contentModel.chunks.length > 0 || hasAssets
@@ -550,27 +579,16 @@ function DocumentDialogBody({
 
     // Full-doc markdown view
     if (view.mode === "full-doc") {
-      // Uploaded image entry: mirror the extracted-asset view — the image
-      // itself, its generated caption, and file metadata badges.
-      const imagePath = imageEntry?.path ?? image?.filePath;
-
-      if (imagePath) {
+      // Previewable entry: mirror the extracted-asset view, the media itself,
+      // its description (the source for a markup image), and file metadata badges.
+      if (preview) {
         return (
-          <ImagePane
-            image={
-              <AssetImage
-                filePath={imagePath}
-                alt={filename}
-                wrapperClassName="min-h-32 min-w-32 rounded-xl border"
-                className="max-h-[70dvh] w-auto max-w-full object-contain"
-              />
-            }
-          >
-            {imageEntry ? (
+          <MediaPane filePath={preview.path} mediaType={preview.mime} alt={filename}>
+            {isManagedMode ? (
               <div className="flex flex-col gap-2">
                 <DescriptionHeading />
                 <DescriptionBody markdown={fullContent} />
-                <FileMetaBadges name={basename(imageEntry.path)} mediaType={imageEntry.mime} />
+                <FileMetaBadges name={basename(preview.path)} mediaType={preview.mime} />
               </div>
             ) : (
               // A fetched image doc shows its description below once read.
@@ -578,7 +596,7 @@ function DocumentDialogBody({
                 <WorkspaceMarkdown documentPath={filename}>{fullContent}</WorkspaceMarkdown>
               )
             )}
-          </ImagePane>
+          </MediaPane>
         );
       }
 
@@ -626,19 +644,15 @@ function DocumentDialogBody({
 
     // Asset view
     if (activeAsset) {
-      // WorkspaceImage resolves src relative to the document's directory
-      const relativeSrc = `${basename(assetsData?.assets_dir ?? "")}/${activeAsset.name}`;
+      // The assets directory sits beside the document, so its scope prefix carries over.
+      const assetPath = `${parentDir(filename)}${basename(assetsData?.assets_dir ?? "")}/${activeAsset.name}`;
       const assetActionPending = pendingAssetAction !== null;
 
       return (
-        <ImagePane
-          image={
-            <WorkspaceImage
-              src={relativeSrc}
-              alt={activeAsset.description}
-              documentPath={filename}
-            />
-          }
+        <MediaPane
+          filePath={assetPath}
+          mediaType={activeAsset.media_type}
+          alt={activeAsset.description || activeAsset.name}
         >
           <div className="flex flex-col gap-2">
             <DescriptionHeading
@@ -744,7 +758,7 @@ function DocumentDialogBody({
               sizeBytes={activeAsset.size_bytes}
             />
           </div>
-        </ImagePane>
+        </MediaPane>
       );
     }
 

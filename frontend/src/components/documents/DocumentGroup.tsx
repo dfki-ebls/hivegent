@@ -6,7 +6,7 @@ import { type FetchedChunk, type FetchedDocument, sortChunks } from "@/lib/types
 import { basename, formatWebUrl, isWebUrl } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { AssetImage } from "@/components/documents/AssetImage";
+import { AssetMedia } from "@/components/documents/AssetMedia";
 import { ChunkCard, GridCard } from "@/components/documents/ChunkCard";
 import { DocumentMap } from "@/components/documents/DocumentMap";
 import { ExpandButton, NameButton } from "@/components/RowButtons";
@@ -70,8 +70,9 @@ export function DocumentGroup({
         <div className="grid auto-rows-fr grid-cols-2 gap-2 @sm:grid-cols-3 @lg:grid-cols-4">
           {doc.image && (
             <GridCard title={doc.image.filePath} className="p-0" onClick={() => onImageClick(doc)}>
-              <AssetImage
+              <AssetMedia
                 filePath={doc.image.filePath}
+                mediaType={doc.image.mediaType}
                 wrapperClassName={contentChunks.length > 0 ? "size-full" : "aspect-square w-full"}
                 className="size-full object-cover"
               />

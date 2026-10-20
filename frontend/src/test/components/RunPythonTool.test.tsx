@@ -4,7 +4,7 @@ import { RunPythonTool } from "@/components/chat/tools/run-python";
 import { DocumentDialog } from "@/components/DocumentDialog";
 import { ImageRef } from "@/components/ImageRef";
 import { WorkspaceImage } from "@/components/WorkspaceImage";
-import { AssetImage } from "@/components/documents/AssetImage";
+import { AssetMedia } from "@/components/documents/AssetMedia";
 import { ConversationIdProvider } from "@/hooks/chat/use-conversation-id";
 import { fetchDocumentAsset, getDocumentContent } from "@/lib/api";
 import type { ToolPart } from "@/lib/chat/tool-part";
@@ -120,7 +120,7 @@ describe("RunPythonTool", () => {
 
 describe("temporary document previews", () => {
   it.each([
-    <AssetImage key="asset" filePath="/tmp/image.png" alt="Preview" />,
+    <AssetMedia key="asset" filePath="/tmp/image.png" alt="Preview" />,
     <ImageRef key="reference" src="/tmp/image.png" alt="Preview" />,
     <WorkspaceImage key="markdown" src="image.png" documentPath="/tmp/notes.md" alt="Preview" />,
   ])("loads each image with its owning conversation", async (preview) => {
