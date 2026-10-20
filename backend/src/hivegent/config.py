@@ -6,9 +6,9 @@ import re
 import unicodedata
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Literal, Self
+from typing import Literal
 
-from pydantic import BaseModel, Field, PositiveInt, SecretStr, model_validator
+from pydantic import BaseModel, Field, PositiveInt, SecretStr
 from pydantic_settings import (
     BaseSettings,
     NestedSecretsSettingsSource,
@@ -344,15 +344,13 @@ class LlmSettings(BaseModel):
     requests;
     ``tool_calls_limit`` of ``None`` leaves tool calls uncapped.  ``retries`` is
     the budget for re-prompting the model when a tool raises ``ModelRetry`` or
-    output validation fails (applied to both), counted per tool and spent
-    against ``request_limit``.  Left unset it becomes ``request_limit`` itself,
-    which is no separate cap at all, so the turn's own bound is the only thing
-    that ends a correction loop.  A correctable
-    failure is how a run legitimately converges (``run_python`` meets Monty's
-    subset of the standard library by trying an import, a query meets a column
-    type by casting it), so a small budget abandons a turn the next call would
-    have got right, while an uncapped one still terminates, since every retry
-    spends a request.
+    output validation fails (applied to both), counted per tool as failures in
+    a row and spent against ``request_limit``.  A correctable failure is how a
+    run legitimately converges (``run_python`` meets Monty's subset of the
+    standard library by trying an import, a query meets a column type by
+    casting it), so a small budget abandons a turn the next call would have got
+    right, while a model stuck repeating a failing call ends its turn long
+    before the request limit would.
 
     ``caption_concurrency`` caps how many image-caption calls to ``aux_model``
     a single document issues at once; an image-heavy document would otherwise
@@ -380,28 +378,12 @@ class LlmSettings(BaseModel):
     inference_provider: InferenceProvider = InferenceProvider.OPENAI
     request_timeout_seconds: float = 600.0
     tool_timeout_seconds: float | None = 300.0
-    request_limit: int = 80
+    request_limit: int = 100
     tool_calls_limit: int | None = 80
     caption_concurrency: int = 4
     subagent_timeout_seconds: float | None = 180.0
     tool_output_max_chars: int = 60_000
-    retries: int | None = None
-
-    @model_validator(mode="after")
-    def _default_retries_to_the_request_limit(self) -> Self:
-        """Settle the retry budget at load, so there is one name to read.
-
-        Left unset it becomes ``request_limit``, which every retry spends one
-        of, so the turn ends for one reason rather than two and raising the
-        request limit raises the tolerance with it.  Resolved here rather than
-        offered as a second property beside the field, since the obvious name
-        would then be the wrong one to read and an agent built from it would
-        quietly get pydantic-ai's default of one.
-        """
-        if self.retries is None:
-            self.retries = self.request_limit
-
-        return self
+    retries: int = 20
 
 
 class MultimodalSettings(BaseModel):

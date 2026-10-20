@@ -364,7 +364,7 @@ Listings name what they left out through `omission_hints` (`include_ignored`, `m
 ## The Python sandbox
 
 `run_python` is a Monty sandbox with no network or host filesystem, and its time and memory budgets surface as `TimeoutError` or `MemoryError`.
-A failed program is a `ModelRetry`, and `llm.retries` defaults to the request limit, so the turn's own bound ends a correction loop.
+A failed program is a `ModelRetry`, and `llm.retries` ends a turn after that many failures of one tool in a row.
 A program is inline `code` or a `.py` `script_path` reloaded on every call, so the model can edit and rerun it.
 
 ### The mount
