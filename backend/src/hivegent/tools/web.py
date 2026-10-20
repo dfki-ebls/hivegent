@@ -20,6 +20,7 @@ from trafilatura.htmlprocessing import build_html_output
 from trafilatura.settings import Document
 
 from ..concurrency import bounded_gather
+from ..converters.formats import is_textual_media_type
 from ..humanize import pluralize
 from ..security import UnsafeUrlError
 from .base import (
@@ -610,14 +611,6 @@ def _is_html(mime: str) -> bool:
     return mime in ("text/html", "application/xhtml+xml")
 
 
-def _is_textual(mime: str) -> bool:
-    return (
-        mime.startswith("text/")
-        or mime in ("application/json", "application/xml")
-        or mime.endswith(("+json", "+xml"))
-    )
-
-
 def _inline_links(tree: HtmlElement, url: str) -> tuple[str, ...]:
     """Write each link of *tree* as the text ``[text](url)`` and return the targets.
 
@@ -775,7 +768,7 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
             response.raise_for_status()
             mime = _mime_type(response.headers.get("content-type", ""))
 
-            if not _is_textual(mime):
+            if not is_textual_media_type(mime):
                 raise ToolRetry(f"unsupported content type '{mime}'.")
 
             body, truncated = await self._read_capped(response)

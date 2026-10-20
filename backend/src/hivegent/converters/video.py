@@ -22,23 +22,12 @@ from ..workers.isolation import run_isolated_untrusted
 __all__ = [
     "FRAME_MAX_DIMENSION",
     "MAX_FRAMES",
-    "VIDEO_MEDIA_TYPES",
     "MediaSample",
     "SampledFrame",
     "animation_frame_count",
-    "is_video_suffix",
     "sample_animated_image",
     "sample_video",
 ]
-
-VIDEO_MEDIA_TYPES: dict[str, str] = {
-    ".avi": "video/x-msvideo",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mov": "video/quicktime",
-    ".mkv": "video/x-matroska",
-}
-"""Extension → media type for the supported video containers."""
 
 # Image formats whose containers support multi-frame animation.
 _ANIMATED_IMAGE_MEDIA_TYPES = frozenset({"image/gif", "image/webp"})
@@ -51,11 +40,6 @@ FRAME_MAX_DIMENSION = 1024
 
 # Fallback per-frame duration for animations that omit timing metadata.
 _DEFAULT_FRAME_MS = 100.0
-
-
-def is_video_suffix(suffix: str) -> bool:
-    """Return whether *suffix* matches a supported video extension."""
-    return suffix.lower() in VIDEO_MEDIA_TYPES
 
 
 @dataclass(slots=True, frozen=True)

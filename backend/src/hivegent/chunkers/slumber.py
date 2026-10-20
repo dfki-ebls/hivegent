@@ -117,13 +117,7 @@ class SlumberDocumentChunker(DocumentChunker):
         ).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
 
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
+    async def _split(self, text: str, /) -> list[ChunkData]:
         """Split text using LLM-guided chunking."""
         from ..llm import create_openai_client
         from ..llm_config import LlmConfig, resolve_llm_config

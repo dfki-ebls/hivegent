@@ -440,7 +440,6 @@ def _entry_metadata(
         description_path="doc.md",
         original_path=original_path,
         assets_dir=assets_dir,
-        mime="text/markdown",
         origin="upload",
         generated_by="user",
     )

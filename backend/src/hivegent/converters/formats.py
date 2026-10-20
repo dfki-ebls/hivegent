@@ -1,9 +1,10 @@
 """Dependency-free format policy shared by routing and converters."""
 
 from collections.abc import Set as AbstractSet
+from mimetypes import MimeTypes
 from pathlib import PurePath
 
-from .base import IMAGE_MEDIA_TYPES
+from .base import IMAGE_MEDIA_TYPES, VIDEO_MEDIA_TYPES
 
 __all__ = [
     "ANYDOC_EXTENSIONS",
@@ -14,7 +15,9 @@ __all__ = [
     "PANDOC_FORMAT_OVERRIDES",
     "PANDOC_SANDBOX_INCOMPATIBLE",
     "PLAIN_TEXT_EXTENSIONS",
+    "is_textual_media_type",
     "match_file_extension",
+    "media_type",
 ]
 
 
@@ -220,3 +223,70 @@ def match_file_extension(filename: str, extensions: AbstractSet[str]) -> str:
             return extension
 
     return suffixes[-1].casefold() if suffixes else ""
+
+
+def _media_types() -> MimeTypes:
+    """Python's own suffix table, overridden by the declared ones.
+
+    Unlike the host ``mime.types`` files the module functions merge in, it is
+    the same on every host, and it does not mislabel common source files
+    (``.rs`` as an XML service description, ``.ts`` as a Qt translation).  The
+    formats documents embed that it lacks are named as IANA and mailcap do.
+    """
+    types = MimeTypes()
+    declared = {
+        ".emf": "image/emf",
+        ".jp2": "image/jp2",
+        ".jpx": "image/jpx",
+        ".jxl": "image/jxl",
+        ".psd": "image/vnd.adobe.photoshop",
+        ".tga": "image/x-targa",
+        ".wmf": "image/wmf",
+        **LLM_MEDIA_TYPES,
+        **IMAGE_MEDIA_TYPES,
+        **VIDEO_MEDIA_TYPES,
+    }
+
+    for suffix, media in declared.items():
+        types.add_type(media, suffix)
+
+    return types
+
+
+_MEDIA_TYPES = _media_types()
+
+
+def media_type(path: str) -> str | None:
+    """Return the media type *path*'s suffix names, or ``None`` when it names none.
+
+    The one resolver behind every stored, served, and shown media type.  A
+    source or config format without an entry stays ``None``, so a caller
+    decides from the bytes rather than from a wrong label.
+
+    >>> media_type("figure.SVG")
+    'image/svg+xml'
+    >>> media_type("clip.mkv")
+    'video/x-matroska'
+    >>> media_type("notes.md")
+    'text/markdown'
+    >>> media_type("scan.jp2")
+    'image/jp2'
+    >>> media_type("main.rs") is None
+    True
+    """
+    return _MEDIA_TYPES.guess_file_type(path)[0]
+
+
+def is_textual_media_type(media_type: str) -> bool:
+    """Return whether *media_type* names a textual format.
+
+    >>> is_textual_media_type("application/ld+json")
+    True
+    >>> is_textual_media_type("image/png")
+    False
+    """
+    return (
+        media_type.startswith("text/")
+        or media_type in ("application/json", "application/xml")
+        or media_type.endswith(("+json", "+xml"))
+    )

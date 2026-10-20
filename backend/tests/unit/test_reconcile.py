@@ -27,7 +27,6 @@ def _state(stem: str) -> EntryState:
         description_path=f"{stem}.md",
         original_path=None,
         assets_dir=None,
-        mime="text/markdown",
         origin="upload",
         generated_by="user",
     )

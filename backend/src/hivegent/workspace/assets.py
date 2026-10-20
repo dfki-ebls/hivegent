@@ -9,7 +9,6 @@ other change, and refused once its asset is gone.
 """
 
 import asyncio
-import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +18,7 @@ from ..changes import Changeset, Delete, Write
 from ..config import sanitize_document_path, settings
 from ..converters.asset_processing import image_context_windows
 from ..converters.base import DOCUMENT_EXTENSION
+from ..converters.formats import media_type
 from ..converters.images import guess_image_media_type
 from ..entries import (
     asset_ref_for,
@@ -84,7 +84,7 @@ class _Asset:
             description_path=description_path,
             description=description,
             size_bytes=self.size,
-            media_type=mimetypes.guess_type(self.name)[0],
+            media_type=media_type(self.name),
         )
 
 

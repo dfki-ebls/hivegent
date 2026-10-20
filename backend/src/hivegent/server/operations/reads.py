@@ -7,7 +7,6 @@ the filesystem to resolve URLs to bytes.  Mutations live in
 
 import asyncio
 import logging
-import mimetypes
 from collections.abc import Callable
 from pathlib import Path
 from stat import S_ISREG
@@ -17,6 +16,7 @@ from fastapi import HTTPException
 from starlette.responses import FileResponse, PlainTextResponse, Response
 
 from ...converters.base import DOCUMENT_EXTENSION
+from ...converters.formats import is_textual_media_type, media_type
 from ...entries import assets_dir_for_stem, stem_path_from_reference
 from ...l10n import Localized
 from ...store import Casebase
@@ -27,6 +27,7 @@ from ...workspace.paths import document_not_found
 
 __all__ = [
     "attachment_disposition",
+    "attachment_response",
     "get_document_response",
     "get_file_response",
     "list_assets",
@@ -41,9 +42,22 @@ _NO_ASSETS = Localized(
 )
 
 
+# Stops a browser from sniffing served text or bytes into a type it would render.
+_NOSNIFF = {"X-Content-Type-Options": "nosniff"}
+
+
 def attachment_disposition(filename: str) -> str:
     """Return an RFC 6266 ``Content-Disposition: attachment`` header value."""
     return f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+def attachment_response(path: Path) -> FileResponse:
+    """Serve *path* as a download under the media type its name declares."""
+    return FileResponse(
+        path=path,
+        media_type=media_type(path.name) or "application/octet-stream",
+        headers={"Content-Disposition": attachment_disposition(path.name), **_NOSNIFF},
+    )
 
 
 async def get_document_response(store: Casebase, safe: str) -> Response:
@@ -54,10 +68,14 @@ async def get_document_response(store: Casebase, safe: str) -> Response:
 async def get_file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
     """Resolve and read a file in one worker thread, as text or a downloadable attachment.
 
-    *resolve* returns ``None`` for a path the caller may not read.  Non-text
-    responses force ``Content-Disposition: attachment`` so a user who pastes
-    the URL into a browser tab cannot execute attacker-uploaded SVG/HTML in
-    the app's same-origin context.
+    *resolve* returns ``None`` for a path the caller may not read.  A file whose
+    name declares no media type, or a textual one, is served as plain text when
+    it decodes, since most source and config formats have no registered type.
+    Everything else, an image included even when its format is markup, keeps
+    its own type so the client can render it, and is forced to
+    ``Content-Disposition: attachment`` so a user who pastes the URL into a
+    browser tab cannot execute attacker-uploaded SVG/HTML in the app's
+    same-origin context.
     """
     return await asyncio.to_thread(_file_response, resolve, shown)
 
@@ -71,9 +89,12 @@ def _file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail=_NOT_A_FILE.current)
 
-    media_type = mimetypes.guess_type(file_path.name)[0]
+    declared = media_type(file_path.name)
 
-    if not media_type or media_type.startswith("text/"):
+    # An SVG is markup, but has to reach an `<img>` under its own type.
+    if declared is None or (
+        not declared.startswith("image/") and is_textual_media_type(declared)
+    ):
         try:
             decoded = read_text_file(file_path)
         except FileNotFoundError as exc:
@@ -85,13 +106,9 @@ def _file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
 
         # Undecodable content falls through to the attachment response below.
         if decoded is not None:
-            return PlainTextResponse(decoded.text)
+            return PlainTextResponse(decoded.text, headers=_NOSNIFF)
 
-    return FileResponse(
-        path=file_path,
-        media_type=media_type or "application/octet-stream",
-        headers={"Content-Disposition": attachment_disposition(file_path.name)},
-    )
+    return attachment_response(file_path)
 
 
 def list_assets(store: Casebase, safe: str) -> AssetListResponse:
@@ -138,7 +155,7 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
                 description_path=description_path,
                 description=description,
                 size_bytes=size,
-                media_type=mimetypes.guess_type(relative.name)[0],
+                media_type=media_type(relative.name),
             )
         )
 

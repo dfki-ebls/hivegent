@@ -7,7 +7,6 @@ chunks.
 """
 
 import asyncio
-import mimetypes
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -128,7 +127,6 @@ def _build_entry_metadata(
         description_path=description_path,
         original_path=original_path,
         assets_dir=assets_dir,
-        mime=mimetypes.guess_type(original_path or description_path)[0],
         origin=origin,
         generated_by=generated_by,
     )

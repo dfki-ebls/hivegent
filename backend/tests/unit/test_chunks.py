@@ -17,7 +17,6 @@ def _entry_metadata() -> EntryMetadata:
         description_path="doc.md",
         original_path=None,
         assets_dir=None,
-        mime="text/markdown",
         origin="upload",
         generated_by="user",
     )

@@ -13,13 +13,7 @@ class NoneDocumentChunker(DocumentChunker):
 
     name = "none"
 
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
+    async def _split(self, text: str, /) -> list[ChunkData]:
         """Return a single chunk spanning the full text."""
         return [
             ChunkData(

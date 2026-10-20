@@ -83,10 +83,6 @@ class EntryMetadata(BaseModel):
         default=None,
         description="Workspace-relative child-assets directory for the entry",
     )
-    mime: str | None = Field(
-        default=None,
-        description="Detected MIME type for the original file when available",
-    )
     origin: EntryOrigin = Field(
         default="upload",
         description="How the logical entry was created",
@@ -108,6 +104,10 @@ class DocumentMetadata(EntryMetadata):
         description="On-disk byte size of the chunked description, when known",
     )
     chunks: list[ChunkData] = Field(description="The document chunks")
+    mime: str | None = Field(
+        default=None,
+        description="Media type the original's name declares, else the description's",
+    )
     content_digest: str | None = Field(
         default=None,
         description=(
@@ -176,13 +176,7 @@ class DocumentChunker(ABC):
         """
         raise NotImplementedError
 
-    async def _split(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
+    async def _split(self, text: str, /) -> list[ChunkData]:
         """Split text into chunks.
 
         Defaults to offloading :meth:`_split_sync` off the event loop (a worker
@@ -191,31 +185,22 @@ class DocumentChunker(ABC):
 
         Args:
             text: The document text to chunk.
-            mime: Detected MIME type of the original file, when available.
-                Format-aware chunkers may use this to switch strategies.
 
         Returns:
             List of ChunkData objects (line numbers may be unset).
         """
         return await run_offloaded(self._split_sync, text)
 
-    async def __call__(
-        self,
-        text: str,
-        /,
-        *,
-        mime: str | None = None,
-    ) -> list[ChunkData]:
+    async def __call__(self, text: str, /) -> list[ChunkData]:
         """Split text into chunks and annotate line numbers.
 
         Args:
             text: The document text to chunk.
-            mime: Detected MIME type of the original file, when available.
 
         Returns:
             List of ChunkData objects with 1-based line numbers set.
         """
-        chunks = await self._split(text, mime=mime)
+        chunks = await self._split(text)
         if not chunks:
             return []
         line_starts = [0]

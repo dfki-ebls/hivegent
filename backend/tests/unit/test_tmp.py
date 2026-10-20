@@ -380,3 +380,30 @@ async def test_a_file_replaced_during_a_read_returns_its_http_error(
         await reads.get_file_response(lambda: target, "~/document.md")
 
     assert exc.value.status_code == status
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "media_type", "attachment"),
+    [
+        ("main.rs", b"fn main() {}", "text/plain", False),
+        (
+            "figure.svg",
+            b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+            "image/svg+xml",
+            True,
+        ),
+        ("photo.png", b"\x89PNG\r\n\x1a\n", "image/png", True),
+        ("blob.bin", b"\x00\xff\x00\xfe", "application/octet-stream", True),
+    ],
+)
+async def test_a_file_is_served_as_text_only_when_its_type_allows(
+    tmp_path: Path, name: str, content: bytes, media_type: str, attachment: bool
+) -> None:
+    target = tmp_path / name
+    target.write_bytes(content)
+
+    response = await reads.get_file_response(lambda: target, f"~/{name}")
+
+    assert response.media_type == media_type
+    assert ("content-disposition" in response.headers) is attachment
+    assert response.headers["x-content-type-options"] == "nosniff"

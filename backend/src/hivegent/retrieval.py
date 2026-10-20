@@ -39,6 +39,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from .chunkers.base import ChunkData, RetrievedChunk
 from .concurrency import shield_to_completion
 from .config import reveal, settings
+from .converters.base import is_image_suffix
 from .db import documents as db_documents
 from .db.engine import session
 from .db.models import Chunk, Document, IndexState
@@ -330,7 +331,6 @@ class _EnrichedRow:
     text: str
     stem_path: str
     original_suffix: str | None
-    entry_kind: str
     store_key: str
 
 
@@ -349,7 +349,6 @@ async def _load_enriched(keys: Sequence[str]) -> list[_EnrichedRow]:
                 Chunk.text,
                 Document.stem_path,
                 Document.original_suffix,
-                Document.entry_kind,
                 Document.owner_user_id,
                 Document.owner_group_id,
             )
@@ -370,7 +369,6 @@ async def _load_enriched(keys: Sequence[str]) -> list[_EnrichedRow]:
             text=text,
             stem_path=stem_path,
             original_suffix=original_suffix,
-            entry_kind=entry_kind.value,
             store_key=Casebase.for_owner(owner_user_id, owner_group_id).store_key,
         )
         for (
@@ -384,7 +382,6 @@ async def _load_enriched(keys: Sequence[str]) -> list[_EnrichedRow]:
             text,
             stem_path,
             original_suffix,
-            entry_kind,
             owner_user_id,
             owner_group_id,
         ) in rows
@@ -432,7 +429,7 @@ def build_search_tool(
             filename = description_path_for_stem(row.stem_path)
             image_path = (
                 original_path_for_stem(row.stem_path, row.original_suffix)
-                if row.entry_kind == "image"
+                if is_image_suffix(row.original_suffix or "")
                 else None
             )
             by_key[row.key] = RetrievedChunk(

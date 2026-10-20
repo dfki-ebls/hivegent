@@ -18,6 +18,7 @@ from .processing import (
 )
 from .reads import (
     attachment_disposition,
+    attachment_response,
     get_document_response,
     get_file_response,
     list_assets,
@@ -25,6 +26,7 @@ from .reads import (
 
 __all__ = [
     "attachment_disposition",
+    "attachment_response",
     "build_tree_response",
     "cleanup_spool_dir",
     "enforce_upload_size",

@@ -11,7 +11,6 @@ group membership (reads) or write access.
 
 import asyncio
 import logging
-import mimetypes
 import shutil
 import tempfile
 from collections.abc import Awaitable, Callable, Iterable
@@ -20,7 +19,7 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
-from starlette.responses import FileResponse, Response
+from starlette.responses import Response
 
 from ... import workspace
 from ...auth import get_current_user
@@ -70,7 +69,7 @@ from ..models import (
     WorkspacePath,
 )
 from ..operations import (
-    attachment_disposition,
+    attachment_response,
     build_tree_response,
     enforce_upload_size,
     get_document_response,
@@ -255,12 +254,7 @@ async def download_original(
     """Download the original binary file for a document."""
     store, safe = resolve_workspace_path(user, filepath)
     original = await workspace.find_original(store, safe)
-    media_type = mimetypes.guess_type(original.name)[0] or "application/octet-stream"
-    return FileResponse(
-        path=original,
-        media_type=media_type,
-        headers={"Content-Disposition": attachment_disposition(original.name)},
-    )
+    return attachment_response(original)
 
 
 @router.put("/documents/original/{filepath:path}")

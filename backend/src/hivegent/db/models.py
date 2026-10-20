@@ -318,7 +318,6 @@ class Document(Timestamped, Base):
     entry_kind: Mapped[EntryKind] = mapped_column(_enum(EntryKind))
     origin: Mapped[Origin] = mapped_column(_enum(Origin))
     generated_by: Mapped[GeneratedBy] = mapped_column(_enum(GeneratedBy))
-    mime: Mapped[str | None]
 
     pipeline: Mapped[str]
     content_digest: Mapped[str | None]

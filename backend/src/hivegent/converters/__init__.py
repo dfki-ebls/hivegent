@@ -17,10 +17,12 @@ from ..pipeline_registry import (
 )
 from .base import (
     IMAGE_MEDIA_TYPES,
+    VIDEO_MEDIA_TYPES,
     ConversionResult,
     DocumentConverter,
     is_image_suffix,
     is_markdown_suffix,
+    is_video_suffix,
 )
 from .formats import (
     ANYDOC_EXTENSIONS,
@@ -32,7 +34,6 @@ from .formats import (
     PLAIN_TEXT_EXTENSIONS,
     match_file_extension,
 )
-from .video import VIDEO_MEDIA_TYPES, is_video_suffix
 
 __all__ = [
     "BINARY_SUFFIXES",

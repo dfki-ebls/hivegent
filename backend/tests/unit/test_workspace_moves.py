@@ -90,7 +90,6 @@ def _doc(stem: str, original_suffix: str | None = None) -> DocumentMetadata:
         description_path=f"{stem}.md",
         original_path=original,
         assets_dir=None,
-        mime=None,
         origin="upload",
         generated_by="converter",
         id="doc-id",

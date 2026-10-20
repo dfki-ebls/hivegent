@@ -8,7 +8,6 @@ gateway (:func:`~hivegent.workspace.changeset.apply_changeset`) then lands.
 
 import asyncio
 import logging
-import mimetypes
 import re
 import tempfile
 from collections.abc import Generator, Sequence
@@ -43,6 +42,7 @@ from ..converters.base import (
     is_external_ref,
 )
 from ..converters.fallbacks import recover_conversion
+from ..converters.formats import media_type
 from ..converters.images import guess_image_media_type
 from ..converters.plain_text import convert_plain_text
 from ..entries import (
@@ -309,7 +309,7 @@ def _prepare_plain_text_or_stub(
     generated_by: EntryGeneratedBy = "stub" if result is None else "converter"
 
     if result is None:
-        mime = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
+        mime = media_type(filepath) or "application/octet-stream"
         markdown = (
             f"File name: {PurePosixPath(filepath).name}.\n"
             f"MIME type: {mime}.\nSize: {len(content)} bytes.\n"

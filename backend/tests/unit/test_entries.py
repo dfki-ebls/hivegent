@@ -74,7 +74,6 @@ def _converted_entry(filepath: str) -> EntryMetadata:
         description_path=description_path_for_stem(stem),
         original_path=filepath,
         assets_dir=None,
-        mime=None,
         origin="upload",
         generated_by="converter",
     )
@@ -113,7 +112,6 @@ def test_markdown_entry_has_no_original_after_projection() -> None:
         description_path="notes/memo.md",
         original_path=None,
         assets_dir=None,
-        mime=None,
         origin="upload",
         generated_by="user",
     )

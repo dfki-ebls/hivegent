@@ -23,6 +23,7 @@ from ..chunkers.base import (
     DocumentMetadata,
     EntryMetadata,
 )
+from ..converters.formats import media_type
 from ..entries import (
     ContentStat,
     assets_dir_for_stem,
@@ -168,7 +169,6 @@ def _entry_from_row(doc: Document) -> EntryMetadata:
         description_path=description_path_for_stem(doc.stem_path),
         original_path=original_path_for_stem(doc.stem_path, doc.original_suffix),
         assets_dir=assets_dir_for_stem(doc.stem_path) if doc.has_assets else None,
-        mime=doc.mime,
         origin=doc.origin.value,  # type: ignore[arg-type]
         generated_by=doc.generated_by.value,  # type: ignore[arg-type]
     )
@@ -178,8 +178,10 @@ def _document_from_row(
     doc: Document, chunks_data: Sequence[ChunkData]
 ) -> DocumentMetadata:
     """Assemble a :class:`DocumentMetadata` from a row + prepared chunks."""
+    entry = _entry_from_row(doc)
     return DocumentMetadata(
-        **_entry_from_row(doc).model_dump(),
+        **entry.model_dump(),
+        mime=media_type(entry.original_path or entry.description_path),
         id=doc.id,
         pipeline=doc.pipeline,
         created_at=doc.created_at,
@@ -475,7 +477,6 @@ class _EntryColumns:
     entry_kind: EntryKind
     origin: Origin
     generated_by: GeneratedBy
-    mime: str | None
 
     @classmethod
     def from_entry(cls, entry: EntryMetadata) -> Self:
@@ -486,7 +487,6 @@ class _EntryColumns:
             entry_kind=EntryKind(entry.entry_kind),
             origin=Origin(entry.origin),
             generated_by=GeneratedBy(entry.generated_by),
-            mime=entry.mime,
         )
 
     def as_values(self) -> dict[str, Any]:

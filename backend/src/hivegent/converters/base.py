@@ -15,6 +15,7 @@ __all__ = [
     "DOCUMENT_EXTENSION",
     "IMAGE_EXTENSIONS",
     "IMAGE_MEDIA_TYPES",
+    "VIDEO_MEDIA_TYPES",
     "AssetBBox",
     "AssetRole",
     "ConversionResult",
@@ -25,6 +26,7 @@ __all__ = [
     "is_external_ref",
     "is_image_suffix",
     "is_markdown_suffix",
+    "is_video_suffix",
     "pil_to_png_bytes",
 ]
 
@@ -55,12 +57,21 @@ IMAGE_MEDIA_TYPES: dict[str, str] = {
 Declared rather than looked up so the answer cannot vary with whichever
 ``mime.types`` registry the host happens to ship, and so the recognised
 extensions and their media types cannot drift apart — the same shape
-:data:`~hivegent.converters.video.VIDEO_MEDIA_TYPES` has.  Which of these a
+:data:`VIDEO_MEDIA_TYPES` has.  Which of these a
 chat model can actually be shown is a separate, narrower question; see
 :data:`~hivegent.converters.VISION_MEDIA_TYPES`.
 """
 
 IMAGE_EXTENSIONS = frozenset(IMAGE_MEDIA_TYPES)
+
+VIDEO_MEDIA_TYPES: dict[str, str] = {
+    ".avi": "video/x-msvideo",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska",
+}
+"""Extension → media type for the supported video containers."""
 
 
 def is_markdown_suffix(suffix: str) -> bool:
@@ -71,6 +82,11 @@ def is_markdown_suffix(suffix: str) -> bool:
 def is_image_suffix(suffix: str) -> bool:
     """Return whether *suffix* matches a known image extension."""
     return suffix.lower() in IMAGE_EXTENSIONS
+
+
+def is_video_suffix(suffix: str) -> bool:
+    """Return whether *suffix* matches a supported video extension."""
+    return suffix.lower() in VIDEO_MEDIA_TYPES
 
 
 def fenced_code_block(text: str, suffix: str) -> str:
