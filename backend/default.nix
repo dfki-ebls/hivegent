@@ -115,47 +115,49 @@ let
     # `license-files` in `pyproject.toml` reaches the repo-level license
     # and additional terms through symlinks,
     # so the build source must span both for them to resolve.
-    hivegent-backend = prev.hivegent-backend.overrideAttrs (finalAttrs: old: {
-      src = lib.fileset.toSource {
-        root = ../.;
-        fileset = lib.fileset.unions [
-          ./.
-          ../LICENSE
-          ../TERMS
-        ];
-      };
-      sourceRoot = "${finalAttrs.src.name}/backend";
-      passthru = lib.recursiveUpdate (old.passthru or { }) {
-        tests.pytest = stdenv.mkDerivation {
-          name = "${final.hivegent-backend.name}-pytest";
-          inherit (final.hivegent-backend) src sourceRoot;
-          nativeBuildInputs = [
-            cacert
-            (mkVenv "hivegent-test-env" {
-              hivegent-backend = [
-                "all"
-                "dev"
-              ];
-            })
-          ]
-          ++ runtimeInputs
-          ++ [ pandoc ];
-          dontConfigure = true;
-          buildPhase = ''
-            runHook preBuild
-            export HOME=$(mktemp -d)
-            export NUMBA_CACHE_DIR=$HOME/.numba_cache
-            pytest
-            runHook postBuild
-          '';
-          installPhase = ''
-            runHook preInstall
-            touch "$out"
-            runHook postInstall
-          '';
+    hivegent-backend = prev.hivegent-backend.overrideAttrs (
+      finalAttrs: old: {
+        src = lib.fileset.toSource {
+          root = ../.;
+          fileset = lib.fileset.unions [
+            ./.
+            ../LICENSE
+            ../TERMS
+          ];
         };
-      };
-    });
+        sourceRoot = "${finalAttrs.src.name}/backend";
+        passthru = lib.recursiveUpdate (old.passthru or { }) {
+          tests.pytest = stdenv.mkDerivation {
+            name = "${final.hivegent-backend.name}-pytest";
+            inherit (final.hivegent-backend) src sourceRoot;
+            nativeBuildInputs = [
+              cacert
+              (mkVenv "hivegent-test-env" {
+                hivegent-backend = [
+                  "all"
+                  "dev"
+                ];
+              })
+            ]
+            ++ runtimeInputs
+            ++ [ pandoc ];
+            dontConfigure = true;
+            buildPhase = ''
+              runHook preBuild
+              export HOME=$(mktemp -d)
+              export NUMBA_CACHE_DIR=$HOME/.numba_cache
+              pytest
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              touch "$out"
+              runHook postInstall
+            '';
+          };
+        };
+      }
+    );
   };
   baseSet = callPackage pyproject-nix.build.packages {
     python = python313;
