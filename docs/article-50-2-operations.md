@@ -34,6 +34,8 @@ Elsewhere, keep the key in a file readable only by the inference server, for exa
 Hivegent sets no sampling parameters, so the server's configuration decides them.
 A request can leave its output unmarked through greedy decoding or a per-request opt-out, so the server must be configured for stochastic sampling and no other client may reach it.
 Keep the inference endpoint private to Hivegent, or require a token that only Hivegent holds.
+With vLLM's Gumbel algorithms, set `deduplicate_contexts = "all"`, since Gumbel sampling is deterministic per context and an agent retrying a failed tool call would otherwise regenerate the same tokens on every attempt.
+This leaves tokens whose context already occurs in the prompt unmarked, such as text copied from a tool result, so include agentic answers built on tool results in the tests below.
 
 Configuring the `[transparency]` section enables detection and signing:
 
