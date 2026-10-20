@@ -7,13 +7,14 @@ import { ToolFallback } from "@/components/chat/tools/ToolFallback";
 import { useSubagentLive } from "@/hooks/chat/use-subagent-live";
 import { type ChatMessage, isOpenPrompt } from "@/lib/chat/chat-utils";
 import { isSubagentTranscript } from "@/lib/chat/subagent";
-import { getToolName, getToolPartInfo, type ToolPart } from "@/lib/chat/tool-part";
+import { CONTEXT_TOOL, getToolName, getToolPartInfo, type ToolPart } from "@/lib/chat/tool-part";
 
 export type ChatPart = ChatMessage["parts"][number];
 
 /**
  * Where a part of a reply goes: a step the agent took sits in a trace with its neighbors,
  * content and anything asking the user stands on its own, and the rest renders nothing.
+ * A context note is the harness reporting run state rather than a step, so it renders nothing too.
  */
 export function partLayout(part: ChatPart, streaming: boolean): "step" | "block" | null {
   switch (part.type) {
@@ -25,7 +26,9 @@ export function partLayout(part: ChatPart, streaming: boolean): "step" | "block"
       return part.mediaType.startsWith("image/") ? "block" : null;
   }
 
-  if (!getToolName(part)) return null;
+  const toolName = getToolName(part);
+
+  if (!toolName || toolName === CONTEXT_TOOL) return null;
 
   return isOpenPrompt(part) ? "block" : "step";
 }
