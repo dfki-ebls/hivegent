@@ -63,7 +63,6 @@ from ..types import (
 from .app import turn_usage_limits
 from .approval import ApprovalNotes
 from .common import UserDeps, scope_instructions
-from .guards import IterationLimitWarner
 from .tools import (
     INJECTABLE_TOOL_NAMES,
     SANDBOX_FUNCTION_NAMES,
@@ -333,9 +332,8 @@ def build_capabilities(
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)
 
     # Cross-cutting run-loop safeguards, applied to every run regardless of mode.
-    # The output spill rides on the agent itself (`agents/app.py`).
+    # The output spill and the limit warner ride on the agents (`agents/app.py`).
     result.append(ApprovalNotes())
-    result.append(IterationLimitWarner())
 
     return result
 

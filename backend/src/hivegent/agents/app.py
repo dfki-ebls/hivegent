@@ -14,6 +14,7 @@ from .common import UserDeps
 from .guards import (
     EnglishToolCalls,
     IncompleteToolCallGuard,
+    IterationLimitWarner,
     PromptImageLimit,
     ToolOutputSpill,
 )
@@ -37,6 +38,7 @@ _guards = [
     EnglishToolCalls(),
     IncompleteToolCallGuard(),
     PromptImageLimit(max_images=settings.multimodal.max_images),
+    IterationLimitWarner(),
 ]
 
 # Every run over the user's deps bounds its tool returns the same way, the

@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic_ai import BinaryContent, FunctionToolset, ImageUrl, RunContext
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    FunctionToolset,
+    ImageUrl,
+    ModelRetry,
+    RunContext,
+)
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
 from pydantic_ai.exceptions import IncompleteToolCall
 from pydantic_ai.messages import (
@@ -302,6 +309,48 @@ async def test_the_wrap_up_note_reads_the_run_limits() -> None:
         )
         == messages
     )
+
+
+async def test_the_retry_note_warns_before_a_failing_tool_ends_the_turn() -> None:
+    """Run a real agent, so the run's retry budget and run id are what decide."""
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool_plain
+    def broken() -> str:
+        raise ModelRetry("still broken")
+
+    warned: list[str] = []
+
+    def call_broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        notes = [
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, UserPromptPart)
+            and "retry-limit-warning" in str(part.content)
+        ]
+
+        if notes:
+            warned.extend(notes)
+
+            return ModelResponse(parts=[TextPart(content="giving up")])
+
+        return ModelResponse(parts=[ToolCallPart(tool_name="broken", args={})])
+
+    result = await Agent(retries=4).run(
+        "go",
+        model=FunctionModel(call_broken),
+        toolsets=[toolset],
+        capabilities=[IterationLimitWarner()],
+    )
+
+    assert warned == [
+        (
+            "[retry-limit-warning] `broken` failed 3 times in a row, and the turn "
+            "ends after 4 retries (1 remaining). Change the arguments or the "
+            "approach instead of repeating the call."
+        )
+    ]
+    assert "retry-limit-warning" not in str(result.all_messages())
 
 
 @dataclass(slots=True, frozen=True)

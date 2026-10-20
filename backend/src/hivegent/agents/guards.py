@@ -21,16 +21,15 @@ Five capabilities that guard a run without belonging to any one feature:
   so a batch of parallel reads that each obey the cap cannot overflow it
   together.
 * :class:`IterationLimitWarner` injects a user-turn nudge as the run nears
-  its request budget, so the model wraps up before the hard
-  :class:`~pydantic_ai.exceptions.UsageLimitExceeded` abort rather than
-  being cut off mid-task.
+  its request budget or a tool its retries, so the model wraps up or changes
+  course before the hard abort rather than being cut off mid-task.
 
 All five hook the pydantic-ai agent loop, so they touch only the agent
 path; the framework-neutral tools and their FastMCP adapter are unaffected.
-All but :class:`IterationLimitWarner`, which is composed per chat run, ride on
-the agents themselves (see ``agents/app.py``), because a localized tool
-result, a truncated call, a request the gateway will reject, and a runaway
-return are hazards on every run, not only the mode-composed chat one.  The
+All ride on the agents themselves (see ``agents/app.py``), because a
+localized tool result, a truncated call, a request the gateway will reject, a
+runaway return, and a spent budget are hazards on every run, not only the
+mode-composed chat one.  The
 chat run's :class:`~hivegent.agents.approval.ApprovalNotes` declares that it
 wraps the spill, so a note is appended to the bounded return and never cut
 off.
@@ -73,6 +72,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    RetryPromptPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -130,7 +130,9 @@ def _image_not_shown(max_images: int) -> Localized[str]:
     )
 
 
-def _run_limit_warning(used: int, max_requests: int, remaining: int) -> Localized[str]:
+def _run_limit_warning(used: int, max_requests: int) -> Localized[str]:
+    remaining = max(0, max_requests - used)
+
     return Localized(
         en=(
             f"[run-limit-warning] You have used {used} of {max_requests} "
@@ -144,6 +146,60 @@ def _run_limit_warning(used: int, max_requests: int, remaining: int) -> Localize
             "unnötige Tool-Aufrufe."
         ),
     )
+
+
+def _retry_limit_warning(tool: str, failures: int, max_retries: int) -> Localized[str]:
+    remaining = max(0, max_retries - failures)
+
+    return Localized(
+        en=(
+            f"[retry-limit-warning] `{tool}` failed {failures} "
+            f"{pluralize(failures, 'time')} in a row, and the turn ends after "
+            f"{max_retries} {pluralize(max_retries, 'retry', 'retries')} "
+            f"({remaining} remaining). "
+            "Change the arguments or the approach instead of repeating the call."
+        ),
+        de=(
+            f"[retry-limit-warning] `{tool}` ist {failures}-mal in Folge "
+            f"fehlgeschlagen, und die Runde endet nach {max_retries} "
+            f"{pluralize(max_retries, 'Wiederholung', 'Wiederholungen')} "
+            f"({remaining} übrig). Ändere die Argumente oder den "
+            "Ansatz, statt den Aufruf zu wiederholen."
+        ),
+    )
+
+
+def _failure_streaks(
+    messages: Sequence[ModelMessage], run_id: str | None
+) -> dict[str, int]:
+    """Each tool's failures in a row within run *run_id*.
+
+    Counted per request the way pydantic-ai counts ``ctx.retries``: a request
+    with a retry for the tool extends its streak, and one with only a return
+    for it ends the streak.
+    """
+    streaks: dict[str, int] = {}
+
+    for message in messages:
+        if not isinstance(message, ModelRequest) or message.run_id != run_id:
+            continue
+
+        failed = {
+            part.tool_name
+            for part in message.parts
+            if isinstance(part, RetryPromptPart) and part.tool_name is not None
+        }
+        succeeded = {
+            part.tool_name for part in message.parts if isinstance(part, ToolReturnPart)
+        }
+
+        for tool in succeeded - failed:
+            streaks.pop(tool, None)
+
+        for tool in failed:
+            streaks[tool] = streaks.get(tool, 0) + 1
+
+    return streaks
 
 
 def _run_language(ctx: RunContext[Any]) -> Language:
@@ -464,44 +520,56 @@ class PromptImageLimit(AbstractCapability[Any]):
 
 
 @dataclass(slots=True)
-class IterationLimitWarner(AbstractCapability[UserDeps]):
-    """Nudge the model to finish as the run nears its request budget.
+class IterationLimitWarner(AbstractCapability[Any]):
+    """Nudge the model to change course as the run nears one of its limits.
 
-    The budget is the run's own ``ctx.usage_limits``, so the warning names the
-    limit that will actually stop the run, and a run without a request limit
-    is never warned.  Once the run has used ``threshold`` of it (counted on the
-    usage the main agent shares with its subagents), a short user-turn note is
-    appended to the outgoing request stating how many requests remain.  It
-    rides the wire alone, so it steers the model without entering the
-    persisted conversation and is re-derived each request rather than
-    accumulating: appended to the run's own messages it would be recorded as a
-    user turn nobody sent, replayed on every later turn, and joined by one more
-    note per warned request.  It is written in the run's language, since an
-    English user turn would pull the final answer into English.
+    Two limits end a run: its request budget, the run's own
+    ``ctx.usage_limits`` (counted on the usage the main agent shares with its
+    subagents), and a tool's retries, ``ctx.max_retries`` failures in a row.
+    Once ``threshold`` of either is spent, a short user-turn note naming that
+    limit is appended to the outgoing request, so a run without a request limit
+    is never warned about one.  It rides the wire alone, so it steers the
+    model without entering the persisted conversation and is re-derived each
+    request rather than accumulating: appended to the run's own messages it
+    would be recorded as a user turn nobody sent, replayed on every later turn,
+    and joined by one more note per warned request.  It is written in the run's
+    language, since an English user turn would pull the final answer into
+    English.
     """
 
     threshold: float = 0.75
 
     async def wrap_model_request(
         self,
-        ctx: RunContext[UserDeps],
+        ctx: RunContext[Any],
         *,
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Append a wrap-up note once the request budget is nearly spent."""
+        """Append a note for every limit that is nearly spent."""
+        language = _run_language(ctx)
+        notes: list[str] = []
         used = ctx.usage.requests
         limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
 
         if limit is not None and used >= self.threshold * limit:
-            note = _run_limit_warning(used, limit, max(0, limit - used))[
-                _run_language(ctx)
-            ]
+            notes.append(_run_limit_warning(used, limit)[language])
+
+        streaks = _failure_streaks(request_context.messages, ctx.run_id)
+        max_retries = ctx.max_retries
+
+        for tool, failures in streaks.items():
+            if failures >= self.threshold * max_retries:
+                notes.append(
+                    _retry_limit_warning(tool, failures, max_retries)[language]
+                )
+
+        if notes:
             request_context = replace(
                 request_context,
                 messages=[
                     *request_context.messages,
-                    ModelRequest(parts=[UserPromptPart(content=note)]),
+                    ModelRequest(parts=[UserPromptPart(content=n) for n in notes]),
                 ],
             )
 

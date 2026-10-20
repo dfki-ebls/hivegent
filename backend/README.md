@@ -223,7 +223,8 @@ It is blocked until it works with `OpenAIChatModel` against vLLM or llama.cpp (u
 ### One budget per turn
 
 `turn_usage_limits` bounds a chat turn, and a subagent runs on the parent's `ctx.usage`, `ctx.usage_limits`, and `ctx.conversation_id`, so the whole turn spends one count and traces as one.
-`IterationLimitWarner` reads the same limits, so its wrap-up names the limit that will stop the run.
+`IterationLimitWarner` reads the same limits and each tool's retries, so its note names the limit that will stop the run once `threshold` of either is spent.
+It rides on every agent, so a subagent on the shared budget is warned too.
 Each purpose runs its own named agent (`chat`, `explore`, `summarize`, `title`, `complete`), since the name is what Logfire attributes spend to.
 
 ### Export, citations, and attachments
