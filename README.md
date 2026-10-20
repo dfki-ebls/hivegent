@@ -4,6 +4,10 @@ Agentic system for non-expert users to interact with LLMs guided by experience.
 
 A self-hosted, retrieval-augmented assistant: a React SPA over a FastAPI service that searches, reads, and reasons over the documents you upload, and cites what it used.
 
+> [!IMPORTANT]
+> **Additional terms of use:** Hivegent is provided under the [MIT license](LICENSE) and the DFKI's [additional terms of use](TERMS).
+> By downloading, installing, or using the software, you accept the additional terms, please read them in full beforehand.
+
 ## Development
 
 The Nix flake carries the whole environment, including PostgreSQL with `pgvector`.
