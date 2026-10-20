@@ -17,6 +17,7 @@ The agent's instructions and injected notes are composed in the run's language (
 Tool names, descriptions, schemas, results, and retries stay English, since models call tools most reliably from English schemas, and `EnglishToolCalls` runs every tool call in English.
 A query argument says which language to phrase the query in, since copying the user's language into a search over documents in another language is the common failure.
 Features hold one capability per language around the same toolset rather than an instruction callable, which pydantic-ai would treat as dynamic and move behind the cache boundary.
+State that changes during a conversation is never an instruction but a context note (see below).
 
 ## Database
 
@@ -225,11 +226,20 @@ Compaction is offered only after the provider refused a turn (`is_context_overfl
 TODO: adopt pydantic-ai's `CompactionPart` to keep one conversation id across a compaction instead of minting a new one, which would let it fire automatically.
 It is blocked until it works with `OpenAIChatModel` against vLLM or llama.cpp (upstream #7255).
 
+### Run state is a context note
+
+The instructions and tool schemas precede the whole history, so anything rendered into them that changes during a conversation has the provider reread all of it.
+`ContextNotes` (`agents/context.py`) therefore reports the mode, the document scope, the memory, and nearly spent limits as a synthetic `get_context` call and its result, enqueued through `RunContext.enqueue` before a model request and persisted with the turn, so a change only extends the cached prefix.
+A note is enqueued only when its text differs from the last one in the history, and the memory is reported once per conversation, so `save_memory` takes effect in the next one.
+`get_context` is a real read-only tool with one schema for every run, so the history never names a tool the model lacks, and the frontend hides its calls.
+The modes that may write compose the same instructions and tools and differ only in their mode note, while read mode drops the mutating features and starts a new prefix.
+A feature names the sources it owns, and a summary turns `report` off, so compaction continues the history with nothing but its prompt.
+
 ### One budget per turn
 
 `turn_usage_limits` bounds a chat turn, and a subagent runs on the parent's `ctx.usage`, `ctx.usage_limits`, and `ctx.conversation_id`, so the whole turn spends one count and traces as one.
-`IterationLimitWarner` reads the same limits and each tool's retries, so its note names the limit that will stop the run once `threshold` of either is spent.
-It rides on every agent, so a subagent on the shared budget is warned too.
+The `limits` context note reads the same limits and each tool's retries, and names the limit that will stop the run once three quarters of either is spent.
+The chat run and every subagent report it, so a subagent on the shared budget is warned too.
 Each purpose runs its own named agent (`chat`, `explore`, `summarize`, `title`, `complete`), since the name is what Logfire attributes spend to.
 
 ### Export, citations, and attachments

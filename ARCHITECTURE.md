@@ -33,6 +33,7 @@ flowchart LR
 - `pydantic-settings` reads configuration from `config.toml`, `HIVEGENT_*` env vars, and credential files.
 - Authentication uses OIDC bearer tokens, with groups and roles read from their claims.
 - Pydantic AI binds models, user-scoped dependencies, and toolsets into one runtime.
+- Run state that changes during a conversation reaches the model as `get_context` notes in the history rather than in the instructions, which keeps the provider's prompt cache valid.
 - PostgreSQL with `pgvector` and cbrkit provide dense, sparse, and hybrid retrieval, plus conversations and memory.
 - Each user or group workspace lives under `data/workspace/<store_key>/`, keyed by the same `user:<id>` or `group:<id>` token that scopes SQL rows.
 - Each conversation owns `data/conversations/<id>/`, outside every workspace.

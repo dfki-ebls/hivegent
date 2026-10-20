@@ -15,6 +15,9 @@ Guidance follows the tools it describes: a block bound to one feature rides on
 its capability, a block spanning several is a :class:`SharedInstructions` entry
 composed as soon as any of them is live, and only behaviour tied to no
 feature at all (personality, language, math) stays agent-level ``instructions``.
+State that changes during a conversation is no instruction at all: a feature
+names the :class:`~hivegent.agents.context.ContextSource` it owns, which
+reaches the model as a context note in the history (:mod:`.context`).
 Prompt text that explains a tool the model was not given is a defect, so nothing
 that names a tool belongs in the agent-level set.
 
@@ -38,19 +41,17 @@ from pydantic_ai.tools import SystemPromptFunc, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 
 from ..config import settings
-from ..db.memory import load_memory
 from ..l10n import DEFAULT_LANGUAGE, Language, Localized, use_language
 from ..prompts import (
     CITATION_INSTRUCTIONS,
     GROUNDING_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
-    MEMORY_INSTRUCTIONS_EMPTY,
+    MEMORY_INSTRUCTIONS,
     PYTHON_INSTRUCTIONS,
     TMP_INSTRUCTIONS,
     VERSION_INSTRUCTIONS,
     WORKSPACE_PATH_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
-    memory_instructions,
 )
 from ..tools.pydantic_ai import invoke_tool
 from ..types import (
@@ -62,7 +63,8 @@ from ..types import (
 )
 from .app import turn_usage_limits
 from .approval import ApprovalNotes
-from .common import UserDeps, scope_instructions
+from .common import UserDeps
+from .context import DOCUMENTS, LIMITS, MEMORY, MODE, ContextNotes, ContextSource
 from .tools import (
     INJECTABLE_TOOL_NAMES,
     SANDBOX_FUNCTION_NAMES,
@@ -96,32 +98,23 @@ type FeatureInstruction = Localized[str] | SystemPromptFunc[UserDeps]
 """A fixed block in every language, or a callable resolved per run."""
 
 
-async def _memory_instructions(ctx: RunContext[UserDeps]) -> str:
-    """Inject the user's persisted memory alongside the save-memory guidance."""
-    language = ctx.deps.language
-    content = await load_memory(ctx.deps.user)
-
-    if content:
-        return memory_instructions(content)[language]
-
-    return MEMORY_INSTRUCTIONS_EMPTY[language]
-
-
 @dataclass(frozen=True, slots=True)
 class Feature:
-    """A named agent feature: a toolset, its instructions, and its modes.
+    """A named agent feature: a toolset, its instructions, its context, and its modes.
 
     :meth:`capability` bundles the toolset and the instructions into the
     capability a run composes, once per language around the one shared
-    toolset; ``modes`` is the only selection metadata pydantic-ai has no
-    concept of.  ``tool_names`` is resolved once from the toolset, so the
-    per-request disabled-tool check needs no toolset walk.
+    toolset, while ``context`` joins the run's one :class:`ContextNotes`;
+    ``modes`` is the only selection metadata pydantic-ai has no concept of.
+    ``tool_names`` is resolved once from the toolset, so the per-request
+    disabled-tool check needs no toolset walk.
     """
 
     id: str
     toolset: FunctionToolset[UserDeps]
     tool_names: frozenset[str]
     instructions: Sequence[FeatureInstruction] = ()
+    context: Sequence[ContextSource] = ()
     modes: frozenset[Mode] = MODE_VALUES
 
     @classmethod
@@ -131,6 +124,7 @@ class Feature:
         toolset: FunctionToolset[UserDeps],
         *,
         instructions: Sequence[FeatureInstruction] = (),
+        context: Sequence[ContextSource] = (),
         modes: frozenset[Mode] = MODE_VALUES,
     ) -> Self:
         """Name a feature once, resolving its tool names from the toolset."""
@@ -139,6 +133,7 @@ class Feature:
             toolset=toolset,
             tool_names=frozenset(toolset.tools),
             instructions=instructions,
+            context=context,
             modes=modes,
         )
 
@@ -155,11 +150,11 @@ class Feature:
 
 
 # The single source of truth for the agent's features.  ``explore`` and
-# ``memory`` carry their own instructions: ``explore`` states the grounding and
-# version discipline for the retrieval tools it owns and describes the live
-# document scope (so the model knows which documents the user selected), and
-# ``memory`` resolves the user's stored memory lazily so its guidance only loads
-# when active.  ``write`` is offered in every mode, since ``/tmp`` is writable in
+# ``memory`` carry their own instructions and context: ``explore`` states the
+# grounding and version discipline for the retrieval tools it owns and reports
+# the live document scope (so the model knows which documents the user
+# selected), and ``memory`` explains saving and reports the stored memory once
+# per conversation.  ``write`` is offered in every mode, since ``/tmp`` is writable in
 # all of them, so its workspace guidance is a shared block narrowed to the modes
 # that may write the workspaces.  The rest are bare toolset bundles.  Adding a
 # feature here exposes it to the agent and the debug surface.
@@ -175,8 +170,8 @@ FEATURES: tuple[Feature, ...] = (
             GROUNDING_INSTRUCTIONS,
             VERSION_INSTRUCTIONS,
             IMAGE_INSTRUCTIONS,
-            scope_instructions,
         ],
+        context=[DOCUMENTS],
     ),
     Feature.build(
         "python",
@@ -188,7 +183,8 @@ FEATURES: tuple[Feature, ...] = (
     Feature.build(
         "memory",
         memory_toolset,
-        instructions=[_memory_instructions],
+        instructions=[MEMORY_INSTRUCTIONS],
+        context=[MEMORY],
         modes=MUTATING_MODES,
     ),
     Feature.build("web", web_toolset),
@@ -282,9 +278,10 @@ def build_capabilities(
     Selects the features offered in ``mode``, drops any whose tools are all
     disabled (so a fully-disabled feature contributes neither tools nor
     instructions), adds the :data:`SHARED_INSTRUCTIONS` blocks whose features
-    survived that selection, hides individually disabled tools via a single
-    :class:`PrepareTools` capability, and wraps each extra toolset (e.g. an MCP
-    server) as its own capability.
+    survived that selection, reports the mode, the limits, and the context of
+    the live features through one :class:`ContextNotes`, hides individually
+    disabled tools via a single :class:`PrepareTools` capability, and wraps
+    each extra toolset (e.g. an MCP server) as its own capability.
 
     A run withholds the union of two lists that differ only in who wrote them:
     ``settings.tools.disabled``, the operator's standing choice, and the
@@ -295,7 +292,8 @@ def build_capabilities(
     tools a user-configured MCP server brings.
 
     The mode selects which features are offered at all (``read`` is handed
-    none of the mutating ones).  Whether a write the remaining ones
+    none of the mutating ones), so the modes that may write compose the same
+    prefix and differ only in the mode note.  Whether a write the remaining ones
     perform pauses for the user is decided per call by the gate in
     ``agents/tools/write.py``, which alone can see the path.
 
@@ -326,13 +324,23 @@ def build_capabilities(
         if shared.features & live and mode in shared.modes
     )
 
+    result.append(
+        ContextNotes(
+            [
+                MODE,
+                *(source for feature in features for source in feature.context),
+                LIMITS,
+            ]
+        )
+    )
+
     if unlisted:
         result.append(_filter_unlisted(unlisted))
 
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)
 
     # Cross-cutting run-loop safeguards, applied to every run regardless of mode.
-    # The output spill and the limit warner ride on the agents (`agents/app.py`).
+    # The output spill rides on the agents (`agents/app.py`).
     result.append(ApprovalNotes())
 
     return result

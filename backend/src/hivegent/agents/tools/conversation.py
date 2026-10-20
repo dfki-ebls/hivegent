@@ -29,6 +29,7 @@ from ...tools.base import ToolOutput
 from ...tools.formatting import BLOCK_SEP, render_arguments, truncate_line
 from ...tools.pydantic_ai import wrap_tool_output
 from ..common import UserDeps
+from ..context import CONTEXT_TOOL
 
 __all__ = [
     "conversation_toolset",
@@ -62,8 +63,9 @@ def _header(conversation: ConversationData | ConversationSummary) -> str:
 def _render_parts(message: ModelMessage) -> Iterator[str]:
     """The readable blocks of *message*: dialogue text and the tools it called.
 
-    Tool returns, system prompts, and reasoning are left out, since they repeat
-    workspace content or internals rather than what was said and done.
+    Tool returns, system prompts, reasoning, and context notes are left out,
+    since they repeat workspace content or internals rather than what was said
+    and done.
     """
     for part in message.parts:
         match part:
@@ -77,7 +79,7 @@ def _render_parts(message: ModelMessage) -> Iterator[str]:
             case TextPart(content=content) if content.strip():
                 yield f"assistant:\n{content.strip()}"
 
-            case ToolCallPart():
+            case ToolCallPart() if part.tool_name != CONTEXT_TOOL:
                 arguments = render_arguments(part.args, _MAX_TOOL_CALL_CHARS)
                 call = f"{part.tool_name}({arguments})"
                 yield f"tool call: {truncate_line(call, _MAX_TOOL_CALL_CHARS)}"

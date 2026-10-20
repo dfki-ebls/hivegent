@@ -31,7 +31,6 @@ __all__ = [
     "MemoryContentArg",
     "RunPrefix",
     "UserDeps",
-    "scope_instructions",
 ]
 
 ExploreTaskArg = Annotated[
@@ -234,7 +233,8 @@ class UserDeps:
     def describe_document_scope(self) -> str:
         """Render the active document scope as prompt text (``''`` if none).
 
-        Rendered in the run's :attr:`language`, since it is part of the prefix.
+        Rendered in the run's :attr:`language`, since it is the context note
+        the run reads (``agents.context.DOCUMENTS``).
 
         The hidden half is rendered back from the very :class:`DocumentFilter`
         objects the document tools enforce, so what the model is told cannot
@@ -268,8 +268,8 @@ class RunPrefix:
     """The inputs that compose a run's prompt prefix.
 
     Kept together because compaction has to reproduce a chat turn's prefix
-    exactly, down to the document scope ``deps`` renders into the prompt via
-    :func:`scope_instructions` and the resolved ``llm`` it is sent under, or
+    exactly, down to the context notes ``deps`` renders into the history and
+    the resolved ``llm`` it is sent under, or
     the provider's cached prefix is thrown away.
     Named for what it is rather than ``AgentRun``, which is a different thing
     in pydantic-ai.
@@ -287,13 +287,3 @@ class RunPrefix:
     # rather than wherever a prefix happens to be used.
     llm: LlmConfig
     model: Model
-
-
-def scope_instructions(ctx: RunContext[UserDeps]) -> str | None:
-    """Dynamic instruction describing the live document scope to the agent.
-
-    Attached to the document-exploration capability so it rides with the tools
-    it explains, on both the main agent and the documents subagent. Returns
-    ``None`` when no scope is active so pydantic-ai omits the block.
-    """
-    return ctx.deps.describe_document_scope() or None

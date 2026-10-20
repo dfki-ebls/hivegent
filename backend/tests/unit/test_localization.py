@@ -12,7 +12,8 @@ _BLOCKS = {
         for name, value in vars(prompts).items()
         if isinstance(value, Localized)
     },
-    "memory_instructions": prompts.memory_instructions("x"),
+    "request_limit_note": prompts.request_limit_note(4),
+    "retry_limit_note": prompts.retry_limit_note("x", 3, 4),
     "sandbox_api_instructions": prompts.sandbox_api_instructions("x"),
 }
 

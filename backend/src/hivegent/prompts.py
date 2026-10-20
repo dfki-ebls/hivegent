@@ -11,6 +11,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .humanize import pluralize
 from .l10n import Language, Localized
 
 __all__ = [
@@ -18,22 +19,29 @@ __all__ = [
     "EXPLORE_INSTRUCTIONS",
     "GROUNDING_INSTRUCTIONS",
     "IMAGE_INSTRUCTIONS",
+    "INTERACTIVE_MODE_NOTE",
     "LANGUAGE_INSTRUCTIONS",
+    "LIMITS_CLEAR_NOTE",
     "MATH_INSTRUCTIONS",
-    "MEMORY_INSTRUCTIONS_EMPTY",
+    "MEMORY_EMPTY_NOTE",
+    "MEMORY_INSTRUCTIONS",
+    "NO_DOCUMENT_SCOPE_NOTE",
     "PERSONALITY_TEMPLATES",
     "PYTHON_INSTRUCTIONS",
+    "READ_MODE_NOTE",
     "SANDBOX_COMPLETE_INSTRUCTIONS",
     "SANDBOX_TYPE_CHECK_INSTRUCTIONS",
     "TMP_INSTRUCTIONS",
     "VERSION_INSTRUCTIONS",
     "WORKSPACE_PATH_INSTRUCTIONS",
     "WRITE_INSTRUCTIONS",
+    "WRITE_MODE_NOTE",
     "Personality",
     "compose_instructions",
     "format_document_scope",
     "join_instructions",
-    "memory_instructions",
+    "request_limit_note",
+    "retry_limit_note",
     "sandbox_api_instructions",
 ]
 
@@ -196,6 +204,103 @@ def format_document_scope(
     lines.append(text.live)
     lines.append("</document_scope>")
     return "\n".join(lines)
+
+
+# ─── Context notes ─────────────────────────────────────────────────────
+# The run state `agents.context` reports as `get_context` results rather than
+# instructions, so a change extends the history instead of rewriting its prefix.
+
+NO_DOCUMENT_SCOPE_NOTE: Localized[str] = Localized(
+    en=(
+        "The user has neither selected nor hidden any documents, so every "
+        "document in the workspace is available."
+    ),
+    de=(
+        "Die Benutzer:in hat keine Dokumente ausgewählt oder ausgeblendet, "
+        "also steht jedes Dokument im Arbeitsbereich zur Verfügung."
+    ),
+)
+
+MEMORY_EMPTY_NOTE: Localized[str] = Localized(
+    en="Your memory is empty.",
+    de="Dein Gedächtnis ist leer.",
+)
+
+INTERACTIVE_MODE_NOTE: Localized[str] = Localized(
+    en=(
+        "Interactive mode: you may change the workspace, and each change waits "
+        "for the user's approval before it applies. Changes to `/tmp` apply "
+        "right away."
+    ),
+    de=(
+        "Interaktiver Modus: Du darfst den Arbeitsbereich ändern, und jede "
+        "Änderung wartet auf die Freigabe der Benutzer:in, bevor sie gilt. "
+        "Änderungen in `/tmp` gelten sofort."
+    ),
+)
+
+WRITE_MODE_NOTE: Localized[str] = Localized(
+    en=(
+        "Write mode: you may change the workspace, and every change applies "
+        "right away without asking the user."
+    ),
+    de=(
+        "Schreibmodus: Du darfst den Arbeitsbereich ändern, und jede Änderung "
+        "gilt sofort, ohne die Benutzer:in zu fragen."
+    ),
+)
+
+READ_MODE_NOTE: Localized[str] = Localized(
+    en=(
+        "Read-only mode: the workspace cannot be changed, only `/tmp` is "
+        "writable, and your memory cannot be saved."
+    ),
+    de=(
+        "Lesemodus: Der Arbeitsbereich kann nicht geändert werden, nur `/tmp` "
+        "ist beschreibbar, und dein Gedächtnis kann nicht gesichert werden."
+    ),
+)
+
+LIMITS_CLEAR_NOTE: Localized[str] = Localized(
+    en="No limit of this turn is close.",
+    de="Keine Grenze dieser Runde ist nahe.",
+)
+
+
+def request_limit_note(max_requests: int) -> Localized[str]:
+    """The note that most of a turn's *max_requests* model requests are spent."""
+    return Localized(
+        en=(
+            f"This turn has used most of its {max_requests} model requests. "
+            "Wrap up: give your best answer now and avoid unnecessary tool calls."
+        ),
+        de=(
+            f"Diese Runde hat die meisten ihrer {max_requests} Modellanfragen "
+            "verbraucht. Komm zum Schluss: Gib jetzt deine beste Antwort und "
+            "vermeide unnötige Tool-Aufrufe."
+        ),
+    )
+
+
+def retry_limit_note(tool: str, failures: int, max_retries: int) -> Localized[str]:
+    """The note that *tool* failed *failures* times in a row of *max_retries*."""
+    remaining = max(0, max_retries - failures)
+
+    return Localized(
+        en=(
+            f"`{tool}` failed {failures} {pluralize(failures, 'time')} in a row, "
+            f"and the turn ends after {max_retries} "
+            f"{pluralize(max_retries, 'retry', 'retries')} ({remaining} remaining). "
+            "Change the arguments or the approach instead of repeating the call."
+        ),
+        de=(
+            f"`{tool}` ist {failures}-mal in Folge fehlgeschlagen, und die Runde "
+            f"endet nach {max_retries} "
+            f"{pluralize(max_retries, 'Wiederholung', 'Wiederholungen')} "
+            f"({remaining} übrig). Ändere die Argumente oder den Ansatz, statt "
+            "den Aufruf zu wiederholen."
+        ),
+    )
 
 
 GROUNDING_INSTRUCTIONS: Localized[str] = Localized(
@@ -408,38 +513,16 @@ Verweise nur auf Bilder, die Tools mit einem Feld `image_path` zurückgegeben ha
 )
 
 
-def memory_instructions(memory_content: str) -> Localized[str]:
-    """The memory block holding the user's saved *memory_content*."""
-    return Localized(
-        en=f"""
-<memory>
-{memory_content}
-</memory>
-
-You have persistent memory that is preserved across conversations.
-When you learn important information about the user, their preferences, key decisions, or ongoing projects, use the save_memory tool to update your memory.
-Always include previously saved information you want to retain, as the tool overwrites the entire memory.
-""",
-        de=f"""
-<memory>
-{memory_content}
-</memory>
-
-Du hast ein dauerhaftes Gedächtnis, das über Konversationen hinweg erhalten bleibt.
-Wenn du wichtige Informationen über die Benutzer:in erfährst, über ihre Vorlieben, wichtige Entscheidungen oder laufende Projekte, aktualisiere dein Gedächtnis mit dem Tool save_memory.
-Nimm immer die bereits gesicherten Informationen auf, die du behalten willst, denn das Tool überschreibt das gesamte Gedächtnis.
-""",
-    )
-
-
-MEMORY_INSTRUCTIONS_EMPTY: Localized[str] = Localized(
+MEMORY_INSTRUCTIONS: Localized[str] = Localized(
     en="""
-You have persistent memory that is preserved across conversations, but it is currently empty.
-When you learn important information about the user, their preferences, key decisions, or ongoing projects, use the save_memory tool to start building your memory.
+You have persistent memory that is preserved across conversations, reported as the get_context `memory` result when a conversation starts.
+When you learn important information about the user, their preferences, key decisions, or ongoing projects, use the save_memory tool to update your memory.
+Always include previously saved information you want to retain, as the tool overwrites the entire memory, and a save takes effect in the next conversation.
 """,
     de="""
-Du hast ein dauerhaftes Gedächtnis, das über Konversationen hinweg erhalten bleibt, aber es ist derzeit leer.
-Wenn du wichtige Informationen über die Benutzer:in erfährst, über ihre Vorlieben, wichtige Entscheidungen oder laufende Projekte, beginne mit dem Tool save_memory dein Gedächtnis aufzubauen.
+Du hast ein dauerhaftes Gedächtnis, das über Konversationen hinweg erhalten bleibt und zu Beginn einer Konversation als Ergebnis von get_context `memory` gemeldet wird.
+Wenn du wichtige Informationen über die Benutzer:in erfährst, über ihre Vorlieben, wichtige Entscheidungen oder laufende Projekte, aktualisiere dein Gedächtnis mit dem Tool save_memory.
+Nimm immer die bereits gesicherten Informationen auf, die du behalten willst, denn das Tool überschreibt das gesamte Gedächtnis, und eine Sicherung gilt ab der nächsten Konversation.
 """,
 )
 

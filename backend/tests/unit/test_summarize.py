@@ -20,7 +20,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from hivegent import compaction
-from hivegent.agents import RunPrefix, UserDeps, build_capabilities, capabilities
+from hivegent.agents import RunPrefix, UserDeps, build_capabilities, context
 from hivegent.agents.summarize import COMPACT_PROMPT, _plan, summarize_conversation
 from hivegent.db.conversations import ConversationData, OwnedConversation
 from hivegent.l10n import LANGUAGES, Language
@@ -86,10 +86,10 @@ def run_prefix(monkeypatch: pytest.MonkeyPatch) -> RunPrefix:
     HTTP client a real one would be built from.
     """
 
-    async def _memory(_user_id: str) -> str:
+    async def _memory(_user: User) -> str:
         return "remembered"
 
-    monkeypatch.setattr(capabilities, "load_memory", _memory)
+    monkeypatch.setattr(context, "load_memory", _memory)
 
     return RunPrefix(
         deps=UserDeps(user=User("u"), mode="interactive"),

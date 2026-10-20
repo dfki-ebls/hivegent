@@ -354,7 +354,7 @@ def _instruction_snapshots(pairs: Sequence[MessagePair]) -> list[InstructionsSna
     """Group *pairs* by the system prompt each message was sent under.
 
     pydantic-ai stamps the fully composed prompt (agent-level blocks plus every
-    live capability's, including the dynamic document scope) onto each
+    live capability's) onto each
     ``ModelRequest`` it sends, and that survives into the stored history, so the
     prompts are read back here rather than recomposed — recomposing would
     describe today's settings, not the ones the turn actually ran under.

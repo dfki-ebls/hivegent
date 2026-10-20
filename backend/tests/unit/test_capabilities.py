@@ -8,15 +8,17 @@ from pydantic_ai.agent import AgentInstructions
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import ToolDefinition
 
-from hivegent.agents import capabilities
+from hivegent.agents import capabilities, context
 from hivegent.agents.app import user_agent
 from hivegent.agents.capabilities import (
     FEATURES,
     build_capabilities,
     collect_tool_schemas,
 )
-from hivegent.agents.common import UserDeps, scope_instructions
+from hivegent.agents.common import UserDeps
+from hivegent.agents.context import DOCUMENTS, ContextNotes, ContextSource
 from hivegent.agents.tools.python import sandbox_surface
 from hivegent.prompts import GROUNDING_INSTRUCTIONS
 from hivegent.server.routes.meta import list_tools
@@ -25,6 +27,16 @@ from hivegent.types import Mode, ToolsSpec
 from tests.helpers import owned, run_context
 
 _EXPLORE = next(feature for feature in FEATURES if feature.id == "explore")
+
+
+@pytest.fixture(autouse=True)
+def _memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report a stored memory without reaching the database."""
+
+    async def load(_user: User) -> str:
+        return "remembered"
+
+    monkeypatch.setattr(context, "load_memory", load)
 
 
 def _static_texts(instructions: AgentInstructions[UserDeps]) -> list[str]:
@@ -38,23 +50,13 @@ def _static_texts(instructions: AgentInstructions[UserDeps]) -> list[str]:
     return []
 
 
-def _dynamic_parts(instructions: AgentInstructions[UserDeps]) -> list[object]:
-    """The callables in *instructions*, skipping the literal blocks."""
-    if isinstance(instructions, str):
-        return []
-
-    if isinstance(instructions, Sequence):
-        return [part for part in instructions if callable(part)]
-
-    return [instructions] if callable(instructions) else []
-
-
-def _callables(spec: ToolsSpec) -> list[object]:
-    """Every dynamic instruction the composed capabilities contribute."""
+def _sources(spec: ToolsSpec) -> list[ContextSource]:
+    """Every context source the composed capabilities report."""
     return [
-        part
+        source
         for capability in build_capabilities(spec, mode="interactive", language="en")
-        for part in _dynamic_parts(capability.get_instructions() or [])
+        if isinstance(capability, ContextNotes)
+        for source in capability.sources
     ]
 
 
@@ -88,30 +90,24 @@ def test_shared_block_survives_on_its_remaining_feature() -> None:
 
 
 def test_document_scope_rides_with_the_retrieval_tools() -> None:
-    """The block naming the user's selection must reach the model.
+    """The note naming the user's selection must reach the model.
 
     It is the only thing that ties a bare "these documents" to the files the
-    eye toggle picked, and being a callable it is invisible to the static
+    eye toggle picked, and being a context note it is invisible to the static
     checks above, so it is asserted on its own.
     """
-    assert scope_instructions in _callables(ToolsSpec())
+    assert DOCUMENTS in _sources(ToolsSpec())
 
     disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
-    assert scope_instructions not in _callables(disabled)
+    assert DOCUMENTS not in _sources(disabled)
 
 
 def _request_params(
-    monkeypatch: pytest.MonkeyPatch,
     *,
     relevant: frozenset[str],
     mode: Mode = "interactive",
 ) -> ModelRequestParameters:
     """Run one turn against a stub model and capture what it was handed."""
-
-    async def _memory(_user: User) -> str:
-        return "remembered"
-
-    monkeypatch.setattr(capabilities, "load_memory", _memory)
     captured: list[ModelRequestParameters] = []
 
     def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -133,31 +129,27 @@ def _request_params(
     return captured[0]
 
 
-def test_the_cacheable_prefix_survives_a_changed_document_selection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Per-turn guidance must land behind every block that does not change.
+def test_the_cacheable_prefix_survives_selection_and_mode_changes() -> None:
+    """The instructions and tool schemas precede the whole history.
 
-    The document scope and the stored memory are resolved per turn, so a
-    provider re-reads the whole prompt from wherever the first of them sits.
-    They are composed with the feature they explain, and only pydantic-ai's
-    hoisting of dynamic instruction parts keeps them at the end; this pins that,
-    since losing it would silently move the cache boundary to the top of the
-    prompt without changing a single visible byte.
+    A change to either has the provider reread the entire conversation, so
+    the document selection and the mode reach the model as context notes in
+    the history instead, and the two modes that may write compose one prefix.
     """
 
-    def static_part(relevant: frozenset[str]) -> str:
-        parts = _request_params(monkeypatch, relevant=relevant).instruction_parts or []
-        return next(part.content for part in parts if not part.dynamic)
+    def prefix(relevant: str, mode: Mode) -> tuple[list[str], list[ToolDefinition]]:
+        params = _request_params(relevant=frozenset({relevant}), mode=mode)
+        parts = [part.content for part in params.instruction_parts or []]
 
-    assert static_part(frozenset({"~/a.md"})) == static_part(frozenset({"~/b.md"}))
+        return parts, params.function_tools
+
+    assert prefix("~/a.md", "interactive") == prefix("~/b.md", "interactive")
+    assert prefix("~/a.md", "interactive") == prefix("~/a.md", "write")
 
 
-def _tool_names(
-    monkeypatch: pytest.MonkeyPatch, mode: Mode = "interactive"
-) -> set[str]:
+def _tool_names(mode: Mode = "interactive") -> set[str]:
     """Every tool one run in *mode* would hand the model."""
-    params = _request_params(monkeypatch, relevant=frozenset(), mode=mode)
+    params = _request_params(relevant=frozenset(), mode=mode)
 
     return {tool.name for tool in params.function_tools}
 
@@ -167,11 +159,11 @@ def test_read_mode_writes_tmp_but_stages_nothing(
 ) -> None:
     """`/tmp` is writable in every mode, so the write tools stay, but nothing stages."""
     monkeypatch.setattr(capabilities.settings.tools, "disabled", [])
-    names = _tool_names(monkeypatch, "read")
+    names = _tool_names("read")
 
     assert {"write_document", "edit_document"} <= names
     assert "apply_changes" not in names
-    assert "apply_changes" in _tool_names(monkeypatch)
+    assert "apply_changes" in _tool_names()
 
 
 def test_the_shape_specific_readers_are_never_merely_hinted_at(
@@ -197,7 +189,7 @@ def test_the_shape_specific_readers_are_never_merely_hinted_at(
     turn to query it.
     """
     monkeypatch.setattr(capabilities.settings.tools, "disabled", [])
-    names = _tool_names(monkeypatch)
+    names = _tool_names()
 
     assert {"jq", "read_binary_document", "query_table"} <= names
 
@@ -207,14 +199,12 @@ def test_the_shape_specific_readers_are_never_merely_hinted_at(
     assert "async def query_table(" in declared
 
 
-def test_the_default_exclusions_never_reach_the_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_default_exclusions_never_reach_the_model() -> None:
     """What deferral used to decide silently is now an operator's list."""
     excluded = set(capabilities.settings.tools.disabled)
     assert excluded == {"list_conversations", "get_conversation"}
 
-    assert not excluded & _tool_names(monkeypatch)
+    assert not excluded & _tool_names()
 
 
 def test_an_operator_exclusion_retracts_the_feature_it_empties(
@@ -246,10 +236,6 @@ def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
             captured.append(info.model_request_parameters)
             return ModelResponse(parts=[TextPart("ok")])
 
-        async def _memory(_user_id: str) -> str:
-            return ""
-
-        monkeypatch.setattr(capabilities, "load_memory", _memory)
         user_agent.run_sync(
             "hi",
             model=FunctionModel(respond),

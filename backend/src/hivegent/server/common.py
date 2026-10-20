@@ -143,8 +143,8 @@ def build_run_prefix(
 
     One builder for both callers on purpose: a compaction request asks for its
     summary as one more turn of the conversation, and that only pays off while
-    its instructions, tool schemas, and document scope match the chat turn
-    before it token for token.
+    its instructions and tool schemas match the chat turn before it token for
+    token.
 
     It also owns the preconditions of that match, so no caller can compose a
     prefix that differs by forgetting one: the LLM config is resolved (and

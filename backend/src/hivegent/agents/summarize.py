@@ -28,6 +28,7 @@ asks again.
 
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import NamedTuple
 
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -45,6 +46,7 @@ from ..l10n import Localized
 from ..llm import SUMMARY_MAX_TOKENS, is_context_overflow, summary_model_settings
 from .app import summary_agent
 from .common import RunPrefix
+from .context import ContextNotes
 
 __all__ = ["COMPACT_PROMPT", "summarize_conversation"]
 
@@ -240,7 +242,14 @@ async def _ask(
         deps=run.deps,
         model=run.model,
         model_settings=model_settings,
-        capabilities=run.capabilities,
+        # The summary continues the history as it stands, so it reports no
+        # context of its own after the prompt.
+        capabilities=[
+            replace(capability, report=False)
+            if isinstance(capability, ContextNotes)
+            else capability
+            for capability in run.capabilities
+        ],
         instructions=run.instructions,
         usage_limits=_COMPACT_LIMITS,
         conversation_id=None

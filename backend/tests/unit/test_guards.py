@@ -8,11 +8,9 @@ from typing import Any
 
 import pytest
 from pydantic_ai import (
-    Agent,
     BinaryContent,
     FunctionToolset,
     ImageUrl,
-    ModelRetry,
     RunContext,
 )
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
@@ -34,7 +32,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import RunUsage
 
 from hivegent.agents.app import title_agent
 from hivegent.agents.approval import (
@@ -45,7 +43,6 @@ from hivegent.agents.approval import (
 from hivegent.agents.common import UserDeps
 from hivegent.agents.guards import (
     IncompleteToolCallGuard,
-    IterationLimitWarner,
     PromptImageLimit,
     ToolOutputSpill,
     _images,
@@ -56,23 +53,11 @@ from hivegent.store import User
 from hivegent.tmp import tmp_dir
 from hivegent.tools.base import ToolOutput
 from hivegent.tools.pydantic_ai import wrap_tool_output
-from tests.helpers import owned
+from tests.helpers import owned, run_context
 
 _TRUNCATED_CALL = ToolCallPart(
     tool_name="edit_document", args='{"file_path":', tool_call_id="call-1"
 )
-
-
-def _run_context(
-    requests: int = 0, limits: UsageLimits | None = None
-) -> RunContext[None]:
-    """A run context with no deps, as ``title_agent`` hands its guards."""
-    return RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(requests=requests),
-        usage_limits=limits,
-    )
 
 
 async def _check(
@@ -82,7 +67,7 @@ async def _check(
 ) -> None:
     """Run the guard over a response with *parts*, as the agent loop would."""
     await IncompleteToolCallGuard().after_model_request(
-        _run_context(),
+        run_context(None),
         request_context=ModelRequestContext(
             model=TestModel(),
             messages=[],
@@ -170,9 +155,6 @@ def _read(tool_call_id: str) -> ToolReturnPart:
 async def _sent(
     capability: AbstractCapability[Any],
     messages: list[ModelMessage],
-    *,
-    requests: int = 0,
-    limits: UsageLimits | None = None,
 ) -> list[ModelMessage]:
     """The messages the guard puts on the wire for a request carrying *messages*."""
     sent: list[ModelMessage] = []
@@ -183,7 +165,7 @@ async def _sent(
         return ModelResponse(parts=[TextPart(content="ok")])
 
     await capability.wrap_model_request(
-        _run_context(requests, limits),
+        run_context(None),
         request_context=ModelRequestContext(
             model=TestModel(),
             messages=messages,
@@ -274,83 +256,6 @@ async def test_image_occurrences_match_provider_content_shapes(shape: str) -> No
     assert "image not shown" in str(trimmed.content)
     assert request.parts[1] is messages[0].parts[1]
     assert len(_images(messages)) == 2
-
-
-async def test_the_wrap_up_note_stays_off_the_conversation() -> None:
-    """A note appended to the run's messages would be recorded as a user turn.
-
-    It would then replay on every later turn and gain one more note per
-    warned request, so the nudge has to ride the wire alone.
-    """
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="go")])]
-    sent = await _sent(
-        IterationLimitWarner(),
-        messages,
-        requests=3,
-        limits=UsageLimits(request_limit=4),
-    )
-
-    assert "used 3 of 4 model requests" in str(sent[-1].parts[0])
-    assert len(sent) == 2
-    assert len(messages) == 1
-
-
-async def test_the_wrap_up_note_reads_the_run_limits() -> None:
-    """The run's own limit decides, so a run without one is never warned."""
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="go")])]
-
-    assert await _sent(IterationLimitWarner(), messages, requests=40) == messages
-    assert (
-        await _sent(
-            IterationLimitWarner(),
-            messages,
-            requests=40,
-            limits=UsageLimits(request_limit=100),
-        )
-        == messages
-    )
-
-
-async def test_the_retry_note_warns_before_a_failing_tool_ends_the_turn() -> None:
-    """Run a real agent, so the run's retry budget and run id are what decide."""
-    toolset = FunctionToolset[Any]()
-
-    @toolset.tool_plain
-    def broken() -> str:
-        raise ModelRetry("still broken")
-
-    warned: list[str] = []
-
-    def call_broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        notes = [
-            str(part.content)
-            for part in messages[-1].parts
-            if isinstance(part, UserPromptPart)
-            and "retry-limit-warning" in str(part.content)
-        ]
-
-        if notes:
-            warned.extend(notes)
-
-            return ModelResponse(parts=[TextPart(content="giving up")])
-
-        return ModelResponse(parts=[ToolCallPart(tool_name="broken", args={})])
-
-    result = await Agent(retries=4).run(
-        "go",
-        model=FunctionModel(call_broken),
-        toolsets=[toolset],
-        capabilities=[IterationLimitWarner()],
-    )
-
-    assert warned == [
-        (
-            "[retry-limit-warning] `broken` failed 3 times in a row, and the turn "
-            "ends after 4 retries (1 remaining). Change the arguments or the "
-            "approach instead of repeating the call."
-        )
-    ]
-    assert "retry-limit-warning" not in str(result.all_messages())
 
 
 @dataclass(slots=True, frozen=True)
