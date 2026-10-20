@@ -27,7 +27,7 @@
     "@tanstack/react-router": "^1",
     "ai": "^7",
     "class-variance-authority": "^0.7",
-    "cn": "^0.4",
+    "cn": "^0.5",
     "fuse.js": "^7",
     "i18next": "^26",
     "jszip": "^3",
