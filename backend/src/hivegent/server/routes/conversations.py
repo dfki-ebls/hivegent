@@ -468,7 +468,7 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
     a turn.
     """
     # The body is the AI SDK's, with the run configuration spliced in beside
-    # its messages; extras are ignored.
+    # its messages. Extras are ignored.
     config = ChatRequestConfig.model_validate(await request.json())
 
     run_prefix = build_run_prefix(config, conversation)

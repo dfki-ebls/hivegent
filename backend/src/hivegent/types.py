@@ -265,8 +265,8 @@ class ChatRequestConfig(BaseModel):
     """The run configuration a chat request carries beside its messages.
 
     Validated straight off the chat body, which also carries the AI SDK's own
-    ``messages`` and ``id``; those are read by the adapter instead and ignored
-    here, since nothing on this model forbids extras.
+    ``messages`` and ``id``.  The adapter reads those, and this model ignores
+    them, since nothing on it forbids extras.
     """
 
     personality: Personality = Field(default=Personality.DEFAULT)
