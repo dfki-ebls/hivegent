@@ -8,6 +8,11 @@ No test connects to a live database or any other stateful service.
 from pathlib import Path
 
 import pytest
+from pydantic_ai import models
+
+# No test reaches a live model, so a request that would is an error, and a test
+# serving one from a mock transport allows it explicitly.
+models.ALLOW_MODEL_REQUESTS = False
 
 
 @pytest.fixture()

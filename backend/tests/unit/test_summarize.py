@@ -4,7 +4,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
-from pydantic_ai import models
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
@@ -28,8 +27,6 @@ from hivegent.llm_config import LlmConfig
 from hivegent.store import User
 from hivegent.types import ToolsSpec
 from tests.helpers import owned
-
-models.ALLOW_MODEL_REQUESTS = False
 
 _MESSAGES = [
     ModelRequest(parts=[UserPromptPart(content="What does the manual say?")]),
