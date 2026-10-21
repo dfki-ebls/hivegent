@@ -32,23 +32,21 @@ let
   # instead and then described in full.
   npmSbom =
     package:
-    let
-      described = bombon.passthruVendoredSbom.npm package {
-        inherit pkgs;
-        includeBuildtimeDependencies = true;
-      };
-    in
-    described.overrideAttrs (old: {
-      passthru = old.passthru // {
-        bombonVendoredSbom = old.passthru.bombonVendoredSbom.overrideAttrs (vendored: {
-          buildPhase = ''
-            npm prune --omit=dev --no-save $npmFlags
-            npm pkg delete devDependencies
-          ''
-          + vendored.buildPhase;
-        });
-      };
-    });
+    (bombon.passthruVendoredSbom.npm package {
+      inherit pkgs;
+      includeBuildtimeDependencies = true;
+    }).overrideAttrs
+      (old: {
+        passthru = old.passthru // {
+          bombonVendoredSbom = old.passthru.bombonVendoredSbom.overrideAttrs (vendored: {
+            buildPhase = ''
+              npm prune --omit=dev --no-save $npmFlags
+              npm pkg delete devDependencies
+            ''
+            + vendored.buildPhase;
+          });
+        };
+      });
 
   withVendoredSbom =
     package: env: command:
@@ -137,6 +135,7 @@ let
               (if any(.license.text | not) then map(select(.license.text | not)) else . end)' \
           gathered.cdx.json > "$sbom"
       '';
+
   components = {
     # bombon walks `drvAttrs`, so a store path that reaches the closure only
     # interpolated into the wrapper has no derivation to describe it. Naming them
