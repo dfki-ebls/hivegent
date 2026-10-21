@@ -37,18 +37,8 @@ export const chat = {
     failed: "{{count}} failed",
     processing: "Processing …",
   },
-  contextLimit: {
-    title: "Context limit reached",
-    message: "Compact this conversation to summarize its history, then retry the last message.",
-    action: "Compact and retry",
-  },
   compaction: {
-    continued: "Continued from a previous conversation",
-    compacting: "Compacting conversation",
-    compactingDescription: "Summarizing earlier messages to fit the context window.",
     compacted: "Conversation compacted",
-    compactedDescription: "Open it to continue where this chat left off.",
-    failed: "Couldn’t compact the conversation",
   },
   navGuard: {
     title: "Stop the current response?",

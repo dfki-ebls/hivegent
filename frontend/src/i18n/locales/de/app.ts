@@ -99,7 +99,6 @@ export const app = {
       listConversations: "Konversationen konnten nicht geladen werden",
       update: "Aktualisieren fehlgeschlagen",
       generateTitle: "Titel konnte nicht erstellt werden",
-      compact: "Komprimieren fehlgeschlagen",
       importConversation: "Import fehlgeschlagen",
       fetchPipelines: "Pipelines konnten nicht geladen werden",
       fetchPipelineConfig: "Konfiguration der Pipeline konnte nicht geladen werden",

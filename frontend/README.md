@@ -56,6 +56,19 @@ Tree mutations publish their change rather than invalidating, and stay pending u
 `prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request.
 The SDK issues the post-approval continuation itself, so per-call settings would resume that turn with server defaults.
 
+## Compaction is a part of the reply
+
+A summary that replaces the earlier history arrives as a `data-compaction` part of an assistant message, live and after a reload.
+`CompactionPart` renders it as a divider that opens to the summary.
+The backend compacts and retries on its own when a turn overflows the context window, so the part can also appear in the middle of a reply.
+
+A compaction made for a prompt is stored ahead of it, so `placeCompactions` moves one that opens a reply to the end of the reply before that prompt, live and in the SDK state once the stream finishes.
+
+The compact button sends a request without a message, whose per-call body adds `compact: true` (`compact` in `hooks/chat/use-hivegent-chat.ts`).
+It is disabled while an approval or question is open, which a compaction would leave unanswerable.
+The SDK streams the response into the last reply, or into a new one after a failed prompt, which `placeCompactions` moves ahead of that prompt, just as a reload shows it.
+The chat status shows the wait, so compaction needs no progress indicator of its own.
+
 ## Tool approvals
 
 The SDK dispatches a continuation only if the chat is idle when the decision is recorded.

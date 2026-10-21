@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -53,6 +54,7 @@ from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
 from hivegent.agents.approval import ApprovalNotes, approval_note_text
+from hivegent.agents.compaction import Compacted
 from hivegent.agents.tools.ask import DISMISSED_QUESTIONS, ask_user
 from hivegent.db.conversations import ActiveNode, _fork_for_path, import_conversation
 from hivegent.server.routes.conversations import _instruction_snapshots
@@ -918,3 +920,21 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
     assert answer.metadata["branch"]["branchCount"] == 2
     assert answer.metadata["branch"]["branchIndex"] == 0
     assert answer.metadata["branch"]["siblingIds"] == ["n2", "n5"]
+
+
+async def test_a_compaction_streams_as_the_part_a_reload_shows() -> None:
+    """A run's compaction reaches the client as it reloads."""
+    adapter = _adapter([])
+    part = CompactionPart(content="the gist")
+    reloaded = dump_messages_with_ids([("n1", ModelResponse(parts=[part]))])
+    shown = reloaded[0].parts[-1].model_dump(mode="json", by_alias=True)
+
+    live = [
+        chunk.model_dump(mode="json", by_alias=True, exclude_none=True)
+        async for chunk in adapter.build_event_stream().handle_capability_event(
+            Compacted(part=part)
+        )
+    ]
+    assert shown == {"type": "data-compaction", "data": {"content": "the gist"}}
+    assert live == [shown]
+

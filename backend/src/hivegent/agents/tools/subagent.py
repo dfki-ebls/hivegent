@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Capability
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import IncompleteToolCall, UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 
@@ -124,6 +124,9 @@ def _failure_reason(exc: Exception) -> str:
     """Describe why a subagent run ended early, for the recovery message."""
     if is_context_overflow(exc):
         return "hit the model's context limit"
+
+    if isinstance(exc, IncompleteToolCall):
+        return "ran out of output tokens mid tool call"
 
     if isinstance(exc, TimeoutError):
         return "ran past its time budget"

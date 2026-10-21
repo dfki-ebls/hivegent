@@ -1,4 +1,5 @@
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
+import { CompactionPart } from "@/components/chat/parts/CompactionPart";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
 import { isReasoningRunning, ReasoningPart } from "@/components/chat/parts/ReasoningPart";
 import { getToolHandler } from "@/components/chat/tools/registry";
@@ -23,6 +24,8 @@ export function partLayout(part: ChatPart, streaming: boolean): "step" | "block"
       return part.text || isReasoningRunning(part, streaming) ? "step" : null;
     case "file":
       return part.mediaType.startsWith("image/") ? "block" : null;
+    case "data-compaction":
+      return "block";
   }
 
   if (!getToolName(part)) return null;
@@ -46,6 +49,8 @@ export function MessagePart({ part, toolData, reasoningDuration }: MessagePartPr
     // A tool that returns binary content lands here too (pydantic-ai extracts it into a trailing user message).
     case "file":
       return <ImagePart url={part.url} filename={part.filename} />;
+    case "data-compaction":
+      return <CompactionPart content={part.data.content} />;
     default:
       return <ToolMessagePart part={part} toolData={toolData} />;
   }

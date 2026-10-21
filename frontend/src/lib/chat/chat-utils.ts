@@ -7,6 +7,7 @@ import {
   isToolUIPart,
 } from "ai";
 import { ASK_USER_PART, DISMISSED_ERROR } from "@/lib/chat/ask-user";
+import type { SubagentUpdate } from "@/lib/chat/subagent";
 import { toolLineState } from "@/lib/chat/tool-part";
 
 /** Whether a chat request is waiting for or receiving model output. */
@@ -56,9 +57,8 @@ export function lastUserIndex(messages: UIMessage[]): number {
  * A user turn in the form a resend needs: its node id plus every part that has
  * to travel again.
  *
- * The single shape both resend paths read (the error banner's retry and the
- * post-compaction retry), so neither can quietly carry less than the user sent.
- * Attachments are the part that used to be dropped: they live only in client
+ * The error banner's retry reads it, so a resend never quietly carries less
+ * than the user sent. Attachments are the part that used to be dropped: they live only in client
  * state until the turn succeeds, so a resend that omits them loses them for good.
  */
 export interface UserTurn {
@@ -93,22 +93,6 @@ export function adoptMessageNodeId(messages: ChatMessage[], nodeId: string): Cha
 }
 
 /**
- * Stable prefix the backend puts onto context-window overflow errors in the
- * chat stream (see `chat_error_text` in `backend/src/hivegent/server/vercel.py`).
- */
-const CONTEXT_LENGTH_ERROR_PREFIX = "context_length_exceeded: ";
-
-/**
- * Whether a chat error means the conversation overflowed the model's context
- * window, in which case compaction can recover. The backend classifies
- * provider errors and prefixes overflows with a stable code, so no matching
- * of provider-specific message text happens here.
- */
-export function isContextLengthError(error: string | undefined): boolean {
-  return error?.startsWith(CONTEXT_LENGTH_ERROR_PREFIX) ?? false;
-}
-
-/**
  * UI-owned metadata the backend persists on a message and the client reads back
  * on reload (see the `*_KEY` constants in `backend/src/hivegent/server/vercel.py`).
  */
@@ -121,14 +105,27 @@ export interface ChatMessageMetadata {
 }
 
 /**
- * The message type used throughout the chat, carrying our metadata shape.
+ * The `data-*` parts the backend streams, keyed by name without the prefix.
  *
- * `UIMessage` defaults its metadata to `unknown`, which forces a cast at every
- * read; binding it once here types `message.metadata` everywhere instead. Chat
- * state is created from this type in `useChat` (see `use-hivegent-chat.ts`), so
- * the annotation flows outward rather than being re-asserted per call site.
+ * `compaction` carries the summary that replaced the history before it, live and after a reload.
+ * Its data may hold more keys, but only `content` is meant for display.
  */
-export type ChatMessage = UIMessage<ChatMessageMetadata>;
+export type ChatDataTypes = {
+  compaction: { content: string };
+  subagent: SubagentUpdate;
+  "tool-output": unknown;
+};
+
+/**
+ * The message type used throughout the chat, carrying our metadata and data part shapes.
+ *
+ * `UIMessage` defaults both to `unknown`, which forces a cast at every read.
+ * Binding them once here types `message.metadata` and the data parts everywhere
+ * instead. Chat state is created from this type in `useChat` (see
+ * `use-hivegent-chat.ts`), so the annotation flows outward rather than being
+ * re-asserted per call site.
+ */
+export type ChatMessage = UIMessage<ChatMessageMetadata, ChatDataTypes>;
 
 /**
  * The run error of the latest turn, live or persisted, or undefined.
@@ -233,6 +230,49 @@ export function closeAbandonedCalls(messages: ChatMessage[]): ChatMessage[] {
 
   return messages.map((message, index) =>
     isAbandoned(message, index) ? { ...message, parts: message.parts.map(closeCall) } : message,
+  );
+}
+
+/** Whether a part carries content, unlike the `step-start` marker between steps. */
+function isContentPart(part: ChatMessage["parts"][number]): boolean {
+  return part.type !== "step-start";
+}
+
+/**
+ * Move a compaction that opens a reply to the end of the reply before its prompt.
+ *
+ * A compaction made for a prompt summarizes the history ahead of that prompt,
+ * so the backend stores it there and a reload shows it at the end of the
+ * previous reply. Live, it streams into the reply after the prompt instead. A
+ * reply that held nothing else goes, as it does on reload.
+ *
+ * Returns *messages* itself when nothing moves, like `closeAbandonedCalls`.
+ */
+export function placeCompactions(messages: ChatMessage[]): ChatMessage[] {
+  let placed: ChatMessage[] | undefined;
+
+  messages.forEach((message, index) => {
+    const opening = message.parts.find(isContentPart);
+    const previous = messages[index - 2];
+
+    if (
+      opening?.type !== "data-compaction" ||
+      message.role !== "assistant" ||
+      messages[index - 1]?.role !== "user" ||
+      previous?.role !== "assistant"
+    ) {
+      return;
+    }
+
+    placed ??= [...messages];
+    placed[index - 2] = { ...previous, parts: [...previous.parts, opening] };
+    placed[index] = { ...message, parts: message.parts.filter((part) => part !== opening) };
+  });
+
+  return (
+    placed?.filter(
+      (message, index) => message === messages[index] || message.parts.some(isContentPart),
+    ) ?? messages
   );
 }
 

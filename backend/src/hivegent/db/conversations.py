@@ -68,10 +68,10 @@ __all__ = [
     "MessagePair",
     "OwnedConversation",
     "append_branch",
-    "create_compacted_conversation",
     "delete_all_conversations",
     "extract_title",
     "import_conversation",
+    "insert_above",
     "is_user_request",
     "list_conversations",
     "load_active_for_display",
@@ -158,7 +158,6 @@ class ConversationData(BaseModel):
     created_at: datetime = Field(description="When the conversation was created")
     updated_at: datetime = Field(description="When the conversation was last updated")
     messages: list[ModelMessage] = Field(default_factory=list)
-    compacted_from: str | None = Field(default=None)
 
     @field_validator("messages", mode="before")
     @classmethod
@@ -178,7 +177,6 @@ class ConversationSummary(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
-    compacted_from: str | None = None
 
 
 # ─── Codecs ────────────────────────────────────────────────────────────
@@ -288,7 +286,8 @@ def _active_path_cte(conversation_id: str, leaf_id: str | ColumnElement[str]) ->
     subquery selecting the conversation's newest leaf.  The anchor is a plain
     equality (no ordering or limit inside the recursive term), and walking *up*
     the unique ``parent_id`` is provably terminating: ``parent_id`` only ever
-    points at an already-created node, so the chain strictly recedes in time and
+    points at an already-created node, or at a compaction inserted between a
+    node and its former parent (:func:`insert_above`), so the chain recedes and
     can neither cycle nor escape the conversation (the recursive term re-checks
     ``conversation_id``).  Columns: ``id``, ``parent_id``, ``payload``, ``depth``
     (0 at the leaf).
@@ -396,7 +395,6 @@ def _to_summary(conv: Conversation) -> ConversationSummary:
         title=conv.title or "",
         created_at=conv.created_at,
         updated_at=conv.updated_at,
-        compacted_from=conv.compacted_from_id,
     )
 
 
@@ -456,7 +454,6 @@ async def load_conversation(conversation: OwnedConversation) -> ConversationData
         created_at=conv.created_at,
         updated_at=conv.updated_at,
         messages=[node.message for node in path],
-        compacted_from=conv.compacted_from_id,
     )
 
 
@@ -585,9 +582,8 @@ async def append_branch(
     parent_id: str | None,
     messages: Sequence[ModelMessage],
     *,
-    head_id: str | None = None,
+    prompt_id: str | None = None,
     title: str | None = None,
-    compacted_from: OwnedConversation | None = None,
 ) -> str | None:
     """Append *messages* as a chain under *parent_id* and make it active.
 
@@ -600,10 +596,10 @@ async def append_branch(
     when omitted, derived from the first user message.  Raises on failure so
     the caller can surface a hard error rather than silently lose the turn.
 
-    *head_id* forces the id of the first node instead of minting one, so the
-    chat route can announce the new user message's id before the turn is
-    persisted (see ``X-Message-Id`` in ``backend/README.md``).  A row created
-    here links back to *compacted_from*, the conversation it continues.
+    *prompt_id* forces the id of the delta's first user request instead of
+    minting one, so the chat route can announce the new user message's id
+    before the turn is persisted (see ``X-Message-Id`` in ``backend/README.md``),
+    even when a compaction the turn made lands ahead of it.
     """
     msg_list = list(messages)
     if not msg_list:
@@ -617,17 +613,17 @@ async def append_branch(
         # holds is not matched and fails on the primary key instead.
         conv = await _get_owned(s, conversation)
         if conv is None:
-            conv = Conversation(
-                id=conversation.id,
-                user_id=conversation.user.id,
-                compacted_from_id=None if compacted_from is None else compacted_from.id,
-            )
+            conv = Conversation(id=conversation.id, user_id=conversation.user.id)
             s.add(conv)
 
+        prompt_index = next(
+            (i for i, message in enumerate(msg_list) if is_user_request(message)),
+            None,
+        )
         parent = parent_id
         last_id: str | None = None
         for index, payload in enumerate(_dump_messages(msg_list)):
-            node_id = head_id if index == 0 and head_id else new_id()
+            node_id = prompt_id if index == prompt_index and prompt_id else new_id()
             s.add(
                 Message(
                     id=node_id,
@@ -642,6 +638,46 @@ async def append_branch(
             conv.title = title or extract_title(msg_list)
         conv.updated_at = datetime.now(UTC)
     return last_id
+
+
+async def insert_above(
+    conversation: OwnedConversation, node_id: str, message: ModelMessage
+) -> None:
+    """Insert *message* between the parent of *node_id* and all of its children.
+
+    A compaction ahead of a stored prompt summarizes the history that every
+    branch from that parent shares, so the branches move under it together and
+    stay siblings.
+
+    Raises:
+        NoResultFound: If *node_id* is not a node of *conversation*.
+    """
+    async with session() as s:
+        await _lock(s, conversation.id)
+        parent_id = (
+            await s.execute(
+                select(Message.parent_id).where(
+                    Message.id == node_id, Message.conversation_id == conversation.id
+                )
+            )
+        ).scalar_one()
+        inserted = Message(
+            id=new_id(),
+            conversation_id=conversation.id,
+            parent_id=parent_id,
+            payload=_dump_messages([message])[0],
+        )
+        s.add(inserted)
+        await s.flush()
+        await s.execute(
+            update(Message)
+            .where(
+                Message.conversation_id == conversation.id,
+                Message.parent_id.is_not_distinct_from(parent_id),
+                Message.id != inserted.id,
+            )
+            .values(parent_id=inserted.id)
+        )
 
 
 async def set_conversation_title(
@@ -704,21 +740,3 @@ async def import_conversation(
         raise ValueError(_IMPORT_FAILED.current)
 
     return summary
-
-
-async def create_compacted_conversation(
-    source: OwnedConversation,
-    summary_message: ModelMessage,
-    title: str,
-) -> OwnedConversation:
-    """Persist a fresh conversation of *source*'s user, seeded with one summary message as its root.
-
-    The source is always a persisted row, since its messages are what was
-    summarized, so the ``compacted_from`` link is never absent.
-    """
-    conversation = OwnedConversation.mint(source.user)
-    await append_branch(
-        conversation, None, [summary_message], title=title, compacted_from=source
-    )
-
-    return conversation

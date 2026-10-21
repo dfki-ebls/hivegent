@@ -274,11 +274,11 @@ class IncompleteToolCallGuard(AbstractCapability[Any]):
 
     pydantic-ai reaches the same conclusion on its own, but only for
     unparseable arguments and only once the tool's retry budget is spent, so
-    this raises its ``IncompleteToolCall`` up front.  Either way
-    :func:`~hivegent.llm.is_context_overflow` classifies it and the frontend
-    compacts the conversation and retries the turn — the right remedy while
-    ``llm.max_tokens`` is unset on the main tier, which is its documented
-    default.
+    this raises its ``IncompleteToolCall`` up front.  Its partial response
+    has already streamed, so the turn is not compacted and retried in place
+    (:class:`~hivegent.agents.compaction.CompactOnOverflow`), and compacting by
+    hand is the remedy while ``llm.max_tokens`` is unset on the main tier,
+    which is its documented default.
 
     Truncated prose is left alone: it is a degraded but usable answer, and
     the aux tier caps its completions on purpose.

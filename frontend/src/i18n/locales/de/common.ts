@@ -9,7 +9,6 @@ export const common = {
     delete: "Löschen",
     dismiss: "Ausblenden",
     edit: "Bearbeiten",
-    open: "Öffnen",
     remove: "Entfernen",
     rename: "Umbenennen",
     retry: "Erneut versuchen",

@@ -33,14 +33,12 @@ __all__ = [
     "AdminOverviewResponse",
     "AdminReindexResponse",
     "AdminUserInfo",
-    "AgentRunConfig",
     "AssetProcessingMode",
     "AttachmentLimits",
     "ChatRequestConfig",
     "ClientConversation",
     "CollectionCompleteEvent",
     "CollectionProgressEvent",
-    "CompactConversationResponse",
     "ConversationArchive",
     "ConversationListResponse",
     "DirectoryEntry",
@@ -263,17 +261,12 @@ for one and not the other.
 """
 
 
-class AgentRunConfig(BaseModel):
-    """Everything a request states that composes the run's prompt prefix.
+class ChatRequestConfig(BaseModel):
+    """The run configuration a chat request carries beside its messages.
 
-    Split out from :class:`ChatRequestConfig` because compaction has to send
-    the same prefix a chat turn sends: the summary is asked for as one more
-    turn of the conversation, so the personality, mode, document scope, and
-    tool configuration all have to match or the provider's cached prefix is
-    lost (see ``backend/README.md``).  A field belongs here when changing it
-    changes the request's leading tokens; anything that only reaches the
-    request body or selects which history is replayed belongs below, since
-    compaction would accept and ignore it.
+    Validated straight off the chat body, which also carries the AI SDK's own
+    ``messages`` and ``id``; those are read by the adapter instead and ignored
+    here, since nothing on this model forbids extras.
     """
 
     personality: Personality = Field(default=Personality.DEFAULT)
@@ -289,16 +282,6 @@ class AgentRunConfig(BaseModel):
     included_documents: list[str] = Field(default_factory=list)
     excluded_documents: list[str] = Field(default_factory=list)
     tools: ToolsSpec = Field(default_factory=ToolsSpec)
-
-
-class ChatRequestConfig(AgentRunConfig):
-    """What a chat turn adds to the prefix: model settings and history selection.
-
-    Validated straight off the chat body, which also carries the AI SDK's own
-    ``messages`` and ``id``; those are read by the adapter instead and ignored
-    here, since nothing on this model forbids extras.
-    """
-
     reasoning_effort: ReasoningEffort = Field(
         default="medium",
         description="Reasoning effort level",
@@ -314,6 +297,10 @@ class ChatRequestConfig(AgentRunConfig):
         # snake_case.
         validation_alias=AliasChoices("messageId", "message_id"),
         description="Target node id: the edited message (submit) or the regenerated one",
+    )
+    compact: bool = Field(
+        default=False,
+        description="Compact the active path instead of running a turn",
     )
 
 
@@ -453,14 +440,6 @@ class ConversationArchive(BaseModel):
                 return half.messages, half.title or (other.title if other else None)
 
         return [], None
-
-
-class CompactConversationResponse(BaseModel):
-    """Response for conversation compaction."""
-
-    new_conversation_id: str = Field(
-        description="ID of the new compacted conversation",
-    )
 
 
 class UpdateTitleRequest(BaseModel):

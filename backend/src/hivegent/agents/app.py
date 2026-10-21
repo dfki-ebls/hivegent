@@ -18,6 +18,7 @@ from .guards import (
     PromptImageLimit,
     ToolOutputSpill,
 )
+from .window import CompactionWindow
 
 __all__ = [
     "explore_agent",
@@ -41,6 +42,10 @@ _guards = [
     LimitNotes(),
 ]
 
+# Every run over the user's deps, the summary included, sends only the history
+# from the latest compaction onward.
+_window = CompactionWindow()
+
 # Every run over the user's deps bounds its tool returns the same way, the
 # chat run and its MCP servers, its subagents, and the MCP exploration alike.
 # pydantic-ai orders capabilities across the agent and the run layer as one
@@ -61,7 +66,7 @@ def _user_agent(name: str) -> Agent[UserDeps, str]:
         retries=settings.llm.retries,
         model_settings=_default_model_settings,
         tool_timeout=settings.llm.tool_timeout_seconds,
-        capabilities=[*_guards, _spill],
+        capabilities=[_window, *_guards, _spill],
     )
 
 

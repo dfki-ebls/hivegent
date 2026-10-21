@@ -10,7 +10,7 @@ from openai.types.chat import chat_completion_chunk
 from pydantic_ai import Agent, UserContent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import (
-    IncompleteToolCall,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     UnexpectedModelBehavior,
 )
@@ -47,24 +47,13 @@ __all__ = [
     "thinking_model_settings",
 ]
 
-# Stable identifiers providers attach to an oversized-prompt rejection:
-# OpenAI puts ``context_length_exceeded`` in ``code``, llama.cpp puts
-# ``exceed_context_size_error`` in ``type``.
-_CONTEXT_OVERFLOW_CODES = frozenset(
-    {"context_length_exceeded", "exceed_context_size_error"}
-)
-# Prose fallbacks for servers whose 400 body carries no stable
-# identifier (a numeric ``code`` and a generic exception-class ``type``):
-# - vLLM: "This model's maximum context length is N tokens." — also
-#   covers SGLang's total-token variant ("Requested token count exceeds
-#   the model's maximum context length of N tokens.").
-# - SGLang: "The input (N tokens) is longer than the model's context
-#   length (M tokens)."
-# - SGLang's scheduler: "Input length (N tokens) exceeds the maximum
-#   allowed length (M tokens)." (the KV-pool bound below the context
-#   length).
+# The error ``type`` llama.cpp rejects an oversized prompt with.
+_LLAMACPP_OVERFLOW_TYPE = "exceed_context_size_error"
+# SGLang's wordings, whose 400 body carries no stable identifier:
+# - "The input (N tokens) is longer than the model's context length (M tokens)."
+# - "Input length (N tokens) exceeds the maximum allowed length (M tokens).",
+#   the KV-pool bound below the context length.
 _CONTEXT_OVERFLOW_PHRASES = (
-    "maximum context length",
     "the model's context length",
     "exceeds the maximum allowed length",
 )
@@ -112,27 +101,19 @@ class _SegmentedOpenAIChatModel(OpenAIChatModel):
 def is_context_overflow(error: Exception) -> bool:
     """Whether *error* means the prompt overflowed the model's context window.
 
-    Classifies on the structure the exception offers first: providers
-    reject an oversized prompt with a 400 whose body carries a stable
-    identifier (see :data:`_CONTEXT_OVERFLOW_CODES`), and a completion that
-    ran out of room mid tool call is pydantic-ai's ``IncompleteToolCall``
-    (raised by :class:`~hivegent.agents.guards.IncompleteToolCallGuard`
-    before the call is dispatched, and by pydantic-ai itself once the tool's
-    retry budget is spent). Message matching remains only where no structure
-    exists: vLLM's and SGLang's 400 bodies are plain prose, and pydantic-ai
-    collapses an empty response with ``finish_reason == "length"`` into the
-    message of an ``UnexpectedModelBehavior``.
+    pydantic-ai already files OpenAI's ``context_length_exceeded`` code and
+    vLLM's wording as ``ModelContextWindowExceededError``.  What it misses is
+    matched here: llama.cpp's error type, SGLang's prose, and the empty
+    response with ``finish_reason == "length"`` that pydantic-ai collapses into
+    the message of an ``UnexpectedModelBehavior``.
     """
     match error:
-        case IncompleteToolCall():
+        case ModelContextWindowExceededError():
             return True
-        case ModelHTTPError(status_code=400, body=body):
-            if isinstance(body, Mapping) and (
-                body.get("code") in _CONTEXT_OVERFLOW_CODES
-                or body.get("type") in _CONTEXT_OVERFLOW_CODES
-            ):
-                return True
-            return any(phrase in str(body) for phrase in _CONTEXT_OVERFLOW_PHRASES)
+        case ModelHTTPError(status_code=400, provider_error_type=kind, body=body):
+            return kind == _LLAMACPP_OVERFLOW_TYPE or any(
+                phrase in str(body) for phrase in _CONTEXT_OVERFLOW_PHRASES
+            )
         case UnexpectedModelBehavior(message=message):
             return "exceeded before any response was generated" in message
         case _:

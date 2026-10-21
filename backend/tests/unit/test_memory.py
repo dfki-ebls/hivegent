@@ -1,8 +1,14 @@
-"""Memory: edited in place and reported when a conversation starts."""
+"""Memory: edited in place and reported when a conversation or compaction window starts."""
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolReturnPart
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from hivegent.agents.common import UserDeps
@@ -30,12 +36,15 @@ def _reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(content="ok")])
 
 
-async def test_the_memory_is_reported_once_when_a_conversation_starts() -> None:
-    """Each turn extends the history, so a second report would only repeat."""
+async def test_the_memory_is_reported_once_per_window() -> None:
+    """Each turn extends the history, so only a compaction calls for a second report."""
     agent = Agent(deps_type=UserDeps, toolsets=[memory_toolset])
     history: list[ModelMessage] = []
 
-    for _ in range(2):
+    for compacted in (False, False, True):
+        if compacted:
+            history.append(ModelResponse(parts=[CompactionPart(content="the gist")]))
+
         result = await agent.run(
             "hi",
             model=FunctionModel(_reply),
@@ -50,4 +59,4 @@ async def test_the_memory_is_reported_once_when_a_conversation_starts() -> None:
         for message in history
         for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == "read_memory"
-    ] == ["- likes tea"]
+    ] == ["- likes tea", "- likes tea"]

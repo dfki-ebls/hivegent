@@ -1,13 +1,7 @@
-"""Vercel AI chat adapter that emits canonical error codes.
+"""Vercel AI chat adapter for the server-owned conversation tree.
 
-The Vercel AI data stream protocol carries stream errors as a bare
-``errorText`` string, so the frontend cannot see HTTP status codes or
-finish reasons.
-This module classifies errors on the server, where the exception type,
-status code, and provider response body are still structured, and
-prefixes context-window overflows with a stable code that the frontend
-matches exactly (see ``isContextLengthError`` in
-``frontend/src/lib/chat/chat-utils.ts``).
+The adapter replays history from storage rather than from the browser echo, and
+its event stream records UI-owned metadata and shows compactions live.
 
 It also owns :func:`run_and_persist`, which streams a turn and mirrors the
 run's message list to storage on every finish, and :func:`dump_messages_with_ids`,
@@ -36,6 +30,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import AgentRunResultEvent, capture_run_messages
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
+    CapabilityEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -62,22 +57,20 @@ from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ErrorC
 from starlette.responses import Response
 
 from ..agents.approval import APPROVAL_NOTE_KEY
+from ..agents.compaction import Compacted
 from ..agents.subagent_events import SubagentUpdate
 from ..agents.tools.ask import ANSWERS, ASK_USER_TOOL, DISMISSED_QUESTIONS
 from ..db._common import new_id
 from ..db.conversations import is_user_request
 from ..l10n import Localized
-from ..llm import is_context_overflow
 
 __all__ = [
     "APPROVAL_METADATA_KEY",
-    "CONTEXT_LENGTH_EXCEEDED",
     "SDK_VERSION",
     "SUBAGENT_CHUNK_TYPE",
     "BranchInfo",
     "ChatAdapter",
     "abandon_pending_calls",
-    "chat_error_text",
     "close_orphan_tool_calls",
     "denial_message",
     "dump_messages_with_ids",
@@ -87,8 +80,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
 
 # Vercel AI data-stream protocol version the frontend speaks; request parsing
 # and response dumping must agree on it. The frontend runs AI SDK v7 (`ai@7`,
@@ -182,22 +173,10 @@ def denial_message(note: str | None) -> str:
     )
 
 
-def chat_error_text(error: Exception) -> str:
-    """Serialize *error* for the chat stream.
-
-    Context-window overflows are prefixed with the stable
-    ``context_length_exceeded`` code so the frontend can offer compaction
-    with an exact match instead of fuzzy-matching provider prose.
-    """
-    if is_context_overflow(error):
-        return f"{CONTEXT_LENGTH_EXCEEDED}: {error}"
-    return str(error)
-
-
 @dataclass
 class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
-    """Event stream that rewrites error chunks with canonical codes and records
-    how long each thinking part took to stream.
+    """Event stream that records how long each thinking part took to stream
+    and shows compactions as they happen.
 
     Vercel AI and Pydantic AI do not expose a first-class reasoning duration.
     We persist this as application message metadata instead of provider
@@ -214,11 +193,13 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     _thinking_started_at: float | None = None
     _thinking_durations_ms: list[int] = field(default_factory=list[int])
 
-    async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
-        async for chunk in super().on_error(error):
-            if isinstance(chunk, ErrorChunk):
-                chunk = ErrorChunk(error_text=chat_error_text(error))
-            yield chunk
+    async def handle_capability_event(
+        self, event: CapabilityEvent
+    ) -> AsyncIterator[BaseChunk]:
+        """Show a compaction the run made, as the stored one reloads."""
+        if isinstance(event, Compacted):
+            async for chunk in self.handle_compaction(event.part):
+                yield chunk
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False

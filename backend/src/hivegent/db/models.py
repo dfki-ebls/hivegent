@@ -235,9 +235,6 @@ class Conversation(Timestamped, Base):
     id: Mapped[str] = mapped_column(primary_key=True, default=_nid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     title: Mapped[str | None]
-    compacted_from_id: Mapped[str | None] = mapped_column(
-        ForeignKey("conversations.id", ondelete="SET NULL"), index=True
-    )
 
     user: Mapped[User] = relationship(back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship(
@@ -254,7 +251,8 @@ class Message(Base):
     than overwriting, so prior branches are preserved.  The active branch is
     simply the newest one: the active path is the conversation's most recently
     created leaf (a node nothing forks from) walked up to the root via
-    ``parent_id``.  Rows are never updated in place, so each carries only
+    ``parent_id``.  Rows are only ever re-parented, under a compaction inserted
+    above them, so each carries only
     ``created_at`` (with a ``server_default``); the ``(conversation_id,
     created_at)`` index orders that newest-leaf lookup and the per-conversation
     walks, while the ``parent_id`` index backs its childless test.

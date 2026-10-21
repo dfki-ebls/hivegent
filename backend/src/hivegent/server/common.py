@@ -26,7 +26,7 @@ from ..prompts import compose_instructions
 from ..security import require_safe_external_url
 from ..store import AccessDenied, Casebase, User, WorkspaceScope
 from ..tmp import tmp_dir
-from ..types import AgentRunConfig, DocumentFilter
+from ..types import ChatRequestConfig, DocumentFilter
 from ..workspace_events import announce_workspace_changed
 from .models import PipelineSpec
 
@@ -65,8 +65,8 @@ def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
 
     *tier* selects which configured ``(model, max_tokens)`` pair backs the
     request; it defaults to ``"aux"`` so the many ancillary routes (titles,
-    image alt-text during upload) are right by default, while the chat and
-    compaction routes pass ``tier="main"``.
+    image alt-text during upload) are right by default, while the chat route
+    passes ``tier="main"``.
     """
     if llm.base_url:
         try:
@@ -137,14 +137,13 @@ def parse_document_scope(
 
 
 def build_run_prefix(
-    config: AgentRunConfig, conversation: OwnedConversation
+    config: ChatRequestConfig, conversation: OwnedConversation
 ) -> RunPrefix:
-    """Compose the prompt prefix *config* describes, for chat or compaction.
+    """Compose the prompt prefix *config* describes, for a turn or a compaction.
 
-    One builder for both callers on purpose: a compaction request asks for its
-    summary as one more turn of the conversation, and that only pays off while
-    its instructions and tool schemas match the chat turn before it token for
-    token.
+    A compaction asks for its summary as one more turn of the conversation,
+    which only pays off while its instructions and tool schemas match the turn
+    before it token for token, so both run under the prefix built here.
 
     It also owns the preconditions of that match, so no caller can compose a
     prefix that differs by forgetting one: the LLM config is resolved (and

@@ -11,8 +11,6 @@ import {
 } from "@/components/ui/message-scroller";
 import { ProcessingTrace } from "@/components/chat/ChainOfThought";
 import { ChatError } from "@/components/chat/ChatError";
-import { CompactionBanner } from "@/components/chat/CompactionBanner";
-import { ContextLimitBanner } from "@/components/chat/ContextLimitBanner";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import {
   Empty,
@@ -26,7 +24,6 @@ import { keyPrefix } from "@/i18n";
 import {
   type ChatMessage,
   isChatBusy,
-  isContextLengthError,
   isProcessing,
   lastUserIndex,
 } from "@/lib/chat/chat-utils";
@@ -39,13 +36,9 @@ interface MessageListProps {
   messageKey: (messageId: string) => string;
   status: ChatStatus;
   chatError: string | undefined;
-  compactDisabled: boolean;
   isLoadingHistory: boolean;
-  compactedFrom: string | null;
   editingId: string | null;
-  onNavigatePrevious: (previousId: string) => void;
   onRetry: () => void;
-  onCompact: () => void;
   onDismissError: () => void;
   onSetEditing: (id: string) => void;
   onCancelEdit: () => void;
@@ -58,13 +51,9 @@ export function MessageList({
   messageKey,
   status,
   chatError,
-  compactDisabled,
   isLoadingHistory,
-  compactedFrom,
   editingId,
-  onNavigatePrevious,
   onRetry,
-  onCompact,
   onDismissError,
   onSetEditing,
   onCancelEdit,
@@ -72,7 +61,6 @@ export function MessageList({
   onRegenerate,
 }: MessageListProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const contextLimitReached = isContextLengthError(chatError);
   const processing = isProcessing(messages, status);
   // Only the turn the user sent last anchors: when one item swaps for another, the scroller
   // jumps to the first anchor it never scrolled to, the oldest message of a loaded conversation.
@@ -91,14 +79,6 @@ export function MessageList({
       <MessageScroller className="min-h-0 flex-1">
         <MessageScrollerViewport>
           <MessageScrollerContent aria-busy={isChatBusy(status)} className="gap-6 p-4">
-            {compactedFrom && (
-              <MessageScrollerItem>
-                <CompactionBanner
-                  compactedFrom={compactedFrom}
-                  onNavigatePrevious={onNavigatePrevious}
-                />
-              </MessageScrollerItem>
-            )}
             {messages.length === 0 && !chatError && (
               <MessageScrollerItem className="flex flex-1">
                 <Empty>
@@ -140,16 +120,7 @@ export function MessageList({
                 <ProcessingTrace />
               </MessageScrollerItem>
             )}
-            {contextLimitReached && (
-              <MessageScrollerItem>
-                <ContextLimitBanner
-                  disabled={compactDisabled}
-                  onCompact={onCompact}
-                  onDismiss={onDismissError}
-                />
-              </MessageScrollerItem>
-            )}
-            {chatError && !contextLimitReached && (
+            {chatError && (
               <MessageScrollerItem>
                 <ChatError message={chatError} onRetry={onRetry} onDismiss={onDismissError} />
               </MessageScrollerItem>

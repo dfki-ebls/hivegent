@@ -9,8 +9,7 @@ messages to: the chat route on an approval continuation and the import route on
 an archive exported mid-session.  These pin the shape the client actually posts,
 so the next such drift fails here rather than as a 422 in production.
 
-Compaction used to be a third such endpoint; it now summarizes the persisted
-active path and takes no messages from the browser at all.
+A compaction is a chat request flagged ``compact``, so the chat route covers it.
 """
 
 import json

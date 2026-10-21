@@ -9,10 +9,12 @@ import {
   closeAbandonedCalls,
   isChatBusy,
   lastUserIndex,
+  placeCompactions,
   shouldContinueRun,
 } from "@/lib/chat/chat-utils";
 import { API_BASE_URL } from "@/lib/health";
-import type { SubagentSteps, SubagentUpdate } from "@/lib/chat/subagent";
+import type { ChatRequestConfig } from "@/lib/types";
+import type { SubagentSteps } from "@/lib/chat/subagent";
 
 /**
  * IDs the server issues in a turn's response headers. Read there rather than
@@ -86,19 +88,24 @@ export function useHivegentChat(
         // options the approval was recorded with, so a per-call body leaves
         // that request settingless and the turn resumes with the server's
         // defaults — no document scope, no model override, no MCP servers.
-        prepareSendMessagesRequest: ({ api, id: chatId, messages, trigger, messageId }) => {
-          const lastMessage = trigger === "regenerate-message" ? undefined : messages.at(-1);
+        // A per-call body only adds a flag to its own request, such as `compact`,
+        // which addresses no message since it compacts the active path.
+        prepareSendMessagesRequest: ({ api, id: chatId, messages, body, trigger, messageId }) => {
+          const compact = body?.compact === true;
+          const lastMessage =
+            compact || trigger === "regenerate-message" ? undefined : messages.at(-1);
           return {
             api:
               draft && turnIds.adoptedConversationId
                 ? `${API_BASE_URL}/api/conversations/${turnIds.adoptedConversationId}/chat`
                 : api,
             body: {
+              ...body,
               ...requestBody?.(),
               id: chatId,
               messages: lastMessage ? [lastMessage] : [],
               trigger,
-              messageId,
+              messageId: compact ? undefined : messageId,
             },
           };
         },
@@ -135,12 +142,14 @@ export function useHivegentChat(
     onData: (dataPart) => {
       if (dataPart.type !== "data-subagent") return;
 
-      const { tool_call_id, transcript } = dataPart.data as SubagentUpdate;
+      const { tool_call_id, transcript } = dataPart.data;
       setSubagentSteps((prev) => new Map(prev).set(tool_call_id, transcript.steps));
     },
     // `useChat` always invokes the latest callbacks, so these stay current.
-    onFinish: () => {
+    onFinish: ({ messages }) => {
       const { conversationId, messageId } = turnIds.take();
+      // Keep a compaction where it shows, so a regenerate dropping its reply keeps it too.
+      if (placeCompactions(messages) !== messages) chat.setMessages(placeCompactions);
       // Swap the SDK's local ID for the node ID, so editing or retrying this
       // message forks the stored branch at it instead of appending to the end.
       if (messageId) {
@@ -176,10 +185,22 @@ export function useHivegentChat(
     await regenerate({ headers: await getAuthHeaders() });
   }, [regenerate]);
 
+  // A send without a message streams into the last reply, or a new one after a user message.
+  const compact = useCallback(async () => {
+    await sendMessage(undefined, {
+      headers: await getAuthHeaders(),
+      body: { compact: true } satisfies Partial<ChatRequestConfig>,
+    });
+  }, [sendMessage]);
+
   // An approval or question the user overtook with another message is dead:
   // the next request closes it server-side, so the transcript every consumer
   // reads says so too, instead of leaving live buttons on a settled decision.
-  const messages = useMemo(() => closeAbandonedCalls(chat.messages), [chat.messages]);
+  // A compaction shows where the server stores it, as after a reload.
+  const messages = useMemo(
+    () => placeCompactions(closeAbandonedCalls(chat.messages)),
+    [chat.messages],
+  );
 
   const isStreaming = isChatBusy(chat.status);
   const messageKey = useCallback(
@@ -193,6 +214,7 @@ export function useHivegentChat(
     messageKey,
     sendUserMessage,
     regenerateTurn,
+    compact,
     isStreaming,
     subagentSteps,
   };

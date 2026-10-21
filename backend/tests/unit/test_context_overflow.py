@@ -1,31 +1,29 @@
-"""Tests for canonical chat-stream error codes.
+"""Tests for context-window overflow classification.
 
-An HTTP rejection is a provider's own contract, so those cases carry a
-captured body.  The two overflows that surface as an exception instead are
-raised by pydantic-ai, which spells one of them as prose in a generic
-``UnexpectedModelBehavior`` — so those are driven through a real run
-(:func:`_run_error`) rather than restated here.  A hand-written copy of that
-sentence would keep passing after an upstream reword, while the compaction
-offer silently stopped appearing.
+pydantic-ai files OpenAI's code and vLLM's wording itself, so only what it
+misses is pinned here: llama.cpp's error type and SGLang's prose, with captured
+bodies, and the empty response pydantic-ai spells as prose in a generic
+``UnexpectedModelBehavior``, driven through a real run (:func:`_run_error`)
+rather than restated, so an upstream reword fails here instead of silently
+ending compaction.
 """
 
 import pytest
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     ModelResponsePart,
     ThinkingPart,
-    ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from hivegent.agents.app import title_agent
-from hivegent.server.vercel import CONTEXT_LENGTH_EXCEEDED, chat_error_text
-
-
-def _is_overflow(error: Exception) -> bool:
-    return chat_error_text(error).startswith(f"{CONTEXT_LENGTH_EXCEEDED}: ")
+from hivegent.llm import is_context_overflow
 
 
 async def _run_error(parts: list[ModelResponsePart]) -> Exception:
@@ -40,17 +38,16 @@ async def _run_error(parts: list[ModelResponsePart]) -> Exception:
     return raised.value
 
 
-def test_openai_structured_code() -> None:
-    error = ModelHTTPError(
-        status_code=400,
-        model_name="gpt-5.2",
-        body={"code": "context_length_exceeded", "message": "too long"},
+def test_pydantic_ai_category() -> None:
+    error = ModelHTTPError.for_category(
+        ModelContextWindowExceededError, status_code=400, model_name="gpt-5.2"
     )
-    assert _is_overflow(error)
+    assert is_context_overflow(error)
 
 
 def test_llamacpp_structured_type() -> None:
-    error = ModelHTTPError(
+    error = ModelHTTPError.for_category(
+        None,
         status_code=400,
         model_name="qwen3.6-27b",
         body={
@@ -61,21 +58,9 @@ def test_llamacpp_structured_type() -> None:
             ),
             "type": "exceed_context_size_error",
         },
+        provider_error_type="exceed_context_size_error",
     )
-    assert _is_overflow(error)
-
-
-def test_vllm_prose_body() -> None:
-    error = ModelHTTPError(
-        status_code=400,
-        model_name="gemma-4",
-        body={
-            "object": "error",
-            "message": "This model's maximum context length is 8192 tokens.",
-            "type": "BadRequestError",
-        },
-    )
-    assert _is_overflow(error)
+    assert is_context_overflow(error)
 
 
 def test_sglang_prose_body() -> None:
@@ -95,7 +80,7 @@ def test_sglang_prose_body() -> None:
             "code": 400,
         },
     )
-    assert _is_overflow(error)
+    assert is_context_overflow(error)
 
 
 @pytest.mark.parametrize(
@@ -105,20 +90,17 @@ def test_sglang_prose_body() -> None:
         # limit went entirely on thinking.
         [],
         [ThinkingPart(content="hmm")],
-        # Cut off mid tool call, which `IncompleteToolCallGuard` turns into an
-        # error before the half-written call is dispatched.
-        [ToolCallPart(tool_name="edit_document", args='{"file_path":')],
     ],
 )
 async def test_a_completion_that_ran_out_of_room_is_an_overflow(
     parts: list[ModelResponsePart],
 ) -> None:
-    assert _is_overflow(await _run_error(parts))
+    assert is_context_overflow(await _run_error(parts))
 
 
 def test_unrelated_errors_pass_through() -> None:
-    assert chat_error_text(ValueError("boom")) == "boom"
-    assert not _is_overflow(
+    assert not is_context_overflow(ValueError("boom"))
+    assert not is_context_overflow(
         ModelHTTPError(status_code=400, model_name="m", body={"message": "bad param"})
     )
-    assert not _is_overflow(UnexpectedModelBehavior("invalid tool call"))
+    assert not is_context_overflow(UnexpectedModelBehavior("invalid tool call"))

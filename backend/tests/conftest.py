@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 from pydantic_ai import models
 
+from hivegent.agents import RunPrefix
+
 # No test reaches a live model, so a request that would is an error, and a test
 # serving one from a mock transport allows it explicitly.
 models.ALLOW_MODEL_REQUESTS = False
@@ -43,3 +45,28 @@ def user_store(data_dir: Path):
 
     _ = data_dir
     return Casebase.for_user("testuser")
+
+
+@pytest.fixture()
+def run_prefix() -> RunPrefix:
+    """A run whose prefix stands in for a chat turn.
+
+    Its model is the one thing a test swaps, which is what carrying the
+    resolved model on the prefix buys: nothing has to reach for the shared
+    HTTP client a real one would be built from.
+    """
+    from pydantic_ai.messages import ModelResponse
+    from pydantic_ai.models.function import FunctionModel
+
+    from hivegent.agents import UserDeps, build_capabilities
+    from hivegent.llm_config import LlmConfig
+    from hivegent.store import User
+    from hivegent.types import ToolsSpec
+
+    return RunPrefix(
+        deps=UserDeps(user=User("u"), mode="interactive"),
+        capabilities=build_capabilities(ToolsSpec(), mode="interactive", language="en"),
+        instructions="chat instructions",
+        llm=LlmConfig(),
+        model=FunctionModel(lambda messages, info: ModelResponse(parts=[])),
+    )

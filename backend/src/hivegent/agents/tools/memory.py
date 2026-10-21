@@ -3,7 +3,7 @@
 The memory is one markdown page per user, read with ``read_memory`` and
 changed in place with ``write_memory``, so a save never has to repeat what it
 keeps.  :class:`MemoryNote` reports it as a ``read_memory`` call when a
-conversation starts.  It is model-written, possibly after reading a web page
+conversation starts, and again after each compaction.  It is model-written, possibly after reading a web page
 or a document, so it reaches the model as a tool result and never as an
 instruction.
 """
@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ToolCallPart,
     ToolReturnPart,
+    post_compaction_window,
 )
 from pydantic_ai.models import ModelRequestContext
 
@@ -81,7 +82,9 @@ def edit_memory(memory: str, content: str, old_text: str | None, max_chars: int)
         occurrences = memory.count(old_text)
 
         if occurrences != 1:
-            found = "does not occur" if not occurrences else f"occurs {occurrences} times"
+            found = (
+                "does not occur" if not occurrences else f"occurs {occurrences} times"
+            )
 
             raise ToolRetry(
                 f"`old_text` {found} in the memory, but must match exactly one "
@@ -118,7 +121,9 @@ async def write_memory(
     passage matching `old_text` exactly is replaced by `content`.
     """
     max_chars = settings.limits.max_memory_chars
-    change = partial(edit_memory, content=content, old_text=old_text, max_chars=max_chars)
+    change = partial(
+        edit_memory, content=content, old_text=old_text, max_chars=max_chars
+    )
 
     with translate_tool_retry(ModelRetry):
         updated = await update_memory(ctx.deps.user, change)
@@ -128,19 +133,23 @@ async def write_memory(
 
 @dataclass(slots=True)
 class MemoryNote(AbstractCapability[UserDeps]):
-    """Report the memory as a ``read_memory`` call when a conversation starts.
+    """Report the memory as a ``read_memory`` call where the model has not read it.
 
-    The pair is enqueued into the conversation's first request and persisted
-    with it, so the memory the conversation started with stays in the cached
-    prefix, while a later change reaches the model through its own
-    ``write_memory`` call or a fresh read.
+    The pair is enqueued into the first request of a conversation, or of the
+    window a compaction opens, and persisted with it.  So the memory the
+    window started with stays in the cached prefix, while a later change
+    reaches the model through its own ``write_memory`` call or a fresh read.
     """
 
     async def before_model_request(
         self, ctx: RunContext[UserDeps], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Enqueue the read before the conversation's first response."""
-        if not any(isinstance(message, ModelResponse) for message in ctx.messages):
+        """Enqueue the read unless the window already holds one."""
+        if not any(
+            isinstance(part, ToolReturnPart) and part.tool_name == read_memory.__name__
+            for message in post_compaction_window(ctx.messages)
+            for part in message.parts
+        ):
             call = ToolCallPart(read_memory.__name__, {})
             result = ToolReturnPart(
                 call.tool_name, await _read(ctx.deps.user), call.tool_call_id

@@ -40,20 +40,8 @@ export const chat = {
     failed: "{{count}} fehlgeschlagen",
     processing: "Wird verarbeitet …",
   },
-  contextLimit: {
-    title: "Kontextlimit erreicht",
-    message:
-      "Komprimiere diese Konversation, um ihren Verlauf zusammenzufassen, und sende die letzte Nachricht dann erneut.",
-    action: "Komprimieren und wiederholen",
-  },
   compaction: {
-    continued: "Fortgesetzt aus einer früheren Konversation",
-    compacting: "Konversation wird komprimiert",
-    compactingDescription:
-      "Frühere Nachrichten werden zusammengefasst, damit sie ins Kontextfenster passen.",
     compacted: "Konversation komprimiert",
-    compactedDescription: "Öffne sie, um dort weiterzumachen, wo dieser Chat aufgehört hat.",
-    failed: "Konversation konnte nicht komprimiert werden",
   },
   navGuard: {
     title: "Aktuelle Antwort stoppen?",

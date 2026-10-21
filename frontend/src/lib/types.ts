@@ -361,7 +361,6 @@ export const ConversationSummarySchema = z.object({
   title: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
-  compacted_from: z.string().nullable().optional(),
 });
 export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;
 
@@ -369,11 +368,6 @@ export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;
 export const ConversationListResponseSchema = z.object({
   conversations: z.array(ConversationSummarySchema),
 });
-/** Response for conversation compaction. */
-export const CompactConversationResponseSchema = z.object({
-  new_conversation_id: z.string(),
-});
-export type CompactConversationResponse = z.infer<typeof CompactConversationResponseSchema>;
 
 /** Response for title generation. */
 export const GenerateTitleResponseSchema = z.object({
@@ -767,24 +761,6 @@ export interface LlmConfig {
   base_url?: string | null;
 }
 
-/**
- * The half of a chat request that composes the model's prompt prefix, mirroring
- * `AgentRunConfig` on the backend.
- *
- * Compaction posts exactly this beside its messages, because the summary is
- * asked for as one more turn of the conversation and only reuses the provider's
- * cached prefix while every field here matches the turns before it.
- */
-export interface AgentRunConfig {
-  personality: Personality;
-  system_message?: string;
-  mode: AgentMode;
-  llm: LlmConfig;
-  included_documents: string[];
-  excluded_documents: string[];
-  tools: ToolsPayload;
-}
-
 /** The snake_case wire form of {@link ToolsSpec}, built by `buildToolsPayload`. */
 export interface ToolsPayload {
   disabled_tools: string[];
@@ -801,14 +777,23 @@ export interface ToolsPayload {
 }
 
 /**
- * {@link AgentRunConfig} plus the model setting only a chat turn carries.
+ * The settings of a chat request, mirroring `ChatRequestConfig` on the backend.
  *
- * Narrower than the backend class of the same name, which also holds `trigger`
- * and `message_id`. Those address a turn rather than configure it, and
- * `useHivegentChat` splices them into the body itself.
+ * Narrower than the backend class, which also holds `trigger` and `message_id`.
+ * Those address a turn rather than configure it, and `useHivegentChat` splices
+ * them into the body itself.
  */
-export interface ChatRequestConfig extends AgentRunConfig {
+export interface ChatRequestConfig {
+  personality: Personality;
+  system_message?: string;
+  mode: AgentMode;
+  llm: LlmConfig;
+  included_documents: string[];
+  excluded_documents: string[];
+  tools: ToolsPayload;
   reasoning_effort: ReasoningEffort;
+  /** Summarize the conversation instead of answering, sent only by the compact action. */
+  compact?: boolean;
 }
 
 // ============================================================

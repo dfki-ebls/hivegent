@@ -1,7 +1,6 @@
 import { mutationOptions, queryOptions } from "@tanstack/react-query";
 
 import {
-  compactConversation,
   deleteConversation,
   getConversationMessages,
   generateConversationTitle,
@@ -9,7 +8,7 @@ import {
   listConversations,
   updateConversationTitle,
 } from "@/lib/api";
-import type { AgentRunConfig, LlmConfig } from "@/lib/types";
+import type { LlmConfig } from "@/lib/types";
 
 const all = ["conversations"] as const;
 
@@ -54,12 +53,4 @@ export const conversationMutations = {
     }),
   import: () =>
     mutationOptions({ mutationKey: [...all, "import"], mutationFn: importConversation, meta }),
-  compact: () =>
-    mutationOptions({
-      mutationKey: [...all, "compact"],
-      // `retryLastMessage` is the caller's, read back once the compaction succeeds.
-      mutationFn: ({ id, body }: { id: string; body: AgentRunConfig; retryLastMessage: boolean }) =>
-        compactConversation(id, body),
-      meta,
-    }),
 };

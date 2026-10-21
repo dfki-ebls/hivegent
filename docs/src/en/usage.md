@@ -58,7 +58,8 @@ The sidebar lists past conversations.
 - Export a conversation to a file and import it later.
 
 Use Compact to summarize a long conversation so it fits the model's context.
-If the model hits its context limit, a banner offers to compact and retry.
+If the model hits its context limit, the conversation is compacted and the reply continues on its own.
+A divider marks where the summary starts, and opens to show it.
 
 ## Tuning the assistant
 

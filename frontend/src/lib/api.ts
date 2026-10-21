@@ -1,7 +1,7 @@
 import type { ChatMessage } from "@/lib/chat/chat-utils";
 import { z } from "zod";
 
-import type { AgentRunConfig, McpServerEntry, ToolsPayload, ToolsSpec } from "@/lib/types";
+import type { McpServerEntry, ToolsPayload, ToolsSpec } from "@/lib/types";
 import {
   AdminMaintenanceStateSchema,
   type AdminOverview,
@@ -17,8 +17,6 @@ import {
   BackendSettingsSchema,
   type ChunkedDocumentResponse,
   ChunkedDocumentResponseSchema,
-  type CompactConversationResponse,
-  CompactConversationResponseSchema,
   ConversationListResponseSchema,
   DocumentLineCountsResponseSchema,
   type ConversationSummary,
@@ -719,26 +717,6 @@ export async function generateConversationTitle(
     "generateTitle",
     GenerateTitleResponseSchema,
     jsonRequest("POST", { llm }),
-  );
-}
-
-/**
- * Compact a conversation.
- *
- * `runConfig` is the very body a chat turn posts (see `useBuildRequestBody`):
- * the server asks for the summary as one more turn of this conversation, and
- * that only reuses the provider's cached prefix while every prefix-composing
- * field matches the turns before it.
- */
-export async function compactConversation(
-  conversationId: string,
-  runConfig: AgentRunConfig,
-): Promise<CompactConversationResponse> {
-  return requestJson(
-    `${API_BASE_URL}/api/conversations/${conversationId}/compaction`,
-    "compact",
-    CompactConversationResponseSchema,
-    jsonRequest("POST", runConfig),
   );
 }
 

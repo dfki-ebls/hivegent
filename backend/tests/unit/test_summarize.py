@@ -1,7 +1,6 @@
 """Tests for conversation summarization."""
 
 from dataclasses import replace
-from datetime import UTC, datetime
 
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
@@ -18,18 +17,15 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from hivegent import compaction
-from hivegent.agents import RunPrefix, UserDeps, build_capabilities
+from hivegent.agents import RunPrefix, build_capabilities
 from hivegent.agents.summarize import COMPACT_PROMPT, _plan, summarize_conversation
-from hivegent.db.conversations import ConversationData, OwnedConversation
 from hivegent.l10n import LANGUAGES, Language
-from hivegent.llm_config import LlmConfig
-from hivegent.store import User
 from hivegent.types import ToolsSpec
-from tests.helpers import owned
+from tests.helpers import MEMORY_READ, OVERFLOW
 
 _MESSAGES = [
     ModelRequest(parts=[UserPromptPart(content="What does the manual say?")]),
+    *MEMORY_READ,
     ModelResponse(
         parts=[
             ThinkingPart(content="the user probably wants the safety chapter"),
@@ -72,24 +68,6 @@ _MEASURED: list[ModelMessage] = [
     *_turn("third", input_tokens=190_000),
     ModelRequest(parts=[UserPromptPart(content="the turn that overflowed")]),
 ]
-
-
-@pytest.fixture
-def run_prefix() -> RunPrefix:
-    """A run whose prefix stands in for the chat turn being compacted.
-
-    Its model is the one thing a test swaps, which is what carrying the
-    resolved model on the prefix buys: nothing has to reach for the shared
-    HTTP client a real one would be built from.
-    """
-
-    return RunPrefix(
-        deps=UserDeps(user=User("u"), mode="interactive"),
-        capabilities=build_capabilities(ToolsSpec(), mode="interactive", language="en"),
-        instructions="chat instructions",
-        llm=LlmConfig(),
-        model=FunctionModel(lambda messages, info: ModelResponse(parts=[])),
-    )
 
 
 @pytest.mark.parametrize("language", LANGUAGES)
@@ -171,23 +149,20 @@ async def test_compaction_sheds_again_when_the_trimmed_turn_still_overflows(
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen.append(messages)
         if len(seen) == 1:
-            raise ModelHTTPError(
-                status_code=400,
-                model_name="m",
-                body={"code": "context_length_exceeded"},
-            )
+            raise OVERFLOW
 
         return ModelResponse(parts=[TextPart(content="summary")])
 
+    history = [_MEASURED[0], *MEMORY_READ, *_MEASURED[1:]]
     summary = await summarize_conversation(
-        _MEASURED, replace(run_prefix, model=FunctionModel(respond))
+        history, replace(run_prefix, model=FunctionModel(respond))
     )
 
     assert summary == "summary"
     # The refused attempt carried every turn the endpoint had served; the retry
     # sheds from the tail, so what remains is still the block it has cached.
-    assert seen[0][:-1] == _MEASURED[:6]
-    assert seen[1][:-1] == _MEASURED[:4]
+    assert seen[0][:-1] == history[:8]
+    assert seen[1][:-1] == history[:6]
 
 
 def test_plan_never_cuts_on_an_unanswered_tool_call() -> None:
@@ -238,45 +213,3 @@ async def test_compaction_rejects_tool_calls_before_execution(
         await summarize_conversation(_MESSAGES, write_run)
 
     assert len(calls) == 1
-
-
-async def test_compaction_summarizes_the_persisted_path_not_a_posted_one(
-    run_prefix: RunPrefix, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The messages come from SQL, so the sized history reaches the planner."""
-    seen: list[list[ModelMessage]] = []
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen.append(messages)
-        return ModelResponse(parts=[TextPart(content="summary text")])
-
-    async def _load(conversation: OwnedConversation) -> ConversationData:
-        assert conversation == owned("c1")
-        return ConversationData(
-            id=conversation.id,
-            title="Manual questions",
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-            messages=_MESSAGES,
-        )
-
-    created: dict[str, object] = {}
-
-    async def _create(source: OwnedConversation, **kwargs: object) -> OwnedConversation:
-        created.update(kwargs, source=source)
-        return owned("c2")
-
-    monkeypatch.setattr(compaction, "load_conversation", _load)
-    monkeypatch.setattr(compaction, "create_compacted_conversation", _create)
-
-    compacted = await compaction.compact_conversation(
-        owned("c1"), replace(run_prefix, model=FunctionModel(respond))
-    )
-
-    assert compacted == owned("c2")
-    summary = created["summary_message"]
-    assert isinstance(summary, ModelResponse)
-    assert summary.parts == [TextPart(content="summary text")]
-    assert seen[0][:-1] == _MESSAGES
-    assert created["source"] == owned("c1")
-    assert created["title"] == "Manual questions (continued)"

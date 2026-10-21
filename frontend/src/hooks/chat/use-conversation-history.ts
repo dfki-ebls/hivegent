@@ -10,11 +10,6 @@ export function useConversationHistory(
   draft = false,
 ) {
   const takeHandoff = useDraftHandoffStore((state) => state.take);
-  // The compacted-from banner reads the link off the conversation list.
-  const { data: compactedFrom = null } = useQuery({
-    ...conversationQueries.list(),
-    select: (list) => list.find((c) => c.id === id)?.compacted_from ?? null,
-  });
   // A draft owns its messages in memory, and its id is no row yet. The
   // conversation a draft just became starts from the messages it handed off,
   // taken once per visit, so the freshly streamed turn never flashes through a
@@ -30,5 +25,5 @@ export function useConversationHistory(
     if (history && history.length > 0) setMessages(history);
   }, [history, setMessages]);
 
-  return { isLoadingHistory: !draft && isPending, compactedFrom };
+  return { isLoadingHistory: !draft && isPending };
 }

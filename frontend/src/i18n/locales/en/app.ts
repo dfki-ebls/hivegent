@@ -96,7 +96,6 @@ export const app = {
       listConversations: "Failed to list conversations",
       update: "Update failed",
       generateTitle: "Title generation failed",
-      compact: "Compaction failed",
       importConversation: "Import failed",
       fetchPipelines: "Failed to fetch pipelines",
       fetchPipelineConfig: "Failed to fetch pipeline configuration",

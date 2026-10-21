@@ -6,7 +6,7 @@ import {
   adoptMessageNodeId,
   closeAbandonedCalls,
   getLastUserMessage,
-  isContextLengthError,
+  placeCompactions,
   recordChatError,
   shouldContinueRun,
   isProcessing,
@@ -27,22 +27,6 @@ const msg = (role: ChatMessage["role"], text: string): ChatMessage => ({
 const assistant = (parts: ChatMessage["parts"]): ChatMessage[] => [
   { id: "assistant", role: "assistant", parts },
 ];
-
-describe("isContextLengthError", () => {
-  it("matches the backend's canonical overflow code", () => {
-    expect(
-      isContextLengthError(
-        "context_length_exceeded: Model token limit (provider default) exceeded",
-      ),
-    ).toBe(true);
-  });
-
-  it("ignores raw provider messages and unrelated errors", () => {
-    expect(isContextLengthError("This model's maximum context length is 8192 tokens.")).toBe(false);
-    expect(isContextLengthError("connection refused")).toBe(false);
-    expect(isContextLengthError(undefined)).toBe(false);
-  });
-});
 
 describe("isProcessing", () => {
   const call = { type: "dynamic-tool", toolName: "search", toolCallId: "1", input: {} } as const;
@@ -191,6 +175,38 @@ describe("closeAbandonedCalls", () => {
     const messages = [msg("user", "q"), asked(), msg("user", "skip that")];
 
     expect(closeAbandonedCalls(messages)[1].parts[1]).toMatchObject({ state: "output-error" });
+  });
+});
+
+describe("placeCompactions", () => {
+  const compaction: ChatMessage["parts"][number] = {
+    type: "data-compaction",
+    data: { content: "the gist" },
+  };
+  const reply = (id: string, parts: ChatMessage["parts"]): ChatMessage => ({
+    id,
+    role: "assistant",
+    parts,
+  });
+
+  it("shows a compaction made for a prompt ahead of it, as a reload does", () => {
+    const answered = [
+      msg("assistant", "a"),
+      msg("user", "q"),
+      reply("r", [{ type: "step-start" }, compaction, { type: "text", text: "b" }]),
+    ];
+    const placed = placeCompactions(answered);
+
+    expect(placed[0].parts.at(-1)).toBe(compaction);
+    expect(placed[2].parts).not.toContain(compaction);
+    // A reply that held only the compaction goes, as it never reloads.
+    expect(placeCompactions([...answered.slice(0, 2), reply("r", [compaction])])).toHaveLength(2);
+  });
+
+  it("leaves a compaction the reply streamed after its own content", () => {
+    const messages = [msg("user", "q"), reply("r", [{ type: "text", text: "b" }, compaction])];
+
+    expect(placeCompactions(messages)).toBe(messages);
   });
 });
 

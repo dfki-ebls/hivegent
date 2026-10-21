@@ -58,7 +58,8 @@ Die Seitenleiste listet frühere Unterhaltungen auf.
 - Exportieren Sie eine Unterhaltung in eine Datei und importieren Sie sie später wieder.
 
 Mit Komprimieren fassen Sie eine lange Unterhaltung zusammen, damit sie in den Kontext des Modells passt.
-Erreicht das Modell sein Kontextlimit, bietet ein Banner an, zu komprimieren und es erneut zu versuchen.
+Erreicht das Modell sein Kontextlimit, wird die Unterhaltung komprimiert und die Antwort läuft von selbst weiter.
+Eine Trennlinie markiert, wo die Zusammenfassung beginnt, und zeigt sie beim Öffnen an.
 
 ## Den Assistenten anpassen
 

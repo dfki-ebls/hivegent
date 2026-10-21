@@ -9,9 +9,8 @@ indexed, searched, or announced.
 
 Its changes commit through the one changeset gateway as a
 :class:`~hivegent.workspace.operations.Folder`, written directly with no
-approval, while this module keeps what is ``/tmp``'s own: its size cap, the
-saved tool results only the host writes and the cap may evict, and the copy a
-compacted conversation starts with.
+approval, while this module keeps what is ``/tmp``'s own: its size cap and the
+saved tool results only the host writes and the cap may evict.
 
 There is no user level: conversation ids are server-generated keys and the
 ``conversations`` row names the one user a folder belongs to, so ownership is
@@ -21,7 +20,6 @@ its conversation's (:mod:`hivegent.conversation_files`).
 """
 
 import asyncio
-import shutil
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -39,7 +37,6 @@ __all__ = [
     "TMP_FOLDER",
     "TMP_SCOPE",
     "clear_tmp",
-    "copy_tmp",
     "save_result",
     "tmp_dir",
     "tmp_root",
@@ -132,21 +129,3 @@ async def clear_tmp(conversations: Iterable[OwnedConversation]) -> int:
         return files
 
     return await asyncio.to_thread(clear)
-
-
-async def copy_tmp(source: OwnedConversation, target: OwnedConversation) -> None:
-    """Give conversation *target* a copy of *source*'s folder.
-
-    A compacted conversation continues its source, whose summary may name the
-    scripts and state the source kept in ``/tmp``.
-    """
-    origin = tmp_dir(settings.data_dir, source)
-
-    if origin.is_dir():
-        _ = await asyncio.to_thread(
-            shutil.copytree,
-            origin,
-            tmp_dir(settings.data_dir, target),
-            symlinks=True,
-            dirs_exist_ok=True,
-        )

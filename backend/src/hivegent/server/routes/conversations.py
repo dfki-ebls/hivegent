@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import replace
 from itertools import chain
 from typing import Annotated, cast
@@ -10,21 +10,23 @@ from typing import Annotated, cast
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
 from pydantic_ai import BinaryContent, DeferredToolRequests
-from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     TextPart,
     UserContent,
     UserPromptPart,
 )
+from pydantic_ai.ui import NativeEvent
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
 from starlette.responses import Response
 
 from ... import conversation_files
 from ...agents import (
+    RunPrefix,
     UserDeps,
     discard_unapproved_changes,
     record_known_urls,
@@ -32,9 +34,14 @@ from ...agents import (
     turn_usage_limits,
     user_agent,
 )
+from ...agents.compaction import (
+    CompactOnOverflow,
+    compact,
+    compaction_cut,
+    is_compaction,
+)
 from ...agents.subagent_events import SubagentUpdate
 from ...auth import get_current_user
-from ...compaction import compact_conversation
 from ...config import settings
 from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
 from ...converters.images import sanitize_image_bytes
@@ -46,6 +53,7 @@ from ...db.conversations import (
     OwnedConversation,
     append_branch,
     import_conversation,
+    insert_above,
     is_user_request,
     list_conversations,
     load_active_for_display,
@@ -67,9 +75,7 @@ from ...store import User
 from ...tools.formatting import BLOCK_SEP
 from ...transparency import sign_provenance
 from ...types import (
-    AgentRunConfig,
     ChatRequestConfig,
-    CompactConversationResponse,
     ConversationArchive,
     ConversationListResponse,
     GenerateTitleRequest,
@@ -130,19 +136,9 @@ _TITLE_FAILED = Localized(
 )
 
 
-def _summarizer_rejected(status_code: int) -> Localized[str]:
-    return Localized(
-        en=f"The summarization model rejected the request (HTTP {status_code}).",
-        de=(
-            f"Das Modell für die Zusammenfassung hat die Anfrage abgelehnt "
-            f"(HTTP {status_code})."
-        ),
-    )
-
-
-_COMPACTION_FAILED = Localized(
-    en="Failed to compact conversation",
-    de="Konversation konnte nicht komprimiert werden",
+_NOTHING_TO_COMPACT = Localized(
+    en="There is nothing to compact: the conversation has no answered turn since its last compaction, or a request still awaits an answer.",
+    de="Es gibt nichts zu komprimieren: Seit der letzten Komprimierung hat die Konversation keine beantwortete Runde, oder eine Anfrage wartet noch auf eine Antwort.",
 )
 _ONLY_IMAGES = Localized(
     en=(
@@ -295,45 +291,6 @@ async def delete_all_conversations_route(
 ) -> None:
     """Delete all conversations for the authenticated user, and their files on disk."""
     await conversation_files.delete_conversations(user)
-
-
-@router.post("/conversations/{conversation_id}/compaction")
-async def create_conversation_compaction(
-    conversation: Owned,
-    request: AgentRunConfig,
-    http_request: Request,
-) -> CompactConversationResponse:
-    """Compact a conversation by summarizing it into a new conversation.
-
-    The body carries the run configuration only: the messages are the
-    conversation's own persisted active path, the same history a chat turn
-    replays.  Summarization defaults to the regular chat model, not
-    ``aux_model``: it spans the whole (typically overflowing) conversation,
-    which needs the full context window rather than a small scoped-task model.
-    """
-
-    run_prefix = build_run_prefix(request, conversation)
-
-    try:
-        compacted = await run_until_disconnect(
-            http_request,
-            compact_conversation(conversation, run_prefix),
-        )
-    except HTTPException:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ModelHTTPError as exc:
-        logger.exception("Failed to compact conversation %s", conversation.id)
-        raise HTTPException(
-            status_code=502,
-            detail=_summarizer_rejected(exc.status_code).current,
-        ) from exc
-    except Exception as exc:
-        logger.exception("Failed to compact conversation %s", conversation.id)
-        raise HTTPException(status_code=500, detail=_COMPACTION_FAILED.current) from exc
-
-    return CompactConversationResponse(new_conversation_id=compacted.id)
 
 
 @router.get("/conversations/{conversation_id}/messages")
@@ -506,10 +463,12 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
     A turn that carries a new user message returns its tree-node id in the
     ``X-Message-Id`` response header, under the same CORS constraint as
     ``X-Conversation-Id``.
+
+    A request flagged ``compact`` compacts the active path instead of running
+    a turn.
     """
     # The body is the AI SDK's, with the run configuration spliced in beside
-    # its messages; extras are ignored, so one model validates both this and
-    # the compaction request that has to reproduce the same prefix.
+    # its messages; extras are ignored.
     config = ChatRequestConfig.model_validate(await request.json())
 
     run_prefix = build_run_prefix(config, conversation)
@@ -543,12 +502,16 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
 
     # History is server-authoritative: load the active-path prefix up to the
     # fork point from the DB and replay it, ignoring the browser echo.  The
-    # client sends only the new message (none for a regenerate).
+    # client sends only the new message (none for a regenerate or compaction).
     prefix, fork_id = await resolve_fork(
         conversation,
         regenerate=config.trigger == "regenerate-message",
         message_id=config.message_id,
     )
+
+    # Ahead of the approvals and answers below, which a compaction leaves pending.
+    if config.compact:
+        return _compact_active_path(conversation, adapter, run_prefix, prefix, fork_id)
 
     # Changes a program staged for an approval this request denies or abandons
     # can never be applied, so they go now rather than at the next boot sweep.
@@ -564,8 +527,8 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
     # this request could answer them.  One that carries anything else abandons
     # them, and the dangling calls have to be closed here or every later turn
     # replays them as a generic "interrupted" result and the model reissues the
-    # same calls again and again.  Stored as its own node, so the delta below
-    # still starts with the message whose id is announced.
+    # same calls again and again.  Stored as its own node, since the run
+    # replays it as part of the prefix.
     if not resumed:
         declined = abandon_pending_calls(prefix)
         if declined is not None:
@@ -587,7 +550,11 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
         deps=deps,
         output_type=[str, DeferredToolRequests],
         model=run_prefix.model,
-        capabilities=run_prefix.capabilities,
+        # Adds no instructions or tools, so the prefix stays the cached one.
+        capabilities=[
+            *run_prefix.capabilities,
+            CompactOnOverflow(run_prefix),
+        ],
         instructions=run_prefix.instructions,
         model_settings=model_settings,
         message_history=prefix,
@@ -597,20 +564,26 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
         conversation_id=conversation.id,
     )
 
-    # Capture only the prefix length, not the prefix list, so the closure
-    # (held for the whole stream) does not pin the full replayed history.
+    # Capture only the prefix length and whether it ends compacted, not the
+    # prefix list, so the closure (held for the whole stream) does not pin the
+    # full replayed history.
     prefix_len = len(prefix)
+    ends_compacted = bool(prefix) and is_compaction(prefix[-1])
 
     async def persist(messages: Sequence[ModelMessage]) -> None:
         # Append only the turn's new messages (past the replayed prefix) as a
-        # branch under the fork point.  The delta's head is the user message
+        # branch under the fork point.  The delta's user message is the one
         # whose id was announced, so it lands under exactly that id.
-        await append_branch(
-            conversation,
-            fork_id,
-            messages[prefix_len:],
-            head_id=user_node_id,
-        )
+        delta = messages[prefix_len:]
+
+        # A compaction that took the place of the regenerated prompt, the fork
+        # node, goes ahead of it.
+        ahead = messages[prefix_len - 1] if prefix_len else None
+        if fork_id and ahead and is_compaction(ahead) and not ends_compacted:
+            await insert_above(conversation, fork_id, ahead)
+            delta = messages[prefix_len + 1 :]
+
+        await append_branch(conversation, fork_id, delta, prompt_id=user_node_id)
 
     response = await run_and_persist(
         adapter, stream, persist=persist, subagent_sink=subagent_sink
@@ -618,6 +591,46 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
     if user_node_id is not None:
         response.headers["X-Message-Id"] = user_node_id
     return response
+
+
+def _compact_active_path(
+    conversation: OwnedConversation,
+    adapter: ChatAdapter[UserDeps, str],
+    run_prefix: RunPrefix,
+    prefix: list[ModelMessage],
+    fork_id: str | None,
+) -> Response:
+    """Stream the compaction of *prefix*, stored at its cut once made.
+
+    Asked for under the same prefix a turn would run under, so the provider
+    answers it from its cache.  The adapter frames the part like a run, so the
+    client renders it as it renders the stored one on reload, and an error
+    reaches it as a run error would.
+    """
+    cut = compaction_cut(prefix)
+
+    if cut is None:
+        raise HTTPException(status_code=400, detail=_NOTHING_TO_COMPACT.current)
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        try:
+            part = await compact(prefix[:cut], run_prefix)
+            compaction = ModelResponse(parts=[part])
+            # Shielded like a turn's write, so a client leaving during it
+            # does not lose a summary already paid for.
+            await asyncio.shield(
+                insert_above(conversation, fork_id, compaction)
+                if fork_id and cut < len(prefix)
+                else append_branch(conversation, fork_id, [compaction])
+            )
+
+        except Exception:
+            logger.exception("Failed to compact conversation %s", conversation.id)
+            raise
+
+        yield PartStartEvent(index=0, part=part)
+
+    return adapter.streaming_response(adapter.transform_stream(events()))
 
 
 @router.post("/conversations/chat")

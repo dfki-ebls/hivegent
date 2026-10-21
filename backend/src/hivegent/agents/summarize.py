@@ -24,6 +24,8 @@ An estimate can still be wrong, since the provider counts a prompt its own way
 and a turn's report describes the request before it, so a refusal is not fatal:
 each one sheds the summary's actual output cap plus a small prompt reserve and
 asks again.
+
+A compaction stores the summary in the conversation (:mod:`.compaction`).
 """
 
 import logging
@@ -46,7 +48,7 @@ from ..llm import SUMMARY_MAX_TOKENS, is_context_overflow, summary_model_setting
 from .app import summary_agent
 from .common import RunPrefix
 
-__all__ = ["COMPACT_PROMPT", "summarize_conversation"]
+__all__ = ["COMPACT_PROMPT", "closed_cuts", "summarize_conversation"]
 
 logger = logging.getLogger(__name__)
 
@@ -152,45 +154,48 @@ class _Cut(NamedTuple):
     size: int
 
 
-def _cut_points(messages: Sequence[ModelMessage]) -> list[_Cut]:
-    """The prefixes of *messages* the compact prompt can be appended to.
+def _cuts(messages: Sequence[ModelMessage]) -> list[_Cut]:
+    """The prefixes of *messages* that can be closed off, ascending.
 
-    A prefix is continuable only where every tool call it makes has been
-    answered, since a provider rejects a history that ends on an open one.  Its
-    size is the count ``ModelResponse.usage`` already carries: input plus
+    A prefix closes only where every tool call it makes has been answered,
+    since a provider rejects a history that ends on an open one.  One ending on
+    a fresh user prompt is left out too: a summary of it would drop that
+    prompt, and it measures the same as the prefix before it, so it sheds
+    nothing.  That also makes the longest one the longest the endpoint has
+    served, everything but the refused prompt when a turn overflowed.
+
+    Its size is the count ``ModelResponse.usage`` already carries: input plus
     output is exactly what the following request sent, so a prefix ending in
     tool returns is measured by the response before them and understates by
-    those returns, which a refusal then corrects.  Ascending; a prefix no turn
-    ever reported a size for is not offered.
-
-    Neither is one ending on a fresh user prompt: it measures the same as the
-    turn before it while keeping a message the provider never counted, so it
-    sheds nothing.  Leaving those out is also what makes the longest prefix
-    here the longest one the endpoint has actually served -- the whole history
-    when the last turn succeeded, and everything but the refused prompt when it
-    did not.
+    those returns, which a refusal then corrects.  Zero where no turn reported
+    one yet.
     """
     cuts: list[_Cut] = []
     open_calls: set[str] = set()
     size = 0
 
-    for i, msg in enumerate(messages):
+    for keep, message in enumerate(messages, start=1):
         answered = False
-        for part in msg.parts:
+
+        for part in message.parts:
             if isinstance(part, ToolCallPart):
                 open_calls.add(part.tool_call_id)
             elif isinstance(part, ToolReturnPart | RetryPromptPart):
                 open_calls.discard(part.tool_call_id)
                 answered = True
 
-        served = answered or isinstance(msg, ModelResponse)
-        if isinstance(msg, ModelResponse) and msg.usage.total_tokens:
-            size = msg.usage.total_tokens
+        if isinstance(message, ModelResponse):
+            size = message.usage.total_tokens or size
 
-        if size and served and not open_calls:
-            cuts.append(_Cut(i + 1, size))
+        if (answered or isinstance(message, ModelResponse)) and not open_calls:
+            cuts.append(_Cut(keep, size))
 
     return cuts
+
+
+def closed_cuts(messages: Sequence[ModelMessage]) -> list[int]:
+    """The lengths of the prefixes of *messages* that can be closed off."""
+    return [cut.keep for cut in _cuts(messages)]
 
 
 def _plan(
@@ -209,7 +214,7 @@ def _plan(
     A conversation nothing ever reported a size for gets that first attempt and
     no more: with no measurement, there is no next prefix to name.
     """
-    cuts = _cut_points(messages) or [_Cut(len(messages), 0)]
+    cuts = [cut for cut in _cuts(messages) if cut.size] or [_Cut(len(messages), 0)]
     plan = [cuts[-1].keep]
     budget = cuts[-1].size
     reserve = max_output_tokens + _COMPACT_PROMPT_RESERVE_TOKENS

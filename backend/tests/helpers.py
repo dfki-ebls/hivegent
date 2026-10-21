@@ -9,6 +9,14 @@ import io
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from pydantic_ai import RunContext
+from pydantic_ai.exceptions import ModelContextWindowExceededError, ModelHTTPError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -17,10 +25,31 @@ from hivegent.store import User
 from hivegent.tools.base import Batch, ItemFailure
 from hivegent.tools.workspace_os import ChangesetLimits
 
-__all__ = ["LIMITS", "owned", "png_bytes", "run_context", "single"]
+__all__ = [
+    "LIMITS",
+    "MEMORY_READ",
+    "OVERFLOW",
+    "owned",
+    "png_bytes",
+    "run_context",
+    "single",
+]
 
 LIMITS = ChangesetLimits(max_operations=200, max_deletes=100, max_chars=20_000_000)
 """What one program may stage in a test that is not about the limits."""
+
+OVERFLOW = ModelHTTPError.for_category(
+    ModelContextWindowExceededError, status_code=400, model_name="m"
+)
+"""A context-window overflow as pydantic-ai raises it."""
+
+MEMORY_READ: list[ModelMessage] = [
+    ModelResponse(parts=[ToolCallPart("read_memory", {}, tool_call_id="memory")]),
+    ModelRequest(
+        parts=[ToolReturnPart("read_memory", "- likes tea", tool_call_id="memory")]
+    ),
+]
+"""The read ``MemoryNote`` reports beside the first prompt of a window."""
 
 
 def owned(conversation_id: str, user: User | None = None) -> OwnedConversation:

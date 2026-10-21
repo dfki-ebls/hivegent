@@ -138,7 +138,6 @@ A move between `/tmp` and a workspace is refused by the gateway, since no one co
 
 `conversation_files` ends a folder's life, since no row cascade reaches it: deleting conversations removes rows and folders together, a reset removes every folder, and `DELETE /api/tmp` empties only each `tmp/`, keeping pending approvals.
 `sweep_conversations` removes a whole folder once nothing below it changed for `settings.conversations.ttl_hours`, runs in a background task after the migrations and every `sweep_interval_hours`, needs no database, and checks each folder again under its `/tmp` lock.
-A compacted conversation starts with a copy of its source's folder (`copy_tmp`).
 
 `TMP_INSTRUCTIONS` is shared by the `python` and `write` features, and `PYTHON_INSTRUCTIONS` names `/tmp` as the home of a rerunnable `.py`, since a `.py` in a workspace is an original that gets chunked.
 The write receipt for a `/tmp` `.py` points at `run_python`'s `script_path` through a `MutationHint`.
@@ -212,19 +211,32 @@ A dismissal or an abandoned question is a failed return worded by the server (`D
 
 ### Compaction is a turn of the conversation
 
+A compaction is a node of the conversation it compacts, a `ModelResponse` holding one provider-less `CompactionPart` whose `content` is the summary.
+The tree keeps every message, so branches, exports, and the transcript stay whole, while pydantic-ai treats the part as the boundary of the instruction window and of the tools it derives from history, and the Vercel adapter round-trips it as a `data-compaction` part.
+
 `summarize_conversation` appends `COMPACT_PROMPT` to the conversation's own message list under the same `RunPrefix` as its chat turns, so the provider's KV prefix cache covers everything but the prompt.
-That is why the compaction route posts the same `AgentRunConfig` as a chat turn, `build_run_prefix` composes both, and the history is loaded from the database rather than the browser.
+That is why a compaction runs inside the chat route, `build_run_prefix` composes the prefix for both, and the history is loaded from the database rather than the browser.
 
 Room is made by dropping messages from the tail, which keeps a shorter prefix of the cached block.
-Sizes come from `ModelResponse.usage`, so no tokenizer or context window setting is needed, and `_cut_points` offers only prefixes where every tool call is answered and that do not end on a fresh user prompt.
+Sizes come from `ModelResponse.usage`, so no tokenizer or context window setting is needed, and `_cuts` offers only prefixes where every tool call is answered and that do not end on a fresh user prompt.
 The first attempt sends the longest prefix the endpoint has served, and only a refusal sheds the reserve (the summary's completion cap plus `_COMPACT_PROMPT_RESERVE_TOKENS`), for at most `_MAX_ATTEMPTS`.
 The subagent recovery path (`_safe_summarize`) reuses this summarizer, since trimming to the last answered call also makes a crashed run's history legal.
 `SUMMARY_MAX_TOKENS` is clamped to the request's own `max_tokens`, and `COMPACT_PROMPT` bounds the summary by structure, since a length cap makes the model drop sections.
 
-Compaction is offered only after the provider refused a turn (`is_context_overflow`), never on a forecast, since the window, reserve, and threshold are not reliably known.
+A compaction fires only after the provider refused a request (`is_context_overflow`), never on a forecast, since the window, reserve, and threshold are not reliably known.
+`CompactOnOverflow` (`agents/compaction.py`) then compacts the run's history at `compaction_cut` and retries, and the `Compacted` event shows it live.
+The cut goes after the refused request where that closes the history, so the summary covers everything the client has seen and the retry continues from it with an empty request.
+A refused prompt is never summarized, so the cut goes ahead of it and the retry sends it again.
+A regenerated prompt is persisted already, so its compaction is stored ahead of it with `insert_above`, which puts the compaction between the prompt's parent and all of that parent's children, since every branch from there shares the summarized history.
+A cut is one of those same prefixes, so the summary and the window agree on where history can be cut.
+A window that overflows on its own is not compacted again, and a cut past the latest prompt waits for a model to answer it, so a prompt is never summarized with only the memory read reported beside it.
+A response cut short mid tool call has already streamed, so it fails the turn instead.
+A chat request flagged `compact` carries no message and compacts the active path at the same cut, which is the header's button.
+A path ending on a failed prompt is compacted ahead of it, and one ending on an open approval or question is not compacted, so the request leaves it pending.
 
-TODO: adopt pydantic-ai's `CompactionPart` to keep one conversation id across a compaction instead of minting a new one, which would let it fire automatically.
-It is blocked until it works with `OpenAIChatModel` against vLLM or llama.cpp (upstream #7255).
+`CompactionWindow` (`agents/window.py`) sends every request the window from the latest compaction onward, with the summary as user text in `<conversation_summary>` tags.
+It renders from the stored node alone, so every later turn sends the window byte for byte and the provider caches it like any other prefix.
+It stands in for upstream #10573, which sends provider-less `CompactionPart`s to Chat Completions models, and goes once a release includes it (#7289).
 
 ### Run state appends its changes
 
@@ -240,7 +252,7 @@ Both change only between turns, so that text joins the user's prompt: a user mes
 ### Memory is a tool result
 
 The memory is model-written, possibly after reading a web page or a document, so it never becomes an instruction.
-`MemoryNote` (`agents/tools/memory.py`) reports it as a synthetic `read_memory` call and result, enqueued into the first request of a conversation and persisted with it, and the model can call `read_memory` again after a change.
+`MemoryNote` (`agents/tools/memory.py`) reports it as a synthetic `read_memory` call and result, enqueued into the first request of a conversation, and of every window a compaction opens, and persisted with it, and the model can call `read_memory` again after a change.
 `write_memory` appends to the memory or replaces one exact passage, so a save never has to repeat what it keeps, and it edits under a row lock, so two conversations saving at once do not overwrite each other.
 `limits.max_memory_chars` bounds the memory, which keeps the note at the start of every conversation small, and an edit that shrinks an oversized memory is still accepted.
 

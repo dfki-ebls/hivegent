@@ -14,7 +14,6 @@ import { StreamingNavGuard } from "@/components/chat/StreamingNavGuard";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/toast";
 import { i18n } from "@/i18n";
-import { useCompaction } from "@/hooks/chat/use-compaction";
 import { useBuildRequestBody } from "@/hooks/chat/use-build-request-body";
 import { useChatErrorLogger } from "@/hooks/chat/use-chat-error-logger";
 import { useConversationHistory } from "@/hooks/chat/use-conversation-history";
@@ -31,6 +30,7 @@ import {
   activeChatError,
   getLastUserMessage,
   isChatBusy,
+  isOpenPrompt,
   recordChatError,
 } from "@/lib/chat/chat-utils";
 import type { ConversationArchive } from "@/lib/types";
@@ -91,6 +91,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     stop,
     sendUserMessage,
     regenerateTurn,
+    compact,
     isStreaming,
     subagentSteps,
   } = useHivegentChat(id, {
@@ -103,12 +104,12 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   const chatError = activeChatError(messages, error);
   const visibleChatError = lastMessage?.id === dismissedErrorId ? undefined : chatError;
 
-  const { isLoadingHistory, compactedFrom } = useConversationHistory(id, setMessages, draft);
+  const { isLoadingHistory } = useConversationHistory(id, setMessages, draft);
   const { editingId, setEditing, clear: clearEditing } = useMessageEditing(status);
 
   // Deliberately leaves the input untouched: it is also invoked while the
-  // user may already be typing the next message (steering-queue drain,
-  // post-compaction retry), so clearing happens at the submit site instead.
+  // user may already be typing the next message (steering-queue drain),
+  // so clearing happens at the submit site instead.
   const handleSendMessage = useCallback(
     async (text: string, files?: FileUIPart[]) => {
       if (!text.trim() && (!files || files.length === 0)) return;
@@ -160,21 +161,11 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
     navigate,
   ]);
 
-  const { compact, isCompacting } = useCompaction({
-    id,
-    messages,
-    isLoadingHistory,
-    onRetry: handleSendMessage,
-    buildRequestBody,
-  });
-
-  // One condition behind both compact buttons, the header's and the banner's.
-  //
-  // Gated on *busy*, not on `ready`: compaction snapshots the transcript and
-  // navigates away, so it has to wait out an in-flight turn, but `error` is a
-  // settled state and it is the only one the context-limit banner ever renders
-  // in, so treating it as unready disabled that banner's own recovery action.
-  const compactDisabled = isChatBusy(status) || isCompacting;
+  // Compaction summarizes a stored conversation, so a draft has nothing to compact yet.
+  // Gated on busy rather than ready, so a failed turn can still be compacted,
+  // and on an open approval or question, which a compaction would leave unanswerable.
+  const compactDisabled =
+    draft || isChatBusy(status) || (lastMessage?.parts.some(isOpenPrompt) ?? false);
 
   // Reset the fetched-documents panel whenever the chat identity changes —
   // this covers every navigation path, including plain links like the header
@@ -310,7 +301,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
         activeTab={activeTab}
         hasMessages={messages.length > 0}
         compactDisabled={compactDisabled}
-        onCompact={() => compact()}
+        onCompact={() => void compact()}
         onNewChat={handleNewChat}
         onImport={() => importInputRef.current?.click()}
         onExport={messages.length > 0 ? handleExport : undefined}
@@ -333,13 +324,9 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
                 messageKey={messageKey}
                 status={status}
                 chatError={visibleChatError}
-                compactDisabled={compactDisabled}
                 isLoadingHistory={isLoadingHistory}
-                compactedFrom={compactedFrom}
                 editingId={editingId}
-                onNavigatePrevious={handleConversationSelect}
                 onRetry={handleRetry}
-                onCompact={() => compact(true)}
                 onDismissError={() => {
                   clearError();
                   setDismissedErrorId(lastMessage?.id ?? null);
