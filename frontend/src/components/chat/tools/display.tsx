@@ -56,27 +56,30 @@ export function ToolParameters({ params }: { params: Record<string, unknown> }) 
 }
 
 /**
+ * A value that is or holds JSON as a code block.
+ * Mount it inside a step's detail, so that closed steps skip the formatting while the reply streams.
+ */
+export function ToolValue({
+  value,
+  ...props
+}: Omit<ToolCodeProps, "code" | "language"> & { value: unknown }) {
+  const { code, language } = useMemo(() => codeOf(value), [value]);
+
+  return <ToolCode code={code} language={language} {...props} />;
+}
+
+/**
  * The call's raw output, for tools without a structured view of it.
  * A list output is a content list, such as a result followed by the user's approval note,
  * so each item gets its own block.
  */
 export function ToolOutputResult({ part }: { part: ToolPart }) {
   const { t } = useTranslation();
-  const blocks = useMemo(
-    () =>
-      part.output === undefined
-        ? []
-        : (Array.isArray(part.output) ? part.output : [part.output]).map(codeOf),
-    [part.output],
-  );
 
-  return blocks.map(({ code, language }, index) => (
-    <ToolCode
-      key={index}
-      title={t(($) => $.chat.tools.sections.result)}
-      code={code}
-      language={language}
-    />
+  if (part.output === undefined) return null;
+
+  return (Array.isArray(part.output) ? part.output : [part.output]).map((value, index) => (
+    <ToolValue key={index} title={t(($) => $.chat.tools.sections.result)} value={value} />
   ));
 }
 

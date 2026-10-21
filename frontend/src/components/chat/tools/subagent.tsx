@@ -5,19 +5,13 @@ import type { TFunction } from "i18next";
 import { MarkdownText } from "@/components/chat/markdown/MarkdownText";
 import { TraceStep } from "@/components/chat/TraceStep";
 import { ToolCard } from "@/components/chat/tools/ToolCard";
-import { ToolCode } from "@/components/chat/tools/display";
+import { ToolValue } from "@/components/chat/tools/display";
 import { ToolIcon } from "@/components/chat/tools/icons";
 import { Badge } from "@/components/ui/badge";
 import { Trace } from "@/components/ui/trace";
 import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
 import type { SubagentStep } from "@/lib/chat/subagent";
-import {
-  prettyPrint,
-  type ToolPart,
-  toolDisplayName,
-  toolInput,
-  toolLineState,
-} from "@/lib/chat/tool-part";
+import { type ToolPart, toolDisplayName, toolInput, toolLineState } from "@/lib/chat/tool-part";
 
 function describeStep(t: TFunction, step: SubagentStep): { icon: ReactNode; label: string } {
   switch (step.kind) {
@@ -106,7 +100,7 @@ export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
       {typeof part.output === "string" ? (
         <MarkdownText>{part.output}</MarkdownText>
       ) : (
-        part.output !== undefined && <ToolCode code={prettyPrint(part.output)} language="json" />
+        part.output !== undefined && <ToolValue value={part.output} />
       )}
     </ToolCard>
   );
