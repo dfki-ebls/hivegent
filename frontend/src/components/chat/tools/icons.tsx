@@ -1,4 +1,5 @@
 import {
+  BookmarkIcon,
   BookmarkPlusIcon,
   BracesIcon,
   FileDiffIcon,
@@ -39,12 +40,13 @@ const TOOL_ICONS: Record<ToolName, LucideIcon> = {
   query_table: TableIcon,
   read_binary_document: FileImageIcon,
   read_document: FileTextIcon,
+  read_memory: BookmarkIcon,
   run_python: SquareTerminalIcon,
-  save_memory: BookmarkPlusIcon,
   search: SearchIcon,
   web_fetch: GlobeIcon,
   web_search: GlobeIcon,
   write_document: FilePlusIcon,
+  write_memory: BookmarkPlusIcon,
 };
 
 /** The icon of a tool, a wrench for tools without one such as MCP tools. */

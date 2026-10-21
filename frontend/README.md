@@ -56,10 +56,6 @@ Tree mutations publish their change rather than invalidating, and stay pending u
 `prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request.
 The SDK issues the post-approval continuation itself, so per-call settings would resume that turn with server defaults.
 
-## Context notes stay hidden
-
-The backend reports run state such as the mode and the document scope as `get_context` calls in the history, which `partLayout` drops, since they are no step the agent took.
-
 ## Tool approvals
 
 The SDK dispatches a continuation only if the chat is idle when the decision is recorded.

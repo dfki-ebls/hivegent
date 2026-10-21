@@ -9,9 +9,6 @@ import type { AddChunk, AddImage, MarkFullDocument } from "@/stores/fetched-docu
 
 export type ToolPart = ToolUIPart | DynamicToolUIPart;
 
-/** The tool the backend reports run state with, see `backend/src/hivegent/agents/context.py`. */
-export const CONTEXT_TOOL = "get_context";
-
 interface LineState {
   status?: "running";
   /** Whether the call failed or was stopped, which an agent routinely recovers from. */

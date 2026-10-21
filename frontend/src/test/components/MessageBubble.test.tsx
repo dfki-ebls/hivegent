@@ -14,7 +14,7 @@ it("offers to copy each text part right after it, even when a tool call follows"
           { type: "text", text: "Looking it up." },
           { type: "text", text: "Saved it." },
           {
-            type: "tool-save_memory",
+            type: "tool-write_memory",
             toolCallId: "call-1",
             state: "output-available",
             input: {},
