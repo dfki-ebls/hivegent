@@ -2,7 +2,6 @@
   lib,
   stdenv,
   callPackage,
-  cacert,
   python313,
   uv2nix,
   pyproject-nix,
@@ -131,7 +130,6 @@ let
             name = "${final.hivegent-backend.name}-pytest";
             inherit (final.hivegent-backend) src sourceRoot;
             nativeBuildInputs = [
-              cacert
               (mkVenv "hivegent-test-env" {
                 hivegent-backend = [
                   "all"

@@ -114,7 +114,6 @@ let
     HIVEGENT_CONFIG_FILE = "${dataDir}/config.toml";
     HIVEGENT_SECURITY__EGRESS_PROXY_URL = egressProxy.url;
     CREDENTIALS_DIRECTORY = credentialsDirectory;
-    SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
   };
 
   caddyEnv = toEnvFile "caddy.env" {
@@ -132,7 +131,6 @@ let
     HIVEGENT_URL = "http://127.0.0.1:${toString backendPort}";
     BRIDGE_CONFIG_FILE = "${dataDir}/bridge-config.json";
     CREDENTIALS_DIRECTORY = credentialsDirectory;
-    SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
   };
 
   # Shared config for both supervised daemons. Restart policy and start timeout
