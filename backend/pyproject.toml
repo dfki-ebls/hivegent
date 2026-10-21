@@ -29,7 +29,7 @@ dependencies = [
   "pdf-inspector>=1,<2",
   "polars>=2,<3",
   "psycopg[binary]>=3,<4",
-  "pydantic-ai-slim[ui,openai,mcp]>=2,<3",
+  "pydantic-ai-slim[ui,openai,mcp]>=2.59,<3",
   "pydantic-monty>=1,<2",
   "pydantic-settings>=2,<3",
   "pypdfium2>=5,<6",
@@ -90,13 +90,13 @@ enableExperimentalFeatures = true
 ignore_no_config = true
 
 [tool.pytest]
-testpaths = ["src", "tests"]
 # Optional converter backends may be absent, and alembic env.py only runs under alembic.
 addopts = ["--doctest-modules", "--doctest-ignore-import-errors", "--ignore=src/hivegent/migrations"]
-asyncio_mode = "auto"
 # docling's own pipeline cache key serializes its options, deprecated computed
 # fields included, so `force_full_page_ocr` warns although nothing here sets it.
 filterwarnings = ["ignore:`force_full_page_ocr` is deprecated:DeprecationWarning"]
+testpaths = ["src", "tests"]
+asyncio_mode = "auto"
 
 # Makes this file the ruff config wherever ruff runs from, so `nix fmt` at the
 # repository root sorts `hivegent` as first-party as a run from here does.
@@ -110,9 +110,9 @@ module-name = "hivegent"
 
 [tool.uv.exclude-newer-package]
 cbrkit = false
-pydantic-ai-slim = "1 day"
-pydantic-graph = "1 day"
-pydantic-evals = "1 day"
+pydantic-ai-slim = "1 hour"
+pydantic-graph = "1 hour"
+pydantic-evals = "1 hour"
 
 [tool.uv.extra-build-dependencies]
 antlr4-python3-runtime = ["setuptools"]
