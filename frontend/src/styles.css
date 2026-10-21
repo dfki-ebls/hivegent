@@ -1,5 +1,9 @@
+/*! shadcn/tailwind.css | MIT License | https://github.com/shadcn-ui/ui */
+/*! shadcn/typeset.css | MIT License | https://github.com/shadcn-ui/ui */
+
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@fontsource-variable/inter";
 @import "katex/dist/katex.min.css";
 @import "./shadcn.css";
 @import "./typeset.css";

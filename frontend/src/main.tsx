@@ -12,7 +12,6 @@ import { syncWorkspaceQueries } from "@/queries/documents";
 import { OidcInitializationGate } from "@/oidc";
 import { routeTree } from "@/routeTree.gen";
 
-import "@fontsource-variable/inter";
 import "@/styles.css";
 
 // A redeploy re-hashes lazily imported chunks, so a tab opened beforehand fails
