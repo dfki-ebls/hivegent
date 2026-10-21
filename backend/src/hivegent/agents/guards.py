@@ -1,6 +1,6 @@
 """Cross-cutting run-loop safeguards composed onto the agents.
 
-Four capabilities that guard a run without belonging to any one feature:
+Five capabilities that guard a run without belonging to any one feature:
 
 * :class:`EnglishToolCalls` validates and executes every tool call in the
   default language, so tool results and retries stay English whatever the
@@ -20,20 +20,18 @@ Four capabilities that guard a run without belonging to any one feature:
   images the serving gateway accepts, swapping the older surplus for a note,
   so a batch of parallel reads that each obey the cap cannot overflow it
   together.
+* :class:`LimitNotes` tells the model in a tool result that the run nears its
+  request budget or a tool its retries, so it wraps up or changes course
+  before the hard abort rather than being cut off mid-task.
 
-A nearly spent limit is no guard but a context note
-(:data:`~hivegent.agents.context.LIMITS`), since the model reads it from the
-persisted history.
-
-All four hook the pydantic-ai agent loop, so they touch only the agent
+All five hook the pydantic-ai agent loop, so they touch only the agent
 path; the framework-neutral tools and their FastMCP adapter are unaffected.
 All ride on the agents themselves (see ``agents/app.py``), because a
 localized tool result, a truncated call, a request the gateway will reject,
-and a runaway return are hazards on every run, not only the
-mode-composed chat one.  The
-chat run's :class:`~hivegent.agents.approval.ApprovalNotes` declares that it
-wraps the spill, so a note is appended to the bounded return and never cut
-off.
+a runaway return, and a spent budget are hazards on every run, not only the
+mode-composed chat one.  :class:`LimitNotes` and the chat run's
+:class:`~hivegent.agents.approval.ApprovalNotes` declare that they wrap the
+spill, so a note is appended to the bounded return and never cut off.
 
 The one that reshapes the conversation does it on the wire and nowhere else,
 through ``wrap_model_request``: the messages handed to the handler are what
@@ -54,25 +52,28 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import partial
-from typing import Any, TypeGuard
+from typing import Any, NoReturn, Self, TypeGuard
 
-from pydantic_ai import BinaryContent, ImageUrl
+from pydantic import ValidationError
+from pydantic_ai import BinaryContent, ImageUrl, ModelRetry
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    CapabilityOrdering,
     RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from pydantic_ai.exceptions import IncompleteToolCall
+from pydantic_ai.exceptions import IncompleteToolCall, ToolRetryError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    RetryPromptPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -85,6 +86,7 @@ from pydantic_core import to_json
 from ..db.conversations import prompt_items
 from ..humanize import format_bytes, pluralize
 from ..l10n import DEFAULT_LANGUAGE, Language, Localized, current_language, use_language
+from ..prompts import request_limit_note, retry_limit_note
 from ..tmp import save_result
 from ..tools.base import SearchPath, ToolRetry
 from ..tools.formatting import truncate_middle
@@ -94,8 +96,10 @@ from .common import UserDeps
 __all__ = [
     "EnglishToolCalls",
     "IncompleteToolCallGuard",
+    "LimitNotes",
     "PromptImageLimit",
     "ToolOutputSpill",
+    "with_note",
 ]
 
 
@@ -444,3 +448,140 @@ class PromptImageLimit(AbstractCapability[Any]):
             request_context = replace(request_context, messages=messages)
 
         return await handler(request_context)
+
+
+def with_note(result: Any, note: str) -> Any:
+    """Append *note* to a tool's model-facing return, keeping its metadata.
+
+    A list already is one, a multimodal return's text and attachments, so the
+    note joins it rather than nesting it, and anything else becomes its first
+    item.  Every noted return is the same shape, and the client shows a list
+    item by item.
+
+    Examples:
+        >>> with_note("written", "Note.")
+        ['written', 'Note.']
+        >>> with_note(["text", 1], "Note.")
+        ['text', 1, 'Note.']
+    """
+    if isinstance(result, ToolReturn):
+        return replace(result, return_value=with_note(result.return_value, note))
+
+    return [*result, note] if isinstance(result, list) else [result, note]
+
+
+@dataclass(slots=True)
+class LimitNotes(AbstractCapability[Any]):
+    """Tell the model in a tool result that a limit of the turn is nearly spent.
+
+    Two limits end a run: its request budget, the run's own
+    ``ctx.usage_limits`` counted on the usage the main agent shares with its
+    subagents, and a tool's retries, ``ctx.max_retries`` failures in a row.
+    Once ``threshold`` of either is spent, a note naming that limit joins what
+    the model reads next: a failing call's retry prompt carries its tool's
+    note, and the first result or retry after the request budget runs low
+    carries the request note, once per run.
+
+    A note rides a tool result rather than a user message of its own, which
+    would void the cached prefix mid-turn (see "One budget per turn" in the
+    README), and is written in the run's language like the other guard notes.
+    """
+
+    threshold: float = 0.75
+    _request_noted: bool = field(default=False, init=False)
+
+    async def for_run(self, ctx: RunContext[Any]) -> Self:
+        """A fresh instance, so each run reports the request note once."""
+        return replace(self)
+
+    def get_ordering(self) -> CapabilityOrdering:
+        """Wrap the spill, so a note joins the bounded return and is never cut off."""
+        return CapabilityOrdering(wraps=[ToolOutputSpill])
+
+    def _take_request_note(self, ctx: RunContext[Any]) -> str | None:
+        """The request note if it is due, marked as reported."""
+        limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
+
+        if (
+            self._request_noted
+            or limit is None
+            or ctx.usage.requests < self.threshold * limit
+        ):
+            return None
+
+        self._request_noted = True
+
+        return request_limit_note(limit)[_run_language(ctx)]
+
+    def _due_notes(self, ctx: RunContext[Any]) -> list[str]:
+        """The notes due on the failure of the call *ctx* runs."""
+        failures = ctx.retry + 1
+        notes: list[str] = []
+
+        if failures >= self.threshold * ctx.max_retries:
+            notes.append(
+                retry_limit_note(ctx.tool_name or "", failures, ctx.max_retries)[
+                    _run_language(ctx)
+                ]
+            )
+
+        if (note := self._take_request_note(ctx)) is not None:
+            notes.append(note)
+
+        return notes
+
+    def _raise_noted(
+        self, ctx: RunContext[Any], retry: RetryPromptPart, error: Exception
+    ) -> NoReturn:
+        """Raise *error* again, as its *retry* prompt with the due notes if any."""
+        if not (notes := self._due_notes(ctx)):
+            raise error
+
+        text = "\n\n".join([str(ToolRetryError(retry)), *notes])
+
+        raise ToolRetryError(replace(retry, content=text)) from error
+
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        error: ValidationError | ModelRetry,
+    ) -> ValidatedToolArgs:
+        """Add the due notes to a rejected call's retry prompt."""
+        retry = RetryPromptPart.from_error(
+            error, tool_name=call.tool_name, tool_call_id=call.tool_call_id
+        )
+        self._raise_noted(ctx, retry, error)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        """Add the due notes to a failed call's retry prompt."""
+        try:
+            return await handler(args)
+
+        except ToolRetryError as error:
+            self._raise_noted(ctx, error.tool_retry, error)
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: Any,
+    ) -> Any:
+        """Add the request note to the first result after the budget runs low."""
+        note = self._take_request_note(ctx)
+
+        return result if note is None else with_note(result, note)

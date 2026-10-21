@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
@@ -26,7 +26,7 @@ from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
 from ..app import explore_agent
 from ..common import ExploreTaskArg, RunPrefix, UserDeps
-from ..context import DOCUMENTS, LIMITS, ContextNotes, ContextSource
+from ..context import DOCUMENT_SCOPE
 from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
 from ..summarize import summarize_conversation
 from .conversation import conversation_toolset
@@ -46,24 +46,14 @@ subagent_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 type SubagentName = Literal["documents", "conversations", "web"]
 
-
-@dataclass(frozen=True, slots=True)
-class _Subagent:
-    """The capability a delegated run is composed from and the context it is told."""
-
-    capability: AbstractCapability[UserDeps]
-    context: Sequence[ContextSource] = ()
-
-
-# The registry mapping each subagent name to its definition, which the
-# ``explore`` tool selects by name.  The ``documents`` subagent *is* a
-# document-exploration agent, so the explore toolset and its system-prompt
-# persona ride together, distinct from the main agent's bare ``explore``
-# bundle, and it is told the document scope as a context note.  A subagent
-# answers the main agent rather than the user, so its prompt is English
-# whatever the interface language is.
-_SUBAGENTS: dict[SubagentName, _Subagent] = {
-    "documents": _Subagent(
+# The registry mapping each subagent name to the capabilities that define it,
+# which the ``explore`` tool selects by name.  The ``documents`` subagent *is*
+# a document-exploration agent, so the explore toolset, its system-prompt
+# persona, and the document scope ride together, distinct from the main
+# agent's bare ``explore`` bundle.  A subagent answers the main agent rather
+# than the user, so its prompt is English whatever the interface language is.
+_SUBAGENTS: dict[SubagentName, Sequence[AbstractCapability[UserDeps]]] = {
+    "documents": [
         Capability(
             id="explore-subagent",
             toolsets=[explore_toolset],
@@ -73,18 +63,16 @@ _SUBAGENTS: dict[SubagentName, _Subagent] = {
                 VERSION_INSTRUCTIONS[DEFAULT_LANGUAGE],
             ],
         ),
-        context=[DOCUMENTS],
-    ),
-    "conversations": _Subagent(
-        Capability(id="conversation", toolsets=[conversation_toolset])
-    ),
+        DOCUMENT_SCOPE,
+    ],
+    "conversations": [Capability(id="conversation", toolsets=[conversation_toolset])],
 }
 
 # The web subagent only exists while its toolset is live; otherwise a `web`
 # scope would delegate to an agent with no tools.  The scope argument's type
 # and description drop `web` in lockstep so the model is never offered it.
 if web_enabled:
-    _SUBAGENTS["web"] = _Subagent(Capability(id="web", toolsets=[web_toolset]))
+    _SUBAGENTS["web"] = [Capability(id="web", toolsets=[web_toolset])]
 
     type ExploreScope = SubagentName
 
@@ -174,13 +162,9 @@ async def run_subagent(
     ctx: RunContext[UserDeps],
     task: str,
     *,
-    capability: AbstractCapability[UserDeps],
-    context: Sequence[ContextSource] = (),
+    capabilities: Sequence[AbstractCapability[UserDeps]],
 ) -> ToolReturn:
-    """Run ``explore_agent`` as a subagent composed from a single *capability*.
-
-    It is told *context* and its limits as context notes, the same way the main
-    agent is.
+    """Run ``explore_agent`` as a subagent composed from *capabilities*.
 
     The reusable core behind every subagent tool: drive a delegated run and
     surface its reasoning, tool calls, and messages to the frontend.  Drives the
@@ -202,10 +186,10 @@ async def run_subagent(
     # twice, a capability or instruction added to either would silently stop
     # the recovery from continuing the very run it is recovering.  Its output
     # is read by the main agent alone, so the whole run, its dynamic
-    # instructions and injected notes included, is held to the default language.
+    # instructions included, is held to the default language.
     prefix = RunPrefix(
         deps=replace(ctx.deps, language=DEFAULT_LANGUAGE),
-        capabilities=[capability, ContextNotes([*context, LIMITS])],
+        capabilities=capabilities,
         instructions=None,
         llm=llm_config,
         model=model_from_config(llm_config),
@@ -310,8 +294,4 @@ async def explore(
     like surveying available documents, finding patterns across files,
     reviewing past conversations, or researching topics on the web.
     """
-    subagent = _SUBAGENTS[scope]
-
-    return await run_subagent(
-        ctx, task, capability=subagent.capability, context=subagent.context
-    )
+    return await run_subagent(ctx, task, capabilities=_SUBAGENTS[scope])

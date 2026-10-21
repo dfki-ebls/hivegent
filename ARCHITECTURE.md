@@ -33,7 +33,7 @@ flowchart LR
 - `pydantic-settings` reads configuration from `config.toml`, `HIVEGENT_*` env vars, and credential files.
 - Authentication uses OIDC bearer tokens, with groups and roles read from their claims.
 - Pydantic AI binds models, user-scoped dependencies, and toolsets into one runtime.
-- Run state that changes during a conversation reaches the model as `get_context` notes in the history rather than in the instructions, which keeps the provider's prompt cache valid.
+- Run state that changes during a conversation is an instruction whose changes are appended to the history rather than rewriting the instructions, which keeps the provider's prompt cache valid.
 - PostgreSQL with `pgvector` and cbrkit provide dense, sparse, and hybrid retrieval, plus conversations and memory.
 - Each user or group workspace lives under `data/workspace/<store_key>/`, keyed by the same `user:<id>` or `group:<id>` token that scopes SQL rows.
 - Each conversation owns `data/conversations/<id>/`, outside every workspace.
@@ -84,7 +84,7 @@ A feature is withheld by its chat mode, by a request's `disabled_tools`, or by `
 | `python`       | Monty sandbox, workspace writes are staged as a changeset.  | `run_python`                                                                                     |
 | `subagent`     | Delegated exploration in a fresh context.                   | `explore`                                                                                        |
 | `write`        | Approved workspace mutation, `/tmp` in every mode.          | `write_document`, `edit_document`, `move_documents`, `delete_documents`, `apply_changes`         |
-| `memory`       | Cross-conversation memory, mutating modes only.             | `save_memory`                                                                                    |
+| `memory`       | Cross-conversation memory, mutating modes only.             | `read_memory`, `write_memory`                                                                    |
 | `web`          | Search with `search_url`, fetch with `web_urls`.            | `web_search`, `web_fetch`                                                                        |
 | `conversation` | Conversation history, disabled by default.                  | `list_conversations`, `get_conversation`                                                         |
 | `ask`          | Multiple-choice questions for the user.                     | `ask_user`                                                                                       |

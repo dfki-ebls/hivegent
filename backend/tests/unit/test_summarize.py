@@ -19,7 +19,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from hivegent import compaction
-from hivegent.agents import RunPrefix, UserDeps, build_capabilities, context
+from hivegent.agents import RunPrefix, UserDeps, build_capabilities
 from hivegent.agents.summarize import COMPACT_PROMPT, _plan, summarize_conversation
 from hivegent.db.conversations import ConversationData, OwnedConversation
 from hivegent.l10n import LANGUAGES, Language
@@ -75,18 +75,13 @@ _MEASURED: list[ModelMessage] = [
 
 
 @pytest.fixture
-def run_prefix(monkeypatch: pytest.MonkeyPatch) -> RunPrefix:
+def run_prefix() -> RunPrefix:
     """A run whose prefix stands in for the chat turn being compacted.
 
     Its model is the one thing a test swaps, which is what carrying the
     resolved model on the prefix buys: nothing has to reach for the shared
     HTTP client a real one would be built from.
     """
-
-    async def _memory(_user: User) -> str:
-        return "remembered"
-
-    monkeypatch.setattr(context, "load_memory", _memory)
 
     return RunPrefix(
         deps=UserDeps(user=User("u"), mode="interactive"),

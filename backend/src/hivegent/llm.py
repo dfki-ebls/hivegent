@@ -222,14 +222,19 @@ def _self_hosted_profile(
     local chat templates emit around a tool call, whatever a family measured
     against its own hosted endpoint.
 
+    ``supports_inline_system_prompts`` is off because their chat templates
+    reject a ``system`` message after the first user turn (see "Run state
+    appends its changes" in the README).
+
     *merge_system_messages* answers the Qwen chat template as vLLM applies it,
-    which rejects a second ``system`` message with "System message must be at
-    the beginning.", while per-capability instructions render as one each.  It
-    is keyed on the runtime rather than the family because a vLLM deployment
-    applies that template whether or not the served name carries ``qwen``.
+    which rejects a second leading ``system`` message the same way, while
+    per-capability instructions render as one each.  It is keyed on the runtime
+    rather than the family because a vLLM deployment applies that template
+    whether or not the served name carries ``qwen``.
     """
     overrides = OpenAIModelProfile(
         supports_thinking=True,
+        supports_inline_system_prompts=False,
         ignore_streamed_leading_whitespace=True,
     )
     if merge_system_messages:

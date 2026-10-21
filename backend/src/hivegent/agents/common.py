@@ -28,7 +28,6 @@ __all__ = [
     "CompletionRefused",
     "Completions",
     "ExploreTaskArg",
-    "MemoryContentArg",
     "RunPrefix",
     "UserDeps",
 ]
@@ -36,10 +35,6 @@ __all__ = [
 ExploreTaskArg = Annotated[
     str,
     Field(description="Natural language description of what to explore or find."),
-]
-MemoryContentArg = Annotated[
-    str,
-    Field(description="Full markdown content to persist as memory."),
 ]
 
 _PARENT_RESERVE = 1
@@ -233,8 +228,8 @@ class UserDeps:
     def describe_document_scope(self) -> str:
         """Render the active document scope as prompt text (``''`` if none).
 
-        Rendered in the run's :attr:`language`, since it is the context note
-        the run reads (``agents.context.DOCUMENTS``).
+        Rendered in the run's :attr:`language`, since it is the instruction
+        the run reads (``agents.context.DOCUMENT_SCOPE``).
 
         The hidden half is rendered back from the very :class:`DocumentFilter`
         objects the document tools enforce, so what the model is told cannot
@@ -268,8 +263,8 @@ class RunPrefix:
     """The inputs that compose a run's prompt prefix.
 
     Kept together because compaction has to reproduce a chat turn's prefix
-    exactly, down to the context notes ``deps`` renders into the history and
-    the resolved ``llm`` it is sent under, or
+    exactly, down to the document scope ``deps`` renders into the
+    instructions and the resolved ``llm`` it is sent under, or
     the provider's cached prefix is thrown away.
     Named for what it is rather than ``AgentRun``, which is a different thing
     in pydantic-ai.

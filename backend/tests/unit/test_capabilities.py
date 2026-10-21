@@ -8,9 +8,8 @@ from pydantic_ai.agent import AgentInstructions
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import ToolDefinition
 
-from hivegent.agents import capabilities, context
+from hivegent.agents import capabilities
 from hivegent.agents.app import user_agent
 from hivegent.agents.capabilities import (
     FEATURES,
@@ -18,7 +17,6 @@ from hivegent.agents.capabilities import (
     collect_tool_schemas,
 )
 from hivegent.agents.common import UserDeps
-from hivegent.agents.context import DOCUMENTS, ContextNotes, ContextSource
 from hivegent.agents.tools.python import sandbox_surface
 from hivegent.prompts import GROUNDING_INSTRUCTIONS
 from hivegent.server.routes.meta import list_tools
@@ -27,16 +25,6 @@ from hivegent.types import Mode, ToolsSpec
 from tests.helpers import owned, run_context
 
 _EXPLORE = next(feature for feature in FEATURES if feature.id == "explore")
-
-
-@pytest.fixture(autouse=True)
-def _memory(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Report a stored memory without reaching the database."""
-
-    async def load(_user: User) -> str:
-        return "remembered"
-
-    monkeypatch.setattr(context, "load_memory", load)
 
 
 def _static_texts(instructions: AgentInstructions[UserDeps]) -> list[str]:
@@ -48,16 +36,6 @@ def _static_texts(instructions: AgentInstructions[UserDeps]) -> list[str]:
         return [part for part in instructions if isinstance(part, str)]
 
     return []
-
-
-def _sources(spec: ToolsSpec) -> list[ContextSource]:
-    """Every context source the composed capabilities report."""
-    return [
-        source
-        for capability in build_capabilities(spec, mode="interactive", language="en")
-        if isinstance(capability, ContextNotes)
-        for source in capability.sources
-    ]
 
 
 def _instructions(spec: ToolsSpec) -> str:
@@ -89,25 +67,13 @@ def test_shared_block_survives_on_its_remaining_feature() -> None:
     assert "workspace-paths" in ids
 
 
-def test_document_scope_rides_with_the_retrieval_tools() -> None:
-    """The note naming the user's selection must reach the model.
-
-    It is the only thing that ties a bare "these documents" to the files the
-    eye toggle picked, and being a context note it is invisible to the static
-    checks above, so it is asserted on its own.
-    """
-    assert DOCUMENTS in _sources(ToolsSpec())
-
-    disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
-    assert DOCUMENTS not in _sources(disabled)
-
-
-def _request_params(
+def _turn(
     *,
-    relevant: frozenset[str],
+    relevant: frozenset[str] = frozenset(),
     mode: Mode = "interactive",
+    spec: ToolsSpec | None = None,
 ) -> ModelRequestParameters:
-    """Run one turn against a stub model and capture what it was handed."""
+    """Run one turn against a stub model, returning what it was first handed."""
     captured: list[ModelRequestParameters] = []
 
     def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -124,32 +90,36 @@ def _request_params(
         "hi",
         model=FunctionModel(respond),
         deps=deps,
-        capabilities=build_capabilities(ToolsSpec(), mode=mode, language="en"),
+        capabilities=build_capabilities(
+            spec or ToolsSpec(), mode=mode, language="en"
+        ),
     )
     return captured[0]
 
 
-def test_the_cacheable_prefix_survives_selection_and_mode_changes() -> None:
-    """The instructions and tool schemas precede the whole history.
+def _instruction_text(params: ModelRequestParameters) -> str:
+    return "\n".join(part.content for part in params.instruction_parts or [])
 
-    A change to either has the provider reread the entire conversation, so
-    the document selection and the mode reach the model as context notes in
-    the history instead, and the two modes that may write compose one prefix.
+
+def test_document_scope_rides_with_the_retrieval_tools() -> None:
+    """The note naming the user's selection must reach the model.
+
+    It is the only thing that ties a bare "these documents" to the files the
+    eye toggle picked, and being computed per request it is invisible to the
+    static checks above, so it is asserted on its own.
     """
+    selected = frozenset({"~/a.md"})
+    assert "~/a.md" in _instruction_text(_turn(relevant=selected))
 
-    def prefix(relevant: str, mode: Mode) -> tuple[list[str], list[ToolDefinition]]:
-        params = _request_params(relevant=frozenset({relevant}), mode=mode)
-        parts = [part.content for part in params.instruction_parts or []]
-
-        return parts, params.function_tools
-
-    assert prefix("~/a.md", "interactive") == prefix("~/b.md", "interactive")
-    assert prefix("~/a.md", "interactive") == prefix("~/a.md", "write")
+    disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
+    assert "~/a.md" not in _instruction_text(
+        _turn(relevant=selected, spec=disabled)
+    )
 
 
 def _tool_names(mode: Mode = "interactive") -> set[str]:
     """Every tool one run in *mode* would hand the model."""
-    params = _request_params(relevant=frozenset(), mode=mode)
+    params = _turn(mode=mode)
 
     return {tool.name for tool in params.function_tools}
 

@@ -15,14 +15,14 @@ shown as one.  The note rides the return value instead, appended after
 :meth:`ApprovalNotes.get_ordering` declares.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.messages import ToolCallPart, ToolReturn
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext, ToolDefinition
 
-from .guards import ToolOutputSpill
+from .guards import ToolOutputSpill, with_note
 
 __all__ = ["APPROVAL_NOTE_KEY", "ApprovalNotes", "approval_note_text"]
 
@@ -37,22 +37,6 @@ def approval_note_text(note: str) -> str:
     'Note from the user who approved this call: Keep the old file.'
     """
     return f"Note from the user who approved this call: {note}"
-
-
-def _with_note(value: Any, note: str) -> list[Any]:
-    """Append *note* to a return value as one more item of its content list.
-
-    A list already is one, a multimodal return's text and attachments, so the
-    note joins it rather than nesting it, and anything else becomes its first
-    item.  Every noted return is the same shape, and the client shows a list
-    item by item.
-
-    >>> _with_note("written", "Note.")
-    ['written', 'Note.']
-    >>> _with_note(["text", 1], "Note.")
-    ['text', 1, 'Note.']
-    """
-    return [*value, note] if isinstance(value, list) else [value, note]
 
 
 @dataclass(slots=True)
@@ -84,9 +68,4 @@ class ApprovalNotes(AbstractCapability[Any]):
         if not isinstance(note, str) or not note:
             return result
 
-        text = approval_note_text(note)
-
-        if isinstance(result, ToolReturn):
-            return replace(result, return_value=_with_note(result.return_value, text))
-
-        return _with_note(result, text)
+        return with_note(result, approval_note_text(note))

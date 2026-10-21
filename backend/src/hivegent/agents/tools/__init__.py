@@ -3,7 +3,7 @@
 from .ask import ask_toolset
 from .conversation import conversation_toolset
 from .explore import explore_toolset
-from .memory import memory_toolset
+from .memory import MemoryNote, memory_toolset
 from .python import (
     INJECTABLE_TOOL_NAMES,
     SANDBOX_FUNCTION_NAMES,
@@ -17,6 +17,7 @@ from .write import discard_unapproved_changes, write_toolset
 __all__ = [
     "INJECTABLE_TOOL_NAMES",
     "SANDBOX_FUNCTION_NAMES",
+    "MemoryNote",
     "SubagentName",
     "ask_toolset",
     "conversation_toolset",

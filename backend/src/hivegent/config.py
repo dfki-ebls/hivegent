@@ -911,6 +911,9 @@ class LimitsSettings(BaseModel):
     sits well below ``max_file_size_bytes`` because an attachment rides in
     the conversation's message history and is re-sent to the model on every
     later turn, so its cost is paid per request rather than once.
+
+    ``max_memory_chars`` bounds a user's memory, which is reported to the
+    model at the start of every conversation.
     """
 
     max_file_size_bytes: int = 50 * 1024 * 1024  # 50 MB
@@ -918,6 +921,7 @@ class LimitsSettings(BaseModel):
     max_collection_files: int = 10_000
     max_image_pixels: int = 1_000_000_000  # ~3 GB uncompressed
     max_attachment_bytes: int = 10 * 1024 * 1024  # 10 MB
+    max_memory_chars: int = 8_000
 
 
 class JobSettings(BaseModel):

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from pydantic_ai import (
+    Agent,
     BinaryContent,
     FunctionToolset,
     ImageUrl,
@@ -21,6 +22,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -43,6 +45,7 @@ from hivegent.agents.approval import (
 from hivegent.agents.common import UserDeps
 from hivegent.agents.guards import (
     IncompleteToolCallGuard,
+    LimitNotes,
     PromptImageLimit,
     ToolOutputSpill,
     _images,
@@ -397,3 +400,42 @@ async def test_the_approval_note_wraps_the_spill_whatever_the_list_order(
     assert len(preview) <= 1_000
     assert "is saved at" in preview
     assert note == approval_note_text("Keep it.")
+
+
+async def test_the_retry_note_rides_a_rejected_calls_retry_prompt() -> None:
+    """Arguments failing validation count against the same budget.
+
+    The failing execution's path is driven by ``test_prompt_cache``.
+    """
+    toolset = FunctionToolset[UserDeps]()
+
+    @toolset.tool_plain(retries=4)
+    def count(n: int) -> str:
+        return str(n)
+
+    def call_count(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if any(
+            isinstance(part, RetryPromptPart) and "in a row" in part.model_response()
+            for part in messages[-1].parts
+        ):
+            return ModelResponse(parts=[TextPart(content="giving up")])
+
+        return ModelResponse(parts=[ToolCallPart(tool_name="count", args={"n": "x"})])
+
+    result = await Agent(deps_type=UserDeps, capabilities=[LimitNotes()]).run(
+        "go",
+        model=FunctionModel(call_count),
+        deps=UserDeps(user=User("u"), mode="read"),
+        toolsets=[toolset],
+    )
+    retries = [
+        part.model_response()
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+
+    assert len(retries) == 3
+    assert "in a row" not in retries[1]
+    assert "Input should be a valid integer" in retries[2]
+    assert "`count` failed 3 times in a row" in retries[2]

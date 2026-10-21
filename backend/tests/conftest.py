@@ -15,6 +15,18 @@ from pydantic_ai import models
 models.ALLOW_MODEL_REQUESTS = False
 
 
+@pytest.fixture(autouse=True)
+def _memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report a stored memory without reaching the database."""
+    from hivegent.agents.tools import memory
+    from hivegent.store import User
+
+    async def load(_user: User) -> str:
+        return "- likes tea"
+
+    monkeypatch.setattr(memory, "load_memory", load)
+
+
 @pytest.fixture()
 def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the global ``settings.data_dir`` at a temporary directory."""
