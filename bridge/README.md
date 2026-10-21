@@ -17,7 +17,7 @@ Platform ──webhook──▶ Express ──chat.webhooks[name]──▶ handl
 ```
 
 The bot reads the shared group workspace `@team-kb` through a `team-kb:read` groups claim.
-Every turn runs in read mode, so no workspace is writable whatever the claim grants, and `edit_document`, `write_document`, and `save_memory` are disabled on top, so curate the workspace in the web UI.
+Every turn runs in read mode, so no workspace is writable whatever the claim grants, and `edit_document`, `write_document`, and `write_memory` are disabled on top, so curate the workspace in the web UI.
 
 ## Layout
 

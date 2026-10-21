@@ -43,7 +43,7 @@ describe("resolveConfig", () => {
     expect(cfg.port).toBe(5000);
     expect(cfg.oidc).toEqual({ issuer: "http://idp", clientId: "from-file", clientSecret: "s" });
     expect(cfg.adapters).toEqual({ teams: false, web: true });
-    expect(cfg.disabledTools).toEqual(["edit_document", "write_document", "save_memory"]);
+    expect(cfg.disabledTools).toEqual(["edit_document", "write_document", "write_memory"]);
   });
 
   it("lets an ENABLE_<NAME> env var override the file's adapter map", () => {

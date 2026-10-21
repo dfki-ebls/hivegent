@@ -149,7 +149,7 @@ export function resolveConfig(env: NodeJS.ProcessEnv, file: FileConfig): BridgeC
     oidc,
     reasoningEffort: env.REASONING_EFFORT ?? file.reasoningEffort,
     // The bot is read-only over documents and never writes cross-conversation memory.
-    disabledTools: ["edit_document", "write_document", "save_memory"],
+    disabledTools: ["edit_document", "write_document", "write_memory"],
     postgresUrl: requireValue(env.POSTGRES_URL ?? file.postgresUrl, "POSTGRES_URL"),
     botUserName: env.BOT_USERNAME ?? file.botUserName ?? "hivegent",
     host: env.HOST ?? file.host ?? DEFAULT_HOST,
