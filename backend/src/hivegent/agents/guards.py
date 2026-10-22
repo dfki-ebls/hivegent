@@ -80,7 +80,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_core import to_json
+from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from ..db.conversations import prompt_items
 from ..humanize import format_bytes, pluralize
@@ -89,7 +89,7 @@ from ..prompts import request_limit_note, retry_limit_note
 from ..tmp import save_result
 from ..tools.base import SearchPath, ToolRetry
 from ..tools.formatting import truncate_middle
-from ..tools.pydantic_ai import unwrap_tool_output
+from ..tools.pydantic_ai import encoded_data, unwrap_tool_output
 from .common import UserDeps
 
 __all__ = [
@@ -346,17 +346,18 @@ async def _save(
     result, and the text otherwise.  ``None`` for a result the folder cannot
     hold, which then keeps only what the preview shows.
     """
-    suffix, content = ("txt", text) if encoded is None else ("json", encoded.decode())
+    suffix, content, size, noted = (
+        ("txt", text, len(text.encode()), None)
+        if encoded is None
+        else ("json", encoded.decode(), len(encoded), data)
+    )
 
     try:
         path = await save_result(root.path, _file_name(call, suffix), content)
     except ToolRetry:
         return None
 
-    if encoded is None:
-        return partial(_saved_note, path, len(text.encode()), None)
-
-    return partial(_saved_note, path, len(encoded), data)
+    return partial(_saved_note, path, size, noted)
 
 
 @dataclass(slots=True)
@@ -432,8 +433,10 @@ class ToolOutputSpill(AbstractCapability[UserDeps]):
         output = unwrap_tool_output(result)
         text = output.text
         wrapped = isinstance(result, ToolReturn)
-        # Inline, since serializing holds the GIL on a worker thread all the same.
-        encoded = to_json(output.data) if wrapped and output.data is not None else None
+        chunk = result.metadata if wrapped else None
+        # The one encoding the stream sends too, inline, since serializing
+        # holds the GIL on a worker thread all the same.
+        encoded = encoded_data(chunk) if isinstance(chunk, DataChunk) else None
         data_over = encoded is not None and len(encoded) > self.max_data_bytes
 
         if text is None or len(text) <= self.max_chars:

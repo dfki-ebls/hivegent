@@ -11,7 +11,7 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from pydantic_ai import FunctionToolset
 from pydantic_ai.messages import ToolReturn
-from pydantic_ai.ui.vercel_ai.response_types import DataChunk
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
 
 from hivegent.tools.base import (
     AsyncTool,
@@ -26,6 +26,7 @@ from hivegent.tools.fastmcp import (
     register_mcp_tools,
 )
 from hivegent.tools.pydantic_ai import (
+    ToolOutputChunk,
     for_pydantic_ai,
     invoke_tool,
     register_agent_tools,
@@ -297,6 +298,15 @@ class TestRegisterAgentTools:
 
 class TestWrapToolOutput:
     """Tests for wrap_tool_output structured-data correlation."""
+
+    def test_the_chunk_streams_the_one_encoding_of_its_data(self) -> None:
+        chunk = wrap_tool_output(
+            ToolOutput(data={"rows": [1, None]}, formatted="x"), tool_call_id="c1"
+        ).metadata
+
+        assert isinstance(chunk, ToolOutputChunk)
+        assert chunk.data_json() is chunk.data_json()
+        assert chunk.encode(5) == BaseChunk.encode(chunk, 5)
 
     def test_structured_data_chunk_carries_tool_call_id(self) -> None:
         # The frontend correlates the data part with its tool part by id,

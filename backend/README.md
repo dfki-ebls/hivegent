@@ -402,6 +402,7 @@ The file is `<tool>-<digest>.json` with the structured data when the return has 
 The preview is the head and tail cut at line ends around a note naming the file, its size, its entry count, whether the tool already truncated, and how to read on.
 A content list keeps its non-text items, and a run without `/tmp` or a result that does not fit gets the same preview with a count of what was left out.
 The structured data is kept once: the `data-tool-output` chunk is dropped when its data went to the file, and when it serializes past `settings.llm.tool_data_max_bytes`, since the frontend loads and the database stores every chunk of a conversation.
+It is encoded once, by `ToolOutputChunk.data_json`, which is what the spill measures and saves and what the chunk streams, while the database dumps the message it rides in on its own.
 Every tool view falls back to the text, which names the file, and the data of a tool is what backs its text and no more, so grep's counting modes carry the files they list without lines.
 Grep makes one ripgrep run: content mode streams matches in path order and stops at `max_results` matching lines, so a broad pattern costs what the result shows and points at `output_mode='count'` for how far it reaches, and the counting modes count every file with `rg --count`.
 An original is left out where its markdown description is there and searched too, decided per file so the stream need not wait for a later one.

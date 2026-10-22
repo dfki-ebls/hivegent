@@ -3,9 +3,9 @@
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, cast, override
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 from pydantic_ai import BinaryContent, FunctionToolset, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolCallPart, ToolReturn
@@ -14,6 +14,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ArgsValidatorFunc, ToolPrepareFunc
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_core import to_json
 
 from .base import (
     BinaryAttachment,
@@ -29,6 +30,7 @@ from .base import (
 __all__ = [
     "ToolOutputChunk",
     "UnwrappedOutput",
+    "encoded_data",
     "for_pydantic_ai",
     "invoke_tool",
     "register_agent_tool",
@@ -51,14 +53,44 @@ def _binary_attachment_to_content(att: BinaryAttachment) -> BinaryContent:
     )
 
 
+def _encode(data: object) -> bytes:
+    """*data* as JSON, the way a streamed chunk spells it."""
+    return to_json(data, by_alias=True, exclude_none=True)
+
+
 class ToolOutputChunk(DataChunk):
     """The structured payload of a tool return, as the frontend receives it.
 
     ``display_only`` carries :attr:`ToolOutput.display_only` to the run's
     capabilities and is excluded from what is streamed and stored.
+
+    The data is encoded once, by :meth:`data_json`, and that encoding is
+    what both the output spill measures and saves and the stream sends.
     """
 
     display_only: bool = Field(default=False, exclude=True)
+    _json: bytes | None = PrivateAttr(default=None)
+
+    def data_json(self) -> bytes:
+        """The data as JSON, encoded on the first call and kept."""
+        if self._json is None:
+            self._json = _encode(self.data)
+
+        return self._json
+
+    @override
+    def encode(self, sdk_version: int) -> str:
+        """The streamed chunk, built around the one encoding of its data."""
+        head = self.model_dump_json(by_alias=True, exclude_none=True, exclude={"data"})
+
+        return f'{head[:-1]},"data":{self.data_json().decode()}}}'
+
+
+def encoded_data(chunk: DataChunk) -> bytes:
+    """*chunk*'s data as JSON, encoded once where the chunk is a :class:`ToolOutputChunk`."""
+    return (
+        chunk.data_json() if isinstance(chunk, ToolOutputChunk) else _encode(chunk.data)
+    )
 
 
 def wrap_tool_output(
