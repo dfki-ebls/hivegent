@@ -26,6 +26,9 @@ describe("syncWebFetchOutput", () => {
     requested_url: "https://example.com/start",
     url: "https://example.com/final",
     title: "Test",
+    start_line: 1,
+    end_line: 1,
+    total_lines: 1,
     content: "# Hello",
     truncated: false,
   };
@@ -34,8 +37,8 @@ describe("syncWebFetchOutput", () => {
     const markFullDocument = vi.fn<SyncOutputContext["markFullDocument"]>();
     syncWebFetchOutput(context({ metadata: [page, failure], markFullDocument, sourceId: "c1" }));
     expect(markFullDocument.mock.calls).toEqual([
-      ["https://example.com/final", "# Hello", "web", "c1"],
-      ["https://example.com/start", "# Hello", "web", "c1"],
+      ["https://example.com/final", "# Hello", "web", "c1", 1],
+      ["https://example.com/start", "# Hello", "web", "c1", 1],
     ]);
   });
 

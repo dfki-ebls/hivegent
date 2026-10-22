@@ -20,13 +20,14 @@ from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..store import Casebase, User, build_search_paths
 from ..tmp import tmp_search_path
-from ..tools import KnownUrls
+from ..tools import FetchedPages, KnownUrls
 from ..tools.base import SearchPath, query_hint, resolve_accessible_file
 from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
 
 __all__ = [
     "SELF_BOUNDED",
+    "WINDOW_MAX_CHARS",
     "CompletionRefused",
     "Completions",
     "ExploreTaskArg",
@@ -39,6 +40,14 @@ ExploreTaskArg = Annotated[
     str,
     Field(description="Natural language description of what to explore or find."),
 ]
+
+WINDOW_MAX_CHARS = settings.llm.tool_output_max_chars * 9 // 10
+"""The window ``read_document`` and ``web_fetch`` show of a text, which a call reads on from by offset.
+
+A whole window has to show rather than spill.  It is measured as rendered,
+numbered and clipped, so the tenth of the output bound left over only holds
+the headers and hints of the reads one call batches.
+"""
 
 _PARENT_RESERVE = 1
 """Requests a turn's completions leave for the parent, which owes the model the program's result."""
@@ -159,6 +168,8 @@ class UserDeps:
     # The URLs `web_fetch` may open, seeded from the history by the chat path
     # and shared with subagents the same way.
     known_urls: KnownUrls = field(default_factory=KnownUrls)
+    # The pages `web_fetch` downloaded this turn, which it reads on from.
+    fetched_pages: FetchedPages = field(default_factory=FetchedPages)
     # Sink for live subagent transcript snapshots; set only on the chat path,
     # where the streaming response drains it (None elsewhere disables it).
     subagent_sink: asyncio.Queue[SubagentUpdate] | None = None

@@ -5,7 +5,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from itertools import chain, islice
+from itertools import chain
 from os import stat_result
 from pathlib import Path, PurePosixPath
 from stat import S_ISDIR, S_ISREG
@@ -22,6 +22,7 @@ from .base import (
     BatchShare,
     FullLinesArg,
     IncludeIgnoredArg,
+    OffsetArg,
     SearchPath,
     ToolOutput,
     ToolRetry,
@@ -39,20 +40,13 @@ from .base import (
     scope_paths,
     sidecar_hint,
 )
-from .formatting import (
-    LineClip,
-    fit_lines,
-    hint_suffix,
-    iter_annotated,
-    omission_hints,
-)
+from .formatting import LineClip, fit_window, hint_suffix, omission_hints
 
 __all__ = [
     "DocumentFilePathArg",
     "DocumentLimitArg",
     "DocumentMaxDepthArg",
     "DocumentMaxResultsArg",
-    "DocumentOffsetArg",
     "DocumentPathArg",
     "DocumentPatternsArg",
     "DocumentRange",
@@ -135,13 +129,6 @@ DocumentMaxResultsArg = Annotated[
         le=_MAX_LISTED_ENTRIES,
     ),
 ]
-DocumentOffsetArg = Annotated[
-    int,
-    Field(
-        description="1-based starting line number.",
-        ge=1,
-    ),
-]
 DocumentLimitArg = Annotated[
     int | None,
     Field(
@@ -161,7 +148,7 @@ class DocumentRead:
     __pydantic_config__ = ConfigDict(extra="forbid")
 
     file_path: DocumentFilePathArg
-    offset: DocumentOffsetArg = 1
+    offset: OffsetArg = 1
     limit: DocumentLimitArg = None
 
     @property
@@ -501,7 +488,6 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
         share: BatchShare,
     ) -> ToolOutput[DocumentRange]:
         """Decode the file and render the requested window of lines."""
-        offset, limit = read.offset, read.limit
         sp, local, absolute = resolve_file_or_retry(self.resolved_paths, read.file_path)
         # Reported as the document is named, which a client keys its coverage by.
         file_path = sp.prefixed(local)
@@ -529,59 +515,28 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
         # tools use, so a hash taken here still matches on a later edit.
         decoded = read_text_or_retry(absolute, file_path, hint)
         file_hash = content_hash(decoded.text)
-        all_lines = decoded.text.splitlines()
-        total = len(all_lines)
-        start = max(1, offset)
-        if total == 0:
-            empty = DocumentRange(
-                file_path=file_path,
-                start_line=start,
-                end_line=start - 1,
-                total_lines=0,
-                content="",
-                content_hash=file_hash,
-            )
-            return ToolOutput(data=empty, formatted="(empty file)")
-        if start > total:
-            past_eof = DocumentRange(
-                file_path=file_path,
-                start_line=start,
-                end_line=start - 1,
-                total_lines=total,
-                content="",
-                content_hash=file_hash,
-            )
-            return ToolOutput(
-                data=past_eof,
-                formatted=f"(offset {start} is past end of file with {total} lines)",
-            )
-
-        stop = total if limit is None else min(total, start + limit - 1)
-
-        # Cap by character budget: one giant line still gets returned alone so
-        # the caller sees something rather than an empty range.  The lines are
-        # measured as rendered, numbered and clipped, since the numbers of many
-        # short lines would otherwise push the window past the spill threshold.
-        # The measuring clip is a throwaway, as it also sees the line that
-        # did not fit.
-        cap = None if full_lines else self.max_line_chars
-        window = iter_annotated(
-            islice(all_lines, start - 1, stop), start, LineClip(cap)
+        clip = LineClip(None if full_lines else self.max_line_chars)
+        window = fit_window(
+            decoded.text.splitlines(),
+            read.offset,
+            share.of(self.max_chars),
+            clip,
+            read.limit,
         )
-        kept = fit_lines(window, share.of(self.max_chars))
-        selected = all_lines[start - 1 : start - 1 + kept]
-        clip = LineClip(cap)
-        body = "\n".join(iter_annotated(selected, start, clip))
-        end = start + len(selected) - 1
-
         result = DocumentRange(
             file_path=file_path,
-            start_line=start,
-            end_line=end,
-            total_lines=total,
-            content="\n".join(selected),
+            start_line=window.start,
+            end_line=window.end,
+            total_lines=window.total,
+            content=window.content,
             content_hash=file_hash,
         )
+
+        if not window.total:
+            return ToolOutput(data=result, formatted="(empty file)")
+
+        if past_end := window.past_end("file"):
+            return ToolOutput(data=result, formatted=past_end)
 
         # A clipped line is the one truncation the reader cannot detect from
         # the output alone, so it is named: a wide table's trailing columns
@@ -598,12 +553,7 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
             hints.append(query)
 
         hints += clip.hints()
-
-        remaining = total - end
-
-        if remaining > 0:
-            hints.append(f"{remaining} more lines, call again with offset={end + 1}")
-
+        hints += window.hints()
         suffix = hint_suffix(hints)
         source = decoded.source_encoding
         encoding = f", decoded from {source}" if source else ""
@@ -612,6 +562,6 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
             formatted=(
                 f"lines {result.start_line}-{result.end_line} of "
                 f"{result.total_lines} (hash {file_hash}{encoding}):"
-                f"\n{body}{suffix}"
+                f"\n{window.rendered}{suffix}"
             ),
         )

@@ -33,6 +33,7 @@ from hivegent.tools.web import (
     SearxngBackend,
     WebFetch,
     WebQuery,
+    WebRead,
     WebSearch,
     WebSearchHit,
     WebSearchResults,
@@ -306,7 +307,7 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler)
-        out = await tool(["https://example.com/start"])
+        out = await tool([WebRead("https://example.com/start")])
 
         page = single(out.data)
         # A link on the fetched page may be fetched next.
@@ -339,7 +340,7 @@ class TestWebFetch:
 
         tool = _fetch_tool(monkeypatch, handler)
         urls = [f"https://example.com/{path}" for path in ("start", "final", "gone")]
-        out = await tool(urls)
+        out = await tool([WebRead(url) for url in urls])
 
         page, duplicate, gone = out.data
         assert not isinstance(page, ItemFailure)
@@ -363,7 +364,7 @@ class TestWebFetch:
             UrlPolicy(allow_hosts=("example.com",), deny_hosts=("evil.com",)),
         )
         with pytest.raises(ToolRetry, match="blocked"):
-            await tool(["https://example.com/start"])
+            await tool([WebRead("https://example.com/start")])
 
     async def test_unsupported_content_type_raises(
         self, monkeypatch: pytest.MonkeyPatch
@@ -375,7 +376,7 @@ class TestWebFetch:
 
         tool = _fetch_tool(monkeypatch, handler)
         with pytest.raises(ToolRetry, match="unsupported content type"):
-            await tool(["https://example.com/img"])
+            await tool([WebRead("https://example.com/img")])
 
     async def test_content_is_truncated_to_caps(
         self, monkeypatch: pytest.MonkeyPatch
@@ -386,7 +387,7 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler, max_response_bytes=10)
-        out = await tool(["https://example.com/big"])
+        out = await tool([WebRead("https://example.com/big")])
         assert single(out.data).content == "a" * 10
         assert single(out.data).truncated
         assert out.text.endswith("[page cut at the 10 B download cap]")
@@ -405,14 +406,55 @@ class TestWebFetch:
             )
 
         tool = _fetch_tool(monkeypatch, handler, max_line_chars=80)
-        out = await tool(["https://example.com/page"])
+        out = await tool([WebRead("https://example.com/page")])
         assert "…" in out.text
         assert "full_lines=true" in out.text
         assert len(max(out.text.splitlines(), key=len)) < 200
         assert long_line in single(out.data).content
 
-        whole = await tool(["https://example.com/page"], full_lines=True)
+        whole = await tool([WebRead("https://example.com/page")], full_lines=True)
         assert long_line in whole.text
+
+    async def test_a_long_page_is_read_on_from_an_offset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        requests: list[httpx2.Request] = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            requests.append(request)
+            return httpx2.Response(
+                200, content=b"one\ntwo\nthree", headers={"content-type": "text/plain"}
+            )
+
+        tool = _fetch_tool(monkeypatch, handler, max_chars=13)
+        first = await tool([WebRead("https://example.com/page")])
+        rest = await tool([WebRead("https://example.com/page", offset=3)])
+
+        assert single(first.data).content == "one\ntwo"
+        assert first.text.endswith("[1 more line, call again with offset=3]")
+        assert (single(rest.data).start_line, single(rest.data).content) == (3, "three")
+        # The turn's pages are kept, so reading on downloads nothing again.
+        assert len(requests) == 1
+
+    async def test_a_failed_page_is_fetched_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        statuses = iter((503, 200))
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
+                next(statuses), content=b"hi", headers={"content-type": "text/plain"}
+            )
+
+        tool = _fetch_tool(monkeypatch, handler)
+
+        with pytest.raises(ToolRetry, match="HTTP 503"):
+            await tool([WebRead("https://example.com/page")])
+
+        assert (
+            single((await tool([WebRead("https://example.com/page")])).data).content
+            == "hi"
+        )
 
     async def test_too_many_redirects_raises(
         self, monkeypatch: pytest.MonkeyPatch
@@ -422,7 +464,7 @@ class TestWebFetch:
 
         tool = _fetch_tool(monkeypatch, handler, max_redirects=3)
         with pytest.raises(ToolRetry, match="redirects"):
-            await tool(["https://example.com/loop"])
+            await tool([WebRead("https://example.com/loop")])
 
 
 class TestKnownUrls:
@@ -440,7 +482,7 @@ class TestKnownUrls:
             )
 
         tool = _fetch_tool(monkeypatch, handler)
-        out = await tool(["https://example.com/index"])
+        out = await tool([WebRead("https://example.com/index")])
 
         assert "[Page 3](https://example.com/p_3)" in single(out.data).content
         assert "https://example.com/p_3" in tool.known_urls
@@ -454,7 +496,7 @@ class TestKnownUrls:
         tool = _fetch_tool(monkeypatch, handler)
 
         with pytest.raises(ToolRetry, match="not appeared in the conversation"):
-            await tool(["https://example.com/start?secret=1"])
+            await tool([WebRead("https://example.com/start?secret=1")])
 
     def test_history_counts_only_user_and_web_tool_text(
         self, monkeypatch: pytest.MonkeyPatch

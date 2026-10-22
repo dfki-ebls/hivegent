@@ -33,7 +33,7 @@ from ...tools import (
 )
 from ...tools.base import ToolSpec
 from ...tools.pydantic_ai import register_agent_tools
-from ..common import UserDeps, agent_toolset
+from ..common import WINDOW_MAX_CHARS, UserDeps, agent_toolset
 
 __all__ = ["WEB_FACTORIES", "record_known_urls", "web_enabled", "web_toolset"]
 
@@ -69,8 +69,10 @@ def _web_fetch(deps: UserDeps) -> WebFetch:
     return WebFetch(
         client=get_web_http_client(),
         known_urls=deps.known_urls,
+        fetched=deps.fetched_pages,
         timeout_seconds=network.web_timeout_seconds,
         max_response_bytes=network.webfetch_max_response_bytes,
+        max_chars=WINDOW_MAX_CHARS,
         fast_extraction=network.webfetch_fast_extraction,
         user_agent=_user_agent,
     )

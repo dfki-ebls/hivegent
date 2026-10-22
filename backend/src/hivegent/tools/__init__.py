@@ -37,6 +37,7 @@ from .retrieval import SearchResult, SearchType, VectorSearchTool
 from .scope import Scope
 from .table import QueryTableTool, TableResult
 from .web import (
+    FetchedPages,
     KnownUrls,
     OpenserpBackend,
     SearchBackend,
@@ -62,6 +63,7 @@ __all__ = [
     "DocumentRead",
     "DocumentSummary",
     "EditDocumentTool",
+    "FetchedPages",
     "GrepLine",
     "GrepMatch",
     "GrepTool",

@@ -3,7 +3,8 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr
@@ -29,14 +30,16 @@ from .base import (
     BatchShare,
     FullLinesArg,
     ItemFailure,
+    OffsetArg,
     ToolOutput,
     ToolRetry,
     batch_field,
     run_batch,
 )
-from .formatting import BLOCK_SEP, LineClip, hint_suffix, iter_annotated
+from .formatting import BLOCK_SEP, LineClip, fit_window, hint_suffix
 
 __all__ = [
+    "FetchedPages",
     "KnownUrls",
     "OpenserpBackend",
     "SearchBackend",
@@ -49,13 +52,15 @@ __all__ = [
     "WebPage",
     "WebQuery",
     "WebQueryArg",
+    "WebRead",
+    "WebReadsArg",
     "WebSearch",
     "WebSearchHit",
     "WebSearchResults",
     "WebSearchesArg",
     "WebTimeRange",
     "WebTimeRangeArg",
-    "WebUrlsArg",
+    "WebUrlArg",
     "build_user_agent",
 ]
 
@@ -155,6 +160,57 @@ class KnownUrls:
         return _url_key(url) in self.urls
 
 
+@dataclass(slots=True, frozen=True)
+class _Page:
+    """A fetched page's readable text, which every window of it is cut from."""
+
+    url: str
+    title: str
+    lines: tuple[str, ...]
+    published: str | None
+    links: tuple[str, ...]
+    truncated: bool
+
+
+@dataclass(slots=True)
+class FetchedPages:
+    """The pages a turn fetched, so reading on from an offset downloads none again.
+
+    Each page is held as the task fetching it, so the reads of one page in a
+    batch share a single download, and a failed one is forgotten, so a later
+    call tries again.  At most ``max_pages`` are kept, the least recently read
+    going first.  Shared with subagents and programs, like :class:`KnownUrls`.
+    """
+
+    max_pages: int = 8
+    _pages: OrderedDict[str, asyncio.Task[_Page]] = field(
+        default_factory=OrderedDict, init=False
+    )
+
+    async def get(self, url: str, fetch: Callable[[], Awaitable[_Page]]) -> _Page:
+        """The page at *url*, fetched with *fetch* unless it already was."""
+        key = _url_key(url) or url
+
+        if (task := self._pages.get(key)) is not None:
+            self._pages.move_to_end(key)
+        else:
+            task = self._pages[key] = asyncio.ensure_future(fetch())
+
+            if len(self._pages) > self.max_pages:
+                _ = self._pages.popitem(last=False)
+
+        # Shielded, so one cancelled read does not cancel the download the
+        # other reads of the page wait on.
+        try:
+            return await asyncio.shield(task)
+
+        except Exception:
+            if self._pages.get(key) is task:
+                del self._pages[key]
+
+            raise
+
+
 def build_user_agent(contact: str = "") -> str:
     """Build a descriptive User-Agent identifying the app and an operator.
 
@@ -207,10 +263,33 @@ WebMaxResultsArg = Annotated[
     int,
     Field(description="Maximum number of results to return per search.", ge=1, le=20),
 ]
-WebUrlsArg = Annotated[
-    list[str],
+WebUrlArg = Annotated[str, Field(description="HTTP or HTTPS URL to fetch.")]
+
+
+@dataclass(slots=True, frozen=True)
+class WebRead:
+    """One page to fetch, and the line of its text to read on from."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    url: WebUrlArg
+    offset: OffsetArg = 1
+
+    @property
+    def key(self) -> str:
+        """The URL, plus the offset when it is not the first line.
+
+        >>> WebRead("https://a.example", offset=40).key
+        'https://a.example (offset=40)'
+        """
+        return self.url if self.offset == 1 else f"{self.url} (offset={self.offset})"
+
+
+WebReadsArg = Annotated[
+    list[WebRead],
     batch_field(
-        "HTTP or HTTPS URLs to fetch. Fetch every page you need in one call, "
+        "Pages to fetch, each with an optional offset. Fetch every page you "
+        "need in one call, since the output budget is shared between them, "
         "and a page that fails is reported without failing the others."
     ),
 ]
@@ -579,18 +658,23 @@ def _search_output(
 
 @dataclass(slots=True, frozen=True)
 class WebPage:
-    """Readable content extracted from a fetched web page.
+    """The window of readable text a call shows of a fetched web page.
 
     ``requested_url`` is the URL asked for and ``url`` the final one after
-    redirects.  ``content`` is the page's main content as markdown (for HTML)
-    or its raw text (for plain-text and JSON responses), ``published`` the date the page states it was published, if
-    any, and ``links`` the absolute targets of all its links or the URLs its
-    text spells out.
+    redirects.  The page's text is its main content as markdown (for HTML) or
+    its raw text (for plain-text and JSON responses), and ``content`` holds
+    its lines ``start_line`` to ``end_line`` of ``total_lines``, as a
+    :class:`~hivegent.tools.documents.DocumentRange` does.  ``published`` is
+    the date the page states it was published, if any, and ``links`` the
+    absolute targets of all its links or the URLs its text spells out.
     """
 
     requested_url: str
     url: str
     title: str
+    start_line: int
+    end_line: int
+    total_lines: int
     content: str
     truncated: bool
     published: str | None = None
@@ -684,12 +768,15 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
 
     ``timeout_seconds`` bounds each page download as a whole and
     ``max_response_bytes`` caps how many raw bytes are downloaded per
-    page.  ``max_line_chars`` truncates each numbered line so a data-URI or
-    minified line cannot flood the context, unless the call passes
-    ``full_lines``, and ``fast_extraction`` trades some recall for less CPU
-    per page.  A call keeps at most a few requests in flight.
+    page.  ``max_chars`` bounds the window of lines shown, which a call
+    fetching several pages splits between them and the model reads on from by
+    ``offset``, as with ``read_document``.  ``max_line_chars`` truncates each
+    numbered line so a data-URI or minified line cannot flood the context,
+    unless the call passes ``full_lines``, and ``fast_extraction`` trades some
+    recall for less CPU per page.  A call keeps at most a few requests in flight.
     Only a URL in ``known_urls`` is fetched, and every page a fetched page
-    links to joins it.
+    links to joins it.  ``fetched`` holds the turn's pages, so reading on from
+    an offset neither downloads nor extracts a page again.
     ``client`` is the pooled web client: its request hook validates the URL and
     every redirect hop against the URL host policy, and the egress proxy rejects
     non-public destinations after resolution.  Following redirects and the hop
@@ -704,13 +791,15 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
     known_urls: KnownUrls
     timeout_seconds: float
     max_response_bytes: int = 5_000_000
+    max_chars: int = 40_000
     max_line_chars: int = 2000
     fast_extraction: bool = False
+    fetched: FetchedPages = field(default_factory=FetchedPages)
     user_agent: str = field(default_factory=build_user_agent)
 
     @override
     async def __call__(
-        self, urls: WebUrlsArg, full_lines: FullLinesArg = False
+        self, pages: WebReadsArg, full_lines: FullLinesArg = False
     ) -> ToolOutput[Batch[WebPage]]:
         """Fetch one or more web pages as readable text.
 
@@ -719,31 +808,35 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
         HTML is reduced to its main content as markdown, without navigation,
         ads, or comments.  Plain-text and JSON responses pass through
         unchanged.  Each content line is numbered
-        so it can be cited like a document line.  Redirects are followed
+        so it can be cited like a document line, and a long page is shown
+        from ``offset`` as far as the budget shared by the pages allows, with
+        the offset to read on from.  Redirects are followed
         by the client, whose request hook checks every hop against the URL
         host policy before the egress proxy connects.  Each page is shown
         under the URL it was asked for, and a URL redirecting to a page
         already fetched is not shown twice.
         """
 
-        async def fetch(url: str, _share: BatchShare) -> ToolOutput[WebPage]:
-            return await self._fetch_or_retry(url, full_lines)
+        async def fetch(read: WebRead, share: BatchShare) -> ToolOutput[WebPage]:
+            return await self._fetch_or_retry(read, full_lines, share)
 
         output = await run_batch(
-            urls,
+            pages,
             fetch,
-            key=lambda url: url,
+            key=lambda read: read.key,
             concurrency=_WEB_CONCURRENCY,
-            identity=lambda page: page.url,
+            identity=lambda page: (page.url, page.start_line),
         )
         self.known_urls.add_results(output.data)
 
         return output
 
-    async def _fetch_or_retry(self, url: str, full_lines: bool) -> ToolOutput[WebPage]:
+    async def _fetch_or_retry(
+        self, read: WebRead, full_lines: bool, share: BatchShare
+    ) -> ToolOutput[WebPage]:
         """Fetch one page, turning every failure into a correctable refusal."""
         try:
-            return await self._fetch(url, full_lines)
+            return await self._fetch(read, full_lines, share)
         except ToolRetry:
             raise
         except (TimeoutError, httpx2.TimeoutException) as exc:
@@ -753,16 +846,24 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
         except (UnsafeUrlError, httpx2.RequestError) as exc:
             raise ToolRetry(str(exc) or "request failed.") from exc
         except Exception as exc:
-            logger.exception("Web fetch failed for URL %r", url)
+            logger.exception("Web fetch failed for URL %r", read.url)
             raise ToolRetry("failed to fetch URL.") from exc
 
-    async def _fetch(self, url: str, full_lines: bool) -> ToolOutput[WebPage]:
-        if url not in self.known_urls:
+    async def _fetch(
+        self, read: WebRead, full_lines: bool, share: BatchShare
+    ) -> ToolOutput[WebPage]:
+        if read.url not in self.known_urls:
             raise ToolRetry(
                 "this URL has not appeared in the conversation; fetch only URLs "
                 "the user gave, search results, or links on fetched pages."
             )
 
+        page = await self.fetched.get(read.url, lambda: self._download(read.url))
+        clip = LineClip(None if full_lines else self.max_line_chars)
+
+        return self._window(read, page, clip, share.of(self.max_chars))
+
+    async def _download(self, url: str) -> _Page:
         async with (
             asyncio.timeout(self.timeout_seconds),
             self.client.stream(
@@ -779,9 +880,7 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
 
         # Parsing a multi-megabyte page is CPU-bound, so it must not stall the
         # event loop every other request of the server shares.
-        return await asyncio.to_thread(
-            self._finalize, url, response, mime, body, truncated, full_lines
-        )
+        return await asyncio.to_thread(self._extract, response, mime, body, truncated)
 
     async def _read_capped(self, response: httpx2.Response) -> tuple[bytes, bool]:
         """Stream the response body up to the configured byte cap.
@@ -799,53 +898,64 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
 
         return bytes(buffer), False
 
-    def _finalize(
-        self,
-        requested_url: str,
-        response: httpx2.Response,
-        mime: str,
-        body: bytes,
-        truncated: bool,
-        full_lines: bool,
-    ) -> ToolOutput[WebPage]:
+    def _extract(
+        self, response: httpx2.Response, mime: str, body: bytes, truncated: bool
+    ) -> _Page:
         url = str(response.url)
+
         if _is_html(mime):
-            title, content, published, links = _extract_html(
+            title, text, published, links = _extract_html(
                 body, url, fast=self.fast_extraction
             )
         else:
             title, published = "", None
-            content = body.decode(
-                response.encoding or "utf-8", errors="replace"
-            ).strip()
-            links = _spelled_urls(content, "://")
+            text = body.decode(response.encoding or "utf-8", errors="replace").strip()
+            links = _spelled_urls(text, "://")
 
-        page = WebPage(
-            requested_url=requested_url,
+        return _Page(
             url=url,
             title=title,
-            content=content,
-            truncated=truncated,
+            lines=tuple(text.splitlines()),
             published=published,
             links=links,
+            truncated=truncated,
         )
 
-        if not content:
+    def _window(
+        self, read: WebRead, fetched: _Page, clip: LineClip, max_chars: int
+    ) -> ToolOutput[WebPage]:
+        """The window of *fetched* that *read* asks for."""
+        window = fit_window(fetched.lines, read.offset, max_chars, clip)
+        page = WebPage(
+            requested_url=read.url,
+            url=fetched.url,
+            title=fetched.title,
+            start_line=window.start,
+            end_line=window.end,
+            total_lines=window.total,
+            content=window.content,
+            truncated=fetched.truncated,
+            published=fetched.published,
+            links=fetched.links,
+        )
+
+        if not window.total:
             return ToolOutput(data=page, formatted="(no readable text on this page)")
 
-        header = f"{title} ({url})" if title else url
+        if past_end := window.past_end("page"):
+            return ToolOutput(data=page, formatted=past_end)
 
-        if published:
-            header += f", published {published}"
+        header = f"{page.title} ({page.url})" if page.title else page.url
 
-        clip = LineClip(None if full_lines else self.max_line_chars)
-        rendered = "\n".join(iter_annotated(content.splitlines(), 1, clip))
-        hints = clip.hints()
+        if page.published:
+            header += f", published {page.published}"
 
-        if truncated:
+        hints = clip.hints() + window.hints()
+
+        if page.truncated:
             cap = format_bytes(self.max_response_bytes)
             hints.append(f"page cut at the {cap} download cap")
 
-        suffix = hint_suffix(hints)
-
-        return ToolOutput(data=page, formatted=f"{header}\n{rendered}{suffix}")
+        return ToolOutput(
+            data=page, formatted=f"{header}\n{window.rendered}{hint_suffix(hints)}"
+        )

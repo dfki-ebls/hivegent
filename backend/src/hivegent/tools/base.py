@@ -76,6 +76,7 @@ __all__ = [
     "Gated",
     "IncludeIgnoredArg",
     "ItemFailure",
+    "OffsetArg",
     "PathTool",
     "SearchPath",
     "SearchPathFilterFunc",
@@ -192,6 +193,12 @@ IncludeIgnoredArg = Annotated[
         ),
     ),
 ]
+
+OffsetArg = Annotated[
+    int,
+    Field(description="1-based line to start reading from.", ge=1),
+]
+"""Where ``read_document`` and ``web_fetch`` show a text from, to read on past a window."""
 
 FullLinesArg = Annotated[
     bool,

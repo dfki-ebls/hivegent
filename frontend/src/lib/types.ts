@@ -321,12 +321,17 @@ export interface DocumentInfo {
 export const DocumentLineCountsResponseSchema = z.object({
   line_counts: z.record(z.string(), z.number()),
 });
-export const DocumentRangeSchema = z.object({
-  file_path: z.string(),
+/** The lines ``start_line`` to ``end_line`` of a text, as ``read_document`` and ``web_fetch`` return them. */
+export const LineRangeSchema = z.object({
   start_line: z.number(),
   end_line: z.number(),
   total_lines: z.number(),
   content: z.string(),
+});
+export type LineRange = z.infer<typeof LineRangeSchema>;
+
+export const DocumentRangeSchema = LineRangeSchema.extend({
+  file_path: z.string(),
   content_hash: z.string(),
 });
 export type DocumentRange = z.infer<typeof DocumentRangeSchema>;

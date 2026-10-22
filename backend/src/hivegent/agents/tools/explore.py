@@ -15,7 +15,7 @@ from ...tools import (
     VectorSearchTool,
 )
 from ...tools.pydantic_ai import register_agent_tools
-from ..common import UserDeps, agent_toolset
+from ..common import WINDOW_MAX_CHARS, UserDeps, agent_toolset
 
 __all__ = ["EXPLORE_FACTORIES", "explore_toolset"]
 
@@ -24,14 +24,8 @@ def _list_documents(deps: UserDeps) -> ListDocumentsTool:
     return ListDocumentsTool(paths=deps.search_paths())
 
 
-# A read resumes from an offset into the document rather than from a saved copy
-# of its window, so a whole window has to show, and a third of the output bound
-# is left for the line numbers and headers it is rendered with.
-_READ_MAX_CHARS = settings.llm.tool_output_max_chars * 2 // 3
-
-
 def _read_document(deps: UserDeps) -> ReadDocumentTool:
-    return ReadDocumentTool(paths=deps.search_paths(), max_chars=_READ_MAX_CHARS)
+    return ReadDocumentTool(paths=deps.search_paths(), max_chars=WINDOW_MAX_CHARS)
 
 
 def _read_binary_document(deps: UserDeps) -> ReadBinaryDocumentTool:

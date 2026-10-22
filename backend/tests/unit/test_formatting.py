@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
-from hivegent.tools.formatting import fit_lines, truncate_middle
+from hivegent.tools.formatting import LineClip, fit_window, truncate_middle
 
 
 def _read_on(head: str) -> str:
@@ -25,18 +25,21 @@ def test_a_middle_cut_keeps_its_note_whole() -> None:
     assert note in truncate_middle("line\n" * 1_000, len(note) + 2, lambda _head: note)
 
 
-class TestFitLines:
+class TestFitWindow:
     """The budget that bounds how many lines a tool takes."""
 
     def test_keeps_contiguous_prefix(self) -> None:
         # A later short line must not backfill past a dropped one: callers
         # resume from where the output stops, so a gap would lose content.
-        assert fit_lines(["aaaa", "bbbbbbbb", "c"], 6) == 1
+        window = fit_window(["aaaa", "bbbbbbbb", "c"], 1, 10, LineClip(None))
+        assert (window.content, window.end) == ("aaaa", 1)
 
     def test_keeps_first_line_however_long(self) -> None:
-        assert fit_lines(["x" * 500, "y"], 10) == 1
+        window = fit_window(["x" * 500, "y"], 1, 10, LineClip(None))
+        assert window.end == 1
+        assert window.hints() == ["1 more line, call again with offset=2"]
 
-    def test_stops_reading_at_the_first_overflow(self) -> None:
-        lines = iter(["aa", "bb", "cc", "dd"])
-        assert fit_lines(lines, 4) == 1
-        assert list(lines) == ["cc", "dd"]
+    def test_measures_lines_as_clipped(self) -> None:
+        window = fit_window(["x" * 500, "y"], 1, 20, LineClip(5))
+        assert window.end == 2
+        assert window.hints() == []

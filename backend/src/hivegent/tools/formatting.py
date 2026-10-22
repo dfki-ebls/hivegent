@@ -7,6 +7,7 @@ wherever text is assembled for a model to read.
 import reprlib
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import islice
 
 from ..humanize import pluralize
 
@@ -14,10 +15,10 @@ __all__ = [
     "BLOCK_SEP",
     "GROUP_SEP",
     "LineClip",
+    "LineWindow",
     "annotate_lines",
-    "fit_lines",
+    "fit_window",
     "hint_suffix",
-    "iter_annotated",
     "number_line",
     "omission_hints",
     "render_arguments",
@@ -247,36 +248,87 @@ class LineClip:
         ]
 
 
-def fit_lines(lines: Iterable[str], max_chars: int) -> int:
-    """How many of *lines*, joined by newlines, fit within *max_chars*.
+@dataclass(slots=True, frozen=True)
+class LineWindow:
+    """The run of a text's lines one call shows, as the client and the model get it."""
 
-    The lines that fit are a contiguous prefix rather than whichever later
-    lines happened to fit, so a caller can resume from exactly where the
-    output stops, and nothing past the first line that overflows is read.  The
-    first line counts however long it is, since a lone oversized line can tell
-    the reader more than an empty result with a notice.
+    start: int
+    end: int
+    total: int
+    content: str
+    """The lines shown, unclipped, for the client."""
+    rendered: str
+    """The lines shown, numbered and clipped, for the model."""
+
+    def past_end(self, noun: str) -> str | None:
+        """The message standing in for a window that starts past the end of the *noun*."""
+        if self.start <= self.total:
+            return None
+
+        lines = pluralize(self.total, "line")
+
+        return f"(offset {self.start} is past the end of the {noun} with {self.total} {lines})"
+
+    def hints(self) -> list[str]:
+        """The hint naming where to read on, or none at the end of the text."""
+        remaining = self.total - self.end
+
+        if remaining <= 0:
+            return []
+
+        noun = pluralize(remaining, "line")
+
+        return [f"{remaining} more {noun}, call again with offset={self.end + 1}"]
+
+
+def fit_window(
+    lines: Sequence[str],
+    start: int,
+    max_chars: int,
+    clip: LineClip,
+    limit: int | None = None,
+) -> LineWindow:
+    """The lines from *start* on, at most *limit*, that fit *max_chars* rendered through *clip*.
+
+    The lines are measured as rendered, numbered and clipped, since the
+    numbers of many short lines would otherwise push the window past what a
+    tool return shows whole.  They are a contiguous prefix rather than
+    whichever later lines happened to fit, so a caller resumes from exactly
+    where the output stops, and nothing past the first line that overflows is
+    rendered.  The first line counts however long it is, since a lone
+    oversized line tells the reader more than an empty result.
 
     This is a different axis from :class:`LineClip`, which bounds a single
     runaway line.
 
-    >>> fit_lines(["ab", "cd", "ef"], 5)
-    2
-    >>> fit_lines(["abcdef"], 3)
-    1
+    >>> window = fit_window(["ab", "cd", "ef"], 2, 8, LineClip(None))
+    >>> window.rendered, window.hints()
+    ('2: cd', ['1 more line, call again with offset=3'])
     """
-    count = 0
+    stop = len(lines) if limit is None else min(len(lines), start + limit - 1)
+    # A throwaway clip, since it also sees the line that did not fit.
+    measure = LineClip(clip.max_chars)
+    kept = 0
     # The first line takes no newline before it.
-    total = -1
+    size = -1
 
-    for line in lines:
-        total += len(line) + 1
+    for line in _iter_annotated(islice(lines, start - 1, stop), start, measure):
+        size += len(line) + 1
 
-        if count and total > max_chars:
+        if kept and size > max_chars:
             break
 
-        count += 1
+        kept += 1
 
-    return count
+    shown = lines[start - 1 : start - 1 + kept]
+
+    return LineWindow(
+        start=start,
+        end=start + kept - 1,
+        total=len(lines),
+        content="\n".join(shown),
+        rendered="\n".join(_iter_annotated(shown, start, clip)),
+    )
 
 
 def hint_suffix(hints: Sequence[str]) -> str:
@@ -343,7 +395,7 @@ def omission_hints(
     return hints
 
 
-def iter_annotated(
+def _iter_annotated(
     lines: Iterable[str],
     start_line: int = 1,
     clip: LineClip | None = None,
@@ -353,7 +405,7 @@ def iter_annotated(
     The line-at-a-time form of :func:`annotate_lines`, for callers that join
     the numbered lines themselves.
 
-    >>> list(iter_annotated(["a", "b"], start_line=4))
+    >>> list(_iter_annotated(["a", "b"], start_line=4))
     ['4: a', '5: b']
     """
     for i, line in enumerate(lines):
@@ -370,7 +422,7 @@ def annotate_lines(
     Without per-line numbers an LLM can only see a chunk's overall line
     range and has to guess which line a sentence is on, producing off-by-one
     citations.  When *clip* is given, each line is first clipped by it so one
-    very long line cannot flood the context.  :func:`fit_lines` is the
+    very long line cannot flood the context.  :func:`fit_window` is the
     counterpart budget on the output as a whole.
 
     >>> annotate_lines(["a", "b"], start_line=4)
@@ -378,4 +430,4 @@ def annotate_lines(
     >>> annotate_lines(["abcdef"], clip=LineClip(3))
     '1: ab…'
     """
-    return "\n".join(iter_annotated(lines, start_line, clip))
+    return "\n".join(_iter_annotated(lines, start_line, clip))
