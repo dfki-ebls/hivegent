@@ -15,7 +15,7 @@ from pydantic_ai import (
     RunContext,
 )
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
-from pydantic_ai.exceptions import IncompleteToolCall
+from pydantic_ai.exceptions import IncompleteToolCall, ToolRetryError
 from pydantic_ai.messages import (
     FinishReason,
     ModelMessage,
@@ -275,13 +275,13 @@ async def _spill(
     capability: AbstractCapability[UserDeps] | None = None,
     note: str | None = None,
 ) -> Any:
-    """Bound *result* to 1000 characters as a grep call's return."""
+    """Bound *result* to 1000 characters and its data to 50 kB as a grep call's return."""
     deps = UserDeps(
         user=User("u"),
         mode="read",
         conversation=None if conversation is None else owned(conversation),
     )
-    capability = capability or ToolOutputSpill(max_chars=1_000)
+    capability = capability or ToolOutputSpill(max_chars=1_000, max_data_bytes=50_000)
 
     return await capability.after_tool_execute(
         RunContext(
@@ -317,7 +317,7 @@ async def test_a_structured_result_too_large_to_show_is_saved_as_json(
     spilled = await _spill(result)
 
     assert isinstance(spilled, ToolReturn)
-    assert spilled.metadata is result.metadata
+    assert spilled.metadata is None
     preview = spilled.return_value
     assert isinstance(preview, str)
     assert len(preview) <= 1_000
@@ -340,10 +340,47 @@ async def test_a_display_only_payload_saves_the_text(data_dir: Path) -> None:
     spilled = await _spill(result)
 
     assert isinstance(spilled, ToolReturn)
+    assert spilled.metadata is result.metadata
     preview = spilled.return_value
     assert isinstance(preview, str)
     assert "read_document from offset=" in preview
     assert _saved(preview, data_dir).read_text() == text
+
+
+async def test_data_too_large_for_the_frontend_is_dropped(data_dir: Path) -> None:
+    result = wrap_tool_output(
+        ToolOutput(data=[_Row("x" * 1_000) for _ in range(100)], formatted="short")
+    )
+
+    spilled = await _spill(result)
+
+    assert isinstance(spilled, ToolReturn)
+    assert spilled.return_value == "short"
+    assert spilled.metadata is None
+    assert not (data_dir / "conversations").exists()
+
+
+async def test_a_retry_prompt_is_bounded_like_a_result() -> None:
+    async def fail(_args: Any) -> Any:
+        raise ToolRetryError(RetryPromptPart(content="x\n" * 2_000, tool_name="grep"))
+
+    with pytest.raises(ToolRetryError) as caught:
+        await ToolOutputSpill(max_chars=1_000, max_data_bytes=50_000).wrap_tool_execute(
+            RunContext(
+                deps=UserDeps(user=User("u"), mode="read"),
+                model=TestModel(),
+                usage=RunUsage(),
+            ),
+            call=ToolCallPart(tool_name="grep", args={}, tool_call_id="call-1"),
+            tool_def=ToolDefinition(name="grep"),
+            args={},
+            handler=fail,
+        )
+
+    content = caught.value.tool_retry.content
+    assert isinstance(content, str)
+    assert len(content) <= 1_000
+    assert "characters left out here" in content
 
 
 async def test_a_result_that_fits_passes_untouched(data_dir: Path) -> None:
@@ -390,7 +427,8 @@ async def test_the_approval_note_wraps_the_spill_whatever_the_list_order(
     data_dir: Path,
 ) -> None:
     """The order is declared, so the note is added after the text was bounded."""
-    spill, notes = ToolOutputSpill(max_chars=1_000), ApprovalNotes()
+    spill = ToolOutputSpill(max_chars=1_000, max_data_bytes=50_000)
+    notes = ApprovalNotes()
     combined = CombinedCapability[UserDeps]([spill, notes])
 
     assert combined.capabilities == [notes, spill]

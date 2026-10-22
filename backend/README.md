@@ -399,9 +399,10 @@ The file is `<tool>-<digest>.json` with the structured data when the return has 
 `tmp.save_result` commits it through the gateway as the host into the reserved folder, and the quota evicts the oldest saved results when needed, never anything else.
 The preview is the head and tail cut at line ends around a note naming the file, its size, its entry count, whether the tool already truncated, and how to read on.
 A content list keeps its non-text items, and a run without `/tmp` or a result that does not fit gets the same preview with a count of what was left out.
+The structured data is kept once: the `data-tool-output` chunk is dropped when its data went to the file, and when it serializes past `settings.llm.tool_data_max_bytes`, since the frontend loads and the database stores every chunk of a conversation.
 Tools keep only data budgets (`row_limit`, `max_results`, `max_chars`, widths), and `read_document`'s `max_chars` is two thirds of the spill threshold, so a numbered window stays under it.
 Every budget can be lifted by the model: counts have no upper bound, `read_document` pages by `offset`, and `full_lines` lifts the per-line or per-cell clip of `read_document`, `grep`, `search`, `web_fetch`, and `query_table`, each clipping through a `tools.formatting.LineClip` that names its own cut.
-`run_python` names a cut of its rendered return value, which `print()` gives whole.
+`run_python` names a cut of its rendered return value, which `print()` gives whole, and the spill clamps a failed call's retry prompt at the same `tool_output_max_chars` without saving it.
 Listings name what they left out through `omission_hints` (`include_ignored`, `max_depth`, `max_results`), each count being what changing that argument would reveal.
 
 ## The Python sandbox

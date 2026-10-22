@@ -364,8 +364,10 @@ class LlmSettings(BaseModel):
     most plain text (LLM-facing) any tool return shows the model or an MCP
     client.  A larger one is saved whole under the conversation's
     ``/tmp/.tool-results/`` and shown as its head and tail around a note naming the
-    file, or only clamped to them where the run has no ``/tmp``, while its
-    structured data stays intact either way.
+    file, or only clamped to them where the run has no ``/tmp``.
+    ``tool_data_max_bytes`` is the most structured data (frontend-facing, as
+    JSON) a tool return streams and stores, and a larger one is dropped, as is
+    one saved to that file, so the data is kept once.
     """
 
     model: str = ""
@@ -383,6 +385,7 @@ class LlmSettings(BaseModel):
     caption_concurrency: int = 4
     subagent_timeout_seconds: float | None = 180.0
     tool_output_max_chars: int = 60_000
+    tool_data_max_bytes: int = 1_000_000
     retries: int = 20
 
 

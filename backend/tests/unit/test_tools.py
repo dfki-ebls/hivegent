@@ -1424,18 +1424,6 @@ class TestRunPythonTool:
             await tool("print('before')\n1 / 0")
         assert "before" in str(exc_info.value)
 
-    async def test_failure_diagnostic_fits_output_budget(
-        self, tool: RunPythonTool
-    ) -> None:
-        capped = replace(tool, max_diagnostic_chars=600)
-
-        with pytest.raises(ToolRetry) as exc_info:
-            await capped("raise ValueError('x' * 10_000)")
-
-        diagnostic = str(exc_info.value)
-        assert len(diagnostic) <= 600
-        assert "characters left out here" in diagnostic
-
     async def test_time_limit_bounds_a_runaway_program(
         self, tool: RunPythonTool
     ) -> None:

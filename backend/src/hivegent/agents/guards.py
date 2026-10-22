@@ -11,8 +11,8 @@ Five capabilities that guard a run without belonging to any one feature:
 * :class:`ToolOutputSpill` bounds the plain text a tool return sends the
   model, saving a larger one whole under the conversation's
   ``/tmp/.tool-results/`` and showing its head and tail around a note naming the
-  file, while leaving the structured ``DataChunk`` (and the binary items of a
-  multimodal return) untouched, so a runaway return cannot dominate the
+  file, and keeps the structured ``DataChunk`` only where it is neither saved
+  there nor too large for the frontend, so a runaway return cannot dominate the
   context and re-cost every later request, and none of it is out of reach.
   The cut itself is :func:`~hivegent.tools.formatting.truncate_middle`, which
   the MCP adapter applies to its returns too.
@@ -48,7 +48,6 @@ return itself, which is recorded in place of the original, so there the
 reduction is what persists.
 """
 
-import asyncio
 import hashlib
 import re
 from collections.abc import Callable, Sequence
@@ -339,38 +338,30 @@ def _saved_note(path: str, size: int, data: Any, head: str) -> str:
 
 
 async def _save(
-    root: SearchPath, call: ToolCallPart, text: str, data: Any
+    root: SearchPath, call: ToolCallPart, text: str, data: Any, encoded: bytes | None
 ) -> Callable[[str], str] | None:
     """Save the whole result into *root*, returning the note naming it, or ``None``.
 
-    The structured data is saved where there is any, since it is whole where
-    the text may be a rendering of part of it, and the text otherwise.  It is
-    serialized and sized on a worker thread.  ``None`` for a result the folder
-    cannot hold, which then keeps only what the preview shows.
+    The structured *data* is saved as its *encoded* JSON where that is the
+    result, and the text otherwise.  ``None`` for a result the folder cannot
+    hold, which then keeps only what the preview shows.
     """
-    structured = data is not None
-    name = _file_name(call, "json" if structured else "txt")
-
-    def serialize() -> tuple[str, int]:
-        if not structured:
-            return text, len(text.encode())
-
-        encoded = to_json(data)
-
-        return encoded.decode(), len(encoded)
+    suffix, content = ("txt", text) if encoded is None else ("json", encoded.decode())
 
     try:
-        content, size = await asyncio.to_thread(serialize)
-        path = await save_result(root.path, name, content)
+        path = await save_result(root.path, _file_name(call, suffix), content)
     except ToolRetry:
         return None
 
-    return partial(_saved_note, path, size, data)
+    if encoded is None:
+        return partial(_saved_note, path, len(text.encode()), None)
+
+    return partial(_saved_note, path, len(encoded), data)
 
 
 @dataclass(slots=True)
 class ToolOutputSpill(AbstractCapability[UserDeps]):
-    """Bound the plain text a tool return sends the model, saving the whole of a larger one.
+    """Bound both channels of a tool return, saving the whole of a larger one.
 
     Applies to every tool uniformly, MCP ones included.  A tool return carries
     two channels: the LLM-facing text in ``ToolReturn.return_value`` and the
@@ -379,9 +370,17 @@ class ToolOutputSpill(AbstractCapability[UserDeps]):
     conversation's ``/tmp/.tool-results/`` (the structured data as ``.json`` where
     there is any and it is the result, the text as ``.txt`` otherwise) and
     replaced by its head and tail around a note naming the file, so the model
-    reads on from the file rather than calling the tool again.  Only the text
-    channel is touched, so the ``DataChunk`` rides through untouched.  A run
-    without a ``/tmp`` gets the same head and tail with a plain note.
+    reads on from the file rather than calling the tool again.  A run without a
+    ``/tmp`` gets the same head and tail with a plain note.
+
+    The structured data is kept once: a chunk whose data went to the file is
+    dropped, and so is one over ``max_data_bytes``, since the frontend loads
+    every chunk of a conversation and the database stores it.  The text then
+    stands alone, and names the file where there is one.
+
+    A failed call's retry prompt is clamped to ``max_chars`` the same way, as
+    one bound covers every text a tool sends the model, but never saved, since
+    a retry is no result to read on from.
 
     The text is a ``str`` return value or the leading ``str`` of a content
     list such as ``[text, BinaryContent]``, whose other items are kept as they
@@ -392,6 +391,33 @@ class ToolOutputSpill(AbstractCapability[UserDeps]):
     """
 
     max_chars: int
+    max_data_bytes: int
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[UserDeps],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        """Bound a failed call's retry prompt, which never reaches :meth:`after_tool_execute`."""
+        try:
+            return await handler(args)
+
+        except ToolRetryError as error:
+            retry = error.tool_retry
+
+            if (
+                not isinstance(retry.content, str)
+                or len(retry.content) <= self.max_chars
+            ):
+                raise
+
+            bounded = truncate_middle(retry.content, self.max_chars)
+
+            raise ToolRetryError(replace(retry, content=bounded)) from error
 
     async def after_tool_execute(
         self,
@@ -399,26 +425,36 @@ class ToolOutputSpill(AbstractCapability[UserDeps]):
         *,
         call: ToolCallPart,
         tool_def: ToolDefinition,
-        args: dict[str, Any],
+        args: ValidatedToolArgs,
         result: Any,
     ) -> Any:
-        """Save an oversized plain text tool return and show a preview of it."""
+        """Save an oversized tool return and bound what the model and the frontend get."""
         output = unwrap_tool_output(result)
         text = output.text
+        wrapped = isinstance(result, ToolReturn)
+        # Inline, since serializing holds the GIL on a worker thread all the same.
+        encoded = to_json(output.data) if wrapped and output.data is not None else None
+        data_over = encoded is not None and len(encoded) > self.max_data_bytes
 
         if text is None or len(text) <= self.max_chars:
-            return result
+            return replace(result, metadata=None) if data_over else result
 
+        saved = None if output.display_only else encoded
         root = ctx.deps.tmp
-        data = None if output.display_only else output.data
-        note = None if root is None else await _save(root, call, text, data)
+        note = (
+            None if root is None else await _save(root, call, text, output.data, saved)
+        )
         preview = truncate_middle(text, self.max_chars, note)
-        bounded = preview if output.rest is None else [preview, *output.rest]
+        value = preview if output.rest is None else [preview, *output.rest]
 
-        return (
-            replace(result, return_value=bounded)
-            if isinstance(result, ToolReturn)
-            else bounded
+        if not wrapped:
+            return value
+
+        # The data is kept once: in the file it went to, or in the chunk within its budget.
+        kept = not data_over and (saved is None or note is None)
+
+        return replace(
+            result, return_value=value, metadata=result.metadata if kept else None
         )
 
 

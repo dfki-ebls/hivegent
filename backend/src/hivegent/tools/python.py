@@ -34,7 +34,7 @@ from .base import (
     sidecar_hint,
 )
 from .changeset import ChangesetOutcome, CommitChanges, PendingChanges, stage_changes
-from .formatting import hint_suffix, truncate_middle
+from .formatting import hint_suffix
 from .monty import HostCall, HostCalls, MontySurface
 from .workspace_os import MOUNT_STUB, WORKSPACE_MOUNT, ChangesetLimits, WorkspaceOS
 
@@ -196,9 +196,7 @@ def _finished_calls(calls: Sequence[HostCall]) -> str:
     return "\n".join([header, *lines])
 
 
-def _diagnostic(
-    exc: MontyError, printed: str, calls: Sequence[HostCall], max_chars: int
-) -> str:
+def _diagnostic(exc: MontyError, printed: str, calls: Sequence[HostCall]) -> str:
     """Render a sandbox failure as text the model can repair its program from.
 
     A traceback is the whole correction for a program the model wrote itself,
@@ -224,7 +222,7 @@ def _diagnostic(
         detail,
     )
 
-    return truncate_middle("\n\n".join(filter(None, parts)), max_chars)
+    return "\n\n".join(filter(None, parts))
 
 
 @dataclass(slots=True, frozen=True)
@@ -303,9 +301,6 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     """How many calls one program may make to the functions of :attr:`surface`."""
 
     limits: ResourceLimits = field(default_factory=_default_limits)
-    max_diagnostic_chars: int = 20_000
-    """Cap on a failure's diagnostic, a retry the output bound never sees."""
-
     max_document_chars: int = 5_000_000
     """Cap on any one document this run reads or writes.
 
@@ -394,9 +389,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
                 calls.raise_ending()
 
                 raise ToolRetry(
-                    _diagnostic(
-                        exc, printed.output, calls.finished, self.max_diagnostic_chars
-                    )
+                    _diagnostic(exc, printed.output, calls.finished)
                 ) from exc
 
         calls.raise_ending()

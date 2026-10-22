@@ -50,7 +50,10 @@ _window = CompactionWindow()
 # chat run and its MCP servers, its subagents, and the MCP exploration alike.
 # pydantic-ai orders capabilities across the agent and the run layer as one
 # list, so the chat run's `ApprovalNotes` still wraps it.
-_spill = ToolOutputSpill(max_chars=settings.llm.tool_output_max_chars)
+_spill = ToolOutputSpill(
+    max_chars=settings.llm.tool_output_max_chars,
+    max_data_bytes=settings.llm.tool_data_max_bytes,
+)
 
 
 def _user_agent(name: str) -> Agent[UserDeps, str]:
