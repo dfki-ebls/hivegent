@@ -53,6 +53,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
   const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
   const addImage = useFetchedDocumentsStore((state) => state.addImage);
+  const claimOutput = useFetchedDocumentsStore((state) => state.claimOutput);
   const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
   const clearFilter = useDocumentFilterStore((state) => state.clear);
   const queryClient = useQueryClient();
@@ -179,7 +180,7 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
   // Runs here rather than in the context panel: a citation renders in the
   // transcript whether or not the panel is open, and it must not be shown
   // before we know the document it points at still exists.
-  useToolOutputSync(messages, addChunk, markFullDocument, addImage);
+  useToolOutputSync(messages, addChunk, markFullDocument, addImage, claimOutput);
   useChatErrorLogger(error, id, messages, buildRequestBody);
 
   const handleEditMessage = useCallback(

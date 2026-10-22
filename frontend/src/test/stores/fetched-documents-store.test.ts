@@ -150,4 +150,16 @@ describe("useFetchedDocumentsStore", () => {
       expect(state.documents.size).toBe(0);
     });
   });
+
+  describe("claimOutput", () => {
+    it("claims a payload once until the store is cleared", () => {
+      const payload = [{ file_path: "a.md" }];
+      const { claimOutput, clearAll } = useFetchedDocumentsStore.getState();
+
+      expect(claimOutput(payload)).toBe(true);
+      expect(claimOutput(payload)).toBe(false);
+      clearAll();
+      expect(useFetchedDocumentsStore.getState().claimOutput(payload)).toBe(true);
+    });
+  });
 });

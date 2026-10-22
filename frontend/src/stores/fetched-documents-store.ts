@@ -11,6 +11,11 @@ import {
 export interface FetchedDocumentsStore {
   chunks: Map<string, FetchedChunk>;
   documents: Map<string, FetchedDocument>;
+  /** The tool output payloads synced since the last reset, which keep their identity across streaming updates. */
+  synced: WeakSet<object>;
+
+  /** Claim *payload* for syncing, false when it was already synced since the last reset. */
+  claimOutput: (payload: object) => boolean;
 
   /**
    * Insert a chunk, creating/updating its parent document entry.  Pass
@@ -43,6 +48,7 @@ export interface FetchedDocumentsStore {
 export type AddChunk = FetchedDocumentsStore["addChunk"];
 export type MarkFullDocument = FetchedDocumentsStore["markFullDocument"];
 export type AddImage = FetchedDocumentsStore["addImage"];
+export type ClaimOutput = FetchedDocumentsStore["claimOutput"];
 
 /** Resolve a document's chunks through the `chunkIds` index the store maintains. */
 export function chunksForDocument(
@@ -54,9 +60,18 @@ export function chunksForDocument(
     .filter((chunk): chunk is FetchedChunk => chunk != null);
 }
 
-export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => ({
+export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set, get) => ({
   chunks: new Map(),
   documents: new Map(),
+  synced: new WeakSet(),
+
+  claimOutput: (payload) => {
+    const { synced } = get();
+    if (synced.has(payload)) return false;
+
+    synced.add(payload);
+    return true;
+  },
 
   addChunk: (chunk, totalLines) =>
     set((state) => {
@@ -133,5 +148,5 @@ export const useFetchedDocumentsStore = create<FetchedDocumentsStore>((set) => (
       return { documents: newDocs };
     }),
 
-  clearAll: () => set({ chunks: new Map(), documents: new Map() }),
+  clearAll: () => set({ chunks: new Map(), documents: new Map(), synced: new WeakSet() }),
 }));
