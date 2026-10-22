@@ -98,12 +98,13 @@ class TestRgSearch:
         )
 
     async def test_context_lines(self, tmp_path: Path) -> None:
-        (tmp_path / "test.txt").write_text("aaa\nbbb\nccc\nddd\neee\n")
+        (tmp_path / "test.txt").write_text("aaa\nbbb\näb ccc\nddd\neee\n")
         matches = await rg_search("ccc", tmp_path, context_lines=1)
         assert len(matches) == 1
+        # The offset counts characters, not the two bytes UTF-8 spends on ä.
         assert matches[0].lines == (
             RgLine(line_number=2, text="bbb", is_match=False),
-            RgLine(line_number=3, text="ccc", is_match=True),
+            RgLine(line_number=3, text="äb ccc", is_match=True, match_start=3),
             RgLine(line_number=4, text="ddd", is_match=False),
         )
 

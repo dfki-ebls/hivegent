@@ -19,9 +19,11 @@ __all__ = [
     "number_line",
     "omission_hints",
     "render_arguments",
+    "truncate_around",
     "truncate_block",
     "truncate_line",
     "truncate_middle",
+    "window_start",
 ]
 
 BLOCK_SEP = "\n---\n"
@@ -70,6 +72,43 @@ def truncate_line(text: str, max_chars: int | None = None) -> str:
         return text
 
     return text[: max_chars - 1] + "…" if max_chars > 0 else ""
+
+
+def window_start(text: str, start: int, max_chars: int) -> int:
+    """Where :func:`truncate_around` opens its window onto *text*.
+
+    A quarter of the budget before *start*, so the lead-in reads too, and never
+    past where the rest of *text* still fills the window.
+
+    >>> window_start("a" * 100, 50, 20), window_start("a" * 100, 99, 20)
+    (45, 80)
+    """
+    if len(text) <= max_chars:
+        return 0
+
+    return max(min(start - max_chars // 4, len(text) - max_chars), 0)
+
+
+def truncate_around(text: str, start: int, max_chars: int) -> str:
+    """Clip *text* to *max_chars* characters kept around offset *start*.
+
+    For a line whose point of interest, such as a search hit, may sit far past
+    what :func:`truncate_line` keeps of its head.  The window opens at
+    :func:`window_start`, and each cut side is marked with an ellipsis.
+
+    >>> truncate_around("a" * 20 + "hit" + "b" * 20, 20, 12)
+    '…aahitbbbbb…'
+    >>> truncate_around("hit and more", 0, 8)
+    'hit and…'
+    """
+    begin = window_start(text, start, max_chars)
+
+    if not begin:
+        return truncate_line(text, max_chars)
+
+    # The leading ellipsis takes the place of the first character kept, and
+    # one character past the window is enough to tell whether the tail is cut.
+    return "…" + truncate_line(text[begin + 1 : begin + max_chars + 1], max_chars - 1)
 
 
 def _head_and_tail(text: str, room: int) -> tuple[str, str]:

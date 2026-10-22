@@ -1298,6 +1298,31 @@ class TestGrepFormatting:
         )
         assert tool._format_matches([block]) == "doc.md\n10-ctx\n11:hit"
 
+    def test_a_wide_line_is_clipped_around_its_match(self, tmp_path: Path) -> None:
+        # A hit deep in a wide table row survives the clip, and a wide context
+        # row stays clipped even when full_lines lifts it for the match.
+        tool = GrepTool(paths=tmp_path, max_line_chars=20)
+        block = GrepMatch(
+            filename="doc.md",
+            lines=(
+                GrepLine(line_number=1, text="| h " * 50, is_match=False),
+                GrepLine(
+                    line_number=2,
+                    text="x" * 100 + "Legende" + "y" * 100,
+                    is_match=True,
+                    match_start=100,
+                ),
+            ),
+        )
+
+        clipped = tool._format_matches([block]).splitlines()
+        whole = tool._format_matches([block], full_lines=True).splitlines()
+
+        assert clipped[1] == f"1-{block.lines[0].text[:19]}…"
+        assert clipped[2] == "2:…xxxxLegendeyyyyyyy…"
+        assert whole[1] == clipped[1]
+        assert whole[2] == f"2:{block.lines[1].text}"
+
     def test_blocks_within_document_separated_by_dashes(self, tmp_path: Path) -> None:
         tool = GrepTool(paths=tmp_path)
         formatted = tool._format_matches([self._block(1), self._block(1)])

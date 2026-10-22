@@ -30,6 +30,8 @@ class RgLine:
     line_number: int
     text: str
     is_match: bool
+    match_start: int | None = None
+    """Character offset of the first match in *text*, ``None`` for context."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -76,6 +78,14 @@ class _RgText(BaseModel):
         return decoded.text if decoded is not None else None
 
 
+class _RgSubmatch(BaseModel):
+    """Where one match sits in its line, as a byte offset."""
+
+    model_config = ConfigDict(frozen=True)
+
+    start: int
+
+
 class _RgLineData(BaseModel):
     """The payload of a ``match`` or ``context`` event."""
 
@@ -84,6 +94,23 @@ class _RgLineData(BaseModel):
     path: _RgText
     lines: _RgText
     line_number: int
+    submatches: tuple[_RgSubmatch, ...] = ()
+
+    def match_start(self) -> int | None:
+        """The first match's offset in characters rather than ripgrep's bytes.
+
+        ``None`` for a context line, and for a line ripgrep could only hand
+        over as bytes, whose decoded characters no longer line up with them.
+        """
+        if not self.submatches or self.lines.text is None:
+            return None
+
+        start = self.submatches[0].start
+
+        if self.lines.text.isascii():
+            return start
+
+        return len(self.lines.text.encode()[:start].decode(errors="ignore"))
 
 
 class _RgLineEvent(BaseModel):
@@ -220,6 +247,7 @@ async def rg_search(
                 # otherwise carry a carriage return into every formatted line.
                 text=text.rstrip("\r\n"),
                 is_match=is_match,
+                match_start=event.data.match_start(),
             )
         )
 

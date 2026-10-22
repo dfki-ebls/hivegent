@@ -31,6 +31,7 @@ from .formatting import (
     hint_suffix,
     number_line,
     omission_hints,
+    truncate_around,
     truncate_line,
 )
 
@@ -60,6 +61,8 @@ class GrepLine:
     line_number: int
     text: str
     is_match: bool
+    match_start: int | None = None
+    """Character offset of the first match in *text*, ``None`` for context."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -245,6 +248,7 @@ async def _search_path(
                         line_number=line.line_number,
                         text=line.text,
                         is_match=line.is_match,
+                        match_start=line.match_start,
                     )
                     for line in rg_match.lines
                 ),
@@ -259,8 +263,11 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
     """Search documents for a pattern.
 
     ``max_line_chars`` safeguards the LLM context against a single call
-    flooding it with long wrapped markdown lines.  The caller can always
-    issue a more specific follow-up to get more detail.
+    flooding it with long wrapped markdown lines.  A matching line is clipped
+    around its match, so the cut never takes the hit itself, and context lines
+    are always clipped, since a wide table row beside a short hit is what
+    floods the output.  The caller can always issue a more specific follow-up
+    to get more detail.
     """
 
     max_line_chars: int = 200
@@ -368,13 +375,9 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         ``-`` for context.  Distinct documents are split by :data:`BLOCK_SEP`
         and discontiguous blocks within a document by :data:`GROUP_SEP`.
         """
-        line_cap = None if full_lines else self.max_line_chars
+        return "".join(self._iter_lines(matches, full_lines))
 
-        return "".join(self._iter_lines(matches, line_cap))
-
-    def _iter_lines(
-        self, matches: list[GrepMatch], max_line_chars: int | None
-    ) -> Iterator[str]:
+    def _iter_lines(self, matches: list[GrepMatch], full_lines: bool) -> Iterator[str]:
         """Yield each match line with the separator that precedes it."""
         prev_file: str | None = None
         for m in matches:
@@ -388,9 +391,14 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
             for i, line in enumerate(m.lines):
                 prefix = head if i == 0 else "\n"
                 mark = ":" if line.is_match else "-"
-                body = number_line(
-                    line.line_number,
-                    truncate_line(line.text, max_line_chars),
-                    mark,
-                )
-                yield f"{prefix}{body}"
+
+                if not line.is_match:
+                    text = truncate_line(line.text, self.max_line_chars)
+                elif full_lines:
+                    text = line.text
+                else:
+                    text = truncate_around(
+                        line.text, line.match_start or 0, self.max_line_chars
+                    )
+
+                yield f"{prefix}{number_line(line.line_number, text, mark)}"
