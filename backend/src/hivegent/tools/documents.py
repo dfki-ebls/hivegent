@@ -552,10 +552,18 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
         stop = total if limit is None else min(total, start + limit - 1)
 
         # Cap by character budget: one giant line still gets returned alone so
-        # the caller sees something rather than an empty range.
-        kept = fit_lines(islice(all_lines, start - 1, stop), share.of(self.max_chars))
+        # the caller sees something rather than an empty range.  The lines are
+        # measured as rendered, numbered and clipped, since the numbers of many
+        # short lines would otherwise push the window past the spill threshold.
+        # The measuring clip is a throwaway, as it also sees the line that
+        # did not fit.
+        cap = None if full_lines else self.max_line_chars
+        window = iter_annotated(
+            islice(all_lines, start - 1, stop), start, LineClip(cap)
+        )
+        kept = fit_lines(window, share.of(self.max_chars))
         selected = all_lines[start - 1 : start - 1 + kept]
-        clip = LineClip(None if full_lines else self.max_line_chars)
+        clip = LineClip(cap)
         body = "\n".join(iter_annotated(selected, start, clip))
         end = start + len(selected) - 1
 

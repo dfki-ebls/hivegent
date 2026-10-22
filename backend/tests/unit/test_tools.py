@@ -796,17 +796,18 @@ class TestReadDocumentTool:
         assert result.content == "b\nc"
 
     async def test_default_window_is_the_char_budget(self, tmp_path: Path) -> None:
-        # Eight lines of five characters and a newline each fit 50 characters.
+        # Five lines rendered as `1: line0`, eight characters and a newline
+        # each, fit 50 characters, the numbers counted with the text.
         lines = [f"line{i}" for i in range(10)] * 10
         (tmp_path / "doc.md").write_text("\n".join(lines))
         tool = ReadDocumentTool(paths=tmp_path, max_chars=50)
         output = await tool([DocumentRead("doc.md")])
         result = single(output.data)
         assert isinstance(result, DocumentRange)
-        assert result.end_line == 8
+        assert result.end_line == 5
         assert result.total_lines == 100
         assert output.formatted is not None
-        assert "92 more lines, call again with offset=9" in output.formatted
+        assert "95 more lines, call again with offset=6" in output.formatted
 
 
 class TestRunBatch:
