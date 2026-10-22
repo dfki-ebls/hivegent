@@ -53,6 +53,7 @@ import {
 } from "@/lib/types";
 
 import { featureFlags } from "@/lib/feature-flags";
+import { joinPath } from "@/lib/utils";
 
 import { API_BASE_URL, waitForBackendReady } from "@/lib/health";
 import { getImpersonation, IMPERSONATE_HEADER } from "@/lib/impersonation";
@@ -260,7 +261,7 @@ export function groupScope(groupId: string): string {
  * scope root, so this is the exact inverse of {@link splitScopePath}.
  */
 export function canonicalPath(scope: string, local: string): string {
-  return local ? `${scope}/${local}` : scope;
+  return joinPath(scope, local);
 }
 
 /**

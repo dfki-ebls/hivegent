@@ -1,5 +1,7 @@
 import type JSZip from "jszip";
 
+import { joinPath } from "@/lib/utils";
+
 export type DropClassification = {
   looseFiles: File[];
   directories: FileSystemDirectoryEntry[];
@@ -38,8 +40,6 @@ const readFileFromEntry = (entry: FileSystemFileEntry): Promise<File> =>
   new Promise((resolve, reject) => {
     entry.file(resolve, reject);
   });
-
-const joinPath = (base: string, name: string): string => (base ? `${base}/${name}` : name);
 
 const walkEntry = async (
   entry: FileSystemEntry,

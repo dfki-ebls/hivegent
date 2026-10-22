@@ -26,6 +26,11 @@ export function parentDir(path: string): string {
   return path.slice(0, path.lastIndexOf("/") + 1);
 }
 
+/** Join *base* and *name* with a slash, either one empty yielding the other. */
+export function joinPath(base: string, name: string): string {
+  return base && name ? `${base}/${name}` : base || name;
+}
+
 /**
  * The part of *path* below *root*, empty for *root* itself and starting with a
  * slash for its descendants (the directory entry `~/a/` of root `~/a` too),
@@ -127,7 +132,7 @@ export function withDirectory(root: DirectoryEntry, path: string): DirectoryEntr
     const created: DirectoryEntry = existing ?? {
       type: "directory",
       name,
-      path: node.path ? `${node.path}/${name}` : name,
+      path: joinPath(node.path, name),
       children: [],
     };
     const updated = rest.length > 0 ? graft(created, rest) : created;

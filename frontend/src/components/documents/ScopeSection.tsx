@@ -19,6 +19,7 @@ import {
   collectFilePaths,
   commonParentDir,
   errorMessage,
+  joinPath,
   treeDocuments,
 } from "@/lib/utils";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
@@ -228,7 +229,7 @@ export function ScopeSection({
       const commonParent = commonParentDir(drag.paths);
       const destination = (source: string) => {
         const suffix = source.slice(commonParent.length);
-        return destDir ? `${destDir}/${suffix}` : suffix;
+        return joinPath(destDir, suffix);
       };
       const sameScope = drag.scope === scope;
       // Within one workspace a same-path entry is a no-op; across workspaces
