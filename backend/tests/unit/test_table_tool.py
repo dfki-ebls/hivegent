@@ -504,6 +504,17 @@ class TestColumnSpelling:
         assert out.formatted is not None
         assert 'unparsed: "Zaehlwert", "m3/d"' in out.formatted
 
+    async def test_a_parse_error_points_at_its_position(self, tmp_path: Path) -> None:
+        tool = QueryTableTool(paths=_quoted_dir(tmp_path))
+
+        with pytest.raises(ToolRetry) as exc:
+            await tool(
+                ["t.csv"], ["SELECT COUNT(CASE WHEN amount > 1) THEN 1 END) FROM t"]
+            )
+
+        assert "\n                    ^\n" in str(exc.value)
+        assert "double-quoted" not in str(exc.value)
+
     async def test_a_clean_header_says_nothing_about_one(self, tmp_path: Path) -> None:
         tool = QueryTableTool(paths=_sales_dir(tmp_path))
 

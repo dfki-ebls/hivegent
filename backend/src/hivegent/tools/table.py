@@ -26,7 +26,7 @@ from .base import (
     run_batch,
     sidecar_hint,
 )
-from .formatting import hint_suffix, truncate_line
+from .formatting import hint_suffix, truncate_around, truncate_line, window_start
 
 __all__ = [
     "QueriedTable",
@@ -79,6 +79,12 @@ _UNPARSED_SAMPLE = 3
 _BARE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 """What SQL takes unquoted; anything else has to be spelled in double quotes."""
 
+_PARSER_POSITION = re.compile(r"at Line: (\d+), Column: (\d+)")
+"""Where sqlparser locates a syntax error, 1-based in both coordinates."""
+
+_POINTER_WIDTH = 80
+"""Characters of a query line shown around a parser error."""
+
 
 def _quoted(name: str) -> str:
     """Spell a column the way a query has to type it.
@@ -120,14 +126,29 @@ def _query_mentions(query: str, name: str) -> bool:
     return re.search(pattern, query, flags=re.IGNORECASE) is not None
 
 
-def _quoting_hint(columns: Sequence[str]) -> str:
-    """Say how a column name that is not a bare identifier has to be typed.
+def _quoting_hint(query: str, columns: Sequence[str]) -> str:
+    """Say how a column the query spells unquoted has to be typed.
 
-    Spelled with one of the file's own columns, since a parse error has nothing
-    else to correct itself from: the schema call it would otherwise be sent
-    back to is the one the query came from.
+    Spelled with that column, since a parse error has nothing else to correct
+    itself from: the schema call it would otherwise be sent back to is the one
+    the query came from.  Silent when every such column is quoted, as a hint
+    about a rule the query kept only distracts from the error it did make.
+
+    >>> _quoting_hint("SELECT Menge (kg) FROM t", ["Menge (kg)"])
+    ' A column name that is not a bare identifier must be double-quoted, as in `SELECT "Menge (kg)" FROM t`.'
+    >>> _quoting_hint('SELECT "Menge (kg)" FROM t', ["Menge (kg)"])
+    ''
     """
-    example = next((name for name in columns if _quoted(name) != name), None)
+    folded = query.casefold()
+    example = next(
+        (
+            name
+            for name in columns
+            if _quoted(name) != name
+            and name.casefold() in folded.replace(_quoted(name).casefold(), "")
+        ),
+        None,
+    )
     if example is None:
         return ""
 
@@ -148,6 +169,34 @@ def _message(exc: pl.exceptions.PolarsError) -> str:
     text = str(exc).partition("Resolved plan until failure:")[0].rstrip()
 
     return text if text.endswith((".", "?", "!")) else f"{text}."
+
+
+def _pointer(message: str, query: str) -> str:
+    """Show the query line a parser error locates, with a caret under the spot.
+
+    sqlparser names the token it stopped at, which is rarely the mistake: a
+    parenthesis closed too early surfaces as the keyword after it.  Seeing the
+    spot in the query is what makes the actual mistake next to it visible.
+
+    >>> print(_pointer("Expected: ), found: WHEN at Line: 1, Column: 19",
+    ...                "SELECT COUNT(CASE WHEN a) FROM t"))
+    <BLANKLINE>
+      SELECT COUNT(CASE WHEN a) FROM t
+                        ^
+    <BLANKLINE>
+    """
+    match = _PARSER_POSITION.search(message)
+    lines = query.splitlines()
+
+    if match is None or not 0 < int(match[1]) <= len(lines):
+        return ""
+
+    line = lines[int(match[1]) - 1]
+    column = min(int(match[2]) - 1, len(line))
+    shown = truncate_around(line, column, _POINTER_WIDTH)
+    offset = column - window_start(line, column, _POINTER_WIDTH)
+
+    return f"\n  {shown}\n  {' ' * offset}^\n"
 
 
 def _naming(values: Sequence[str]) -> str:
@@ -704,8 +753,11 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
     ) -> str:
         """Explain a failed query, naming the columns a cast would rescue."""
         message = _message(exc)
+        query = query or ""
+        # The caret sits under the message it explains, before the hints.
+        located = _pointer(message, query) or " "
         detail = (
-            f"query failed: {message} The tables are named "
+            f"query failed: {message}{located}The tables are named "
             f"{', '.join(_relation(index) for index in range(len(sources)))}; "
             "call without queries to see their columns and types, or run "
             "`SHOW TABLES`."
@@ -732,7 +784,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
             return (
                 detail
                 + dialect
-                + _quoting_hint([name for s in sources for name in s.columns])
+                + _quoting_hint(query, [name for s in sources for name in s.columns])
             )
 
         # A dtype error over a column the coercion pass had to leave as text
@@ -741,7 +793,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
             _quoted(name)
             for source in sources
             for name in source.strings
-            if query and _query_mentions(query, name)
+            if _query_mentions(query, name)
         ]
 
         if named and isinstance(

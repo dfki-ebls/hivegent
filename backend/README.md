@@ -360,7 +360,8 @@ Failures say another function name may exist, since there is no function registr
 Every text column whose values all parse as a number, date, datetime, or boolean is retyped before the query, and a single zero-padded value marks an identifier and vetoes numeric typing.
 A column that falls short is reported as a `TextColumn` with the parsed share and a sample of unparsed values, scoped to the columns the query touched and led by the worst shortfall.
 The tool repairs nothing and asks instead, since a spilled header row, a `<100`, or a `0,05` each need a decision about someone else's data.
-Column names that are not bare identifiers are listed double-quoted (`_quoted`), and a parser error states that rule with one of the file's own columns.
+Column names that are not bare identifiers are listed double-quoted (`_quoted`), and a parser error states that rule only when the query spells such a column unquoted.
+A parser error also shows the query line with a caret at the position sqlparser reports, since the token it names is rarely the mistake itself.
 
 Excel is read through `fastexcel`, and a delimited file in a legacy encoding is retried once decoded on a `ComputeError`.
 The row limit is the only cut that reaches the data, and a table too long to show whole is spilled.
