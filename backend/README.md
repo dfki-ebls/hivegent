@@ -389,7 +389,7 @@ MCP serves the `explore`, `write`, and `subagent` features through one adapter (
 The other features need a conversation or a sandbox, and `tools.disabled` and `tools.sandbox_only` withhold a tool here as from a run.
 Each call builds the caller's `UserDeps` in `interactive` mode with no conversation, and the served set is settled once at import by each tool's `prepare` hook, which withholds `apply_changes` and, without a main model, `explore`.
 The gate's `ApprovalRequired` is answered with an MCP elicitation (`mcp/confirmation.py`) showing the `ChangesetSummary`, and its request state is a digest of the tool, arguments, and summary, so an answer cannot be replayed for other arguments or a changed workspace.
-A return is its text bounded by `tools.formatting.truncate_middle`, its binary attachments as image or resource blocks, and its data as `structured_content` under `result` unless it is display-only, with no `outputSchema`.
+A return is its text bounded by `tools.formatting.truncate_middle` at `settings.mcp.output_max_chars` (`None` sends it whole) and its binary attachments as image or resource blocks, with no `structured_content` or `outputSchema`, since major clients hand structured content to their model in place of the LLM-tuned text or beside it.
 
 ### Spilling bulk output
 

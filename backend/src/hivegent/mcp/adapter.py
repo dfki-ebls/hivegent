@@ -28,7 +28,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import BinaryContent, Tool
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.tools import ToolDefinition
-from pydantic_core import to_json, to_jsonable_python
+from pydantic_core import to_json
 
 from ..agents import UserDeps, agent_tool, invoke_agent_tool, unlisted_tool_names
 from ..agents.capabilities import feature_tools
@@ -83,25 +83,21 @@ def _block(content: BinaryContent) -> ContentBlock:
 
 
 def _result(value: object) -> ToolResult:
-    """The MCP rendering of a return, its text bounded as the agent's is."""
+    """The MCP rendering of a return: its text within the MCP output bound, and its attachments.
+
+    The structured data is left out.  It is our frontend's, and clients that
+    get it hand it to their model in place of the text, or beside it.
+    """
     output = unwrap_tool_output(value)
     text = output.text if output.text is not None else to_json(output.data).decode()
-    blocks: list[ContentBlock] = [
-        TextContent(
-            type="text", text=truncate_middle(text, settings.llm.tool_output_max_chars)
-        )
-    ]
+    limit = settings.mcp.output_max_chars
+    bounded = text if limit is None else truncate_middle(text, limit)
+    blocks: list[ContentBlock] = [TextContent(type="text", text=bounded)]
     blocks.extend(
         _block(item) for item in output.rest or () if isinstance(item, BinaryContent)
     )
-    data = None if output.display_only or output.data is None else output.data
 
-    return ToolResult(
-        content=blocks,
-        structured_content=None
-        if data is None
-        else {"result": to_jsonable_python(data)},
-    )
+    return ToolResult(content=blocks)
 
 
 async def _call(name: str, arguments: Mapping[str, Any], deps: UserDeps) -> ToolResult:

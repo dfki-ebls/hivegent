@@ -361,8 +361,7 @@ class LlmSettings(BaseModel):
     (``explore``); on expiry the partial findings are summarized and returned
     rather than failing the turn, so keep it below ``tool_timeout_seconds`` to
     fire first, or ``None`` to disable.  ``tool_output_max_chars`` is the
-    most plain text (LLM-facing) any tool return shows the model or an MCP
-    client.  A larger one is saved whole under the conversation's
+    most plain text (LLM-facing) any tool return shows the model.  A larger one is saved whole under the conversation's
     ``/tmp/.tool-results/`` and shown as its head and tail around a note naming the
     file, or only clamped to them where the run has no ``/tmp``.
     ``tool_data_max_bytes`` is the most structured data (frontend-facing, as
@@ -559,6 +558,9 @@ class McpSettings(BaseModel):
     pre-registered ``client_id``/``client_secret``) or ``remote`` (clients
     register themselves with the upstream via RFC 7591 dynamic client
     registration, e.g. Rauthy; FastMCP only verifies JWTs).
+    ``output_max_chars`` is the most text one tool return sends a client,
+    whose middle is left out past it, or ``None`` to send it whole, since the
+    client cannot read the rest from this server's ``/tmp``.
     """
 
     enable: bool = False
@@ -567,6 +569,7 @@ class McpSettings(BaseModel):
     client_secret: SecretStr | None = None
     base_url: str = "http://localhost:8000/mcp"
     allow_unauthenticated: bool = False
+    output_max_chars: int | None = 60_000
 
 
 class ClaimSettings(BaseModel):

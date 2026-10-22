@@ -3,7 +3,6 @@
 import base64
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import replace
 from typing import Any, cast, override
 from urllib.parse import quote
 
@@ -28,7 +27,6 @@ from .base import (
     lenient,
     translate_tool_retry,
 )
-from .formatting import truncate_middle
 
 __all__ = [
     "OutputTool",
@@ -84,8 +82,6 @@ class OutputTool(FunctionTool):
 
 def for_fastmcp(
     factory_provider: Callable[..., Tool[Any]],
-    *,
-    max_chars: int | None = None,
 ) -> Callable[..., ToolOutput[Any]] | Callable[..., Awaitable[ToolOutput[Any]]]:
     """Build a wrapper function whose signature FastMCP can introspect.
 
@@ -98,9 +94,6 @@ def for_fastmcp(
     Args:
         factory_provider: Callable that returns a Tool instance.
             Must have a return annotation that is a ``Tool`` subclass.
-        max_chars: The most text a return shows, unbounded for ``None``.
-            An MCP client has no ``/tmp`` of this server's to read the rest
-            from, so the structured content is what stays whole.
 
     Returns:
         A callable with rewritten signature, annotations, and docstring.
@@ -129,24 +122,18 @@ def for_fastmcp(
         "return": spec.data_type,
     }
 
-    def bounded(output: ToolOutput[Any]) -> ToolOutput[Any]:
-        if max_chars is None:
-            return output
-
-        return replace(output, formatted=truncate_middle(output.text, max_chars))
-
     # Surface a ToolRetry as a FastMCP ToolError so the message reaches the MCP
     # client instead of being masked as an internal error.
     if spec.is_async:
 
         async def wrapper(**kwargs: Any) -> ToolOutput[Any]:
             with translate_tool_retry(ToolError):
-                return bounded(await kwargs.pop("_tool_")(**kwargs))
+                return await kwargs.pop("_tool_")(**kwargs)
     else:
 
         def wrapper(**kwargs: Any) -> ToolOutput[Any]:
             with translate_tool_retry(ToolError):
-                return bounded(kwargs.pop("_tool_")(**kwargs))
+                return kwargs.pop("_tool_")(**kwargs)
 
     spec.apply_to(wrapper, new_sig, new_annotations)
     return wrapper
@@ -156,7 +143,6 @@ def register_mcp_tool(
     app: FastMCP,
     factory: Callable[..., Tool[Any]],
     *,
-    max_chars: int,
     annotations: ToolAnnotations | None = None,
 ) -> None:
     """Register one Tool factory on a FastMCP app.
@@ -167,11 +153,10 @@ def register_mcp_tool(
     Args:
         app: The FastMCP application.
         factory: Factory callable for the tool.
-        max_chars: The most text one return shows.
         annotations: Optional hints for the client, such as whether the tool
             only reads or may destroy.
     """
-    fn = for_fastmcp(factory, max_chars=max_chars)
+    fn = for_fastmcp(factory)
     app.add_tool(OutputTool.from_function(fn, annotations=annotations))
 
 
@@ -179,7 +164,6 @@ def register_mcp_tools(
     app: FastMCP,
     factories: Sequence[Callable[..., Tool[Any]]],
     *,
-    max_chars: int,
     annotations: ToolAnnotations | None = None,
 ) -> None:
     """Register multiple Tool factories on a FastMCP app with the same options.
@@ -187,8 +171,7 @@ def register_mcp_tools(
     Args:
         app: The FastMCP application.
         factories: Sequence of factory callables.
-        max_chars: The most text one return shows.
         annotations: Optional hints applied to every tool.
     """
     for factory in factories:
-        register_mcp_tool(app, factory, max_chars=max_chars, annotations=annotations)
+        register_mcp_tool(app, factory, annotations=annotations)

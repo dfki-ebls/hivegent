@@ -8,7 +8,6 @@ from typing import Annotated, Any, cast, override
 
 import pytest
 from fastmcp import FastMCP
-from mcp.types import TextContent
 from pydantic import BaseModel, Field
 from pydantic_ai import FunctionToolset
 from pydantic_ai.messages import ToolReturn
@@ -355,7 +354,7 @@ class TestForFastMCP:
 
     async def test_structured_output_matches_the_registered_schema(self) -> None:
         app = FastMCP("test")
-        register_mcp_tools(app, [_tool_output_mcp], max_chars=10_000)
+        register_mcp_tools(app, [_tool_output_mcp])
         registered = await app.get_tool("tool_output_mcp")
         assert registered is not None
 
@@ -375,7 +374,7 @@ class TestForFastMCP:
     ) -> None:
         """Where a `#/$defs/...` pointer resolves, so the refs are not dangling."""
         app = FastMCP("test")
-        register_mcp_tools(app, [_model_mcp], max_chars=10_000)
+        register_mcp_tools(app, [_model_mcp])
         registered = await app.get_tool("model_mcp")
         assert registered is not None
         schema = registered.output_schema
@@ -387,7 +386,7 @@ class TestForFastMCP:
 
     async def test_a_bare_item_is_taken_as_a_one_item_list(self) -> None:
         app = FastMCP("test")
-        register_mcp_tools(app, [_list_mcp], max_chars=10_000)
+        register_mcp_tools(app, [_list_mcp])
 
         result = await app.call_tool("list_mcp", {"queries": "a"})
 
@@ -395,20 +394,8 @@ class TestForFastMCP:
 
     async def test_a_double_encoded_string_is_unquoted(self) -> None:
         app = FastMCP("test")
-        register_mcp_tools(app, [_sync_mcp], max_chars=10_000)
+        register_mcp_tools(app, [_sync_mcp])
 
         result = await app.call_tool("sync_mcp", {"query": '"needle"'})
 
         assert result.structured_content == {"result": "needle:5"}
-
-    async def test_a_long_text_is_bounded(self) -> None:
-        """A plain MCP tool has no spill, so the adapter cuts its text itself."""
-        app = FastMCP("test")
-        register_mcp_tools(app, [_sync_mcp], max_chars=600)
-
-        result = await app.call_tool("sync_mcp", {"query": "line\n" * 1_000})
-        block = result.content[0]
-
-        assert isinstance(block, TextContent)
-        assert len(block.text) <= 600
-        assert "characters left out here" in block.text
