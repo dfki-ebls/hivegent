@@ -389,7 +389,7 @@ class TestWebFetch:
         out = await tool(["https://example.com/big"])
         assert single(out.data).content == "a" * 10
         assert single(out.data).truncated
-        assert out.text.endswith("[page cut at the 10 byte download cap]")
+        assert out.text.endswith("[page cut at the 10 B download cap]")
 
     async def test_long_line_truncated_in_formatted_only(
         self, monkeypatch: pytest.MonkeyPatch

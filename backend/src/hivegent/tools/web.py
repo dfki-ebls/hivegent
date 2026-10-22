@@ -21,7 +21,7 @@ from trafilatura.settings import Document
 
 from ..concurrency import bounded_gather
 from ..converters.formats import is_textual_media_type
-from ..humanize import pluralize
+from ..humanize import format_bytes, pluralize
 from ..security import UnsafeUrlError
 from .base import (
     AsyncTool,
@@ -843,7 +843,8 @@ class WebFetch(AsyncTool[Batch[WebPage]]):
         hints = clip.hints()
 
         if truncated:
-            hints.append(f"page cut at the {self.max_response_bytes} byte download cap")
+            cap = format_bytes(self.max_response_bytes)
+            hints.append(f"page cut at the {cap} download cap")
 
         suffix = hint_suffix(hints)
 
