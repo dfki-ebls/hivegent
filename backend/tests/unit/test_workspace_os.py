@@ -276,6 +276,8 @@ def test_limits_hold_across_the_run(workspace: Path) -> None:
     mount = _mount(workspace, writable=True)
     mount.limits = ChangesetLimits(max_operations=2, max_deletes=1, max_chars=10)
 
+    # `/tmp` answers to its own quota, not to what a run may stage.
+    _ = mount.path_write_text(PurePosixPath("/tmp/scratch.txt"), "z" * 20)
     _ = mount.path_write_text(_virtual("a.txt"), "x" * 8)
 
     with pytest.raises(MemoryError, match="characters"):

@@ -843,8 +843,11 @@ class WorkspaceOS(AbstractOS):
 
         return sp.prefixed(local)
 
-    def _charge(self, key: str, *, deleting: bool = False) -> None:
-        """Count one more changed path against the run's limits, which only a gated root has."""
+    def _charge(self, key: str, *, deleting: bool = False, chars: int = 0) -> None:
+        """Count a change to *key*, and the *chars* it writes, against the run's limits.
+
+        Only a gated root has them, while ``/tmp`` answers to its own quota.
+        """
         if isinstance(self.policy(key), Direct):
             return
 
@@ -861,8 +864,15 @@ class WorkspaceOS(AbstractOS):
                 f"{self.limits.max_deletes} deletions one run may make."
             )
 
+        if self.written + chars > self.limits.max_chars:
+            raise MemoryError(
+                f"Writing '{key}' takes this program past the "
+                f"{self.limits.max_chars} characters one run may write."
+            )
+
         self.touched.add(key)
         self.deletes += int(deleting)
+        self.written += chars
 
     def _make_parents(self, key: str) -> None:
         """Create every missing directory above *key*, the way the gateway will."""
@@ -935,16 +945,9 @@ class WorkspaceOS(AbstractOS):
                 f"hold at most {self.max_document_chars}."
             )
 
-        self.written += len(data)
-
-        if self.written > self.limits.max_chars:
-            raise MemoryError(
-                f"Writing '{key}' takes this program past the "
-                f"{self.limits.max_chars} characters one run may write."
-            )
+        self._charge(key, chars=len(data))
 
         if not isinstance(node, Text):
-            self._charge(key)
             self._make_parents(key)
 
         if append:
