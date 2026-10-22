@@ -1,14 +1,18 @@
 """Unit tests for async subprocess wrappers."""
 
+from contextlib import aclosing
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from hivegent.subprocesses import (
     RgLine,
+    RgMatch,
     SubprocessError,
     jq_filter,
     pandoc_convert,
+    rg_count,
     rg_search,
     run,
 )
@@ -56,12 +60,28 @@ class TestRun:
         assert items == [{"a": 1}, {"b": 2}]
 
 
+async def _search(pattern: str, root: Path, **kwargs: Any) -> list[RgMatch]:
+    return [match async for match in rg_search(pattern, root, **kwargs)]
+
+
 class TestRgSearch:
     """Tests for ``rg_search``."""
 
+    async def test_closing_early_stops_the_search(self, tmp_path: Path) -> None:
+        for name in "abc":
+            (tmp_path / f"{name}.txt").write_text("hit\n")
+
+        found = rg_search("hit", tmp_path)
+
+        async with aclosing(found):
+            first = await anext(found)
+
+        # Walked in path order, so the first block is the same on every run.
+        assert first.path == "a.txt"
+
     async def test_finds_matches(self, tmp_path: Path) -> None:
         (tmp_path / "hello.txt").write_text("Hello World\nGoodbye World\n")
-        matches = await rg_search("Hello", tmp_path)
+        matches = await _search("Hello", tmp_path)
         assert len(matches) == 1
         assert matches[0].lines[0].line_number == 1
         assert matches[0].lines[0].is_match
@@ -69,13 +89,13 @@ class TestRgSearch:
 
     async def test_no_matches_returns_empty(self, tmp_path: Path) -> None:
         (tmp_path / "hello.txt").write_text("nothing here\n")
-        matches = await rg_search("zzz_missing", tmp_path)
+        matches = await _search("zzz_missing", tmp_path)
         assert matches == []
 
     async def test_pattern_starting_with_dash(self, tmp_path: Path) -> None:
         (tmp_path / "options.txt").write_text("--version\n")
 
-        matches = await rg_search("--version", tmp_path)
+        matches = await _search("--version", tmp_path)
 
         assert len(matches) == 1
         assert matches[0].lines[0].text == "--version"
@@ -83,23 +103,20 @@ class TestRgSearch:
     async def test_glob_filter(self, tmp_path: Path) -> None:
         (tmp_path / "include.md").write_text("target\n")
         (tmp_path / "exclude.txt").write_text("target\n")
-        matches = await rg_search("target", tmp_path, glob="*.md")
-        paths = [m.path for m in matches]
-        assert any("include.md" in p for p in paths)
-        assert not any("exclude.txt" in p for p in paths)
+        assert await rg_count("target", tmp_path, glob="*.md") == {"include.md": 1}
 
     async def test_decodes_legacy_encoded_lines(self, tmp_path: Path) -> None:
         # ripgrep hands back non-UTF-8 lines base64-encoded under a `bytes`
         # key instead of `text`, in CRLF sources including the terminator.
         (tmp_path / "legacy.txt").write_bytes("Leitfähigkeit\r\n".encode("cp1252"))
-        matches = await rg_search("Leitf", tmp_path)
+        matches = await _search("Leitf", tmp_path)
         assert matches[0].lines == (
             RgLine(line_number=1, text="Leitfähigkeit", is_match=True),
         )
 
     async def test_context_lines(self, tmp_path: Path) -> None:
         (tmp_path / "test.txt").write_text("aaa\nbbb\näb ccc\nddd\neee\n")
-        matches = await rg_search("ccc", tmp_path, context_lines=1)
+        matches = await _search("ccc", tmp_path, context_lines=1)
         assert len(matches) == 1
         # The offset counts characters, not the two bytes UTF-8 spends on ä.
         assert matches[0].lines == (

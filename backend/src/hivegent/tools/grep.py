@@ -2,16 +2,21 @@
 
 import asyncio
 import logging
-from collections.abc import Iterator
-from dataclasses import dataclass
-from pathlib import Path
+from collections.abc import Iterator, Sequence
+from contextlib import aclosing
+from dataclasses import dataclass, replace
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal, override
 
 from pydantic import Field
 
 from ..converters import BINARY_SUFFIXES
-from ..entries import is_description_file, stem_path_from_reference
-from ..subprocesses import rg_search
+from ..entries import (
+    description_path_for_stem,
+    is_description_file,
+    stem_path_from_reference,
+)
+from ..subprocesses import RgMatch, rg_count, rg_search
 from .base import (
     WORKSPACE_SCOPE_HINT,
     AsyncPathTool,
@@ -55,6 +60,8 @@ _MAX_RESULTS = 10_000
 
 _MAX_CONTEXT = 100
 """Ceiling on ``context``, since every block holds its context lines too."""
+
+_FAILED = "Grep failed for pattern %r in %s"
 
 type GrepOutputMode = Literal["content", "files_with_matches", "count"]
 
@@ -109,7 +116,10 @@ GrepContextArg = Annotated[
 GrepMaxResultsArg = Annotated[
     int,
     Field(
-        description="Maximum total number of matches to return.",
+        description=(
+            "Maximum number of matching lines to return, or of files in the "
+            "`files_with_matches` and `count` modes."
+        ),
         ge=1,
         le=_MAX_RESULTS,
     ),
@@ -169,41 +179,69 @@ def _binary_glob(glob: str | None) -> str:
     )
 
 
-def _drop_shadowed_originals(matches: list[GrepMatch]) -> list[GrepMatch]:
-    """Drop original hits whose own markdown description matched as well.
+@dataclass(slots=True, frozen=True)
+class _Hit:
+    """A file with matches, under the root that found it."""
+
+    root: SearchPath
+    local: str
+    count: int
+    """How many of its lines match."""
+
+    @property
+    def filename(self) -> str:
+        """The file as every result spells it."""
+        return self.root.prefixed(self.local)
+
+
+def _globbed(local: str, glob: str | None) -> bool:
+    """Whether a search under *glob* reads *local*, as ripgrep matches a glob.
+
+    >>> _globbed("reports/q1.md", "*.md"), _globbed("q1.md", "reports/*.md")
+    (True, False)
+    """
+    if glob is None:
+        return True
+
+    path = PurePosixPath(local)
+
+    return (path if "/" in glob else PurePosixPath(path.name)).full_match(glob)
+
+
+def _shadowed(sp: SearchPath, local: str, glob: str | None) -> bool:
+    """Whether *local* is an original whose markdown description the search reads instead.
 
     Every entry keeps its markdown description beside the original it was
     projected from, so a text original (XML, CSV, source code) matches twice
     over with near-identical lines at shifted line numbers.  The description
     wins: it is the face of the entry the user edits and the chunker indexes,
     and it is regenerated whenever the original changes, so it never lags
-    behind while the reverse does not hold.  An entry with no description hit
-    is left alone, and a search explicitly globbed to the original's
-    extension still reaches it, since then no description is in the result
-    set to displace it.
+    behind while the reverse does not hold.  It is decided per file, from the
+    description being there to read, so a search streaming files in order
+    need not wait for a later one, and a search globbed to the original's
+    extension still reaches it, since then the description is not read.
     """
-    classified = [
-        (m, is_description_file(m.filename), stem_path_from_reference(m.filename))
-        for m in matches
-    ]
-    described = {stem for _, is_description, stem in classified if is_description}
-    return [
-        m
-        for m, is_description, stem in classified
-        if is_description or stem not in described
-    ]
+    if is_description_file(local):
+        return False
+
+    description = description_path_for_stem(stem_path_from_reference(local))
+
+    return (
+        _globbed(description, glob)
+        and file_allowed(sp.filter_func, description)
+        and (sp.path / description).is_file()
+    )
 
 
-async def _search_path(
+async def _count_path(
     sp: SearchPath,
     pattern: str,
     glob: str | None,
-    context: int,
     case_sensitive: bool,
     literal: bool,
     exclude_dirs: tuple[str, ...],
-) -> tuple[list[GrepMatch], int]:
-    """Run ripgrep against a single search path, counting the matches it hid.
+) -> tuple[list[_Hit], int]:
+    """Count the matching lines of each file in one search path, and the files it hid.
 
     One run per workspace, each anchored in its own root, so an unprefixed
     ``reports/*.txt`` names that subdirectory of every workspace the call
@@ -217,51 +255,139 @@ async def _search_path(
     """
     if not sp.path.exists():
         return [], 0
+
     try:
-        rg_matches = await rg_search(
+        counts = await rg_count(
             pattern,
             sp.path,
             glob=glob,
-            context_lines=context,
             case_sensitive=case_sensitive,
             literal=literal,
             exclude_dirs=exclude_dirs,
         )
     except Exception:
-        logger.warning(
-            "Grep failed for pattern %r in %s", pattern, sp.path, exc_info=True
-        )
+        logger.warning(_FAILED, pattern, sp.path, exc_info=True)
         return [], 0
 
-    matches: list[GrepMatch] = []
+    hits: list[_Hit] = []
     hidden = 0
-    for rg_match in rg_matches:
-        # ripgrep runs inside the root, so what it reports is already local.
-        filename = rg_match.path
-
-        if not file_allowed(sp.filter_func, filename):
+    for local, count in counts.items():
+        if not file_allowed(sp.filter_func, local) or _shadowed(sp, local, glob):
             continue
 
-        if entry_ignored(filename, exclude_dirs):
+        if entry_ignored(local, exclude_dirs):
             hidden += 1
             continue
 
-        matches.append(
-            GrepMatch(
-                filename=sp.prefixed(filename),
-                lines=tuple(
-                    GrepLine(
-                        line_number=line.line_number,
-                        text=line.text,
-                        is_match=line.is_match,
-                        match_start=line.match_start,
-                    )
-                    for line in rg_match.lines
-                ),
+        hits.append(_Hit(sp, local, count))
+
+    return hits, hidden
+
+
+def _grep_match(sp: SearchPath, rg_match: RgMatch) -> GrepMatch:
+    # ripgrep runs inside the root, so what it reports is already local.
+    return GrepMatch(
+        filename=sp.prefixed(rg_match.path),
+        lines=tuple(
+            GrepLine(
+                line_number=line.line_number,
+                text=line.text,
+                is_match=line.is_match,
+                match_start=line.match_start,
             )
+            for line in rg_match.lines
+        ),
+    )
+
+
+def _cut(block: GrepMatch, left: int) -> tuple[GrepMatch, int]:
+    """*block* up to *left* matching lines, cut after its last kept one, and what is left.
+
+    >>> line = GrepLine(1, "x", is_match=True)
+    >>> block, left = _cut(GrepMatch("a", (line, line)), 1)
+    >>> len(block.lines), left
+    (1, 0)
+    """
+    lines: list[GrepLine] = []
+
+    for line in block.lines:
+        if line.is_match:
+            if not left:
+                break
+
+            left -= 1
+
+        lines.append(line)
+
+    return replace(block, lines=tuple(lines)), left
+
+
+async def _search(
+    paths: Sequence[SearchPath],
+    pattern: str,
+    glob: str | None,
+    context: int,
+    case_sensitive: bool,
+    literal: bool,
+    exclude_dirs: tuple[str, ...],
+    limit: int,
+) -> tuple[list[GrepMatch], int]:
+    """The leading match blocks across *paths*, up to *limit* matching lines, and the files hidden.
+
+    Each root streams its blocks in path order and the search stops reading
+    at the limit, so a broad pattern costs what it shows, which leaves how
+    many more there are unknown.  The hidden count is a floor for the same
+    reason as :func:`_count_path`'s, and covers only what was read.
+    """
+    kept: list[GrepMatch] = []
+    hidden: set[str] = set()
+    shadowed: dict[str, bool] = {}
+    left = limit
+
+    for sp in paths:
+        if not left:
+            break
+
+        if not sp.path.exists():
+            continue
+
+        found = rg_search(
+            pattern,
+            sp.path,
+            glob=glob,
+            context_lines=context,
+            max_count=limit,
+            case_sensitive=case_sensitive,
+            literal=literal,
+            exclude_dirs=exclude_dirs,
         )
 
-    return matches, hidden
+        try:
+            async with aclosing(found):
+                async for rg_match in found:
+                    local = rg_match.path
+
+                    if local not in shadowed:
+                        shadowed[local] = _shadowed(sp, local, glob)
+
+                    if shadowed[local] or not file_allowed(sp.filter_func, local):
+                        continue
+
+                    if entry_ignored(local, exclude_dirs):
+                        hidden.add(sp.prefixed(local))
+                        continue
+
+                    block, left = _cut(_grep_match(sp, rg_match), left)
+                    kept.append(block)
+
+                    if not left:
+                        break
+
+        # What the root yielded before it failed stays, as the rest of the search does.
+        except Exception:
+            logger.warning(_FAILED, pattern, sp.path, exc_info=True)
+
+    return kept, len(hidden)
 
 
 @dataclass(slots=True, frozen=True)
@@ -272,6 +398,10 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
     flooding it with long wrapped markdown lines.  A matching line is clipped
     around its match, so the cut never takes the hit itself, and a context
     line from its start.  ``full_lines`` lifts the clip from both.
+
+    Content mode streams the matches in path order and stops reading at
+    ``max_results``, so it bounds what a search holds and reads rather than
+    only what it renders, and the counting modes count every file in one run.
     """
 
     max_line_chars: int = 200
@@ -303,74 +433,61 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         if refusal := _binary_glob(glob):
             raise ToolRetry(refusal)
 
-        # Context is wasted work when the formatted output discards it.
-        effective_context = context if output_mode == "content" else 0
         exclude = excluded_dirs(include_ignored)
         # A scope prefix on the glob narrows the search to one workspace, and
         # `scoped` folds it to NFC to match the canonically named files.
         # `pattern` deliberately stays raw: it matches file content, which is
         # never normalized, so folding it would stop it matching decomposed text.
         paths, glob = self.scoped(glob)
-        results = await asyncio.gather(
-            *(
-                _search_path(
-                    sp,
-                    pattern,
-                    glob,
-                    effective_context,
-                    case_sensitive,
-                    literal,
-                    exclude,
-                )
-                for sp in paths
-            )
-        )
-        all_matches = _drop_shadowed_originals(
-            [m for batch, _hidden in results for m in batch]
-        )
-        hidden = sum(hidden for _batch, hidden in results)
-
-        return self._render(all_matches, hidden, output_mode, max_results, full_lines)
-
-    def _render(
-        self,
-        all_matches: list[GrepMatch],
-        hidden: int,
-        output_mode: GrepOutputMode,
-        max_results: int,
-        full_lines: bool,
-    ) -> ToolOutput[list[GrepMatch]]:
-        """Render the matches in the shape *output_mode* asks for.
-
-        The structured data is the match blocks behind what the text shows,
-        since the frontend cites what it is given: the blocks shown in content
-        mode, and in the counting modes, which search without context, the
-        matched lines of the files listed.
-        """
         hints: list[str] = []
 
+        # The structured data is what backs the text, since the frontend
+        # cites what it is given: the blocks shown in content mode, and in the
+        # counting modes, which show no line, the files listed.
         if output_mode == "content":
             clip = LineClip(None if full_lines else self.max_line_chars)
-            data = all_matches[:max_results]
-            body = self._format_matches(data, clip)
-            total = len(all_matches)
-            hints += clip.hints()
-        else:
-            counts: dict[str, int] = {}
-            for m in all_matches:
-                counts[m.filename] = counts.get(m.filename, 0) + sum(
-                    1 for line in m.lines if line.is_match
-                )
-            listed = sorted(counts.items())[:max_results]
-            shown = {filename for filename, _ in listed}
-            data = [m for m in all_matches if m.filename in shown]
-            body = "\n".join(
-                fn if output_mode == "files_with_matches" else f"{fn}: {n}"
-                for fn, n in listed
+            data, hidden = await _search(
+                paths,
+                pattern,
+                glob,
+                context,
+                case_sensitive,
+                literal,
+                exclude,
+                max_results,
             )
-            total = len(counts)
+            body = self._format_matches(data, clip)
+            shown = sum(line.is_match for block in data for line in block.lines)
+            hints += clip.hints()
+            hints += omission_hints(hidden=hidden, max_results=max_results, shown=shown)
 
-        hints += omission_hints(hidden=hidden, max_results=max_results, total=total)
+            # The search stopped at the cap, so only a count says how far it reaches.
+            if shown >= max_results:
+                hints.append("output_mode='count' says how many lines match per file")
+        else:
+            results = await asyncio.gather(
+                *(
+                    _count_path(sp, pattern, glob, case_sensitive, literal, exclude)
+                    for sp in paths
+                )
+            )
+            hits = sorted(
+                (hit for batch, _hidden in results for hit in batch),
+                key=lambda hit: hit.filename,
+            )
+            listed = hits[:max_results]
+            data = [GrepMatch(hit.filename, ()) for hit in listed]
+            body = "\n".join(
+                hit.filename
+                if output_mode == "files_with_matches"
+                else f"{hit.filename}: {hit.count}"
+                for hit in listed
+            )
+            hints += omission_hints(
+                hidden=sum(hidden for _batch, hidden in results),
+                max_results=max_results,
+                total=len(hits),
+            )
 
         return ToolOutput(
             data=data, formatted=(body or "(no matches)") + hint_suffix(hints)

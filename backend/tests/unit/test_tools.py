@@ -1245,6 +1245,22 @@ class TestGrepSearch:
         assert "showing 1 of 2" in result.text
         assert self._filenames(result.data) == {"a.md"}
 
+    async def test_a_capped_search_reads_only_the_lines_it_shows(
+        self, tmp_path: Path
+    ) -> None:
+        # The search stops at the cap, cutting the block that reaches past it
+        # after its last shown match, and the count mode says how far it reaches.
+        (tmp_path / "a.md").write_text("needle\n" * 3)
+        (tmp_path / "b.md").write_text("needle\n" * 100)
+        tool = GrepTool(paths=tmp_path)
+
+        result = await tool("needle", max_results=5)
+        counted = await tool("needle", output_mode="count")
+
+        assert [sum(line.is_match for line in m.lines) for m in result.data] == [3, 2]
+        assert "reached max_results=5" in result.text
+        assert counted.text == "a.md: 3\nb.md: 100"
+
     async def test_parent_glob_cannot_search_outside_workspace(
         self, tmp_path: Path
     ) -> None:

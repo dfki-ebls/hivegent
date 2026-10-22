@@ -4,7 +4,7 @@ from .base import SubprocessError, SubprocessResult, run
 from .jq import jq_filter
 from .pandoc import pandoc_convert
 from .poppler import pdftotext_convert
-from .rg import RgLine, RgMatch, rg_search
+from .rg import RgLine, RgMatch, rg_count, rg_search
 
 __all__ = [
     "RgLine",
@@ -14,6 +14,7 @@ __all__ = [
     "jq_filter",
     "pandoc_convert",
     "pdftotext_convert",
+    "rg_count",
     "rg_search",
     "run",
 ]

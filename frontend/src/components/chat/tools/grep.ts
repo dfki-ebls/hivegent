@@ -2,7 +2,7 @@ import { z } from "zod";
 import { type ChunkPosition, GrepMatchSchema } from "@/lib/types";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
-/** The match blocks of every output mode, which the counting modes search without context. */
+/** The match blocks of content mode, and the listed files without lines in the counting modes. */
 const GrepMatchesSchema = z.array(GrepMatchSchema);
 
 export const syncGrepOutput: SyncOutput = ({ input, metadata, addChunk, sourceId }) => {
