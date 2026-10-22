@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator, Container, Iterator, Mapping, Sequence
+from collections.abc import Container, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,10 +10,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from ..concurrency import shield_to_completion
 
-__all__ = ["SubprocessError", "SubprocessResult", "run", "stream_lines"]
-
-_LINE_LIMIT = 1 << 30
-"""The longest line :func:`stream_lines` reads, far past any document's, since one line is one record."""
+__all__ = ["SubprocessError", "SubprocessResult", "run"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -118,48 +115,3 @@ async def run(
     ):
         raise SubprocessError(result)
     return result
-
-
-async def stream_lines(
-    args: Sequence[str | Path],
-    *,
-    cwd: Path | None = None,
-    allowed_returncodes: Container[int] = (),
-) -> AsyncGenerator[bytes]:
-    """Yield the lines a command writes to stdout as it writes them.
-
-    For a command whose output a caller may stop reading early: closing the
-    generator kills the command, so it stops once the caller has enough
-    rather than producing the rest into a pipe nobody reads.  stderr is
-    drained alongside, so a command reporting many errors never blocks on it.
-
-    Raises:
-        SubprocessError: Once stdout is read to its end, if the command exited
-            with a code other than 0 or one of *allowed_returncodes*.
-    """
-    proc = await asyncio.create_subprocess_exec(
-        *[str(a) for a in args],
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=cwd,
-        limit=_LINE_LIMIT,
-    )
-    assert proc.stdout is not None and proc.stderr is not None
-    stderr = asyncio.ensure_future(proc.stderr.read())
-
-    try:
-        async for line in proc.stdout:
-            yield line
-
-        returncode = await proc.wait()
-
-        if returncode != 0 and returncode not in allowed_returncodes:
-            raise SubprocessError(SubprocessResult(b"", await stderr, returncode))
-
-    finally:
-        if proc.returncode is None:
-            proc.kill()
-            await shield_to_completion(proc.wait())
-
-        # Read only for the error above, so an early close drops it.
-        _ = stderr.cancel()

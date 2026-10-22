@@ -1,6 +1,5 @@
 """Unit tests for async subprocess wrappers."""
 
-from contextlib import aclosing
 from pathlib import Path
 from typing import Any
 
@@ -61,23 +60,11 @@ class TestRun:
 
 
 async def _search(pattern: str, root: Path, **kwargs: Any) -> list[RgMatch]:
-    return [match async for match in rg_search(pattern, root, **kwargs)]
+    return await rg_search(pattern, root, [p.name for p in root.iterdir()], **kwargs)
 
 
 class TestRgSearch:
     """Tests for ``rg_search``."""
-
-    async def test_closing_early_stops_the_search(self, tmp_path: Path) -> None:
-        for name in "abc":
-            (tmp_path / f"{name}.txt").write_text("hit\n")
-
-        found = rg_search("hit", tmp_path)
-
-        async with aclosing(found):
-            first = await anext(found)
-
-        # Walked in path order, so the first block is the same on every run.
-        assert first.path == "a.txt"
 
     async def test_finds_matches(self, tmp_path: Path) -> None:
         (tmp_path / "hello.txt").write_text("Hello World\nGoodbye World\n")

@@ -1,10 +1,11 @@
 """Typed async wrapper around ripgrep (``rg``)."""
 
+import asyncio
 import base64
-import json
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from itertools import batched
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -18,7 +19,7 @@ from pydantic import (
 )
 
 from ..text import decode_bytes
-from .base import run, stream_lines
+from .base import SubprocessError, SubprocessResult, run
 
 __all__ = ["RgLine", "RgMatch", "rg_count", "rg_search"]
 
@@ -38,7 +39,7 @@ class RgLine:
 
 @dataclass(slots=True, frozen=True)
 class RgMatch:
-    """A match block from ripgrep — at least one matching line, plus any
+    """A match block from ripgrep, at least one matching line plus any
     surrounding context lines that ripgrep grouped with it."""
 
     # Relative to the search root, which is where ripgrep was run.
@@ -155,23 +156,20 @@ def _parse_event(raw: JsonValue) -> _RgEvent | None:
         return None
 
 
-def _filters(
-    *,
-    glob: str | None,
-    case_sensitive: bool,
-    literal: bool,
-    exclude_dirs: tuple[str, ...],
-) -> list[str]:
-    """The flags a count and a search share: how the pattern matches and what is walked."""
+_FILES_PER_RUN = 1_000
+"""Most files one search names, which keeps its command line far below ``ARG_MAX``."""
+
+
+def _matching(*, case_sensitive: bool, literal: bool) -> list[str]:
+    """The flags that decide how the pattern matches."""
     args: list[str] = []
+
     if not case_sensitive:
         args.append("--ignore-case")
+
     if literal:
         args.append("--fixed-strings")
-    if glob:
-        args.extend(["--glob", glob])
-    for excluded in exclude_dirs:
-        args.extend(["--glob", f"!**/{excluded}/**"])
+
     return args
 
 
@@ -185,50 +183,6 @@ async def rg_count(
     exclude_dirs: tuple[str, ...] = (),
 ) -> dict[str, int]:
     """Count the matching lines of every file below *root*, by path relative to it.
-
-    The whole result set in a line per file, however much matches.  The
-    arguments are :func:`rg_search`'s.
-    """
-    args: list[str | Path] = ["rg", "--count", "--null"]
-    args.extend(
-        _filters(
-            glob=glob,
-            case_sensitive=case_sensitive,
-            literal=literal,
-            exclude_dirs=exclude_dirs,
-        )
-    )
-    args.extend(["--", pattern, "."])
-    # rg exits 1 when there are no matches — that's not an error.
-    result = await run(args, allowed_returncodes=(1,), cwd=root)
-
-    counts: dict[str, int] = {}
-
-    for line in result.stdout.splitlines():
-        raw, _, count = line.partition(b"\0")
-
-        if (path := _decode(raw)) is not None:
-            counts[path.removeprefix("./")] = int(count)
-
-    return counts
-
-
-async def rg_search(
-    pattern: str,
-    root: Path,
-    *,
-    glob: str | None = None,
-    context_lines: int = 0,
-    max_count: int | None = None,
-    case_sensitive: bool = False,
-    literal: bool = False,
-    exclude_dirs: tuple[str, ...] = (),
-) -> AsyncGenerator[RgMatch]:
-    """Search *root* for *pattern* using ripgrep, yielding match blocks as they arrive.
-
-    The files are walked in path order, so the blocks a caller stops after
-    are the same on every run, and closing the generator stops ripgrep, so a
-    caller that has enough never pays for the rest of the walk.
 
     ripgrep runs with *root* as its working directory rather than being
     handed it as an argument, because that is what anchors a glob: ripgrep
@@ -244,8 +198,6 @@ async def rg_search(
             reported path is relative to.
         glob: Only search files matching this glob, either by basename
             (``"*.md"``) or anchored at *root* (``"reports/*.txt"``).
-        context_lines: Number of context lines before and after each match.
-        max_count: Most matching lines to report per file, all for ``None``.
         case_sensitive: When ``False`` (the default), search
             case-insensitively.  When ``True``, match case exactly.
         literal: When ``True``, treat *pattern* as a fixed string rather
@@ -253,62 +205,85 @@ async def rg_search(
         exclude_dirs: Directory names to skip anywhere in the tree
             (e.g. ``("node_modules", ".git")``).
 
-    Yields:
-        Match blocks parsed from ripgrep's JSON output, each path relative to
-        *root*.  Each block contains one or more lines, and ``is_match``
-        distinguishes matching lines from surrounding context.
+    Raises:
+        ValueError: If ripgrep fails, mostly on a pattern it cannot parse.
     """
-    args: list[str | Path] = ["rg", "--json", "--sort", "path"]
-    args.extend(
-        _filters(
-            glob=glob,
-            case_sensitive=case_sensitive,
-            literal=literal,
-            exclude_dirs=exclude_dirs,
-        )
-    )
-    if context_lines > 0:
-        args.extend(["--context", str(context_lines)])
-    if max_count is not None:
-        args.extend(["--max-count", str(max_count)])
+    args: list[str | Path] = [
+        "rg",
+        "--count",
+        "--null",
+        *_matching(case_sensitive=case_sensitive, literal=literal),
+    ]
+
+    if glob:
+        args.extend(["--glob", glob])
+
+    for excluded in exclude_dirs:
+        args.extend(["--glob", f"!**/{excluded}/**"])
+
     args.extend(["--", pattern, "."])
 
+    # rg exits 1 when there are no matches, which is no error.  An explicitly
+    # given target is searched whatever the ignore files say, and `.` is as
+    # explicit as an absolute path, so a workspace under an ignored directory
+    # (`data/` in the dev tree) stays searchable.
+    try:
+        result = await run(args, allowed_returncodes=(1,), cwd=root)
+
+    except SubprocessError as exc:
+        raise ValueError(f"rg failed: {exc.result.stderr_text.strip()}") from exc
+
+    counts: dict[str, int] = {}
+
+    for line in result.stdout.splitlines():
+        raw, _, count = line.partition(b"\0")
+
+        # `.` is the target, so every path arrives spelled `./<relative>`.
+        if (path := _decode(raw)) is not None:
+            counts[path.removeprefix("./")] = int(count)
+
+    return counts
+
+
+def _block(path: str | None, lines: list[RgLine]) -> Iterator[RgMatch]:
+    """The block of *lines* under *path*, or none before the first line."""
+    if lines and path is not None:
+        yield RgMatch(path=path, lines=tuple(lines))
+
+
+def _blocks(result: SubprocessResult, *, context_lines: int) -> Iterator[RgMatch]:
+    """The match blocks of one ``--json`` run."""
     block_lines: list[RgLine] = []
     block_path: str | None = None
 
-    # rg exits 1 when there are no matches — that's not an error.  An
-    # explicitly given target is searched whatever the ignore files say, and
-    # `.` is as explicit as an absolute path, so a workspace under an ignored
-    # directory (`data/` in the dev tree) stays searchable.
-    async for line in stream_lines(args, allowed_returncodes=(1,), cwd=root):
-        if not line.strip():
-            continue
-
-        raw = json.loads(line)
+    for raw in result.stdout_ndjson():
         event = _parse_event(raw)
+
         if not isinstance(event, _RgLineEvent):
             if event is None:
                 logger.debug("Skipping unmodelled ripgrep event: %r", raw)
-            if block_lines and block_path is not None:
-                yield RgMatch(path=block_path, lines=tuple(block_lines))
+
+            yield from _block(block_path, block_lines)
             block_lines = []
             block_path = None
             continue
 
         line_path = event.data.path.decode()
         text = event.data.lines.decode()
+
         if line_path is None or text is None:
             logger.debug("Skipping undecodable ripgrep line: %r", raw)
             continue
 
         is_match = event.type == "match"
+
         # Without --context, consecutive matches have no separator,
         # so flush the previous block before starting a new one.
-        if is_match and context_lines == 0 and block_lines and block_path is not None:
-            yield RgMatch(path=block_path, lines=tuple(block_lines))
+        if is_match and context_lines == 0:
+            yield from _block(block_path, block_lines)
             block_lines = []
-        # `.` is the target, so every path arrives spelled `./<relative>`.
-        block_path = line_path.removeprefix("./")
+
+        block_path = line_path
         block_lines.append(
             RgLine(
                 line_number=event.data.line_number,
@@ -320,5 +295,64 @@ async def rg_search(
             )
         )
 
-    if block_lines and block_path is not None:
-        yield RgMatch(path=block_path, lines=tuple(block_lines))
+    yield from _block(block_path, block_lines)
+
+
+async def rg_search(
+    pattern: str,
+    root: Path,
+    files: Sequence[str],
+    *,
+    context_lines: int = 0,
+    max_count: int | None = None,
+    case_sensitive: bool = False,
+    literal: bool = False,
+) -> list[RgMatch]:
+    """Search the *files* below *root* for *pattern* using ripgrep.
+
+    The files are named rather than walked, since :func:`rg_count` already
+    found which ones match, so a caller reads the lines of only those it shows.
+    They are searched in parallel and come back in no particular order.
+
+    Args:
+        pattern: Regex pattern to search for.
+        root: Directory the *files* and every reported path are relative to.
+        files: The files to search.
+        context_lines: Number of context lines before and after each match.
+        max_count: Most matching lines to report per file, all for ``None``.
+        case_sensitive: When ``False`` (the default), search
+            case-insensitively.  When ``True``, match case exactly.
+        literal: When ``True``, treat *pattern* as a fixed string rather
+            than a regular expression.
+
+    Returns:
+        Match blocks parsed from ripgrep's JSON output, each path relative to
+        *root*.  Each block contains one or more lines, and ``is_match``
+        distinguishes matching lines from surrounding context.
+    """
+    args: list[str | Path] = [
+        "rg",
+        "--json",
+        *_matching(case_sensitive=case_sensitive, literal=literal),
+    ]
+
+    if context_lines > 0:
+        args.extend(["--context", str(context_lines)])
+
+    if max_count is not None:
+        args.extend(["--max-count", str(max_count)])
+
+    # rg exits 2 for a file it could not read, here one that vanished since
+    # it was counted, which costs that file's lines alone.
+    results = await asyncio.gather(
+        *(
+            run([*args, "--", pattern, *batch], allowed_returncodes=(1, 2), cwd=root)
+            for batch in batched(files, _FILES_PER_RUN)
+        )
+    )
+
+    return [
+        block
+        for result in results
+        for block in _blocks(result, context_lines=context_lines)
+    ]

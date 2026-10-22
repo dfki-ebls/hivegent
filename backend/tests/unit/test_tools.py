@@ -45,7 +45,7 @@ from hivegent.tools.documents import (
     ReadDocumentTool,
 )
 from hivegent.tools.formatting import LineClip
-from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
+from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool, _format_matches
 from hivegent.tools.jq import JqResult, JqTool
 from hivegent.tools.mutations import (
     DeleteDocumentsTool,
@@ -1180,13 +1180,14 @@ class TestGrepSearch:
 
         assert self._filenames(result.data) == {"notes.md"}
 
+    @pytest.mark.parametrize("glob", [None, "*.{xml,md}"])
     async def test_original_dropped_when_description_matches(
-        self, tmp_path: Path
+        self, tmp_path: Path, glob: str | None
     ) -> None:
         (tmp_path / "doc.xml").write_text("<a>needle</a>\n")
         (tmp_path / "doc.md").write_text("```xml\n<a>needle</a>\n```\n")
         (tmp_path / "raw.xml").write_text("<a>needle</a>\n")
-        result = await GrepTool(paths=tmp_path)("needle")
+        result = await GrepTool(paths=tmp_path)("needle", glob=glob)
         assert self._filenames(result.data) == {"doc.md", "raw.xml"}
 
     async def test_original_kept_when_globbed(self, tmp_path: Path) -> None:
@@ -1245,21 +1246,25 @@ class TestGrepSearch:
         assert "showing 1 of 2" in result.text
         assert self._filenames(result.data) == {"a.md"}
 
-    async def test_a_capped_search_reads_only_the_lines_it_shows(
+    async def test_a_capped_search_cuts_at_the_cap_and_names_the_total(
         self, tmp_path: Path
     ) -> None:
-        # The search stops at the cap, cutting the block that reaches past it
-        # after its last shown match, and the count mode says how far it reaches.
+        # The block that reaches past the cap is cut after its last shown
+        # match, and a file past it is never read for its lines.
         (tmp_path / "a.md").write_text("needle\n" * 3)
         (tmp_path / "b.md").write_text("needle\n" * 100)
-        tool = GrepTool(paths=tmp_path)
+        (tmp_path / "c.md").write_text("needle\n")
 
-        result = await tool("needle", max_results=5)
-        counted = await tool("needle", output_mode="count")
+        result = await GrepTool(paths=tmp_path)("needle", max_results=5)
 
         assert [sum(line.is_match for line in m.lines) for m in result.data] == [3, 2]
-        assert "reached max_results=5" in result.text
-        assert counted.text == "a.md: 3\nb.md: 100"
+        assert "showing 5 of 104" in result.text
+
+    async def test_an_invalid_pattern_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("needle(\n")
+
+        with pytest.raises(ToolRetry, match="regex parse error"):
+            await GrepTool(paths=tmp_path)("needle(")
 
     async def test_parent_glob_cannot_search_outside_workspace(
         self, tmp_path: Path
@@ -1300,10 +1305,7 @@ class TestGrepFormatting:
                 GrepLine(line_number=11, text="hit", is_match=True),
             ),
         )
-        assert (
-            GrepTool._format_matches([block], LineClip(None))
-            == "doc.md\n10-ctx\n11:hit"
-        )
+        assert _format_matches([block], LineClip(None)) == "doc.md\n10-ctx\n11:hit"
 
     def test_a_wide_line_is_clipped_around_its_match(self, tmp_path: Path) -> None:
         # A hit deep in a wide table row survives the clip, and full_lines
@@ -1322,8 +1324,8 @@ class TestGrepFormatting:
         )
 
         clip = LineClip(20)
-        clipped = GrepTool._format_matches([block], clip).splitlines()
-        whole = GrepTool._format_matches([block], LineClip(None)).splitlines()
+        clipped = _format_matches([block], clip).splitlines()
+        whole = _format_matches([block], LineClip(None)).splitlines()
 
         assert clipped[1] == f"1-{block.lines[0].text[:19]}…"
         assert clipped[2] == "2:…xxxxLegendeyyyyyyy…"
@@ -1332,13 +1334,11 @@ class TestGrepFormatting:
         assert clip.hints()
 
     def test_blocks_within_document_separated_by_dashes(self, tmp_path: Path) -> None:
-        formatted = GrepTool._format_matches(
-            [self._block(1), self._block(1)], LineClip(None)
-        )
+        formatted = _format_matches([self._block(1), self._block(1)], LineClip(None))
         assert formatted == "f.md\n1:x\n--\n1:x"
 
     async def test_separate_documents_joined_by_separator(self, tmp_path: Path) -> None:
-        formatted = GrepTool._format_matches(
+        formatted = _format_matches(
             [self._block(1, "a.md"), self._block(1, "b.md")], LineClip(None)
         )
         assert formatted == "a.md\n1:x\n---\nb.md\n1:x"
