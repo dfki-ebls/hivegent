@@ -341,10 +341,11 @@ async def invoke_tool[D](
 ) -> Any:
     """Run the tool *name* of *toolset* as an agent run calls it, outside of one.
 
-    Goes through pydantic-ai's own :class:`ToolManager` over the toolset the
-    tool belongs to, so its ``prepare`` hook, its schema, its
-    ``args_validator``, and its timeout, the toolset's included, apply exactly
-    as in a run, with errors raised rather than turned into retry prompts.
+    Goes through pydantic-ai's own :class:`ToolManager` over a toolset of
+    the tool alone, which keeps the timeout and retries of the one it belongs
+    to, so its ``prepare`` hook, its schema, its ``args_validator``, and its
+    timeout apply exactly as in a run, with errors raised rather than turned
+    into retry prompts, and no other tool's ``prepare`` hook runs.
 
     Args:
         toolset: The toolset holding the tool.
@@ -358,13 +359,19 @@ async def invoke_tool[D](
         The raw return value, taken apart by :func:`unwrap_tool_output`.
 
     Raises:
+        KeyError: If *toolset* holds no tool *name*.
         pydantic.ValidationError: If ``args`` fail the tool's schema.
         ModelRetry: If the tool or its validator refuses the arguments, or
             its ``prepare`` hook withholds it.
         ApprovalRequired: If the validator asks the user first.
     """
     context = run_context(deps, usage_limits=usage_limits)
-    manager = await ToolManager(toolset).for_run_step(context)
+    alone = FunctionToolset[D](
+        [toolset.tools[name]],
+        max_retries=toolset.max_retries,
+        timeout=toolset.timeout,
+    )
+    manager = await ToolManager(alone).for_run_step(context)
 
     return await manager.handle_call(
         ToolCallPart(name, dict(args)),
