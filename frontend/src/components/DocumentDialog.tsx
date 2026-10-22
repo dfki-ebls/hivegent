@@ -16,16 +16,8 @@ import { useTranslation } from "react-i18next";
 import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
-import {
-  basename,
-  centerInScroller,
-  cn,
-  errorMessage,
-  isWebUrl,
-  parentDir,
-  previewText,
-} from "@/lib/utils";
-import { buildAuxLlmConfig, formatTarget } from "@/lib/api";
+import { basename, centerInScroller, cn, errorMessage, isWebUrl, previewText } from "@/lib/utils";
+import { buildAuxLlmConfig, canonicalPath, formatTarget, splitScopePath } from "@/lib/api";
 import { documentMutations, documentQueries } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
 import { AssetMedia, isPreviewable } from "@/components/documents/AssetMedia";
@@ -402,6 +394,8 @@ function DocumentDialogBody({
   });
   const assetsData = assetsQuery.data;
   const managedData = chunksQuery.data ?? null;
+  // Both responses name their files relative to the workspace of *filename*.
+  const { scope } = splitScopePath(filename);
   const managedLoading = chunksQuery.isLoading;
   const isLoading = contentQuery.isLoading;
 
@@ -431,7 +425,7 @@ function DocumentDialogBody({
         // indexed as text previews like a captioned raster image.
         preview:
           managedData?.original_path && isPreviewable(managedData.mime)
-            ? { path: managedData.original_path, mime: managedData.mime }
+            ? { path: canonicalPath(scope, managedData.original_path), mime: managedData.mime }
             : null,
         metadata: managedData,
       };
@@ -457,6 +451,7 @@ function DocumentDialogBody({
     isManagedMode,
     contentQuery.data,
     managedData,
+    scope,
     chunksQuery.error,
     managedLoading,
     chunks,
@@ -644,8 +639,7 @@ function DocumentDialogBody({
 
     // Asset view
     if (activeAsset) {
-      // The assets directory sits beside the document, so its scope prefix carries over.
-      const assetPath = `${parentDir(filename)}${basename(assetsData?.assets_dir ?? "")}/${activeAsset.name}`;
+      const assetPath = canonicalPath(scope, activeAsset.path);
       const assetActionPending = pendingAssetAction !== null;
 
       return (
