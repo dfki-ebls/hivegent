@@ -15,8 +15,8 @@ from pydantic import ValidationError
 from pydantic_ai.exceptions import ModelRetry
 
 from ...agents import (
+    TOOL_NAMES,
     UserDeps,
-    agent_tool,
     collect_tool_schemas,
     invoke_agent_tool,
 )
@@ -52,12 +52,8 @@ async def run_tool(
     a message so they can be inspected in the console rather than surfacing as
     opaque HTTP errors. An unknown tool name is a 404.
     """
-    try:
-        _ = agent_tool(tool_name)
-    except KeyError as exc:
-        raise HTTPException(
-            status_code=404, detail=f"Unknown tool: {tool_name}"
-        ) from exc
+    if tool_name not in TOOL_NAMES:
+        raise HTTPException(status_code=404, detail=f"Unknown tool: {tool_name}")
 
     deps = UserDeps(user=user, mode="write")
     text: str | None = None

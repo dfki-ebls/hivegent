@@ -8,7 +8,7 @@ from .app import (
     user_agent,
 )
 from .capabilities import (
-    agent_tool,
+    TOOL_NAMES,
     build_capabilities,
     check_tool_settings,
     collect_tool_schemas,
@@ -29,11 +29,11 @@ from .tools import (
 )
 
 __all__ = [
+    "TOOL_NAMES",
     "ExploreTaskArg",
     "RunPrefix",
     "SubagentName",
     "UserDeps",
-    "agent_tool",
     "build_capabilities",
     "check_tool_settings",
     "collect_tool_schemas",

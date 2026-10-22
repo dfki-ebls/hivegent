@@ -54,7 +54,7 @@ import inspect
 import reprlib
 import types
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from functools import cache, wraps
 from typing import Any
 
@@ -224,15 +224,15 @@ class HostCalls:
     """
 
     budget: CallBudget
-    max_wall_seconds: float | None = None
+    max_wall_seconds: InitVar[float | None] = None
     finished: list[HostCall] = field(default_factory=list)
     ending: Exception | None = None
     deadline: float | None = field(default=None, init=False)
     """When, on the event loop's clock, the program's host calls run out of time."""
 
-    def __post_init__(self) -> None:
-        if self.max_wall_seconds is not None:
-            self.deadline = asyncio.get_running_loop().time() + self.max_wall_seconds
+    def __post_init__(self, max_wall_seconds: float | None) -> None:
+        if max_wall_seconds is not None:
+            self.deadline = asyncio.get_running_loop().time() + max_wall_seconds
 
     def bind(self, surface: MontySurface) -> dict[str, _HostFunction]:
         """The functions of *surface* for one program, each held to this policy."""

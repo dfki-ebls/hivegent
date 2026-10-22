@@ -83,9 +83,9 @@ from .tools import (
 __all__ = [
     "FEATURES",
     "SHARED_INSTRUCTIONS",
+    "TOOL_NAMES",
     "Feature",
     "SharedInstructions",
-    "agent_tool",
     "build_capabilities",
     "check_tool_settings",
     "collect_tool_schemas",
@@ -192,6 +192,9 @@ FEATURES: tuple[Feature, ...] = (
     Feature.build("conversation", conversation_toolset),
     Feature.build("ask", ask_toolset),
 )
+
+TOOL_NAMES = frozenset(name for feature in FEATURES for name in feature.tool_names)
+"""Every agent tool any feature registers."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,8 +365,7 @@ def check_tool_settings() -> None:
         ValueError: If a name is not a built-in tool, or is not one the
             sandbox can be given.
     """
-    known = {name for feature in FEATURES for name in feature.tool_names}
-    known |= SANDBOX_FUNCTION_NAMES
+    known = TOOL_NAMES | SANDBOX_FUNCTION_NAMES
 
     if unknown := sorted(set(settings.tools.disabled) - known):
         raise ValueError(
@@ -421,15 +423,6 @@ def _feature_of(name: str) -> Feature:
         return feature
 
     raise KeyError(name)
-
-
-def agent_tool(name: str) -> Tool[UserDeps]:
-    """The agent tool called *name*, looked up across every feature.
-
-    Raises:
-        KeyError: If no tool named *name* is registered.
-    """
-    return _feature_of(name).toolset.tools[name]
 
 
 async def invoke_agent_tool(
