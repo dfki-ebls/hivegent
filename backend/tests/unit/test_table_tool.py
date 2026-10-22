@@ -504,6 +504,30 @@ class TestColumnSpelling:
         assert out.formatted is not None
         assert 'unparsed: "Zaehlwert", "m3/d"' in out.formatted
 
+    async def test_header_rows_are_guessed_and_skipped(self, tmp_path: Path) -> None:
+        # A group row above the names and a units row below them, as exported.
+        (tmp_path / "grouped.csv").write_text(
+            ",Gruppe A,\nName,Menge (kg),Preis\n,kg,EUR\nx,1.5,2\ny,3,4\n"
+        )
+        tool = QueryTableTool(paths=tmp_path)
+
+        guess = single((await tool(["grouped.csv"])).data).tables[0].header_guess
+        assert guess is not None
+        assert (guess.skip_above_header, guess.skip_below_header) == (1, 1)
+        assert guess.names == ("Name", "Menge (kg)", "Preis")
+
+        with pytest.raises(ToolRetry, match="skip_above_header=1, skip_below_header=1"):
+            await tool(["grouped.csv"], ['SELECT "Menge (kg)" FROM t'])
+
+        out = await tool(
+            ["grouped.csv"],
+            ['SELECT SUM("Menge (kg)") AS total FROM t'],
+            skip_above_header=1,
+            skip_below_header=1,
+        )
+        assert single(out.data).rows == (("4.5",),)
+        assert single(out.data).tables[0].header_guess is None
+
     async def test_a_parse_error_points_at_its_position(self, tmp_path: Path) -> None:
         tool = QueryTableTool(paths=_quoted_dir(tmp_path))
 

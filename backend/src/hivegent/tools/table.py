@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from itertools import chain
@@ -29,6 +30,7 @@ from .base import (
 from .formatting import hint_suffix, truncate_around, truncate_line, window_start
 
 __all__ = [
+    "HeaderGuess",
     "QueriedTable",
     "QueryTableTool",
     "TableFilePathsArg",
@@ -36,6 +38,8 @@ __all__ = [
     "TableResult",
     "TableRowLimitArg",
     "TableSheetArg",
+    "TableSkipAboveHeaderArg",
+    "TableSkipBelowHeaderArg",
     "TextColumn",
 ]
 
@@ -78,6 +82,12 @@ _UNPARSED_SAMPLE = 3
 
 _BARE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 """What SQL takes unquoted; anything else has to be spelled in double quotes."""
+
+_UNNAMED = re.compile(r"(?:_duplicated_|__UNNAMED__)\d+|")
+"""How Polars names a header cell that is empty, in a spreadsheet or a CSV."""
+
+_HEADER_SCAN = 10
+"""Leading rows a header guess may span, past which they are data gone odd."""
 
 _PARSER_POSITION = re.compile(r"at Line: (\d+), Column: (\d+)")
 """Where sqlparser locates a syntax error, 1-based in both coordinates."""
@@ -156,6 +166,15 @@ def _quoting_hint(query: str, columns: Sequence[str]) -> str:
         " A column name that is not a bare identifier must be double-quoted, "
         f"as in `SELECT {_quoted(example)} FROM {_RELATION}`."
     )
+
+
+def _sentence(hint: str) -> str:
+    """Capitalise a lowercase hint and close it, to stand alone in a message.
+
+    >>> _sentence("pass x=1")
+    'Pass x=1.'
+    """
+    return f"{hint[:1].upper()}{hint[1:]}."
 
 
 def _message(exc: pl.exceptions.PolarsError) -> str:
@@ -268,6 +287,20 @@ def _text(name: str) -> pl.Expr:
     return pl.col(name).str.strip_chars()
 
 
+def _filled(text: pl.Expr) -> pl.Expr:
+    """Whether a text cell holds a value, as an empty one reads as missing."""
+    return text.is_not_null() & text.ne("")
+
+
+def _label(cell: str | None) -> str | None:
+    """A cell as a column name, ``None`` for a blank one.
+
+    >>> _label("  Menge "), _label(" "), _label(None)
+    ('Menge', None, None)
+    """
+    return (cell or "").strip() or None
+
+
 @dataclass(slots=True, frozen=True)
 class TextColumn:
     """A column the file stores as text, and the dtype its values parse as."""
@@ -285,6 +318,21 @@ class TextColumn:
     def complete(self) -> bool:
         """Whether every value parses, which is what makes retyping lossless."""
         return self.parsed == self.total
+
+
+@dataclass(slots=True, frozen=True)
+class HeaderGuess:
+    """The header rows that would put a table's column names where they seem to be.
+
+    Guessed when the values no type parses sit in the first rows of the data,
+    which is what a title, group, or units row next to the names looks like.
+    Both counts are absolute, so they replace what the call passed.
+    """
+
+    skip_above_header: int
+    skip_below_header: int
+    names: tuple[str, ...]
+    """The column names that skipping those rows would give."""
 
 
 TableFilePathsArg = Annotated[
@@ -325,6 +373,30 @@ TableSheetArg = Annotated[
     ),
 ]
 
+TableSkipAboveHeaderArg = Annotated[
+    int,
+    Field(
+        description=(
+            "Rows to drop above the column names, counting the loaded header as "
+            "the first, so the row after them names the columns. For a sheet "
+            "whose names sit under a title or group row. Applied to every table "
+            "given."
+        ),
+        ge=0,
+    ),
+]
+
+TableSkipBelowHeaderArg = Annotated[
+    int,
+    Field(
+        description=(
+            "Rows to drop between the column names and the first data row, such "
+            "as a units row. Applied to every table given."
+        ),
+        ge=0,
+    ),
+]
+
 TableRowLimitArg = Annotated[
     int,
     Field(
@@ -353,6 +425,8 @@ class QueriedTable:
     source_encoding: str | None = None
     text_columns: tuple[TextColumn, ...] = ()
     """Text columns that hold numbers or dates, retyped where every value did."""
+
+    header_guess: HeaderGuess | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -407,6 +481,12 @@ class _Source:
     report_complete: bool = True
     """Whether losslessly converted text columns should be reported."""
 
+    skip_above_header: int = 0
+    skip_below_header: int = 0
+    """The header rows the frame was loaded with, which a guess counts from."""
+
+    header_guess: HeaderGuess | None = None
+
     @property
     def columns(self) -> tuple[str, ...]:
         """Every column name, as the loaded frame declares them."""
@@ -421,13 +501,14 @@ class _Source:
             sheets=self.sheets,
             source_encoding=self.source_encoding,
             text_columns=self.text_columns,
+            header_guess=self.header_guess,
         )
 
 
 def _column_counts(name: str) -> Iterator[pl.Expr]:
     """The value counts one text column is judged by, in a fixed order."""
     text = _text(name)
-    filled = text.is_not_null() & text.ne("")
+    filled = _filled(text)
     yield filled.sum()
     yield (filled & text.str.contains(_LEADING_ZERO)).sum()
 
@@ -435,32 +516,68 @@ def _column_counts(name: str) -> Iterator[pl.Expr]:
         yield (filled & coercion.matches(text)).sum()
 
 
+def _lead(name: str, coercion: _Coercion) -> pl.Expr:
+    """Rows above a column's first parsing value, if every other value sits there.
+
+    Null for a column with an unparsed value further down, which is mixed data
+    rather than header rows spilled into it.
+    """
+    text = _text(name)
+    filled = _filled(text)
+    parses = filled & coercion.matches(text)
+    unparsed = filled & ~parses
+    first = parses.arg_max()
+
+    # The first parsing row is not unparsed itself, so the running count there
+    # is every unparsed value above it.
+    return pl.when(unparsed.cum_sum().get(first) == unparsed.sum()).then(first)
+
+
+@dataclass(slots=True, frozen=True)
+class _Leading:
+    """What the first rows of a table say about where its header ends."""
+
+    leads: tuple[int | None, ...] = ()
+    """Each mixed column's :func:`_lead`."""
+
+    rows: tuple[tuple[str | None, ...], ...] = ()
+    """The first rows as text, as far as a header guess may reach."""
+
+
 def _with_unparsed(
     frame: pl.LazyFrame, typed: Sequence[tuple[TextColumn, _Coercion]]
-) -> tuple[tuple[TextColumn, _Coercion], ...]:
+) -> tuple[tuple[tuple[TextColumn, _Coercion], ...], _Leading]:
     """Attach a sample of the values each mixed column could not parse.
 
     One collect for all of them rather than one apiece, and only for the
     columns that fell short: a column every value parsed in has nothing to
-    sample.  Sorted so the same file always names the same values.
+    sample.  Sorted so the same file always names the same values.  What a
+    header guess reads of the first rows rides the same collect.
     """
     mixed = [pair for pair in typed if not pair[0].complete]
 
     if not mixed:
-        return tuple(typed)
+        return tuple(typed), _Leading()
 
     # One column per frame, aliased so the filter and the read address it by a
     # name no source column can shadow.
     sample = "value"
     value = pl.col(sample)
-    sampled = pl.collect_all(
+    leads, head, *sampled = pl.collect_all(
         [
-            frame.select(_text(column.name).alias(sample))
-            .filter(value.is_not_null() & value.ne("") & ~coercion.matches(value))
-            .unique()
-            .sort(sample)
-            .head(_UNPARSED_SAMPLE)
-            for column, coercion in mixed
+            frame.select(
+                _lead(column.name, coercion).alias(str(index))
+                for index, (column, coercion) in enumerate(mixed)
+            ),
+            frame.head(_HEADER_SCAN).select(pl.all().cast(pl.String)),
+            *(
+                frame.select(_text(column.name).alias(sample))
+                .filter(_filled(value) & ~coercion.matches(value))
+                .unique()
+                .sort(sample)
+                .head(_UNPARSED_SAMPLE)
+                for column, coercion in mixed
+            ),
         ]
     )
     values = {
@@ -471,6 +588,46 @@ def _with_unparsed(
     return tuple(
         (replace(column, unparsed=values.get(column.name, ())), coercion)
         for column, coercion in typed
+    ), _Leading(leads=leads.row(0), rows=tuple(head.rows()))
+
+
+def _header_guess(source: _Source, leading: _Leading) -> HeaderGuess | None:
+    """Guess the header rows when the unparsed values crowd the first rows.
+
+    Taken only when most mixed columns agree, at the lead they share most,
+    since one sparse column starts its values late and one odd cell is not a
+    header.  The names are the row among the leading ones, the loaded header
+    included, that fills the most cells, the first of equals: a title or group
+    row fills fewer, and a units row repeats the names' gaps.
+    """
+    counts = Counter(lead for lead in leading.leads if lead)
+
+    if 2 * counts.total() <= len(leading.leads):
+        return None
+
+    top = max(counts.values())
+    lead = min(lead for lead, count in counts.items() if count == top)
+
+    if lead > _HEADER_SCAN:
+        return None
+
+    rows = [
+        tuple(None if _UNNAMED.fullmatch(name) else name for name in source.columns),
+        *leading.rows[:lead],
+    ]
+    filled = [sum(1 for cell in row if _label(cell)) for row in rows]
+    best = filled.index(max(filled))
+    above, below = source.skip_above_header, source.skip_below_header
+
+    if best:
+        above, below = above + below + best, lead - best
+    else:
+        below += lead
+
+    return HeaderGuess(
+        skip_above_header=above,
+        skip_below_header=below,
+        names=tuple(label for cell in rows[best] if (label := _label(cell))),
     )
 
 
@@ -487,7 +644,8 @@ def _coerce(source: _Source) -> _Source:
 
     A column that falls short is recorded with the count that did parse and a
     sample of what did not, so a genuinely mixed one is reported before a query
-    fails over it, not after.
+    fails over it, not after.  When those values sit in the first rows, the
+    header rows that would drop them are guessed.
     """
     frame = source.frame
     names = [
@@ -538,7 +696,7 @@ def _coerce(source: _Source) -> _Source:
         )
         typed.append((column, coercion))
 
-    sampled = _with_unparsed(frame, typed)
+    sampled, leading = _with_unparsed(frame, typed)
     converted = {column.name for column, _ in sampled if column.complete}
     text_columns = tuple(
         column for column, _ in sampled if source.report_complete or not column.complete
@@ -553,6 +711,57 @@ def _coerce(source: _Source) -> _Source:
         ),
         text_columns=text_columns,
         strings=tuple(name for name in names if name not in converted),
+        header_guess=_header_guess(source, leading),
+    )
+
+
+def _distinct(names: Sequence[str]) -> tuple[str, ...]:
+    """Suffix a repeated name the way Polars does for a CSV header.
+
+    >>> _distinct(["a", "b", "a"])
+    ('a', 'b', 'a_duplicated_0')
+    """
+    seen: Counter[str] = Counter()
+    distinct: list[str] = []
+
+    for name in names:
+        distinct.append(f"{name}_duplicated_{seen[name] - 1}" if seen[name] else name)
+        seen[name] += 1
+
+    return tuple(distinct)
+
+
+def _rehead(source: _Source, above: int, below: int) -> _Source:
+    """Take the column names *above* rows down and drop *below* rows under them.
+
+    Done on the loaded frame rather than by the readers, so a spreadsheet and a
+    delimited file count rows alike, as the sample shows them: the loaded
+    header first, an empty spreadsheet row not at all.
+    """
+    if not above and not below:
+        return source
+
+    frame = source.frame
+    columns = source.columns
+
+    if above:
+        cells = frame.slice(above - 1, 1).select(pl.all().cast(pl.String)).collect()
+
+        if cells.is_empty():
+            raise ToolRetry(
+                f"skip_above_header={above} skips every row of '{source.file_path}'"
+            )
+
+        names = _distinct(
+            [_label(cell) or f"__UNNAMED__{i}" for i, cell in enumerate(cells.row(0))]
+        )
+        frame = frame.rename(dict(zip(columns, names, strict=True)))
+
+    return replace(
+        source,
+        frame=frame.slice(above + below),
+        skip_above_header=above,
+        skip_below_header=below,
     )
 
 
@@ -635,6 +844,8 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         file_paths: TableFilePathsArg,
         queries: TableQueriesArg = None,
         sheet: TableSheetArg = None,
+        skip_above_header: TableSkipAboveHeaderArg = 0,
+        skip_below_header: TableSkipBelowHeaderArg = 0,
         row_limit: TableRowLimitArg = _DEFAULT_ROW_LIMIT,
     ) -> ToolOutput[Batch[TableResult]]:
         """Query one or more spreadsheets or delimited documents with SQL.
@@ -655,6 +866,10 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         and joins, but a function it lacks is refused by name and often exists
         under another, so read the refusal and try another spelling rather than
         abandoning the query.  ``SHOW TABLES`` lists what is registered.
+
+        A sheet whose column names sit under a title or group row, or above a
+        units row, is read with ``skip_above_header`` and ``skip_below_header``,
+        which the result suggests when the first rows look like that.
         """
         resolved: list[tuple[str, Path]] = []
 
@@ -676,7 +891,8 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         # turned out to be.
         sources = await asyncio.to_thread(
             lambda: tuple(
-                self._open(path, absolute, sheet) for path, absolute in resolved
+                self._open(path, absolute, sheet, skip_above_header, skip_below_header)
+                for path, absolute in resolved
             )
         )
 
@@ -723,16 +939,24 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         except pl.exceptions.PolarsError as exc:
             raise ToolRetry(self._failure(exc, sources, query)) from exc
 
-    def _open(self, file_path: str, absolute: Path, sheet: str | None) -> _Source:
-        """Load and retype the file, retrying once for one that is not UTF-8.
+    def _open(
+        self, file_path: str, absolute: Path, sheet: str | None, above: int, below: int
+    ) -> _Source:
+        """Load, rehead, and retype the file, retrying once for one that is not UTF-8.
 
         Coercion is what forces the read: every text column is scanned here,
         so a file in a legacy encoding fails now rather than mid-query, and
         the query phase is left with only its own failures to report.
         """
+
+        def read(*, decode: bool) -> _Source:
+            source = _load(absolute, file_path, sheet, decode=decode)
+
+            return _coerce(_rehead(source, above, below))
+
         try:
             try:
-                return _coerce(_load(absolute, file_path, sheet, decode=False))
+                return read(decode=False)
 
             # Invalid UTF-8 is reached only once a column is read, and every
             # other read failure uses a different PolarsError subclass.
@@ -740,7 +964,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
                 if absolute.suffix.lower() not in DELIMITED_SUFFIXES:
                     raise
 
-                return _coerce(_load(absolute, file_path, sheet, decode=True))
+                return read(decode=True)
 
         except pl.exceptions.PolarsError as exc:
             raise ToolRetry(f"could not read the table: {_message(exc)}") from exc
@@ -762,6 +986,15 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
             "call without queries to see their columns and types, or run "
             "`SHOW TABLES`."
         )
+
+        # A column missing from a table whose header is off is that header,
+        # and the query alone never says so.
+        if isinstance(exc, pl.exceptions.ColumnNotFoundError):
+            return detail + "".join(
+                f" {_sentence(self._header_hint(_relation(index), source.header_guess))}"
+                for index, source in enumerate(sources)
+                if source.header_guess is not None
+            )
 
         # A parse error is almost always an unquoted header, since an exported
         # sheet names its columns with spaces, units, and parentheses; the
@@ -986,6 +1219,11 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         # call: the query that most needs to hear it is the one that named the
         # column, and a run that opens with a SELECT never asks for the schema
         # afterwards.
+        hints += [
+            self._header_hint(table.name, table.header_guess)
+            for table in result.tables
+            if table.header_guess is not None
+        ]
         hints += self._typing_hints(result, query)
 
         if query is None:
@@ -1062,6 +1300,16 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
             )
 
         return hints
+
+    def _header_hint(self, name: str, guess: HeaderGuess) -> str:
+        """Name the header rows a table seems to have, and the names they give."""
+        return self._named(
+            f"the first rows of {name} hold the values no type parses, so they "
+            "look like header rows rather than data; pass "
+            f"skip_above_header={guess.skip_above_header}, "
+            f"skip_below_header={guess.skip_below_header} to name the columns",
+            [_quoted(column) for column in guess.names],
+        )
 
     def _named(self, label: str, values: Sequence[str]) -> str:
         """Spell a capped list without letting the cap pass for the whole of it."""

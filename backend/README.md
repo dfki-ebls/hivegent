@@ -360,6 +360,8 @@ Failures say another function name may exist, since there is no function registr
 Every text column whose values all parse as a number, date, datetime, or boolean is retyped before the query, and a single zero-padded value marks an identifier and vetoes numeric typing.
 A column that falls short is reported as a `TextColumn` with the parsed share and a sample of unparsed values, scoped to the columns the query touched and led by the worst shortfall.
 The tool repairs nothing and asks instead, since a spilled header row, a `<100`, or a `0,05` each need a decision about someone else's data.
+When most mixed columns hold their unparsed values only in the first rows, those rows read as a title, group, or units row, and a `HeaderGuess` names the `skip_above_header` and `skip_below_header` that would drop them, in the hints, the failures, and the data a program receives.
+Both are applied to the loaded frame rather than by the readers, so a spreadsheet and a delimited file count rows alike, as the sample shows them.
 Column names that are not bare identifiers are listed double-quoted (`_quoted`), and a parser error states that rule only when the query spells such a column unquoted.
 A parser error also shows the query line with a caret at the position sqlparser reports, since the token it names is rarely the mistake itself.
 
