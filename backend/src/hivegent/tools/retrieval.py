@@ -70,9 +70,16 @@ SearchQueriesArg = Annotated[
         "rather than retrying."
     ),
 ]
+_MAX_SEARCH_RESULTS = 1000
+"""Ceiling on ``max_results``, which sizes the database query and its rerank pool."""
+
 SearchMaxResultsArg = Annotated[
     int,
-    Field(description="Maximum number of results to return.", ge=1),
+    Field(
+        description="Maximum number of results to return.",
+        ge=1,
+        le=_MAX_SEARCH_RESULTS,
+    ),
 ]
 SearchTypeArg = Annotated[
     SearchType,

@@ -50,6 +50,12 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+_MAX_RESULTS = 10_000
+"""Ceiling on ``max_results``, which bounds what a search holds in memory."""
+
+_MAX_CONTEXT = 100
+"""Ceiling on ``context``, since every block holds its context lines too."""
+
 type GrepOutputMode = Literal["content", "files_with_matches", "count"]
 
 
@@ -97,6 +103,7 @@ GrepContextArg = Annotated[
     Field(
         description="Number of context lines to include before and after a match.",
         ge=0,
+        le=_MAX_CONTEXT,
     ),
 ]
 GrepMaxResultsArg = Annotated[
@@ -104,6 +111,7 @@ GrepMaxResultsArg = Annotated[
     Field(
         description="Maximum total number of matches to return.",
         ge=1,
+        le=_MAX_RESULTS,
     ),
 ]
 GrepCaseSensitiveArg = Annotated[

@@ -80,6 +80,9 @@ _DATETIME = r"^\d{4}-\d{1,2}-\d{1,2}[ T]\d"
 
 _DEFAULT_ROW_LIMIT = 100
 
+_MAX_ROW_LIMIT = 100_000
+"""Ceiling on ``row_limit``, since a join can return far more rows than its tables hold."""
+
 _QUERY_CONCURRENCY = 4
 """Queries or descriptions one batched call runs at once, each on its own thread."""
 
@@ -411,6 +414,7 @@ TableRowLimitArg = Annotated[
             "increase it when the task needs more complete row-level data."
         ),
         ge=1,
+        le=_MAX_ROW_LIMIT,
     ),
 ]
 

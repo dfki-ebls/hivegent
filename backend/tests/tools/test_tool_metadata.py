@@ -64,7 +64,8 @@ def test_agent_table_tool_exposes_configurable_row_limit() -> None:
     schema = tool.function_schema.json_schema
 
     assert tool.description == tool_description(QueryTableTool)
-    assert "maximum" not in schema["properties"]["row_limit"]
+    # A ceiling against memory, far past what any tool return shows.
+    assert schema["properties"]["row_limit"]["maximum"] == 100_000
     assert schema["properties"]["row_limit"]["description"] == _description(
         TableRowLimitArg
     )

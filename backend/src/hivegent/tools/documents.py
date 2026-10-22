@@ -124,9 +124,16 @@ DocumentMaxDepthArg = Annotated[
         ge=1,
     ),
 ]
+_MAX_LISTED_ENTRIES = 10_000
+"""Ceiling on ``max_results``, which bounds what a listing holds in memory."""
+
 DocumentMaxResultsArg = Annotated[
     int,
-    Field(description="Maximum number of entries to return.", ge=1),
+    Field(
+        description="Maximum number of entries to return.",
+        ge=1,
+        le=_MAX_LISTED_ENTRIES,
+    ),
 ]
 DocumentOffsetArg = Annotated[
     int,
