@@ -1242,6 +1242,7 @@ class TestGrepSearch:
         )
 
         assert "showing 1 of 2" in result.text
+        assert self._filenames(result.data) == {"a.md"}
 
     async def test_parent_glob_cannot_search_outside_workspace(
         self, tmp_path: Path

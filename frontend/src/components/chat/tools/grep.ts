@@ -1,12 +1,15 @@
-import type { ChunkPosition, GrepMatch } from "@/lib/types";
+import { z } from "zod";
+import { type ChunkPosition, GrepMatchSchema } from "@/lib/types";
 import type { SyncOutput } from "@/lib/chat/tool-part";
+
+/** The match blocks of every output mode, which the counting modes search without context. */
+const GrepMatchesSchema = z.array(GrepMatchSchema);
 
 export const syncGrepOutput: SyncOutput = ({ input, metadata, addChunk, sourceId }) => {
   if (!input) return;
-  if (!Array.isArray(metadata)) return;
-  const matches = metadata as GrepMatch[];
+  const matches = GrepMatchesSchema.safeParse(metadata).data;
   const pattern = input.pattern as string;
-  if (!matches.length || !pattern) return;
+  if (!matches?.length || !pattern) return;
 
   for (const match of matches) {
     if (match.lines.length === 0) continue;

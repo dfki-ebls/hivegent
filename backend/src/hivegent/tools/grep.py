@@ -334,9 +334,10 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
     ) -> ToolOutput[list[GrepMatch]]:
         """Render the matches in the shape *output_mode* asks for.
 
-        The counting modes cap only their text, so their structured data keeps
-        every match; the content mode caps both, since a match the text never
-        showed still carries its lines and the frontend cites what it is given.
+        The structured data is the match blocks behind what the text shows,
+        since the frontend cites what it is given: the blocks shown in content
+        mode, and in the counting modes, which search without context, the
+        matched lines of the files listed.
         """
         hints: list[str] = []
 
@@ -347,13 +348,14 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
             total = len(all_matches)
             hints += clip.hints()
         else:
-            data = all_matches
             counts: dict[str, int] = {}
             for m in all_matches:
                 counts[m.filename] = counts.get(m.filename, 0) + sum(
                     1 for line in m.lines if line.is_match
                 )
             listed = sorted(counts.items())[:max_results]
+            shown = {filename for filename, _ in listed}
+            data = [m for m in all_matches if m.filename in shown]
             body = "\n".join(
                 fn if output_mode == "files_with_matches" else f"{fn}: {n}"
                 for fn, n in listed
