@@ -8,7 +8,9 @@ a lock or writes anything, and :func:`rechunk` is the one public operation
 left here, since it changes the index and never the workspace.
 """
 
+import difflib
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -84,10 +86,78 @@ def _hash_changed(path: str, expected: str, actual: str) -> Localized[str]:
     )
 
 
-def _old_string_missing(path: str) -> Localized[str]:
+_NEAR_MISS_RATIO = 0.6
+"""Similarity past which the closest span reads as a mistyped old_string."""
+
+_NEAR_MISS_BUDGET = 5_000_000
+"""Characters a near-miss scan may compare, about the document times the span."""
+
+
+@dataclass(slots=True, frozen=True)
+class _NearMiss:
+    """The span of a document most like an old_string that did not match."""
+
+    line: int
+    text: str
+    ratio: float
+
+
+def _near_miss(text: str, old: str) -> _NearMiss | None:
+    """Find the run of as many lines as *old* has that is most like it.
+
+    What makes a failed edit cheap to retry is the exact text that was meant,
+    which a mistyped character, a changed indent, or a curly quote all differ
+    from by a little.  The cheap ratio bounds prune before the exact one, and
+    *old* is the matcher's second sequence, whose index it builds only once.
+    A document too large to scan within :data:`_NEAR_MISS_BUDGET` gets none.
+
+    >>> _near_miss("a\\nfoo = bar(1)\\nb\\n", "foo = baz(1)")
+    _NearMiss(line=2, text='foo = bar(1)', ratio=0.9166666666666666)
+    >>> _near_miss("a\\nb\\n", "something else") is None
+    True
+    """
+    size = max(len(old.splitlines()), 1)
+
+    if len(text) * size > _NEAR_MISS_BUDGET:
+        return None
+
+    lines = text.splitlines(keepends=True)
+    matcher = difflib.SequenceMatcher(autojunk=False)
+    matcher.set_seq2(old)
+    best: _NearMiss | None = None
+
+    for index in range(max(len(lines) - size + 1, 1)):
+        span = "".join(lines[index : index + size]).rstrip("\r\n")
+        matcher.set_seq1(span)
+        floor = _NEAR_MISS_RATIO if best is None else best.ratio
+
+        if matcher.real_quick_ratio() <= floor or matcher.quick_ratio() <= floor:
+            continue
+
+        if (ratio := matcher.ratio()) > floor:
+            best = _NearMiss(line=index + 1, text=span, ratio=ratio)
+
+    return best
+
+
+def _old_string_missing(path: str, near: _NearMiss | None) -> Localized[str]:
+    en = f"old_string not found in '{path}'"
+    de = f"old_string wurde in „{path}“ nicht gefunden"
+
+    if near is None:
+        return Localized(en=en, de=de)
+
+    percent = round(near.ratio * 100)
+
     return Localized(
-        en=f"old_string not found in '{path}'",
-        de=f"old_string wurde in „{path}“ nicht gefunden",
+        en=(
+            f"{en}; the closest text, from line {near.line} and {percent}% "
+            f"similar, reads:\n{near.text}"
+        ),
+        de=(
+            f"{de}. Der ähnlichste Text, ab Zeile {near.line} und zu {percent} % "
+            f"ähnlich, lautet:\n{near.text}"
+        ),
     )
 
 
@@ -301,7 +371,12 @@ def _replace(shown: str, text: str, edit: TextEdit) -> tuple[str, int]:
     count = text.count(edit.old_string)
 
     if count == 0:
-        raise HTTPException(status_code=422, detail=_old_string_missing(shown).current)
+        raise HTTPException(
+            status_code=422,
+            detail=_old_string_missing(
+                shown, _near_miss(text, edit.old_string)
+            ).current,
+        )
 
     if count > 1 and not edit.replace_all:
         raise HTTPException(

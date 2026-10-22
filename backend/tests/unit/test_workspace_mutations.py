@@ -164,6 +164,16 @@ class TestEditDocumentText:
 
         assert (workspace_dir / "doc.md").read_text() == "a b"
 
+    async def test_a_missed_old_string_shows_the_closest_text(
+        self, user_store: Casebase, workspace_dir: Path
+    ) -> None:
+        (workspace_dir / "doc.md").write_text("intro\nrows = [r for r in data]\nend\n")
+
+        with pytest.raises(HTTPException, match="from line 2") as exc:
+            await _edit(user_store, "doc.md", "rows = [r for r in date]", "x")
+
+        assert str(exc.value.detail).endswith("\nrows = [r for r in data]")
+
     async def test_stale_expected_hash_is_409(
         self, user_store: Casebase, workspace_dir: Path
     ) -> None:
