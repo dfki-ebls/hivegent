@@ -18,9 +18,10 @@ exclude-newer-span = "P3D"
 
 [options.exclude-newer-package]
 cbrkit = false
-pydantic-ai-slim = { timestamp = "0001-01-01T00:00:00Z", span = "PT1H" }
-pydantic-evals = { timestamp = "0001-01-01T00:00:00Z", span = "PT1H" }
-pydantic-graph = { timestamp = "0001-01-01T00:00:00Z", span = "PT1H" }
+certifi = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
+pydantic-ai-slim = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
+pydantic-evals = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
+pydantic-graph = { timestamp = "0001-01-01T00:00:00Z", span = "P1D" }
 
 [[package]]
 name = "accelerate"

@@ -110,9 +110,10 @@ module-name = "hivegent"
 
 [tool.uv.exclude-newer-package]
 cbrkit = false
-pydantic-ai-slim = "1 hour"
-pydantic-graph = "1 hour"
-pydantic-evals = "1 hour"
+certifi = "1 day"
+pydantic-ai-slim = "1 day"
+pydantic-graph = "1 day"
+pydantic-evals = "1 day"
 
 [tool.uv.extra-build-dependencies]
 antlr4-python3-runtime = ["setuptools"]
