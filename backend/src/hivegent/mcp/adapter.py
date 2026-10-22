@@ -82,6 +82,13 @@ def _block(content: BinaryContent) -> ContentBlock:
     )
 
 
+def _bounded(text: str) -> str:
+    """*text* within the MCP output bound, which a client cannot read on past."""
+    limit = settings.mcp.output_max_chars
+
+    return text if limit is None else truncate_middle(text, limit)
+
+
 def _result(value: object) -> ToolResult:
     """The MCP rendering of a return: its text within the MCP output bound, and its attachments.
 
@@ -90,9 +97,7 @@ def _result(value: object) -> ToolResult:
     """
     output = unwrap_tool_output(value)
     text = output.text if output.text is not None else to_json(output.data).decode()
-    limit = settings.mcp.output_max_chars
-    bounded = text if limit is None else truncate_middle(text, limit)
-    blocks: list[ContentBlock] = [TextContent(type="text", text=bounded)]
+    blocks: list[ContentBlock] = [TextContent(type="text", text=_bounded(text))]
     blocks.extend(
         _block(item) for item in output.rest or () if isinstance(item, BinaryContent)
     )
@@ -124,9 +129,9 @@ class AgentTool(McpTool):
         try:
             return await _call(self.name, arguments, deps)
         except ModelRetry as exc:
-            raise ToolError(exc.message) from exc
+            raise ToolError(_bounded(exc.message)) from exc
         except ValidationError as exc:
-            raise ToolError(str(exc)) from exc
+            raise ToolError(_bounded(str(exc))) from exc
 
 
 def _prepared(tool: Tool[UserDeps], deps: UserDeps) -> ToolDefinition | None:
