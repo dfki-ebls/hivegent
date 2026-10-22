@@ -172,7 +172,7 @@ async def run_subagent(
     surface its reasoning, tool calls, and messages to the frontend.  Drives the
     run with ``iter`` rather than ``run`` + ``capture_run_messages`` so its
     transcript comes off its own run (``run.all_messages()``), not an ambient
-    capture context — the main chat run wraps the whole turn in
+    capture context.  The main chat run wraps the whole turn in
     ``capture_run_messages`` for crash-safe persistence, and a nested capture
     here would latch onto that outer list and summarise the wrong conversation.
 
@@ -180,9 +180,9 @@ async def run_subagent(
     ``ctx.deps``), and the full transcript is packed onto the return metadata so
     it persists.  The run is bounded by ``settings.llm.subagent_timeout_seconds``
     and its recovery by ``settings.llm.request_timeout_seconds``, and any
-    failure short of a shared usage limit — a context overflow, the timeout, or
-    an unexpected crash — is contained: the partial findings are summarised and
-    returned instead of aborting the whole chat turn.
+    failure short of a shared usage limit, such as a context overflow, the
+    timeout, or an unexpected crash, is contained: the partial findings are
+    summarised and returned instead of aborting the whole chat turn.
     """
     llm_config = _subagent_llm_config(ctx.deps)
     # One prefix drives the run and the summary that recovers it: composed
