@@ -262,6 +262,8 @@ The memory is model-written, possibly after reading a web page or a document, so
 `LimitNotes` (`agents/guards.py`) reads the same limits and each tool's retries, and names the limit that will stop the run once three quarters of either is spent.
 The note arrives mid-turn, so it rides what the model reads next rather than a turn of its own: a failing call's retry prompt, or the first result after the request budget runs low, once per run.
 It rides on every agent, so a subagent on the shared budget is warned too.
+Every agent toolset is built by `agent_toolset`, which carries `llm.tool_timeout_seconds`, since pydantic-ai applies an agent's `tool_timeout` to its own tools alone, and a tool's own timeout overrides it, which is how `explore` and `run_python` declare `SELF_BOUNDED`: `explore` bounds the subagent and the summary recovering it, and `run_python` its host calls.
+`invoke_agent_tool` runs a tool through its feature's toolset, so the MCP endpoint and the debug route are bounded the same way.
 Each purpose runs its own named agent (`chat`, `explore`, `summarize`, `title`, `complete`), since the name is what Logfire attributes spend to.
 
 ### Export, citations, and attachments
@@ -476,10 +478,12 @@ A tool stays registered while the frontend consumes its tool part (citations fro
 
 The read budget is per document (`max_document_chars`), not a running total, since the host holds one decoded document at a time, and it is checked by size before decoding (`check_read_budget`) and by length after.
 Inline `code`, the stored script, and every written file answer to the same cap.
-`max_memory` bounds what a program retains, `request_timeout_seconds` and `tool_timeout_seconds` bound host time, since `max_feed_duration_secs` counts bytecode only, and `max_total_sleep_secs` caps sleeping.
+`max_memory` bounds what a program retains, `max_feed_duration_secs` its bytecode, and `max_total_sleep_secs` its sleeping, while `max_wall_seconds` bounds the time it waits on host calls: past it a running call is cut off and every later one refused, as a `TimeoutError` the program catches to finish with what it has, so no timer has to stop it and lose what it paid for.
+`request_timeout_seconds` is the pool's backstop for one worker turn.
 The lifespan owns the worker pool (`sandbox.py`), and every call takes a fresh session, so no program sees another's state.
 
 `HostCalls` applies one policy to every host function: `settings.sandbox.max_host_calls` caps a program's calls before the first await, a `ToolRetry` or bad argument becomes a `ValueError`, and any other failure a `RuntimeError` named by type alone, so no host details leak.
+Monty's `max_suspensions` (`settings.sandbox.max_suspensions`) counts every round trip to the host, each file operation and name lookup too, so it sits well above `max_host_calls`, since its default of 1000 ends a program after about 500 file reads.
 `UsageLimitExceeded` (`TURN_ENDING_ERRORS`) ends the turn however the program handled it.
 Each call is kept as a bounded `HostCall` in `PythonResult.calls`, and a failed program's retry lists the first 20 before the traceback.
 

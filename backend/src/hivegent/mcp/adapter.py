@@ -30,7 +30,7 @@ from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.tools import ToolDefinition
 from pydantic_core import to_json
 
-from ..agents import UserDeps, agent_tool, invoke_agent_tool, unlisted_tool_names
+from ..agents import UserDeps, invoke_agent_tool, unlisted_tool_names
 from ..agents.capabilities import feature_tools
 from ..auth import dev_user, user_from_claims
 from ..changes import ChangesetSummary
@@ -102,10 +102,8 @@ def _result(value: object) -> ToolResult:
 
 async def _call(name: str, arguments: Mapping[str, Any], deps: UserDeps) -> ToolResult:
     """Call the tool, asking the user first wherever the write gate asks."""
-    tool = agent_tool(name)
-
     try:
-        return _result(await invoke_agent_tool(tool, arguments, deps))
+        return _result(await invoke_agent_tool(name, arguments, deps))
     except ApprovalRequired as exc:
         question = _question(_SUMMARY.validate_python(exc.metadata))
         digest = content_hash(to_json((name, arguments, exc.metadata)).decode())
@@ -113,7 +111,7 @@ async def _call(name: str, arguments: Mapping[str, Any], deps: UserDeps) -> Tool
         if (ask := confirm(get_context(), question, digest)) is not None:
             return InputRequiredToolResult(ask)
 
-    return _result(await invoke_agent_tool(tool, arguments, deps, approved=True))
+    return _result(await invoke_agent_tool(name, arguments, deps, approved=True))
 
 
 class AgentTool(McpTool):

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_ai import FunctionToolset
 from pydantic_ai.exceptions import CallDeferred
 
-from ..common import UserDeps
+from ..common import UserDeps, agent_toolset
 
 __all__ = [
     "ANSWERS",
@@ -123,7 +123,7 @@ QuestionsArg = Annotated[
     Field(min_length=1, max_length=4, description="The questions, asked together."),
 ]
 
-ask_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+ask_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
 
 @ask_toolset.tool_plain(name=ASK_USER_TOOL)

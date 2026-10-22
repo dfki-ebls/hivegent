@@ -28,7 +28,7 @@ from ...config import settings
 from ...db.memory import load_memory, update_memory
 from ...store import User
 from ...tools.base import ToolRetry, translate_tool_retry
-from ..common import UserDeps
+from ..common import UserDeps, agent_toolset
 
 __all__ = ["MemoryNote", "edit_memory", "memory_toolset", "read_memory", "write_memory"]
 
@@ -49,7 +49,7 @@ MemoryOldTextArg = Annotated[
     ),
 ]
 
-memory_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+memory_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
 
 async def _read(user: User) -> str:

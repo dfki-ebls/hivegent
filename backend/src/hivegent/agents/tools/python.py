@@ -43,7 +43,7 @@ from ...tools.python import (
     validate_program_source,
 )
 from ...tools.workspace_os import WORKSPACE_MOUNT, ChangesetLimits
-from ..common import CompletionRefused, UserDeps
+from ..common import SELF_BOUNDED, CompletionRefused, UserDeps, agent_toolset
 from .explore import EXPLORE_FACTORIES
 from .web import WEB_FACTORIES
 from .write import changeset_committer, program_paths
@@ -60,6 +60,7 @@ _limits: ResourceLimits = {
     "max_feed_duration_secs": settings.sandbox.max_duration_seconds,
     "max_total_sleep_secs": settings.sandbox.max_duration_seconds,
     "max_memory": settings.sandbox.max_memory_bytes,
+    "max_suspensions": settings.sandbox.max_suspensions,
 }
 
 _changeset_limits = ChangesetLimits(
@@ -265,6 +266,8 @@ def _run_python(ctx: RunContext[UserDeps]) -> RunPythonTool:
         changeset_limits=_changeset_limits,
         surface=sandbox_surface(ctx),
         max_host_calls=settings.sandbox.max_host_calls,
+        max_wall_seconds=settings.sandbox.max_wall_seconds,
+        max_document_chars=settings.limits.max_file_size_bytes,
         type_check=settings.sandbox.type_check,
         environ=_environ(deps),
     )
@@ -290,7 +293,7 @@ def _environ(deps: UserDeps) -> dict[str, str]:
     return environ
 
 
-python_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+python_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
 
 def validate_run_python(
@@ -313,4 +316,6 @@ register_agent_tool(
     _run_python,
     takes_ctx=True,
     args_validator=validate_run_python,
+    # Bounds itself, see `sandbox.max_wall_seconds`.
+    timeout=SELF_BOUNDED,
 )

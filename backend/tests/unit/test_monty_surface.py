@@ -94,6 +94,9 @@ class _Search(AsyncTool[list[Hit]]):
         if not query:
             raise ToolRetry("give me a query")
 
+        if query == "slow":
+            await asyncio.sleep(60)
+
         return ToolOutput(data=[Hit(filename="a.md", score=0.5)][:limit])
 
 
@@ -264,6 +267,23 @@ refused
             "query='b'",
         ]
         assert result.data.calls[0].result == "[{'filename': 'a.md', 'score': 0.5}]"
+
+    async def test_a_call_past_the_time_limit_is_cut_off_for_the_program_to_finish(
+        self, tool: RunPythonTool
+    ) -> None:
+        program = """
+results = []
+for query in ['slow', 'a']:
+    try:
+        results.append(await search(query=query))
+    except TimeoutError as exc:
+        results.append(str(exc))
+results
+"""
+        result = await replace(tool, max_wall_seconds=0.2)(program)
+
+        assert str(result.data.result).count("reached its time limit") == 2
+        assert [call.arguments for call in result.data.calls] == ["query='slow'"]
 
     async def test_a_failure_lists_the_calls_that_finished(
         self, tool: RunPythonTool

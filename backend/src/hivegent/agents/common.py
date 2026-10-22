@@ -1,13 +1,14 @@
 """Shared helpers for the agents package."""
 
 import asyncio
+import math
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Annotated, override
 
 from pydantic import Field
-from pydantic_ai import RunContext
+from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext
@@ -25,11 +26,13 @@ from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
 
 __all__ = [
+    "SELF_BOUNDED",
     "CompletionRefused",
     "Completions",
     "ExploreTaskArg",
     "RunPrefix",
     "UserDeps",
+    "agent_toolset",
 ]
 
 ExploreTaskArg = Annotated[
@@ -282,3 +285,20 @@ class RunPrefix:
     # rather than wherever a prefix happens to be used.
     llm: LlmConfig
     model: Model
+
+
+SELF_BOUNDED = math.inf
+"""The timeout of a tool that bounds itself, which ``None`` would leave to its toolset's."""
+
+
+def agent_toolset() -> FunctionToolset[UserDeps]:
+    """A toolset of agent tools, each call bounded by ``llm.tool_timeout_seconds``.
+
+    pydantic-ai applies an agent's ``tool_timeout`` only to the tools the agent
+    registers itself, never to a capability's toolset, which is where every
+    agent tool lives.  A tool's own timeout takes precedence, which is how one
+    that bounds itself declares :data:`SELF_BOUNDED`.  The toolset is what
+    every call goes through, :func:`~.capabilities.invoke_agent_tool`'s
+    included, so the bound holds wherever a tool runs.
+    """
+    return FunctionToolset(timeout=settings.llm.tool_timeout_seconds)

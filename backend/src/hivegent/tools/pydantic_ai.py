@@ -12,7 +12,6 @@ from pydantic_ai.messages import ToolCallPart, ToolReturn
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ArgsValidatorFunc, ToolPrepareFunc
-from pydantic_ai.tools import Tool as PydanticTool
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -223,6 +222,7 @@ def register_agent_tool[D](
     takes_ctx: bool = False,
     args_validator: ArgsValidatorFunc[D, ...] | None = None,
     prepare: ToolPrepareFunc[D] | None = None,
+    timeout: float | None = None,
 ) -> None:
     """Register one Tool factory on a FunctionToolset.
 
@@ -241,6 +241,7 @@ def register_agent_tool[D](
         takes_ctx: Whether *factory* is handed the run rather than its deps.
         args_validator: Optional validator for this tool's arguments.
         prepare: Optional per-run hook that may withhold the tool.
+        timeout: This tool's timeout, the toolset's for ``None``.
     """
     fn = for_pydantic_ai(factory, deps_type, takes_ctx=takes_ctx)
     toolset.add_function(
@@ -249,6 +250,7 @@ def register_agent_tool[D](
         description=fn.__doc__,
         args_validator=args_validator,
         prepare=prepare,
+        timeout=timeout,
     )
 
 
@@ -297,22 +299,24 @@ def run_context[D](
 
 
 async def invoke_tool[D](
-    tool: PydanticTool[D],
+    toolset: FunctionToolset[D],
+    name: str,
     args: Mapping[str, Any],
     deps: D,
     *,
     approved: bool = False,
     usage_limits: UsageLimits | None = None,
 ) -> Any:
-    """Run ``tool`` as an agent run calls it, outside of one.
+    """Run the tool *name* of *toolset* as an agent run calls it, outside of one.
 
-    Goes through pydantic-ai's own :class:`ToolManager`, so the tool's
-    ``prepare`` hook, its schema, its ``args_validator``, and its timeout
-    apply exactly as in a run, with errors raised rather than turned into
-    retry prompts.
+    Goes through pydantic-ai's own :class:`ToolManager` over the toolset the
+    tool belongs to, so its ``prepare`` hook, its schema, its
+    ``args_validator``, and its timeout, the toolset's included, apply exactly
+    as in a run, with errors raised rather than turned into retry prompts.
 
     Args:
-        tool: The pydantic-ai tool to run.
+        toolset: The toolset holding the tool.
+        name: The tool to run.
         args: Raw argument mapping, validated against the tool's schema.
         deps: The dependencies passed to the tool (e.g. ``UserDeps``).
         approved: Whether the user already approved this call.
@@ -328,10 +332,10 @@ async def invoke_tool[D](
         ApprovalRequired: If the validator asks the user first.
     """
     context = run_context(deps, usage_limits=usage_limits)
-    manager = await ToolManager(FunctionToolset[D]([tool])).for_run_step(context)
+    manager = await ToolManager(toolset).for_run_step(context)
 
     return await manager.handle_call(
-        ToolCallPart(tool.name, dict(args)),
+        ToolCallPart(name, dict(args)),
         approved=approved,
         wrap_validation_errors=False,
     )

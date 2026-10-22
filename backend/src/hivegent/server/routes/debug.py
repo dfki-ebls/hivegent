@@ -53,7 +53,7 @@ async def run_tool(
     opaque HTTP errors. An unknown tool name is a 404.
     """
     try:
-        tool = agent_tool(tool_name)
+        _ = agent_tool(tool_name)
     except KeyError as exc:
         raise HTTPException(
             status_code=404, detail=f"Unknown tool: {tool_name}"
@@ -67,7 +67,7 @@ async def run_tool(
     start = time.perf_counter()
 
     try:
-        output = unwrap_tool_output(await invoke_agent_tool(tool, args, deps))
+        output = unwrap_tool_output(await invoke_agent_tool(tool_name, args, deps))
         text, data, ok = output.text, output.data, True
     except ValidationError as exc:
         error = str(exc)

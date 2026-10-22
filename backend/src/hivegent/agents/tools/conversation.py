@@ -28,7 +28,7 @@ from ...db.conversations import (
 from ...tools.base import ToolOutput
 from ...tools.formatting import BLOCK_SEP, render_arguments
 from ...tools.pydantic_ai import wrap_tool_output
-from ..common import UserDeps
+from ..common import UserDeps, agent_toolset
 
 __all__ = [
     "conversation_toolset",
@@ -44,7 +44,7 @@ __all__ = [
 # `conversations` scope.  A deployment that wants them back drops them from
 # that list, which is a decision an operator can make and tool search could
 # not.
-conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+conversation_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
 
 _MAX_ARGUMENT_CHARS = 200

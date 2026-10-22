@@ -335,14 +335,17 @@ class LlmSettings(BaseModel):
     does not cap total generation time.  ``tool_timeout_seconds`` bounds a single
     tool execution; on expiry pydantic-ai returns a retry prompt to the model, so
     a wedged tool (a stuck subprocess, query, or fetch) cannot stall a turn — set
-    it generously so a legitimately slow tool (a subagent, a large-document
-    conversion) still fits, or ``None`` to disable.  ``request_limit`` and
-    ``tool_calls_limit`` bound how many model requests and tool calls a turn may
-    make, shared across the main agent and its subagents (which run on the same
-    usage accumulator), so an agentic loop terminates on one shared budget
-    rather than each run separately at pydantic-ai's implicit default of 50
-    requests;
-    ``tool_calls_limit`` of ``None`` leaves tool calls uncapped.  ``retries`` is
+    it generously so a legitimately slow tool (a large-document conversion)
+    still fits, or ``None`` to disable.
+    ``request_limit`` and ``tool_calls_limit`` bound how many model requests and
+    tool calls a turn may make, shared across the main agent, its subagents, and
+    the completions of its programs (which run on the same usage accumulator),
+    so an agentic loop terminates on one shared budget rather than each run
+    separately at pydantic-ai's implicit default of 50 requests.  The request
+    limit is what bounds a turn, sized for a long task that compacts along the
+    way, and ``tool_calls_limit`` defaults to ``None``, uncapped, since one
+    request may issue many parallel calls, so a cap below a multiple of the
+    request limit would end a turn first, and with no warning.  ``retries`` is
     the budget for re-prompting the model when a tool raises ``ModelRetry`` or
     output validation fails (applied to both), counted per tool as failures in
     a row and spent against ``request_limit``.  A correctable failure is how a
@@ -358,12 +361,14 @@ class LlmSettings(BaseModel):
     rate limits so retries make it slower, not faster.
 
     ``subagent_timeout_seconds`` bounds one subagent delegation
-    (``explore``); on expiry the partial findings are summarized and returned
-    rather than failing the turn, so keep it below ``tool_timeout_seconds`` to
-    fire first, or ``None`` to disable.  ``tool_output_max_chars`` is the
-    most plain text (LLM-facing) any tool return shows the model.  A larger one is saved whole under the conversation's
-    ``/tmp/.tool-results/`` and shown as its head and tail around a note naming the
-    file, or only clamped to them where the run has no ``/tmp``.
+    (``explore``), or ``None`` to disable.  On expiry the partial findings are
+    summarized within ``request_timeout_seconds`` and returned rather than
+    failing the turn, so ``explore`` bounds itself and ``tool_timeout_seconds``
+    leaves it out.  ``tool_output_max_chars`` is the most plain text
+    (LLM-facing) any tool return shows the model.  A larger one is saved whole
+    under the conversation's ``/tmp/.tool-results/`` and shown as its head and
+    tail around a note naming the file, or only clamped to them where the run
+    has no ``/tmp``.
     ``tool_data_max_bytes`` is the most structured data (frontend-facing, as
     JSON) a tool return streams and stores, and a larger one is dropped, as is
     one saved to that file, so the data is kept once.
@@ -375,14 +380,14 @@ class LlmSettings(BaseModel):
     api_key: SecretStr | None = None
     base_url: str = ""
     max_tokens: int | None = None
-    aux_max_tokens: int | None = 2048
+    aux_max_tokens: int | None = 8192
     inference_provider: InferenceProvider = InferenceProvider.OPENAI
     request_timeout_seconds: float = 600.0
-    tool_timeout_seconds: float | None = 300.0
-    request_limit: int = 100
-    tool_calls_limit: int | None = 80
+    tool_timeout_seconds: float | None = 600.0
+    request_limit: int = 500
+    tool_calls_limit: int | None = None
     caption_concurrency: int = 4
-    subagent_timeout_seconds: float | None = 180.0
+    subagent_timeout_seconds: float | None = 600.0
     tool_output_max_chars: int = 60_000
     tool_data_max_bytes: int = 1_000_000
     retries: int = 20
@@ -772,9 +777,24 @@ class SandboxSettings(BaseModel):
     writes in total.  A program that passes one is told so where it stands,
     as an exception it can handle.
 
+    A program may read or write one document as long as
+    :attr:`LimitsSettings.max_file_size_bytes` in characters, so it can open
+    every document the workspace accepts.  The document is decoded in the
+    server process outside ``max_memory_bytes``, which must leave room for the
+    program to hold one and work on it, and ``max_changeset_chars`` sits above it.
+
     ``max_host_calls`` caps how many calls one program makes to the functions
     it is handed, the injected tools and ``complete`` alike, so a runaway loop
     is refused at the call that passes it rather than spending the turn.
+    ``max_suspensions`` is Monty's cap on everything a program waits on the
+    host for, each file operation and name lookup as well as each host call,
+    which counts about three, so it sits well above ``max_host_calls``.
+
+    ``max_wall_seconds`` bounds how long one program waits on its host calls,
+    or ``None`` to disable.  Past it a running call is cut off and every later
+    one refused, as a ``TimeoutError`` the program catches to finish with what
+    it has, so ``run_python`` bounds itself and ``llm.tool_timeout_seconds``
+    leaves it out.
 
     The ``completion_*`` settings bound the ``complete`` function a program may
     call.  ``completion_max_calls`` is an exact budget per turn, shared by
@@ -789,17 +809,19 @@ class SandboxSettings(BaseModel):
     min_processes: int = 1
     max_processes: int | None = None
     checkout_timeout_seconds: float | None = 30.0
-    request_timeout_seconds: float | None = 60.0
-    max_duration_seconds: float = 5.0
-    max_memory_bytes: int = 256_000_000
+    request_timeout_seconds: float | None = 120.0
+    max_duration_seconds: float = 30.0
+    max_memory_bytes: int = 1_000_000_000
     type_check: bool = True
     max_changeset_operations: int = 200
     max_changeset_deletes: int = 100
-    max_changeset_chars: int = 20_000_000
-    max_host_calls: int = Field(default=100, ge=1)
+    max_changeset_chars: int = 100_000_000
+    max_host_calls: int = Field(default=10_000, ge=1)
+    max_suspensions: int = Field(default=100_000, ge=1)
+    max_wall_seconds: float | None = Field(default=900.0, gt=0)
     completion_max_calls: int = Field(default=50, ge=0)
-    completion_max_tokens: int = Field(default=1024, ge=1)
-    completion_timeout_seconds: float = Field(default=60.0, gt=0)
+    completion_max_tokens: int = Field(default=8192, ge=1)
+    completion_timeout_seconds: float = Field(default=300.0, gt=0)
     completion_concurrency: int = Field(default=4, ge=1)
 
 
@@ -927,7 +949,7 @@ class LimitsSettings(BaseModel):
     max_collection_files: int = 10_000
     max_image_pixels: int = 1_000_000_000  # ~3 GB uncompressed
     max_attachment_bytes: int = 10 * 1024 * 1024  # 10 MB
-    max_memory_chars: int = 8_000
+    max_memory_chars: int = 20_000
 
 
 class JobSettings(BaseModel):

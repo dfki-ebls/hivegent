@@ -33,7 +33,7 @@ from ...tools import (
 )
 from ...tools.base import ToolSpec
 from ...tools.pydantic_ai import register_agent_tools
-from ..common import UserDeps
+from ..common import UserDeps, agent_toolset
 
 __all__ = ["WEB_FACTORIES", "record_known_urls", "web_enabled", "web_toolset"]
 
@@ -76,7 +76,7 @@ def _web_fetch(deps: UserDeps) -> WebFetch:
     )
 
 
-web_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+web_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
 WEB_FACTORIES = tuple(
     factory

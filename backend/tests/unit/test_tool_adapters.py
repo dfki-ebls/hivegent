@@ -285,7 +285,7 @@ class TestRegisterAgentTools:
         register_agent_tools(toolset, _Deps, [_list_default])
         tool = toolset.tools["list_default"]
 
-        result = await invoke_tool(tool, {"queries": "a"}, _Deps())
+        result = await invoke_tool(toolset, "list_default", {"queries": "a"}, _Deps())
 
         assert unwrap_tool_output(result).data == ["a"]
         schema = tool.function_schema.json_schema["properties"]["queries"]

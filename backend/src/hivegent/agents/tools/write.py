@@ -66,7 +66,7 @@ from ...tools.mutations import (
 from ...tools.pydantic_ai import register_agent_tool
 from ...tools.python import is_python_script
 from ...workspace.operations import Root
-from ..common import UserDeps
+from ..common import UserDeps, agent_toolset
 
 __all__ = [
     "changeset_committer",
@@ -372,7 +372,7 @@ def _offer_apply_changes(
     )
 
 
-write_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+write_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
 register_agent_tool(
     write_toolset, UserDeps, _edit_document, args_validator=validate_document_edit

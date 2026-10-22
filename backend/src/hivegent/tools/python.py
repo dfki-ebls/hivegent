@@ -300,6 +300,9 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
     max_host_calls: int = field(default=100, kw_only=True)
     """How many calls one program may make to the functions of :attr:`surface`."""
 
+    max_wall_seconds: float | None = field(default=None, kw_only=True)
+    """How long one program may wait on the functions of :attr:`surface`, see :class:`HostCalls`."""
+
     limits: ResourceLimits = field(default_factory=_default_limits)
     max_document_chars: int = 5_000_000
     """Cap on any one document this run reads or writes.
@@ -363,7 +366,9 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         )
         filesystem = self._filesystem()
         printed = CollectString()
-        calls = HostCalls(CallBudget(self.max_host_calls))
+        calls = HostCalls(
+            CallBudget(self.max_host_calls), max_wall_seconds=self.max_wall_seconds
+        )
 
         async with self.pool.checkout(
             script_name=canonical_script or "script.py",

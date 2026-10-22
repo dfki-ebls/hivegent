@@ -3,7 +3,10 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeForm
 
 from hivegent.agents import explore_toolset
+from hivegent.agents.capabilities import FEATURES, feature_tools
+from hivegent.agents.common import SELF_BOUNDED
 from hivegent.agents.tools import python_toolset
+from hivegent.config import settings
 from hivegent.mcp import mcp_app
 from hivegent.tools.base import tool_description
 from hivegent.tools.documents import (
@@ -107,3 +110,20 @@ async def test_mcp_search_tool_uses_consistent_search_type_name() -> None:
     assert tool.parameters["properties"]["search_type"]["description"] == _description(
         SearchTypeArg
     )
+
+
+def test_every_tool_call_is_bounded() -> None:
+    """The toolset carries the default, and only a tool that bounds itself opts out."""
+    timeouts = {
+        tool.name: tool.timeout
+        for feature in FEATURES
+        for tool in feature.toolset.tools.values()
+        if feature.toolset.timeout == settings.llm.tool_timeout_seconds
+    }
+
+    assert set(timeouts) == {tool.name for _, tool in feature_tools()}
+    assert {name for name, timeout in timeouts.items() if timeout is not None} == {
+        "explore",
+        "run_python",
+    }
+    assert timeouts["explore"] == SELF_BOUNDED

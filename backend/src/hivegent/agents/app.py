@@ -68,7 +68,6 @@ def _user_agent(name: str) -> Agent[UserDeps, str]:
         deps_type=UserDeps,
         retries=settings.llm.retries,
         model_settings=_default_model_settings,
-        tool_timeout=settings.llm.tool_timeout_seconds,
         capabilities=[_window, *_guards, _spill],
     )
 
@@ -84,7 +83,6 @@ title_agent: Agent[None, str] = Agent(
     name="title",
     retries=settings.llm.retries,
     model_settings=_default_model_settings,
-    tool_timeout=settings.llm.tool_timeout_seconds,
     capabilities=_guards,
 )
 

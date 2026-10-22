@@ -411,33 +411,43 @@ def collect_tool_schemas() -> list[ToolSchema]:
     ]
 
 
+def _feature_of(name: str) -> Feature:
+    """The feature whose toolset holds the tool *name*.
+
+    Raises:
+        KeyError: If no tool named *name* is registered.
+    """
+    if feature := next((f for f in FEATURES if name in f.tool_names), None):
+        return feature
+
+    raise KeyError(name)
+
+
 def agent_tool(name: str) -> Tool[UserDeps]:
     """The agent tool called *name*, looked up across every feature.
 
     Raises:
         KeyError: If no tool named *name* is registered.
     """
-    if tool := next((tool for _, tool in feature_tools() if tool.name == name), None):
-        return tool
-
-    raise KeyError(name)
+    return _feature_of(name).toolset.tools[name]
 
 
 async def invoke_agent_tool(
-    tool: Tool[UserDeps],
+    name: str,
     args: Mapping[str, Any],
     deps: UserDeps,
     *,
     approved: bool = False,
 ) -> Any:
-    """Validate ``args`` and run ``tool`` with ``deps`` as one agent turn would.
+    """Validate ``args`` and run the tool *name* with ``deps`` as one agent turn would.
 
     Runs the tool through the exact code path the agent uses (see
-    :func:`hivegent.tools.pydantic_ai.invoke_tool`), held to a turn's usage
-    limits and in the default language like every agent tool call.
+    :func:`hivegent.tools.pydantic_ai.invoke_tool`), its feature's toolset and
+    so its timeout included, held to a turn's usage limits and in the default
+    language like every agent tool call.
 
     Args:
-        tool: The agent tool to invoke, as :func:`agent_tool` looks it up.
+        name: The agent tool to invoke.
         args: Raw argument mapping, validated against the tool's schema.
         deps: The dependencies passed to the tool (e.g. ``UserDeps``).
         approved: Whether the user already approved this call.
@@ -447,11 +457,19 @@ async def invoke_agent_tool(
         :func:`hivegent.tools.pydantic_ai.unwrap_tool_output`.
 
     Raises:
+        KeyError: If no tool named *name* is registered.
         pydantic.ValidationError: If ``args`` fail the tool's schema.
         ModelRetry: If the tool or its validator refuses the arguments.
         ApprovalRequired: If the write gate asks the user first.
     """
+    toolset = _feature_of(name).toolset
+
     with use_language(DEFAULT_LANGUAGE):
         return await invoke_tool(
-            tool, args, deps, approved=approved, usage_limits=turn_usage_limits
+            toolset,
+            name,
+            args,
+            deps,
+            approved=approved,
+            usage_limits=turn_usage_limits,
         )

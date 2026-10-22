@@ -25,7 +25,7 @@ from ...prompts import (
 from ...tools.base import ToolOutput
 from ...tools.pydantic_ai import wrap_tool_output
 from ..app import explore_agent
-from ..common import ExploreTaskArg, RunPrefix, UserDeps
+from ..common import SELF_BOUNDED, ExploreTaskArg, RunPrefix, UserDeps, agent_toolset
 from ..context import DOCUMENT_SCOPE
 from ..subagent_events import SubagentTranscriptBuilder, SubagentUpdate
 from ..summarize import summarize_conversation
@@ -42,7 +42,7 @@ __all__ = [
     "subagent_toolset",
 ]
 
-subagent_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+subagent_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
 type SubagentName = Literal["documents", "conversations", "web"]
 
@@ -149,10 +149,9 @@ async def _safe_summarize(
     note then stands in for it rather than escalating the failure.
     """
     try:
-        # The recovery runs after the timeout above has expired, so it carries
-        # its own: a summary is worth a wait, but not an unbounded one on a
-        # chat turn that is already over its subagent budget.
-        async with asyncio.timeout(settings.llm.subagent_timeout_seconds):
+        # The recovery runs after the subagent's timeout has expired, so it
+        # carries its own, that of the one request a summary is.
+        async with asyncio.timeout(settings.llm.request_timeout_seconds):
             return await summarize_conversation(messages, run)
 
     except Exception:
@@ -180,9 +179,10 @@ async def run_subagent(
     Each node's events stream live as ``data-subagent`` parts (via the sink on
     ``ctx.deps``), and the full transcript is packed onto the return metadata so
     it persists.  The run is bounded by ``settings.llm.subagent_timeout_seconds``
-    and any failure short of a shared usage limit — a context overflow, the
-    timeout, or an unexpected crash — is contained: the partial findings are
-    summarised and returned instead of aborting the whole chat turn.
+    and its recovery by ``settings.llm.request_timeout_seconds``, and any
+    failure short of a shared usage limit — a context overflow, the timeout, or
+    an unexpected crash — is contained: the partial findings are summarised and
+    returned instead of aborting the whole chat turn.
     """
     llm_config = _subagent_llm_config(ctx.deps)
     # One prefix drives the run and the summary that recovers it: composed
@@ -284,7 +284,8 @@ def _offer_explore(
     return tool_def if _subagent_llm_config(ctx.deps).model else None
 
 
-@subagent_toolset.tool(prepare=_offer_explore)
+# Bounds the subagent and its recovery itself.
+@subagent_toolset.tool(prepare=_offer_explore, timeout=SELF_BOUNDED)
 async def explore(
     ctx: RunContext[UserDeps],
     task: ExploreTaskArg,

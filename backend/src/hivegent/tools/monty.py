@@ -49,6 +49,7 @@ lists them so the next attempt can build on them instead of paying for the
 same calls.
 """
 
+import asyncio
 import inspect
 import reprlib
 import types
@@ -191,6 +192,14 @@ def _program_error(name: str, exc: Exception) -> Exception:
     return RuntimeError(f"{name} raised {type(exc).__name__}")
 
 
+def _out_of_time() -> TimeoutError:
+    return TimeoutError(
+        "This program reached its time limit, so no further host call runs. "
+        "Finish with the results already obtained, or move the rest into a "
+        "second program."
+    )
+
+
 @dataclass(slots=True)
 class HostCalls:
     """What one program asks of the host: its budget, its errors, and a record.
@@ -205,11 +214,25 @@ class HostCalls:
     failure: the first one is kept in :attr:`ending` for the host to raise once
     the program stopped, and every later call is refused, since the turn it
     would spend on is over.
+
+    A call still running *max_wall_seconds* after the program started is cut
+    off there, and every later one is refused, each as a ``TimeoutError`` the
+    program may catch to finish with what it has, which is what keeps a
+    program from being stopped with all its results lost.  What it can do
+    after that is bytecode, sleep, and file operations, which Monty's own
+    limits bound.
     """
 
     budget: CallBudget
+    max_wall_seconds: float | None = None
     finished: list[HostCall] = field(default_factory=list)
     ending: Exception | None = None
+    deadline: float | None = field(default=None, init=False)
+    """When, on the event loop's clock, the program's host calls run out of time."""
+
+    def __post_init__(self) -> None:
+        if self.max_wall_seconds is not None:
+            self.deadline = asyncio.get_running_loop().time() + self.max_wall_seconds
 
     def bind(self, surface: MontySurface) -> dict[str, _HostFunction]:
         """The functions of *surface* for one program, each held to this policy."""
@@ -231,6 +254,12 @@ class HostCalls:
             if self.ending is not None:
                 raise RuntimeError("The turn has ended, so no further host call runs.")
 
+            if (
+                self.deadline is not None
+                and asyncio.get_running_loop().time() >= self.deadline
+            ):
+                raise _out_of_time()
+
             self.budget.take(
                 f"This program reached its limit of {self.budget.limit} host "
                 "function calls. Batch what one call can take, such as several "
@@ -239,15 +268,18 @@ class HostCalls:
 
             arguments = render_arguments(kwargs, _PREVIEW_CHARS)
 
+            clock = asyncio.timeout_at(self.deadline)
+
             try:
-                result = await function(**kwargs)
+                async with clock:
+                    result = await function(**kwargs)
 
             except TURN_ENDING_ERRORS as exc:
                 self.ending = self.ending or exc
                 raise
 
             except Exception as exc:
-                error = _program_error(name, exc)
+                error = _out_of_time() if clock.expired() else _program_error(name, exc)
                 preview = truncate_line(
                     f"{type(error).__name__}: {error}", _PREVIEW_CHARS
                 )

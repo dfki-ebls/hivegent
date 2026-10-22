@@ -15,7 +15,7 @@ from ...tools import (
     VectorSearchTool,
 )
 from ...tools.pydantic_ai import register_agent_tools
-from ..common import UserDeps
+from ..common import UserDeps, agent_toolset
 
 __all__ = ["EXPLORE_FACTORIES", "explore_toolset"]
 
@@ -58,7 +58,7 @@ def _search(deps: UserDeps) -> VectorSearchTool[RetrievedChunk]:
     return build_search_tool(deps.user.stores(), filter_for_store=deps.filter_for_store)
 
 
-explore_toolset: FunctionToolset[UserDeps] = FunctionToolset()
+explore_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
 # None of them is deferred.  `query_table`, `jq`, and `read_binary_document`
 # were, on the reasoning that a document of that shape is rare enough that most
