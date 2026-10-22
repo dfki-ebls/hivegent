@@ -17,8 +17,13 @@ from cbrkit import filter as cbrkit_filter
 from cbrkit.typing import AsyncRetrieverFunc
 from pydantic import Field
 
-from .base import AsyncTool, ToolOutput, batch_field
-from .formatting import BLOCK_SEP, annotate_lines, truncate_block
+from .base import AsyncTool, FullLinesArg, ToolOutput, batch_field
+from .formatting import (
+    BLOCK_SEP,
+    LineClip,
+    annotate_lines,
+    hint_suffix,
+)
 
 __all__ = [
     "SearchMaxResultsArg",
@@ -104,7 +109,8 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
             rerank candidate pool.  Only applied when a reranker is active.
         max_line_chars: Per-line truncation cap for the formatted output,
             guarding the context against a chunk carrying a base64-embedded
-            image or other very long line.
+            image or other very long line, unless the call passes
+            ``full_lines``.
     """
 
     injectable: ClassVar[bool] = True
@@ -125,6 +131,7 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         queries: SearchQueriesArg,
         max_results: SearchMaxResultsArg = 10,
         search_type: SearchTypeArg = "hybrid",
+        full_lines: FullLinesArg = False,
     ) -> ToolOutput[list[R]]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval.
 
@@ -142,9 +149,11 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
             else cast(list[R], raw)
         )
 
-        formatted = (
-            _format_results(final, self.max_line_chars) if final else "(no results)"
-        )
+        if not final:
+            return ToolOutput(data=final, formatted="(no results)")
+
+        clip = LineClip(None if full_lines else self.max_line_chars)
+        formatted = _format_results(final, clip) + hint_suffix(clip.hints())
 
         return ToolOutput(data=final, formatted=formatted)
 
@@ -230,13 +239,13 @@ def _fuse(rankings: Sequence[Sequence[SearchResult]], limit: int) -> list[Search
     return [SearchResult(key=key, text=texts[key], score=scores[key]) for key in best]
 
 
-def _format_results(results: Sequence[Any], max_line_chars: int) -> str:
+def _format_results(results: Sequence[Any], clip: LineClip) -> str:
     """Render search results as a human/LLM-readable string block.
 
     Accepts both :class:`SearchResult` and ``RetrievedChunk`` via attribute
     lookup; either is a valid downstream of :class:`VectorSearchTool`.
-    *max_line_chars* truncates each line so a long line in a chunk cannot
-    flood the context.
+    *clip* truncates each line so a long line in a chunk cannot flood the
+    context.
     """
     blocks: list[str] = []
     for i, r in enumerate(results, 1):
@@ -248,9 +257,9 @@ def _format_results(results: Sequence[Any], max_line_chars: int) -> str:
         label = f"{key}#{chunk_idx}" if chunk_idx is not None else key
         if start_line is not None and end_line is not None:
             label += f" L{start_line}-{end_line}"
-            text = annotate_lines(text.splitlines(), start_line, max_line_chars)
+            text = annotate_lines(text.splitlines(), start_line, clip)
         else:
-            text = truncate_block(text, max_line_chars)
+            text = "\n".join(map(clip, text.splitlines()))
         # The leading [i] is the relevance rank (results are sorted best-first).
         # We deliberately omit the score: cbrkit min-max normalizes per query,
         # so it pins the top hit to 100% and the worst to 0% even when every

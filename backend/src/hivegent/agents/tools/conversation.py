@@ -26,7 +26,7 @@ from ...db.conversations import (
     load_conversation as _load_conversation,
 )
 from ...tools.base import ToolOutput
-from ...tools.formatting import BLOCK_SEP, render_arguments, truncate_line
+from ...tools.formatting import BLOCK_SEP, render_arguments
 from ...tools.pydantic_ai import wrap_tool_output
 from ..common import UserDeps
 
@@ -47,8 +47,8 @@ __all__ = [
 conversation_toolset: FunctionToolset[UserDeps] = FunctionToolset()
 
 
-_MAX_TOOL_CALL_CHARS = 200
-"""Cap on one rendered tool call, which names what was done, not its result."""
+_MAX_ARGUMENT_CHARS = 200
+"""Cap on the arguments of one rendered tool call, which names what was done, not its result."""
 
 
 def _header(conversation: ConversationData | ConversationSummary) -> str:
@@ -79,9 +79,8 @@ def _render_parts(message: ModelMessage) -> Iterator[str]:
                 yield f"assistant:\n{content.strip()}"
 
             case ToolCallPart():
-                arguments = render_arguments(part.args, _MAX_TOOL_CALL_CHARS)
-                call = f"{part.tool_name}({arguments})"
-                yield f"tool call: {truncate_line(call, _MAX_TOOL_CALL_CHARS)}"
+                arguments = render_arguments(part.args, _MAX_ARGUMENT_CHARS)
+                yield f"tool call: {part.tool_name}({arguments})"
 
             case _:
                 pass

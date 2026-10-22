@@ -71,8 +71,6 @@ def _web_fetch(deps: UserDeps) -> WebFetch:
         known_urls=deps.known_urls,
         timeout_seconds=network.web_timeout_seconds,
         max_response_bytes=network.webfetch_max_response_bytes,
-        max_chars=network.webfetch_max_chars,
-        max_line_chars=network.webfetch_max_line_chars,
         fast_extraction=network.webfetch_fast_extraction,
         user_agent=_user_agent,
     )

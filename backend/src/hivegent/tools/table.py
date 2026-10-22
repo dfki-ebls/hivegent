@@ -19,6 +19,7 @@ from .base import (
     AsyncPathTool,
     Batch,
     BatchShare,
+    FullLinesArg,
     ToolOutput,
     ToolRetry,
     batch_field,
@@ -27,7 +28,13 @@ from .base import (
     run_batch,
     sidecar_hint,
 )
-from .formatting import hint_suffix, truncate_around, truncate_line, window_start
+from .formatting import (
+    LineClip,
+    hint_suffix,
+    truncate_around,
+    truncate_line,
+    window_start,
+)
 
 __all__ = [
     "HeaderGuess",
@@ -72,7 +79,6 @@ _DATETIME = r"^\d{4}-\d{1,2}-\d{1,2}[ T]\d"
 """The shape Polars infers a format for, which is what makes that parse total."""
 
 _DEFAULT_ROW_LIMIT = 100
-_MAX_ROW_LIMIT = 1000
 
 _QUERY_CONCURRENCY = 4
 """Queries or descriptions one batched call runs at once, each on its own thread."""
@@ -405,7 +411,6 @@ TableRowLimitArg = Annotated[
             "increase it when the task needs more complete row-level data."
         ),
         ge=1,
-        le=_MAX_ROW_LIMIT,
     ),
 ]
 
@@ -824,16 +829,15 @@ def _cell(value: object) -> str:
 class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
     """Query a tabular document with SQL instead of reading it line by line.
 
-    Row, column, and cell budgets bound the result, and every cut is named in
-    the formatted output.
+    Row and cell budgets bound the result, and every cut is named in the
+    formatted output.  ``row_limit`` lifts the first, ``full_lines`` the
+    second.  The query picks the columns, so every one it selects is shown.
     """
 
     injectable: ClassVar[bool] = True
     """Monty decodes no spreadsheet, so a program can only be handed this."""
 
-    max_rows: int = _MAX_ROW_LIMIT
     preview_rows: int = 5
-    max_columns: int = 40
     max_cell_chars: int = 200
     max_named_columns: int = 10
     """Cap on the columns a hint spells out before it is noise itself."""
@@ -847,6 +851,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         skip_above_header: TableSkipAboveHeaderArg = 0,
         skip_below_header: TableSkipBelowHeaderArg = 0,
         row_limit: TableRowLimitArg = _DEFAULT_ROW_LIMIT,
+        full_lines: FullLinesArg = False,
     ) -> ToolOutput[Batch[TableResult]]:
         """Query one or more spreadsheets or delimited documents with SQL.
 
@@ -902,7 +907,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
                 index: int, _share: BatchShare
             ) -> ToolOutput[TableResult]:
                 return await asyncio.to_thread(
-                    self._run, sources, None, row_limit, index
+                    self._run, sources, None, row_limit, full_lines, index
                 )
 
             return await run_batch(
@@ -913,7 +918,9 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
             )
 
         async def run(query: str, _share: BatchShare) -> ToolOutput[TableResult]:
-            return await asyncio.to_thread(self._run, sources, query, row_limit)
+            return await asyncio.to_thread(
+                self._run, sources, query, row_limit, full_lines
+            )
 
         return await run_batch(
             queries, run, key=lambda query: query, concurrency=_QUERY_CONCURRENCY
@@ -924,6 +931,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         sources: tuple[_Source, ...],
         query: str | None,
         row_limit: int,
+        full_lines: bool,
         subject: int = 0,
     ) -> ToolOutput[TableResult]:
         """Run one query, or describe the *subject* table when there is none."""
@@ -934,7 +942,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
             )
 
         try:
-            return self._query(sources, query, row_limit, subject)
+            return self._query(sources, query, row_limit, full_lines, subject)
 
         except pl.exceptions.PolarsError as exc:
             raise ToolRetry(self._failure(exc, sources, query)) from exc
@@ -1049,6 +1057,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         sources: tuple[_Source, ...],
         query: str | None,
         row_limit: int,
+        full_lines: bool,
         subject: int,
     ) -> ToolOutput[TableResult]:
         """Run the query over the loaded frames and render what it returned.
@@ -1059,7 +1068,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         is described, since a schema call has no join to describe.
         """
         named = tuple((_relation(i), source) for i, source in enumerate(sources))
-        limit = self.preview_rows if query is None else min(row_limit, self.max_rows)
+        limit = self.preview_rows if query is None else row_limit
 
         if query is None:
             named = (named[subject],)
@@ -1084,7 +1093,8 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
             total_rows=total,
             query=query,
         )
-        rows, body = self._render(frame_rows, columns, preamble)
+        clip = LineClip(None if full_lines else self.max_cell_chars, "cells")
+        rows, body = self._render(frame_rows, columns, preamble, clip)
         result = TableResult(
             query=query,
             tables=tuple(source.queried(name) for name, source in named),
@@ -1097,14 +1107,7 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
 
         return ToolOutput(
             data=result,
-            formatted=body
-            + hint_suffix(
-                self._hints(
-                    result,
-                    query,
-                    can_increase_rows=result.truncated and limit < self.max_rows,
-                )
-            ),
+            formatted=body + hint_suffix(self._hints(result, query, clip)),
         )
 
     def _render(
@@ -1112,26 +1115,23 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         frame: pl.DataFrame,
         columns: tuple[str, ...],
         lines: list[str],
+        clip: LineClip,
     ) -> tuple[tuple[tuple[str, ...], ...], str]:
         """Render every row as a markdown table under *lines*, keeping each one whole.
 
-        Only the display clips a column or a cell, so ``TableResult.rows`` is
-        the whole of what the row limit allowed.
+        Only the display clips a cell by *clip*, so ``TableResult.rows`` is the
+        whole of what the row limit allowed.
         """
         if frame.is_empty():
             return (), "\n".join([*lines, "(no rows)"])
 
-        width = min(len(columns), self.max_columns)
         rows = tuple(
             tuple(_cell(value) for value in values) for values in frame.iter_rows()
         )
-        rendered = [
-            f"| {' | '.join(truncate_line(cell, self.max_cell_chars) for cell in row[:width])} |"
-            for row in rows
-        ]
+        rendered = [f"| {' | '.join(map(clip, row))} |" for row in rows]
         header = [
-            f"| {' | '.join(columns[:width])} |",
-            f"| {' | '.join('---' for _ in range(width))} |",
+            f"| {' | '.join(columns)} |",
+            f"| {' | '.join('---' for _ in columns)} |",
         ]
 
         return rows, "\n".join([*lines, *header, *rendered])
@@ -1192,27 +1192,15 @@ class QueryTableTool(AsyncPathTool[Batch[TableResult]]):
         self,
         result: TableResult,
         query: str | None,
-        *,
-        can_increase_rows: bool,
+        clip: LineClip,
     ) -> list[str]:
         """Name every cut, so a partial table cannot read as a complete one."""
-        hints: list[str] = []
-
-        if len(result.columns) > self.max_columns:
-            hints.append(
-                f"{self.max_columns} of {len(result.columns)} columns shown, "
-                "name the ones you need in the SELECT"
-            )
+        hints = clip.hints()
 
         if result.truncated and query is not None:
-            increase = (
-                f", increase row_limit up to {self.max_rows}"
-                if can_increase_rows
-                else ""
-            )
             hints.append(
-                f"{len(result.rows)} rows returned{increase}, narrow with WHERE, "
-                "or aggregate with GROUP BY"
+                f"{len(result.rows)} rows returned, increase row_limit, narrow "
+                "with WHERE, or aggregate with GROUP BY"
             )
 
         # What is wrong with the data rides every call, not only the schema

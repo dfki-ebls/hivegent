@@ -983,10 +983,7 @@ class NetworkSettings(BaseModel):
     ``web_fetch`` download as a whole, so a server trickling bytes cannot hold
     a turn.  The ``webfetch_*`` knobs only apply to the ``web_fetch`` agent tool:
     ``webfetch_max_response_bytes`` caps how many raw bytes are
-    downloaded per page, ``webfetch_max_chars`` caps the extracted text
-    handed to the model, ``webfetch_max_line_chars`` truncates each
-    numbered line so a data-URI or minified line cannot flood the
-    context, and ``webfetch_fast_extraction`` skips trafilatura's backup
+    downloaded per page, and ``webfetch_fast_extraction`` skips trafilatura's backup
     extractors, saving CPU per page at the cost of some recall.
     ``contact_email`` is the operator address put in
     the ``web_fetch`` ``User-Agent``, so traffic questions reach a human; it
@@ -1005,8 +1002,6 @@ class NetworkSettings(BaseModel):
     connect_timeout_seconds: float = 5.0
     web_timeout_seconds: float = 20.0
     webfetch_max_response_bytes: int = 5_000_000
-    webfetch_max_chars: int = 100_000
-    webfetch_max_line_chars: int = 2000
     webfetch_fast_extraction: bool = False
     webfetch_max_redirects: int = 5
     web_keepalive_seconds: float = 60.0

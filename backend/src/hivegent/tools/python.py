@@ -34,7 +34,7 @@ from .base import (
     sidecar_hint,
 )
 from .changeset import ChangesetOutcome, CommitChanges, PendingChanges, stage_changes
-from .formatting import truncate_middle
+from .formatting import hint_suffix, truncate_middle
 from .monty import HostCall, HostCalls, MontySurface
 from .workspace_os import MOUNT_STUB, WORKSPACE_MOUNT, ChangesetLimits, WorkspaceOS
 
@@ -65,7 +65,11 @@ def is_python_script(file_path: str) -> bool:
     return PurePosixPath(file_path).suffix.lower() == ".py"
 
 
+_CUT = "\x00"
+"""Where :data:`_VALUE_REPR` left something out, which no ``repr`` of a value spells raw."""
+
 _VALUE_REPR = reprlib.Repr(
+    fillvalue=_CUT,
     maxlevel=6,
     maxtuple=1000,
     maxlist=1000,
@@ -84,8 +88,14 @@ The sandbox converts the trailing expression into a real Python object, so a
 program that ends in a large collection would spend megabytes and hundreds of
 milliseconds building a string far past what a tool return shows.  The caps sit
 well above that, so an ordinary value is rendered whole and only the runaway
-case is cut, before the string is built rather than after.
+case is cut, before the string is built rather than after.  Every cut is marked
+by :data:`_CUT`, shown as ``...`` once the output has named it.
 """
+
+_ELIDED_HINT = (
+    "the result is cut where it shows '...', print() it or write it to a file "
+    "to get all of it"
+)
 
 CodeArg = Annotated[
     str | None,
@@ -482,8 +492,11 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
         of it and a saved copy of the text is the whole of it too.
         """
         stdout = printed.rstrip("\n")
-        result = None if value is None else _VALUE_REPR.repr(value)
+        rendered = None if value is None else _VALUE_REPR.repr(value)
+        elided = rendered is not None and _CUT in rendered
+        result = rendered and rendered.replace(_CUT, "...")
         body = "\n".join(filter(None, (stdout, result and f"Result: {result}")))
+        body += hint_suffix([_ELIDED_HINT] if elided else [])
 
         return ToolOutput(
             data=PythonResult(

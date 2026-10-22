@@ -65,13 +65,13 @@ class TestQueryTableTool:
         assert single(out.data).rows == (("EU", "625"), ("US", "600"))
 
     async def test_row_cap_is_named_in_the_output(self, tmp_path: Path) -> None:
-        tool = QueryTableTool(paths=_sales_dir(tmp_path), max_rows=10)
-        out = await tool(["sales.csv"], ["SELECT * FROM t"])
+        tool = QueryTableTool(paths=_sales_dir(tmp_path))
+        out = await tool(["sales.csv"], ["SELECT * FROM t"], row_limit=2)
 
         assert single(out.data).truncated
-        assert len(single(out.data).rows) == 10
+        assert len(single(out.data).rows) == 2
         assert out.formatted is not None
-        assert "10 rows returned" in out.formatted
+        assert "2 rows returned, increase row_limit" in out.formatted
 
     async def test_model_can_request_more_than_default_row_limit(
         self, tmp_path: Path
@@ -114,21 +114,25 @@ class TestQueryTableTool:
         with pytest.raises(ToolRetry, match="Q1, Q2"):
             await tool(["book.xlsx"], sheet="Q9")
 
-    async def test_column_cut_is_named_and_leaves_the_data_channel_whole(
+    async def test_cell_clip_is_named_and_leaves_the_data_channel_whole(
         self, tmp_path: Path
     ) -> None:
-        # The cut binds the rendering only: the frontend still gets every
-        # column, the way a read keeps its lines untruncated in `content`.
-        header = ",".join(f"c{i}" for i in range(12))
-        values = ",".join(str(i) for i in range(12))
-        (tmp_path / "wide.csv").write_text(f"{header}\n{values}")
-        tool = QueryTableTool(paths=tmp_path, max_columns=4)
+        # The clip binds the rendering only: the frontend still gets every
+        # cell whole, the way a read keeps its lines untruncated in `content`.
+        (tmp_path / "wide.csv").write_text(f"note\n{'x' * 30}end")
+        tool = QueryTableTool(paths=tmp_path, max_cell_chars=10)
         out = await tool(["wide.csv"], ["SELECT * FROM t"])
 
-        assert len(single(out.data).columns) == 12
+        assert single(out.data).rows == (("x" * 30 + "end",),)
         assert out.formatted is not None
-        assert "4 of 12 columns shown" in out.formatted
-        assert "c11" not in out.formatted
+        assert "cells clipped at 10 chars" in out.formatted
+        assert "end" not in out.formatted
+
+        whole = await tool(["wide.csv"], ["SELECT * FROM t"], full_lines=True)
+
+        assert whole.formatted is not None
+        assert "x" * 30 + "end" in whole.formatted
+        assert "clipped" not in whole.formatted
 
     async def test_text_columns_are_retyped_when_every_value_parses(
         self, tmp_path: Path

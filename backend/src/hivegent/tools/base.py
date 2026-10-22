@@ -199,8 +199,7 @@ FullLinesArg = Annotated[
         description=(
             "When true, return every line in full instead of clipping it to a "
             "per-line budget, for content whose tail carries meaning such as a "
-            "wide table. The whole-output budget still applies, so expect "
-            "fewer lines, not more text."
+            "wide table or a long matched line."
         ),
     ),
 ]

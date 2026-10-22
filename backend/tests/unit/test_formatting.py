@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
-from hivegent.tools.formatting import cap_lines, truncate_middle
+from hivegent.tools.formatting import fit_lines, truncate_middle
 
 
 def _read_on(head: str) -> str:
@@ -25,20 +25,18 @@ def test_a_middle_cut_keeps_its_note_whole() -> None:
     assert note in truncate_middle("line\n" * 1_000, len(note) + 2, lambda _head: note)
 
 
-class TestCapLines:
+class TestFitLines:
     """The budget that bounds how many lines a tool takes."""
 
     def test_keeps_contiguous_prefix(self) -> None:
         # A later short line must not backfill past a dropped one: callers
         # resume from where the output stops, so a gap would lose content.
-        text, omitted = cap_lines(["aaaa", "bbbbbbbb", "c"], 6)
-        assert text == "aaaa"
-        assert omitted == 2
+        assert fit_lines(["aaaa", "bbbbbbbb", "c"], 6) == 1
 
     def test_keeps_first_line_however_long(self) -> None:
-        text, omitted = cap_lines(["x" * 500, "y"], 10)
-        assert text == "x" * 500
-        assert omitted == 1
+        assert fit_lines(["x" * 500, "y"], 10) == 1
 
-    def test_unbounded_budget_keeps_everything(self) -> None:
-        assert cap_lines(["a", "b"]) == ("a\nb", 0)
+    def test_stops_reading_at_the_first_overflow(self) -> None:
+        lines = iter(["aa", "bb", "cc", "dd"])
+        assert fit_lines(lines, 4) == 1
+        assert list(lines) == ["cc", "dd"]

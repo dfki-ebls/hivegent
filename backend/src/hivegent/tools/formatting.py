@@ -6,21 +6,22 @@ wherever text is assembled for a model to read.
 
 import reprlib
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 
 from ..humanize import pluralize
 
 __all__ = [
     "BLOCK_SEP",
     "GROUP_SEP",
+    "LineClip",
     "annotate_lines",
-    "cap_lines",
+    "fit_lines",
     "hint_suffix",
     "iter_annotated",
     "number_line",
     "omission_hints",
     "render_arguments",
     "truncate_around",
-    "truncate_block",
     "truncate_line",
     "truncate_middle",
     "window_start",
@@ -200,59 +201,82 @@ def render_arguments(args: str | Mapping[str, object] | None, max_chars: int) ->
     return truncate_line(text, max_chars)
 
 
-def truncate_block(text: str, max_line_chars: int | None = None) -> str:
-    """Clip every line of *text* to *max_line_chars*, rejoined by newlines.
+@dataclass(slots=True)
+class LineClip:
+    """A per-line budget that clips each line it is handed and names any cut.
 
-    The counterpart to :func:`annotate_lines` for output that is not
-    line-numbered: each line is clipped by :func:`truncate_line` so one very
-    long line — a base64-embedded image, a minified bundle — cannot flood the
-    model's context.  A ``None`` budget, or a *text* already within it, is
-    returned unchanged without splitting.
+    A clipped line is the one cut a reader cannot tell from the output alone,
+    so one object both clips and remembers, and :meth:`hints` admits it.  A
+    ``None`` budget keeps every line whole, which is what ``full_lines`` asks
+    for, so the hint names that argument.
 
-    >>> truncate_block("ab\\ncdef", max_line_chars=3)
-    'ab\\ncd…'
-    >>> truncate_block("untouched")
-    'untouched'
+    >>> clip = LineClip(4)
+    >>> clip("ab"), clip("abcdef"), clip.hints()
+    ('ab', 'abc…', ['lines clipped at 4 chars, pass full_lines=true to see them whole'])
+    >>> LineClip(None)("abcdef")
+    'abcdef'
     """
-    if max_line_chars is None or len(text) <= max_line_chars:
-        return text
-    return "\n".join(truncate_line(line, max_line_chars) for line in text.splitlines())
+
+    max_chars: int | None
+    noun: str = "lines"
+    clipped: bool = field(default=False, init=False)
+
+    def __call__(self, text: str) -> str:
+        """Clip *text* from its start."""
+        return self.around(text, 0)
+
+    def around(self, text: str, start: int) -> str:
+        """Clip *text* around offset *start*, as :func:`truncate_around` does."""
+        if self.max_chars is None or len(text) <= self.max_chars:
+            return text
+
+        self.clipped = True
+
+        return truncate_around(text, start, self.max_chars)
+
+    def hints(self) -> list[str]:
+        """The hint naming the cut, or none when no line was clipped."""
+        if not self.clipped:
+            return []
+
+        return [
+            (
+                f"{self.noun} clipped at {self.max_chars} chars, "
+                "pass full_lines=true to see them whole"
+            )
+        ]
 
 
-def cap_lines(lines: Iterable[str], max_chars: int | None = None) -> tuple[str, int]:
-    """Join *lines* with newlines while the total stays within *max_chars*.
+def fit_lines(lines: Iterable[str], max_chars: int) -> int:
+    """How many of *lines*, joined by newlines, fit within *max_chars*.
 
-    Returns the joined text and how many lines were left out.  Once the
-    budget is reached every remaining line is dropped, so what is kept is a
-    contiguous prefix rather than whichever later lines happened to fit, and
-    a caller can resume from exactly where the output stops.  The first line
-    is kept however long it is, since a lone oversized line can tell the
-    reader more than an empty result with a notice.
+    The lines that fit are a contiguous prefix rather than whichever later
+    lines happened to fit, so a caller can resume from exactly where the
+    output stops, and nothing past the first line that overflows is read.  The
+    first line counts however long it is, since a lone oversized line can tell
+    the reader more than an empty result with a notice.
 
-    This is a different axis from :func:`truncate_line`, which bounds a
-    single runaway line.
+    This is a different axis from :class:`LineClip`, which bounds a single
+    runaway line.
 
-    >>> cap_lines(["ab", "cd", "ef"], 5)
-    ('ab\\ncd', 1)
-    >>> cap_lines(["abcdef"], 3)
-    ('abcdef', 0)
-    >>> cap_lines(["ab", "cd"])
-    ('ab\\ncd', 0)
+    >>> fit_lines(["ab", "cd", "ef"], 5)
+    2
+    >>> fit_lines(["abcdef"], 3)
+    1
     """
-    kept: list[str] = []
-    total = 0
-    iterator = iter(lines)
+    count = 0
+    # The first line takes no newline before it.
+    total = -1
 
-    for line in iterator:
-        extra = len(line) + (1 if kept else 0)
+    for line in lines:
+        total += len(line) + 1
 
-        if kept and max_chars is not None and total + extra > max_chars:
-            return "\n".join(kept), 1 + sum(1 for _ in iterator)
+        if count and total > max_chars:
+            break
 
-        kept.append(line)
-        total += extra
+        count += 1
 
-    return "\n".join(kept), 0
+    return count
 
 
 def hint_suffix(hints: Sequence[str]) -> str:
@@ -322,37 +346,36 @@ def omission_hints(
 def iter_annotated(
     lines: Iterable[str],
     start_line: int = 1,
-    max_line_chars: int | None = None,
+    clip: LineClip | None = None,
 ) -> Iterator[str]:
     """Yield each of *lines* numbered from *start_line*, clipped per line.
 
-    The line-at-a-time form of :func:`annotate_lines`, for callers that feed
-    the result to :func:`cap_lines` and need to know how many lines the
-    budget dropped.
+    The line-at-a-time form of :func:`annotate_lines`, for callers that join
+    the numbered lines themselves.
 
     >>> list(iter_annotated(["a", "b"], start_line=4))
     ['4: a', '5: b']
     """
     for i, line in enumerate(lines):
-        yield number_line(start_line + i, truncate_line(line, max_line_chars))
+        yield number_line(start_line + i, line if clip is None else clip(line))
 
 
 def annotate_lines(
     lines: Iterable[str],
     start_line: int = 1,
-    max_line_chars: int | None = None,
+    clip: LineClip | None = None,
 ) -> str:
     """Number *lines* sequentially from *start_line*, joined by newlines.
 
     Without per-line numbers an LLM can only see a chunk's overall line
     range and has to guess which line a sentence is on, producing off-by-one
-    citations.  When *max_line_chars* is set, each line is first clipped by
-    :func:`truncate_line` so one very long line cannot flood the context.
-    :func:`cap_lines` is the counterpart budget on the output as a whole.
+    citations.  When *clip* is given, each line is first clipped by it so one
+    very long line cannot flood the context.  :func:`fit_lines` is the
+    counterpart budget on the output as a whole.
 
     >>> annotate_lines(["a", "b"], start_line=4)
     '4: a\\n5: b'
-    >>> annotate_lines(["abcdef"], max_line_chars=3)
+    >>> annotate_lines(["abcdef"], clip=LineClip(3))
     '1: ab…'
     """
-    return "\n".join(iter_annotated(lines, start_line, max_line_chars))
+    return "\n".join(iter_annotated(lines, start_line, clip))

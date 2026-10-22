@@ -44,6 +44,7 @@ from hivegent.tools.documents import (
     ListDocumentsTool,
     ReadDocumentTool,
 )
+from hivegent.tools.formatting import LineClip
 from hivegent.tools.grep import GrepLine, GrepMatch, GrepTool
 from hivegent.tools.jq import JqResult, JqTool
 from hivegent.tools.mutations import (
@@ -794,32 +795,18 @@ class TestReadDocumentTool:
         assert result.end_line == 3
         assert result.content == "b\nc"
 
-    async def test_default_window_caps_lines(self, tmp_path: Path) -> None:
-        lines = [f"line{i}" for i in range(5000)]
-        (tmp_path / "big.md").write_text("\n".join(lines))
-        tool = ReadDocumentTool(paths=tmp_path)
-        result = single((await tool([DocumentRead("big.md")])).data)
-        assert isinstance(result, DocumentRange)
-        assert result.start_line == 1
-        assert result.end_line == 2000
-        assert result.total_lines == 5000
-
-    async def test_custom_default_lines(self, tmp_path: Path) -> None:
-        lines = [f"line{i}" for i in range(100)]
+    async def test_default_window_is_the_char_budget(self, tmp_path: Path) -> None:
+        # Eight lines of five characters and a newline each fit 50 characters.
+        lines = [f"line{i}" for i in range(10)] * 10
         (tmp_path / "doc.md").write_text("\n".join(lines))
-        tool = ReadDocumentTool(paths=tmp_path, default_lines=10)
-        result = single((await tool([DocumentRead("doc.md")])).data)
+        tool = ReadDocumentTool(paths=tmp_path, max_chars=50)
+        output = await tool([DocumentRead("doc.md")])
+        result = single(output.data)
         assert isinstance(result, DocumentRange)
-        assert result.end_line == 10
-
-    async def test_continuation_hint_when_truncated(self, tmp_path: Path) -> None:
-        lines = [f"line{i}" for i in range(100)]
-        (tmp_path / "doc.md").write_text("\n".join(lines))
-        tool = ReadDocumentTool(paths=tmp_path, default_lines=10)
-        formatted = (await tool([DocumentRead("doc.md")])).formatted
-        assert formatted is not None
-        assert "more lines" in formatted
-        assert "offset=11" in formatted
+        assert result.end_line == 8
+        assert result.total_lines == 100
+        assert output.formatted is not None
+        assert "92 more lines, call again with offset=9" in output.formatted
 
 
 class TestRunBatch:
@@ -1288,7 +1275,6 @@ class TestGrepFormatting:
     ) -> None:
         # The path appears once as a heading; lines carry only their number
         # with ``:`` for matches and ``-`` for context.
-        tool = GrepTool(paths=tmp_path)
         block = GrepMatch(
             filename="doc.md",
             lines=(
@@ -1296,12 +1282,14 @@ class TestGrepFormatting:
                 GrepLine(line_number=11, text="hit", is_match=True),
             ),
         )
-        assert tool._format_matches([block]) == "doc.md\n10-ctx\n11:hit"
+        assert (
+            GrepTool._format_matches([block], LineClip(None))
+            == "doc.md\n10-ctx\n11:hit"
+        )
 
     def test_a_wide_line_is_clipped_around_its_match(self, tmp_path: Path) -> None:
-        # A hit deep in a wide table row survives the clip, and a wide context
-        # row stays clipped even when full_lines lifts it for the match.
-        tool = GrepTool(paths=tmp_path, max_line_chars=20)
+        # A hit deep in a wide table row survives the clip, and full_lines
+        # lifts it from the context row and the match alike.
         block = GrepMatch(
             filename="doc.md",
             lines=(
@@ -1315,23 +1303,25 @@ class TestGrepFormatting:
             ),
         )
 
-        clipped = tool._format_matches([block]).splitlines()
-        whole = tool._format_matches([block], full_lines=True).splitlines()
+        clip = LineClip(20)
+        clipped = GrepTool._format_matches([block], clip).splitlines()
+        whole = GrepTool._format_matches([block], LineClip(None)).splitlines()
 
         assert clipped[1] == f"1-{block.lines[0].text[:19]}…"
         assert clipped[2] == "2:…xxxxLegendeyyyyyyy…"
-        assert whole[1] == clipped[1]
+        assert whole[1] == f"1-{block.lines[0].text}"
         assert whole[2] == f"2:{block.lines[1].text}"
+        assert clip.hints()
 
     def test_blocks_within_document_separated_by_dashes(self, tmp_path: Path) -> None:
-        tool = GrepTool(paths=tmp_path)
-        formatted = tool._format_matches([self._block(1), self._block(1)])
+        formatted = GrepTool._format_matches(
+            [self._block(1), self._block(1)], LineClip(None)
+        )
         assert formatted == "f.md\n1:x\n--\n1:x"
 
     async def test_separate_documents_joined_by_separator(self, tmp_path: Path) -> None:
-        tool = GrepTool(paths=tmp_path)
-        formatted = tool._format_matches(
-            [self._block(1, "a.md"), self._block(1, "b.md")]
+        formatted = GrepTool._format_matches(
+            [self._block(1, "a.md"), self._block(1, "b.md")], LineClip(None)
         )
         assert formatted == "a.md\n1:x\n---\nb.md\n1:x"
 
@@ -1365,6 +1355,14 @@ class TestRunPythonTool:
         result = await tool("import math\nprint('working')\nmath.factorial(5)")
         assert result.data == PythonResult(result="120", stdout="working")
         assert result.text == "working\nResult: 120"
+
+    async def test_an_elided_result_names_the_cut(self, tool: RunPythonTool) -> None:
+        cut = await tool("list(range(5_000))")
+        assert "998, 999, ...]" in cut.text
+        assert cut.text.endswith("print() it or write it to a file to get all of it]")
+
+        whole = await tool("'Loading...'")
+        assert whole.text == "Result: 'Loading...'"
 
     async def test_blank_code_beside_a_script_runs_the_script(
         self, tool: RunPythonTool, tmp_path: Path

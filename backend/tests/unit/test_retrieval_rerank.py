@@ -7,6 +7,7 @@ from pydantic import SecretStr
 
 from hivegent import retrieval
 from hivegent.config import settings
+from hivegent.tools.formatting import LineClip
 from hivegent.tools.retrieval import (
     SearchResult,
     VectorSearchTool,
@@ -19,7 +20,7 @@ def test_format_results_truncates_long_lines() -> None:
     # A long line in a chunk (e.g. a base64 image) must be clipped so the
     # formatted block cannot flood the model context.
     result = SearchResult(key="doc.md", text="A" * 5_000, score=0.5)
-    formatted = _format_results([result], max_line_chars=80)
+    formatted = _format_results([result], LineClip(80))
     assert "…" in formatted
     assert len(max(formatted.splitlines(), key=len)) < 200
 

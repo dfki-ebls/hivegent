@@ -385,11 +385,11 @@ class TestWebFetch:
                 200, content=b"a" * 100, headers={"content-type": "text/plain"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler, max_chars=10)
+        tool = _fetch_tool(monkeypatch, handler, max_response_bytes=10)
         out = await tool(["https://example.com/big"])
         assert single(out.data).content == "a" * 10
         assert single(out.data).truncated
-        assert out.text.endswith("[truncated]")
+        assert out.text.endswith("[page cut at the 10 byte download cap]")
 
     async def test_long_line_truncated_in_formatted_only(
         self, monkeypatch: pytest.MonkeyPatch
@@ -407,8 +407,12 @@ class TestWebFetch:
         tool = _fetch_tool(monkeypatch, handler, max_line_chars=80)
         out = await tool(["https://example.com/page"])
         assert "…" in out.text
+        assert "full_lines=true" in out.text
         assert len(max(out.text.splitlines(), key=len)) < 200
         assert long_line in single(out.data).content
+
+        whole = await tool(["https://example.com/page"], full_lines=True)
+        assert long_line in whole.text
 
     async def test_too_many_redirects_raises(
         self, monkeypatch: pytest.MonkeyPatch

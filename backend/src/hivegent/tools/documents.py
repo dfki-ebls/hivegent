@@ -5,7 +5,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from itertools import chain
+from itertools import chain, islice
 from os import stat_result
 from pathlib import Path, PurePosixPath
 from stat import S_ISDIR, S_ISREG
@@ -39,7 +39,13 @@ from .base import (
     scope_paths,
     sidecar_hint,
 )
-from .formatting import cap_lines, hint_suffix, iter_annotated, omission_hints
+from .formatting import (
+    LineClip,
+    fit_lines,
+    hint_suffix,
+    iter_annotated,
+    omission_hints,
+)
 
 __all__ = [
     "DocumentFilePathArg",
@@ -120,7 +126,7 @@ DocumentMaxDepthArg = Annotated[
 ]
 DocumentMaxResultsArg = Annotated[
     int,
-    Field(description="Maximum number of entries to return.", ge=1, le=1000),
+    Field(description="Maximum number of entries to return.", ge=1),
 ]
 DocumentOffsetArg = Annotated[
     int,
@@ -133,8 +139,8 @@ DocumentLimitArg = Annotated[
     int | None,
     Field(
         description=(
-            "Maximum number of lines to return. When omitted, uses the tool's "
-            "default window."
+            "Maximum number of lines to return. When omitted, reads as many as "
+            "the character budget allows."
         ),
         ge=1,
     ),
@@ -448,7 +454,6 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
     them.
     """
 
-    default_lines: int = 2000
     max_chars: int = 40_000
     max_line_chars: int = 2000
 
@@ -462,10 +467,10 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
 
         Each read returns the lines from ``offset`` (1-indexed) up to
         ``limit`` lines, each prefixed with its line number, under a header
-        naming the document.  When ``limit`` is omitted the tool reads a
-        default window and reports how many lines remain so the caller can
-        issue a follow-up with a higher ``offset``.  The output is also
-        clamped by a per-call character budget shared by the reads.  Long
+        naming the document.  The lines are also clamped by a per-call
+        character budget shared by the reads, and the output reports how many
+        lines remain so the caller can issue a follow-up with a higher
+        ``offset``.  Long
         lines are clipped unless ``full_lines`` is set, and the output says
         when that happened so the caller can ask for them whole.  A file
         stored in a legacy encoding is decoded transparently, with the
@@ -544,18 +549,14 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
                 formatted=f"(offset {start} is past end of file with {total} lines)",
             )
 
-        window = limit if limit is not None else self.default_lines
-        end = min(total, start + window - 1)
+        stop = total if limit is None else min(total, start + limit - 1)
 
         # Cap by character budget: one giant line still gets returned alone so
-        # the caller sees something rather than an empty range.  Both budgets
-        # below run the same rule, so both are asked for it the same way and
-        # trim the window by what it dropped.
-        window = all_lines[start - 1 : end]
-        _text, over_budget = cap_lines(window, share.of(self.max_chars))
-        selected = window[: len(window) - over_budget]
-        line_cap = None if full_lines else self.max_line_chars
-        body = "\n".join(iter_annotated(selected, start, line_cap))
+        # the caller sees something rather than an empty range.
+        kept = fit_lines(islice(all_lines, start - 1, stop), share.of(self.max_chars))
+        selected = all_lines[start - 1 : start - 1 + kept]
+        clip = LineClip(None if full_lines else self.max_line_chars)
+        body = "\n".join(iter_annotated(selected, start, clip))
         end = start + len(selected) - 1
 
         result = DocumentRange(
@@ -581,11 +582,7 @@ class ReadDocumentTool(AsyncPathTool[Batch[DocumentRange]]):
         if query := query_hint(sp, local):
             hints.append(query)
 
-        if line_cap is not None and any(len(line) > line_cap for line in selected):
-            hints.append(
-                f"lines clipped at {line_cap} chars, "
-                "pass full_lines=true to read them whole"
-            )
+        hints += clip.hints()
 
         remaining = total - end
 

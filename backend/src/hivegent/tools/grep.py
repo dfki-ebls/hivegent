@@ -28,11 +28,10 @@ from .base import (
 from .formatting import (
     BLOCK_SEP,
     GROUP_SEP,
+    LineClip,
     hint_suffix,
     number_line,
     omission_hints,
-    truncate_around,
-    truncate_line,
 )
 
 __all__ = [
@@ -105,7 +104,6 @@ GrepMaxResultsArg = Annotated[
     Field(
         description="Maximum total number of matches to return.",
         ge=1,
-        le=1000,
     ),
 ]
 GrepCaseSensitiveArg = Annotated[
@@ -264,10 +262,8 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
 
     ``max_line_chars`` safeguards the LLM context against a single call
     flooding it with long wrapped markdown lines.  A matching line is clipped
-    around its match, so the cut never takes the hit itself, and context lines
-    are always clipped, since a wide table row beside a short hit is what
-    floods the output.  The caller can always issue a more specific follow-up
-    to get more detail.
+    around its match, so the cut never takes the hit itself, and a context
+    line from its start.  ``full_lines`` lifts the clip from both.
     """
 
     max_line_chars: int = 200
@@ -342,10 +338,14 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
         every match; the content mode caps both, since a match the text never
         showed still carries its lines and the frontend cites what it is given.
         """
+        hints: list[str] = []
+
         if output_mode == "content":
+            clip = LineClip(None if full_lines else self.max_line_chars)
             data = all_matches[:max_results]
-            body = self._format_matches(data, full_lines)
+            body = self._format_matches(data, clip)
             total = len(all_matches)
+            hints += clip.hints()
         else:
             data = all_matches
             counts: dict[str, int] = {}
@@ -360,45 +360,43 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
             )
             total = len(counts)
 
-        hints = omission_hints(hidden=hidden, max_results=max_results, total=total)
+        hints += omission_hints(hidden=hidden, max_results=max_results, total=total)
 
         return ToolOutput(
             data=data, formatted=(body or "(no matches)") + hint_suffix(hints)
         )
 
-    def _format_matches(
-        self, matches: list[GrepMatch], full_lines: bool = False
-    ) -> str:
+    @staticmethod
+    def _format_matches(matches: list[GrepMatch], clip: LineClip) -> str:
         """Render *matches* with each document path once as a heading.
 
         Every line then carries only its number with ``:`` for matches and
         ``-`` for context.  Distinct documents are split by :data:`BLOCK_SEP`
         and discontiguous blocks within a document by :data:`GROUP_SEP`.
         """
-        return "".join(self._iter_lines(matches, full_lines))
+        return "".join(_iter_lines(matches, clip))
 
-    def _iter_lines(self, matches: list[GrepMatch], full_lines: bool) -> Iterator[str]:
-        """Yield each match line with the separator that precedes it."""
-        prev_file: str | None = None
-        for m in matches:
-            if prev_file is None:
-                head = f"{m.filename}\n"
-            elif m.filename != prev_file:
-                head = f"{BLOCK_SEP}{m.filename}\n"
-            else:
-                head = GROUP_SEP
-            prev_file = m.filename
-            for i, line in enumerate(m.lines):
-                prefix = head if i == 0 else "\n"
-                mark = ":" if line.is_match else "-"
 
-                if not line.is_match:
-                    text = truncate_line(line.text, self.max_line_chars)
-                elif full_lines:
-                    text = line.text
-                else:
-                    text = truncate_around(
-                        line.text, line.match_start or 0, self.max_line_chars
-                    )
+def _iter_lines(matches: list[GrepMatch], clip: LineClip) -> Iterator[str]:
+    """Yield each match line with the separator that precedes it."""
+    prev_file: str | None = None
+    for m in matches:
+        if prev_file is None:
+            head = f"{m.filename}\n"
+        elif m.filename != prev_file:
+            head = f"{BLOCK_SEP}{m.filename}\n"
+        else:
+            head = GROUP_SEP
+        prev_file = m.filename
+        for i, line in enumerate(m.lines):
+            prefix = head if i == 0 else "\n"
+            mark = ":" if line.is_match else "-"
 
-                yield f"{prefix}{number_line(line.line_number, text, mark)}"
+            # A match is clipped around its hit, so the cut never takes it.
+            text = (
+                clip.around(line.text, line.match_start or 0)
+                if line.is_match
+                else clip(line.text)
+            )
+
+            yield f"{prefix}{number_line(line.line_number, text, mark)}"
