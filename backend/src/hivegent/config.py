@@ -370,8 +370,7 @@ class LlmSettings(BaseModel):
     tail around a note naming the file, or only clamped to them where the run
     has no ``/tmp``.
     ``tool_data_max_bytes`` is the most structured data (frontend-facing, as
-    JSON) a tool return streams and stores, and a larger one is dropped, as is
-    one saved to that file, so the data is kept once.
+    JSON) a tool return streams and stores, and a larger one is dropped.
     """
 
     model: str = ""

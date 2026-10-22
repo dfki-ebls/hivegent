@@ -11,8 +11,8 @@ Five capabilities that guard a run without belonging to any one feature:
 * :class:`ToolOutputSpill` bounds the plain text a tool return sends the
   model, saving a larger one whole under the conversation's
   ``/tmp/.tool-results/`` and showing its head and tail around a note naming the
-  file, and keeps the structured ``DataChunk`` only where it is neither saved
-  there nor too large for the frontend, so a runaway return cannot dominate the
+  file, and keeps the structured ``DataChunk`` the client cites from unless it
+  is too large for the frontend, so a runaway return cannot dominate the
   context and re-cost every later request, and none of it is out of reach.
   The cut itself is :func:`~hivegent.tools.formatting.truncate_middle`, which
   the MCP adapter applies to its returns too.
@@ -80,7 +80,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from ..db.conversations import prompt_items
 from ..humanize import format_bytes, pluralize
@@ -89,7 +88,7 @@ from ..prompts import request_limit_note, retry_limit_note
 from ..tmp import save_result
 from ..tools.base import SearchPath, ToolRetry
 from ..tools.formatting import truncate_middle
-from ..tools.pydantic_ai import encoded_data, unwrap_tool_output
+from ..tools.pydantic_ai import ToolOutputChunk, unwrap_tool_output
 from .common import UserDeps
 
 __all__ = [
@@ -374,10 +373,10 @@ class ToolOutputSpill(AbstractCapability[UserDeps]):
     reads on from the file rather than calling the tool again.  A run without a
     ``/tmp`` gets the same head and tail with a plain note.
 
-    The structured data is kept once: a chunk whose data went to the file is
-    dropped, and so is one over ``max_data_bytes``, since the frontend loads
-    every chunk of a conversation and the database stores it.  The text then
-    stands alone, and names the file where there is one.
+    The chunk is kept within ``max_data_bytes`` even where its data went to
+    the file too, since the client cites from it, and dropped past that, since
+    the frontend loads every chunk of a conversation and the database stores
+    it.  The text then stands alone, and names the file where there is one.
 
     A failed call's retry prompt is clamped to ``max_chars`` the same way, as
     one bound covers every text a tool sends the model, but never saved, since
@@ -436,11 +435,14 @@ class ToolOutputSpill(AbstractCapability[UserDeps]):
         chunk = result.metadata if wrapped else None
         # The one encoding the stream sends too, inline, since serializing
         # holds the GIL on a worker thread all the same.
-        encoded = encoded_data(chunk) if isinstance(chunk, DataChunk) else None
-        data_over = encoded is not None and len(encoded) > self.max_data_bytes
+        encoded = chunk.data_json() if isinstance(chunk, ToolOutputChunk) else None
+
+        # The chunk is what the client cites, so it stays whenever it fits its budget.
+        if encoded is not None and len(encoded) > self.max_data_bytes:
+            result = replace(result, metadata=None)
 
         if text is None or len(text) <= self.max_chars:
-            return replace(result, metadata=None) if data_over else result
+            return result
 
         saved = None if output.display_only else encoded
         root = ctx.deps.tmp
@@ -450,15 +452,7 @@ class ToolOutputSpill(AbstractCapability[UserDeps]):
         preview = truncate_middle(text, self.max_chars, note)
         value = preview if output.rest is None else [preview, *output.rest]
 
-        if not wrapped:
-            return value
-
-        # The data is kept once: in the file it went to, or in the chunk within its budget.
-        kept = not data_over and (saved is None or note is None)
-
-        return replace(
-            result, return_value=value, metadata=result.metadata if kept else None
-        )
+        return replace(result, return_value=value) if wrapped else value
 
 
 @dataclass(slots=True)

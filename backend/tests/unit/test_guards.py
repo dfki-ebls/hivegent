@@ -317,7 +317,8 @@ async def test_a_structured_result_too_large_to_show_is_saved_as_json(
     spilled = await _spill(result)
 
     assert isinstance(spilled, ToolReturn)
-    assert spilled.metadata is None
+    # The chunk stays within its budget, since the client cites from it.
+    assert spilled.metadata is result.metadata
     preview = spilled.return_value
     assert isinstance(preview, str)
     assert len(preview) <= 1_000

@@ -30,7 +30,6 @@ from .base import (
 __all__ = [
     "ToolOutputChunk",
     "UnwrappedOutput",
-    "encoded_data",
     "for_pydantic_ai",
     "invoke_tool",
     "register_agent_tool",
@@ -84,13 +83,6 @@ class ToolOutputChunk(DataChunk):
         head = self.model_dump_json(by_alias=True, exclude_none=True, exclude={"data"})
 
         return f'{head[:-1]},"data":{self.data_json().decode()}}}'
-
-
-def encoded_data(chunk: DataChunk) -> bytes:
-    """*chunk*'s data as JSON, encoded once where the chunk is a :class:`ToolOutputChunk`."""
-    return (
-        chunk.data_json() if isinstance(chunk, ToolOutputChunk) else _encode(chunk.data)
-    )
 
 
 def wrap_tool_output(
