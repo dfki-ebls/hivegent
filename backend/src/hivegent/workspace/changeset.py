@@ -700,6 +700,9 @@ class _TextEffect:
     target: Location
     current: str | None
     content: str
+    data: bytes
+    """*content* as the UTF-8 stored on disk, encoded once for every check and the write."""
+
     chunking: ChunkingSpec | None
     origin: Location | None
     """Where *current* lies before the changeset, ``None`` for nothing."""
@@ -946,7 +949,9 @@ def _resolve_text(
         None if origin is None else origin.full_path, shown, mutate, operation.basis
     )
     chunking = operation.chunking if isinstance(operation, Write) else None
-    effect = _TextEffect(target, current, content, chunking, origin)
+    effect = _TextEffect(
+        target, current, content, content.encode("utf-8"), chunking, origin
+    )
     resolved = replace(operation, target=target)
 
     # A plain file is bounded by its root's quota alone.
@@ -955,7 +960,7 @@ def _resolve_text(
 
         return _Resolved(resolved, effect, report)
 
-    _enforce_file_size(content.encode("utf-8"))
+    _enforce_file_size(effect.data)
     stem = stem_path_from_reference(path)
     unit = plan.description(target) or _Unit(
         root, stem, EntryPaths(stem, path, None, None)
@@ -1157,12 +1162,12 @@ def _admit(plan: _Plan, resolved: Sequence[_Resolved]) -> None:
 
     for item in resolved:
         match item.effect:
-            case _TextEffect(target=target, content=content, origin=origin) if (
+            case _TextEffect(target=target, data=data, origin=origin) if (
                 target.root.quota is not None
             ):
                 root = target.root
                 replaced = 0 if origin is None else disk_size(origin.full_path)
-                growth[root] += len(content.encode("utf-8")) - replaced
+                growth[root] += len(data) - replaced
                 keep.add(target.full_path)
             case _Vacate(unit=unit, destination=destination) if (
                 unit.root.quota is not None
@@ -1441,8 +1446,7 @@ async def _convert(item: tuple[Casebase, _Converting]) -> _Converted:
             store, effect, prepared, original, effect.replacing, upload.spec.chunking
         )
 
-    path = effect.target.path
-    data = effect.content.encode("utf-8")
+    path, data = effect.target.path, effect.data
     # A carried original keeps the rows it has until the move lands them here.
     origin = effect.origin
     metadata = (
@@ -1545,7 +1549,7 @@ def _install_text(
     target, store = effect.target, effect.store
     live = target.full_path
     journal.install(
-        _write_workspace_file(staging, target.path, effect.content.encode("utf-8")),
+        _write_workspace_file(staging, target.path, effect.data),
         live,
     )
 
