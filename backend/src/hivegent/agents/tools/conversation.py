@@ -1,6 +1,6 @@
 """Conversation-oriented agent tool registrations."""
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -16,8 +16,7 @@ from ...db.conversations import (
     ConversationData,
     ConversationSummary,
     owned_conversation,
-    prompt_items,
-    prompt_text,
+    render_prompt,
 )
 from ...db.conversations import (
     list_conversations as _list_conversations,
@@ -33,6 +32,7 @@ from ..common import UserDeps, agent_toolset
 __all__ = [
     "conversation_toolset",
     "format_conversation",
+    "format_messages",
     "get_conversation",
     "list_conversations",
 ]
@@ -69,11 +69,7 @@ def _render_parts(message: ModelMessage) -> Iterator[str]:
     for part in message.parts:
         match part:
             case UserPromptPart():
-                text = "\n".join(
-                    "[attachment]" if (line := prompt_text(item)) is None else line
-                    for item in prompt_items(part)
-                )
-                yield f"user:\n{text.strip()}"
+                yield f"user:\n{render_prompt(part).strip()}"
 
             case TextPart(content=content) if content.strip():
                 yield f"assistant:\n{content.strip()}"
@@ -91,15 +87,16 @@ def format_conversation(conversation: ConversationData) -> str:
 
     The header matches a :func:`list_conversations` line.
     """
-    header = _header(conversation)
-    blocks = [
-        block for message in conversation.messages for block in _render_parts(message)
-    ]
+    return BLOCK_SEP.join(
+        [_header(conversation), format_messages(conversation.messages)]
+    )
 
-    if not blocks:
-        return f"{header}\n\n(no messages)"
 
-    return BLOCK_SEP.join([header, *blocks])
+def format_messages(messages: Iterable[ModelMessage]) -> str:
+    """Render *messages* as one block per message part, dialogue and tool calls."""
+    blocks = [block for message in messages for block in _render_parts(message)]
+
+    return BLOCK_SEP.join(blocks) or "(no messages)"
 
 
 @conversation_toolset.tool

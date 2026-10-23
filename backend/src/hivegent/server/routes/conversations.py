@@ -85,7 +85,12 @@ from ...types import (
     UpdateTitleRequest,
 )
 from ..cancellation import run_until_disconnect
-from ..common import build_run_prefix, prepare_llm_config
+from ..common import (
+    CONVERSATION_NOT_FOUND,
+    build_run_prefix,
+    found,
+    prepare_llm_config,
+)
 from ..operations import attachment_disposition
 from ..vercel import (
     SDK_VERSION,
@@ -99,19 +104,6 @@ __all__ = ["router"]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-_CONVERSATION_NOT_FOUND = Localized(
-    en="Conversation not found", de="Konversation nicht gefunden"
-)
-
-
-def _found[T](value: T | None) -> T:
-    """*value*, or ``404`` for a conversation that is missing or not the caller's."""
-    if value is None:
-        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
-
-    return value
-
 
 _TITLE_INSTRUCTIONS = Localized(
     en="""Generate a short, descriptive title (max 60 characters) for the conversation.
@@ -187,7 +179,7 @@ async def _owned_conversation(
     Every ``{conversation_id}`` route takes the :class:`OwnedConversation` its
     message tree and ``/tmp`` need from here.
     """
-    return _found(await owned_conversation(user, conversation_id))
+    return found(await owned_conversation(user, conversation_id))
 
 
 type Owned = Annotated[OwnedConversation, Depends(_owned_conversation)]
@@ -204,7 +196,7 @@ async def get_conversations(
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(conversation: Owned) -> ConversationSummary:
     """Get summary information for a specific conversation."""
-    return _found(await load_conversation_summary(conversation))
+    return found(await load_conversation_summary(conversation))
 
 
 @router.patch("/conversations/{conversation_id}")
@@ -212,7 +204,7 @@ async def update_conversation_title(
     conversation: Owned, request: UpdateTitleRequest
 ) -> ConversationSummary:
     """Update the title of a conversation."""
-    return _found(await set_conversation_title(conversation, request.title))
+    return found(await set_conversation_title(conversation, request.title))
 
 
 def _extract_message_texts(
@@ -241,7 +233,7 @@ async def generate_conversation_title(
     http_request: Request,
 ) -> GenerateTitleResponse:
     """Generate a title for a conversation using an LLM."""
-    data = _found(await load_conversation(conversation))
+    data = found(await load_conversation(conversation))
 
     messages_text = _extract_message_texts(data.messages)
     if not messages_text:
@@ -282,7 +274,7 @@ async def generate_conversation_title(
 async def delete_conversation(conversation: Owned) -> None:
     """Delete a conversation and its files on disk."""
     if not await conversation_files.delete_conversation(conversation):
-        raise HTTPException(status_code=404, detail=_CONVERSATION_NOT_FOUND.current)
+        raise HTTPException(status_code=404, detail=CONVERSATION_NOT_FOUND.current)
 
 
 @router.delete("/conversations", status_code=status.HTTP_204_NO_CONTENT)
@@ -343,7 +335,7 @@ async def export_conversation_route(conversation: Owned) -> Response:
     export button fills that half in and downloads the same shape, and the
     counterpart :func:`import_conversation_route` restores either one.
     """
-    summary = _found(await load_conversation_summary(conversation))
+    summary = found(await load_conversation_summary(conversation))
 
     result = await load_active_for_display(conversation)
     pairs, siblings = result if result else ([], {})

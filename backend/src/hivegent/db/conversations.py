@@ -62,6 +62,7 @@ from .models import Conversation, Message
 from .users import ensure_user
 
 __all__ = [
+    "CHAT_ERROR_KEY",
     "UNTITLED",
     "ConversationData",
     "ConversationSummary",
@@ -82,6 +83,7 @@ __all__ = [
     "prompt_items",
     "prompt_text",
     "remove_conversation",
+    "render_prompt",
     "resolve_fork",
     "set_conversation_title",
 ]
@@ -133,6 +135,11 @@ class ActiveNode:
 
 # A node id paired with its decoded message — the public active-path shape.
 type MessagePair = tuple[str, ModelMessage]
+
+# Message metadata key carrying a run's error text so the frontend can re-render
+# the chat error banner from reloaded history (a stream error is otherwise a
+# transient chunk, not a message part, and is lost on reload).
+CHAT_ERROR_KEY = "chatError"
 
 UNTITLED = Localized(en="Untitled", de="Ohne Titel")
 """The title shown for a conversation that has none."""
@@ -233,6 +240,14 @@ def prompt_text(item: UserContent) -> str | None:
         return item.content
 
     return None
+
+
+def render_prompt(part: UserPromptPart) -> str:
+    """*part*'s text, each attachment standing in as ``[attachment]``."""
+    return "\n".join(
+        "[attachment]" if (line := prompt_text(item)) is None else line
+        for item in prompt_items(part)
+    )
 
 
 def extract_title(messages: Sequence[ModelMessage]) -> str | None:

@@ -61,7 +61,7 @@ from ..agents.compaction import Compacted
 from ..agents.subagent_events import SubagentUpdate
 from ..agents.tools.ask import ANSWERS, ASK_USER_TOOL, DISMISSED_QUESTIONS
 from ..db._common import new_id
-from ..db.conversations import is_user_request
+from ..db.conversations import CHAT_ERROR_KEY, is_user_request
 from ..l10n import Localized
 
 __all__ = [
@@ -112,11 +112,6 @@ _SAVE_FAILED = Localized(
     en="Failed to save the conversation.",
     de="Die Konversation konnte nicht gesichert werden.",
 )
-
-# Message metadata key carrying a run's error text so the frontend can re-render
-# the chat error banner from reloaded history (a stream error is otherwise a
-# transient chunk, not a message part, and is lost on reload).
-CHAT_ERROR_KEY = "chatError"
 
 # Message metadata key mapping each tool call a user decision resolved to that
 # decision, set on the request that carries their returns (see `record_approvals`).

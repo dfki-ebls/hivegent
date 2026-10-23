@@ -31,9 +31,11 @@ from ..workspace_events import announce_workspace_changed
 from .models import PipelineSpec
 
 __all__ = [
+    "CONVERSATION_NOT_FOUND",
     "ClientId",
     "build_run_prefix",
     "delete_user_data",
+    "found",
     "parse_document_scope",
     "parse_pipeline_spec",
     "prepare_llm_config",
@@ -47,6 +49,19 @@ __all__ = [
 # for any client that does not name itself (the CLI, an MCP client), which then
 # simply receives every notification.
 type ClientId = Annotated[str | None, Header(alias="X-Client-Id")]
+
+
+CONVERSATION_NOT_FOUND = Localized(
+    en="Conversation not found", de="Konversation nicht gefunden"
+)
+
+
+def found[T](value: T | None) -> T:
+    """*value*, or ``404`` for a conversation that is missing or not the caller's."""
+    if value is None:
+        raise HTTPException(status_code=404, detail=CONVERSATION_NOT_FOUND.current)
+
+    return value
 
 
 def _invalid_pipeline_spec(error: str) -> Localized[str]:

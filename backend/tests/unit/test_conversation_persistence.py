@@ -56,11 +56,15 @@ import hivegent.server.vercel as vercel_module
 from hivegent.agents.approval import ApprovalNotes, approval_note_text
 from hivegent.agents.compaction import Compacted
 from hivegent.agents.tools.ask import DISMISSED_QUESTIONS, ask_user
-from hivegent.db.conversations import ActiveNode, _fork_for_path, import_conversation
+from hivegent.db.conversations import (
+    CHAT_ERROR_KEY,
+    ActiveNode,
+    _fork_for_path,
+    import_conversation,
+)
 from hivegent.server.routes.conversations import _instruction_snapshots
 from hivegent.server.vercel import (
     APPROVAL_METADATA_KEY,
-    CHAT_ERROR_KEY,
     REASONING_DURATIONS_KEY,
     SDK_VERSION,
     ChatAdapter,
@@ -937,4 +941,3 @@ async def test_a_compaction_streams_as_the_part_a_reload_shows() -> None:
     ]
     assert shown == {"type": "data-compaction", "data": {"content": "the gist"}}
     assert live == [shown]
-
