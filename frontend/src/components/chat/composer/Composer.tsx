@@ -1,17 +1,17 @@
 import type { ChatStatus, FileUIPart } from "ai";
-import { ArrowUpIcon, ImagePlusIcon, SquareIcon } from "lucide-react";
+import { ImagePlusIcon } from "lucide-react";
 import { type FormEvent, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { AttachedFiles } from "@/components/chat/composer/AttachedFiles";
 import { ChatTextarea } from "@/components/chat/composer/ChatTextarea";
 import { DictateButton } from "@/components/chat/composer/DictateButton";
 import { DocumentFilterBadges } from "@/components/chat/composer/DocumentFilterBadges";
+import { SubmitStopButton } from "@/components/chat/composer/SubmitStopButton";
 import { ModeSelector } from "@/components/chat/composer/ModeSelector";
 import { ReasoningEffortSelector } from "@/components/chat/composer/ReasoningEffortSelector";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { WithTooltip } from "@/components/TooltipButton";
 import { InputGroup, InputGroupAddon, InputGroupButton } from "@/components/ui/input-group";
-import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
 import { keyPrefix } from "@/i18n";
 import { formatFileSize } from "@/i18n/format";
@@ -190,17 +190,12 @@ export function Composer({
           />
           <ModeSelector value={agentMode} onChange={setAgentMode} />
           {/* Enter still submits while streaming, which steers the running turn. */}
-          <InputGroupButton
-            type={isStreaming ? "button" : "submit"}
-            size="icon-sm"
-            variant="default"
-            className="rounded-full"
-            aria-label={isStreaming ? t(($) => $.stop) : t(($) => $.submit)}
-            disabled={!isStreaming && !canSend}
-            onClick={isStreaming ? onStop : undefined}
-          >
-            {status === "submitted" ? <Spinner /> : isStreaming ? <SquareIcon /> : <ArrowUpIcon />}
-          </InputGroupButton>
+          <SubmitStopButton
+            status={status}
+            streaming={isStreaming}
+            empty={!canSend}
+            onStop={onStop}
+          />
         </InputGroupAddon>
       </InputGroup>
     </form>
