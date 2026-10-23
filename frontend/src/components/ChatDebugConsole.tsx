@@ -116,7 +116,8 @@ function DebugChat({ conversationId }: { conversationId: string }) {
     if (!text || busy) return;
 
     void sendMessage({ text });
-    event.currentTarget.reset();
+    // Cleared rather than reset, which would bring back the prefilled prompt.
+    if (textRef.current) textRef.current.value = "";
   };
 
   if (summary.isPending) {
@@ -176,7 +177,12 @@ function DebugChat({ conversationId }: { conversationId: string }) {
       />
       <form onSubmit={submit} className="shrink-0 p-4">
         <InputGroup>
-          <ChatTextarea ref={textRef} placeholder={t(($) => $.placeholder)} />
+          {/* Prefilled, so a session can start with the general analysis. */}
+          <ChatTextarea
+            ref={textRef}
+            defaultValue={t(($) => $.defaultPrompt)}
+            placeholder={t(($) => $.placeholder)}
+          />
           <InputGroupAddon align="block-end">
             <ReasoningEffortSelector
               value={reasoningEffort}

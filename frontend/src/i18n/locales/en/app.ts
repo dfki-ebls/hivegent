@@ -61,6 +61,7 @@ export const app = {
     emptyTitle: "Open a conversation",
     emptyDescription: "Enter the ID of any user's conversation to start debugging it.",
     placeholder: "Ask about this conversation …",
+    defaultPrompt: "Analyze this conversation and list your findings.",
     report: "Write report",
     reportTitle: "Report",
     reportDescription:

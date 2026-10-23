@@ -64,6 +64,7 @@ export const app = {
     emptyDescription:
       "Gib die ID der Konversation eines beliebigen Nutzers ein, um sie zu debuggen.",
     placeholder: "Frage zu dieser Konversation …",
+    defaultPrompt: "Analysiere diese Konversation und liste deine Befunde auf.",
     report: "Bericht schreiben",
     reportTitle: "Bericht",
     reportDescription:
