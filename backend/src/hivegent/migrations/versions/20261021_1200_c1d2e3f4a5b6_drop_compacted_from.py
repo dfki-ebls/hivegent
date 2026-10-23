@@ -22,7 +22,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_index(op.f("ix_conversations_compacted_from_id"), table_name="conversations")
+    op.drop_index(
+        op.f("ix_conversations_compacted_from_id"), table_name="conversations"
+    )
     op.drop_column("conversations", "compacted_from_id")
 
 

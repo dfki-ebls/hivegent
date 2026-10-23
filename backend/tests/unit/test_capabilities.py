@@ -90,9 +90,7 @@ def _turn(
         "hi",
         model=FunctionModel(respond),
         deps=deps,
-        capabilities=build_capabilities(
-            spec or ToolsSpec(), mode=mode, language="en"
-        ),
+        capabilities=build_capabilities(spec or ToolsSpec(), mode=mode, language="en"),
     )
     return captured[0]
 
@@ -112,9 +110,7 @@ def test_document_scope_rides_with_the_retrieval_tools() -> None:
     assert "~/a.md" in _instruction_text(_turn(relevant=selected))
 
     disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
-    assert "~/a.md" not in _instruction_text(
-        _turn(relevant=selected, spec=disabled)
-    )
+    assert "~/a.md" not in _instruction_text(_turn(relevant=selected, spec=disabled))
 
 
 def _tool_names(mode: Mode = "interactive") -> set[str]:

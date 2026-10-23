@@ -242,6 +242,7 @@ READ_MODE_NOTE: Localized[str] = Localized(
     ),
 )
 
+
 def request_limit_note(max_requests: int) -> Localized[str]:
     """The note that most of a turn's *max_requests* model requests are spent."""
     return Localized(

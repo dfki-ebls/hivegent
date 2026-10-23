@@ -18,16 +18,24 @@ const LICENSE_FILE = /^(licen[cs]e|copying)/i;
  * under the conditions of a script.
  */
 function stylesheetPackages(file: string): string[] {
-  return [...readFileSync(file, "utf8").matchAll(STYLESHEET_IMPORTS)].flatMap(([, specifier = ""]) => {
-    if (!specifier.startsWith(".")) return findPackageJSON(specifier, pathToFileURL(file)) ?? [];
+  return [...readFileSync(file, "utf8").matchAll(STYLESHEET_IMPORTS)].flatMap(
+    ([, specifier = ""]) => {
+      if (!specifier.startsWith(".")) return findPackageJSON(specifier, pathToFileURL(file)) ?? [];
 
-    return specifier.endsWith(".css") ? stylesheetPackages(resolve(dirname(file), specifier)) : [];
-  });
+      return specifier.endsWith(".css")
+        ? stylesheetPackages(resolve(dirname(file), specifier))
+        : [];
+    },
+  );
 }
 
 /** The notice of the package in `dir`, keyed by name and version. */
 function packageNotice(dir: string): [string, string] {
-  const { name, version = "0.0.0", license } = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
+  const {
+    name,
+    version = "0.0.0",
+    license,
+  } = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
     name: string;
     version?: string;
     license?: string;
@@ -35,7 +43,10 @@ function packageNotice(dir: string): [string, string] {
   const file = readdirSync(dir).find((entry) => LICENSE_FILE.test(entry));
   const heading = `## ${name} - ${version}${license ? ` (${license.trim()})` : ""}`;
 
-  return [`${name}@${version}`, file ? `${heading}\n\n${readFileSync(join(dir, file), "utf8").trim()}` : heading];
+  return [
+    `${name}@${version}`,
+    file ? `${heading}\n\n${readFileSync(join(dir, file), "utf8").trim()}` : heading,
+  ];
 }
 
 /**
@@ -67,16 +78,30 @@ export function thirdPartyLicenses(fileName: string, preamble?: string): Plugin 
         outDirs.set(name, resolve(config.root, config.build.outDir));
 
         const ids = Object.values(bundle).flatMap((output) =>
-          output.type === "chunk" ? output.moduleIds : output.originalFileNames.map((file) => resolve(config.root, file)),
+          output.type === "chunk"
+            ? output.moduleIds
+            : output.originalFileNames.map((file) => resolve(config.root, file)),
         );
         // Server builds emit stylesheets only for their manifests.
         const stylesheets =
           config.consumer === "client"
-            ? [...new Set(ids.filter((id) => isCSSRequest(id) && id.startsWith("/") && !id.includes("/node_modules/")))]
+            ? [
+                ...new Set(
+                  ids.filter(
+                    (id) =>
+                      isCSSRequest(id) && id.startsWith("/") && !id.includes("/node_modules/"),
+                  ),
+                ),
+              ]
             : [];
 
-        for (const id of [...ids, ...stylesheets.flatMap((id) => stylesheetPackages(id.split("?")[0] ?? id))]) {
-          const inlined = [...outDirs].find(([env, outDir]) => env !== name && id.startsWith(`${outDir}/`));
+        for (const id of [
+          ...ids,
+          ...stylesheets.flatMap((id) => stylesheetPackages(id.split("?")[0] ?? id)),
+        ]) {
+          const inlined = [...outDirs].find(
+            ([env, outDir]) => env !== name && id.startsWith(`${outDir}/`),
+          );
           const dir = PACKAGE_DIR.exec(id)?.[0];
 
           if (inlined) for (const found of packages.get(inlined[0]) ?? []) dirs.add(found);
@@ -86,10 +111,16 @@ export function thirdPartyLicenses(fileName: string, preamble?: string): Plugin 
         // Each worker ends before the build that imports it does.
         if (config.isWorker || dirs.size === 0) return;
 
-        const notices = [...new Map([...dirs].map(packageNotice))].sort(([a], [b]) => a.localeCompare(b));
+        const notices = [...new Map([...dirs].map(packageNotice))].sort(([a], [b]) =>
+          a.localeCompare(b),
+        );
         const sections = [preamble?.trim(), "# Licenses", ...notices.map(([, notice]) => notice)];
 
-        this.emitFile({ type: "asset", fileName, source: `${sections.filter(Boolean).join("\n\n")}\n` });
+        this.emitFile({
+          type: "asset",
+          fileName,
+          source: `${sections.filter(Boolean).join("\n\n")}\n`,
+        });
       },
     },
   };

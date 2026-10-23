@@ -171,9 +171,7 @@ async def test_each_request_extends_the_previous_one(
     assert "~/b.md" in sent and "Write mode" in sent
     assert "failed 3 times in a row" in sent
     assert "most of its 4 model requests" in sent
-    assert all(
-        message["role"] != "system" for message in requests[-1]["messages"][1:]
-    )
+    assert all(message["role"] != "system" for message in requests[-1]["messages"][1:])
 
     for previous, current in pairwise(requests):
         assert current["tools"] == previous["tools"]

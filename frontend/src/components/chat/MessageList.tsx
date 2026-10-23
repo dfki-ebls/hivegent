@@ -21,12 +21,7 @@ import {
 } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
 import { keyPrefix } from "@/i18n";
-import {
-  type ChatMessage,
-  isChatBusy,
-  isProcessing,
-  lastUserIndex,
-} from "@/lib/chat/chat-utils";
+import { type ChatMessage, isChatBusy, isProcessing, lastUserIndex } from "@/lib/chat/chat-utils";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.messages);
 
