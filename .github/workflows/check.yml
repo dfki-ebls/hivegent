@@ -2,23 +2,33 @@ name: check
 on:
   pull_request:
   workflow_call:
+    secrets:
+      CACHIX_TOKEN:
+        required: false
   push:
     branches:
       - main
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   check:
+    name: Flake check
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: wimpysworld/nothing-but-nix@687c797a730352432950c707ab493fcc951818d7 # v10
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: wimpysworld/nothing-but-nix@v10
+      - uses: DeterminateSystems/nix-installer-action@v23
         with:
           extra-conf: |
             accept-flake-config = true
             log-lines = 1000
-      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+      - uses: cachix/cachix-action@v17
         with:
           name: dfki-ebls
           authToken: ${{ secrets.CACHIX_TOKEN }}
