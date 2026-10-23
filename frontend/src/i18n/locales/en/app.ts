@@ -6,6 +6,7 @@ export const app = {
     documentation: "Documentation",
     licenses: "Licenses",
     toolDebugger: "Tool Debugger",
+    chatDebugger: "Chat Debugger",
     signOut: "Sign out",
   },
   landing: {
@@ -46,12 +47,33 @@ export const app = {
     commaSeparated: "Comma-separated values",
     noOptions: "No configuration options available.",
   },
+  adminOnly: {
+    title: "Admin access required",
+    description: "This page is only available to admins.",
+  },
+  chatDebugger: {
+    title: "Chat Debugger",
+    description:
+      "Ask an agent about any user's conversation to find tool errors, loop issues, and feature gaps. The session is not stored, and the report replaces the conversation's data with placeholders.",
+    conversationId: "Conversation ID",
+    open: "Open",
+    notFound: "Conversation not found",
+    emptyTitle: "Open a conversation",
+    emptyDescription: "Enter the ID of any user's conversation to start debugging it.",
+    placeholder: "Ask about this conversation …",
+    report: "Write report",
+    reportTitle: "Report",
+    reportDescription:
+      "Condensed from this session, with the conversation's data replaced by placeholders.",
+    masked_one:
+      "{{count}} span still repeated the conversation and was masked as <REDACTED_n>. Check the report before sharing it.",
+    masked_other:
+      "{{count}} spans still repeated the conversation and were masked as <REDACTED_n>. Check the report before sharing it.",
+  },
   toolDebugger: {
     title: "Tool Debugger",
     description:
       "Invoke any agent tool directly to exercise stateful behavior such as pgvector retrieval. Arguments and their types are inferred from each tool's schema.",
-    adminRequired: "Admin access required",
-    adminRequiredDescription: "The tool debugger is only available to admins.",
     loadFailed: "Failed to load tools",
     selectTool: "Select a tool to debug",
     run: "Run tool",
@@ -84,6 +106,8 @@ export const app = {
       fetchTools: "Failed to fetch tools",
       fetchToolSchemas: "Failed to fetch tool schemas",
       runTool: "Failed to run tool",
+      fetchDebugConversation: "Failed to open the conversation",
+      writeDebugReport: "Failed to write the report",
       testMcpServer: "Failed to test the MCP server",
       upload: "Upload failed",
       save: "Save failed",

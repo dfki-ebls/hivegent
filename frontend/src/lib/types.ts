@@ -514,6 +514,14 @@ export const ToolRunResultSchema = z.object({
 });
 export type ToolRunResult = z.infer<typeof ToolRunResultSchema>;
 
+/** A chat debugger report, free of the analyzed conversation's data. */
+export const DebugReportSchema = z.object({
+  markdown: z.string(),
+  /** Spans masked as `<REDACTED_n>` after the model failed to replace them. */
+  masked: z.number(),
+});
+export type DebugReport = z.infer<typeof DebugReportSchema>;
+
 /** Summary information about a knowledge group. */
 // ============================================================
 // Tool configuration schemas (persisted in localStorage, sent to backend)
@@ -800,6 +808,9 @@ export interface ChatRequestConfig {
   /** Summarize the conversation instead of answering, sent only by the compact action. */
   compact?: boolean;
 }
+
+/** The run configuration a chat debugger request carries beside its messages. */
+export type DebugRequestConfig = Pick<ChatRequestConfig, "llm" | "reasoning_effort">;
 
 // ============================================================
 // Display constants

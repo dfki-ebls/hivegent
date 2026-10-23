@@ -33,6 +33,7 @@ dependencies = [
   "pydantic-monty>=1,<2",
   "pydantic-settings>=2,<3",
   "pypdfium2>=5,<6",
+  "pyspellchecker>=0.8,<0.9",
   "sentence_transformers>=6,<7",
   "sqlalchemy[asyncio]>=2,<3",
   "trafilatura>=2,<3",

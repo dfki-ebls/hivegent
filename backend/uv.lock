@@ -1514,6 +1514,7 @@ dependencies = [
     { name = "pydantic-monty" },
     { name = "pydantic-settings" },
     { name = "pypdfium2" },
+    { name = "pyspellchecker" },
     { name = "sentence-transformers" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "trafilatura" },
@@ -1588,6 +1589,7 @@ requires-dist = [
     { name = "pydantic-monty", specifier = ">=1,<2" },
     { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "pypdfium2", specifier = ">=5,<6" },
+    { name = "pyspellchecker", specifier = ">=0.8,<0.9" },
     { name = "sentence-transformers", specifier = ">=6,<7" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2,<3" },
     { name = "tesserocr", marker = "extra == 'docling'", specifier = ">=2,<3" },
@@ -3950,6 +3952,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b6/6d/f94028646d7bbe6d9d873c47ee7c246f2d29129d253f0d96cb6fcab70733/pyreadline3-3.5.6.tar.gz", hash = "sha256:61e53218b99656091ddb077df9e71f25850e72e030b6183b39c9b7e6e4f4a9bf", size = 100368, upload-time = "2026-05-14T17:55:04.471Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/5e/35c856e186b74678c24927847ad9895a51f1bc02a0c6126477a6c6040064/pyreadline3-3.5.6-py3-none-any.whl", hash = "sha256:8449b734232e42a5dcd74048e39b60db2839a4c38cf3ae2bf7707d58b5389c0d", size = 85243, upload-time = "2026-05-14T17:55:03.262Z" },
+]
+
+[[package]]
+name = "pyspellchecker"
+version = "0.8.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/f4/870865239781117f75f788594c98fc3c65836ad9b93779550f369700187a/pyspellchecker-0.8.4.tar.gz", hash = "sha256:48cafa76d65c30ce4d81d0831938f25e8f34ede243c1cc6840014b0eb51ad629", size = 7238678, upload-time = "2025-11-30T00:18:39.415Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8e/79/2a6993dd02c537ae1344a693f20f9b556206a5385c398022fb66cb004b3a/pyspellchecker-0.8.4-py3-none-any.whl", hash = "sha256:20c53d119568011bbaef68608aceb956b888bcd9d563798f7770721a112b8255", size = 7236997, upload-time = "2025-11-30T00:18:37.411Z" },
 ]
 
 [[package]]

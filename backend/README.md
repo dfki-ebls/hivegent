@@ -264,7 +264,19 @@ The note arrives mid-turn, so it rides what the model reads next rather than a t
 It rides on every agent, so a subagent on the shared budget is warned too.
 Every agent toolset is built by `agent_toolset`, which carries `llm.tool_timeout_seconds`, since pydantic-ai applies an agent's `tool_timeout` to its own tools alone, and a tool's own timeout overrides it, which is how `explore` and `run_python` declare `SELF_BOUNDED`: `explore` bounds the subagent and the summary recovering it, and `run_python` its host calls.
 `invoke_agent_tool` runs a tool through its feature's toolset, so the MCP endpoint and the debug route are bounded the same way.
-Each purpose runs its own named agent (`chat`, `explore`, `summarize`, `title`, `complete`), since the name is what Logfire attributes spend to.
+Each purpose runs its own named agent (`chat`, `explore`, `summarize`, `title`, `complete`, `debug`, `report`), since the name is what Logfire attributes spend to.
+
+### The chat debugger reads any conversation
+
+`/api/debug/conversations/{id}/chat` lets an admin ask the `debug` agent about any user's conversation, found by `any_conversation` without the ownership check, and every access is logged.
+The route is stateless, the client sends the whole debugging session with every request, so nothing about it is stored.
+`agents/debugger.py` flattens the conversation into numbered steps, one per message part, model response, changed instructions, and stored run error, which the agent reads overview first, then failures, single steps, and searches.
+Neither pydantic-ai nor the Vercel AI protocol records durations, so a step's time is derived from the stored timestamps: a model response from its request being sent to its stream starting, a tool return from its call's response starting to the return, generation included.
+
+The `report` agent condenses a session into Markdown with the conversation's data replaced by typed placeholders.
+`LeakCheck` then holds the report against the conversation word by word, flagging the words of the conversation that hold digits or address characters, are capitalized mid-sentence, or are unknown to the English and German dictionaries of `pyspellchecker`, which keep only common words, unless Hivegent's own tool schemas and instructions use them.
+A quote of common words alone identifies nothing, so quotes leak through these words too.
+A report that leaks gets one more turn to fix it, and what it still leaks is masked as `<REDACTED_n>`.
 
 ### Export, citations, and attachments
 

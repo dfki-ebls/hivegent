@@ -68,6 +68,7 @@ __all__ = [
     "ConversationSummary",
     "MessagePair",
     "OwnedConversation",
+    "any_conversation",
     "append_branch",
     "delete_all_conversations",
     "extract_title",
@@ -454,6 +455,25 @@ async def owned_conversation(
         found = await s.scalar(select(Conversation.id).where(_row(conversation)))
 
     return None if found is None else conversation
+
+
+async def any_conversation(conversation_id: str) -> OwnedConversation | None:
+    """*conversation_id* as its owner's, whoever that is, or ``None``.
+
+    The ownership check for an admin reading across users, which reads the
+    owner from the row rather than checking it against the caller.
+    """
+    try:
+        sanitize_conversation_id(conversation_id)
+    except ValueError:
+        return None
+
+    async with session() as s:
+        owner = await s.scalar(
+            select(Conversation.user_id).where(Conversation.id == conversation_id)
+        )
+
+    return None if owner is None else OwnedConversation(User(owner), conversation_id)
 
 
 async def load_conversation(conversation: OwnedConversation) -> ConversationData | None:

@@ -8,6 +8,7 @@ export const app = {
     documentation: "Dokumentation",
     licenses: "Lizenzen",
     toolDebugger: "Tool-Debugger",
+    chatDebugger: "Chat-Debugger",
     signOut: "Abmelden",
   },
   landing: {
@@ -48,12 +49,34 @@ export const app = {
     commaSeparated: "Durch Kommas getrennte Werte",
     noOptions: "Keine Konfigurationsoptionen verfügbar.",
   },
+  adminOnly: {
+    title: "Admin-Zugriff erforderlich",
+    description: "Diese Seite ist nur für Admins verfügbar.",
+  },
+  chatDebugger: {
+    title: "Chat-Debugger",
+    description:
+      "Befrage einen Agenten zur Konversation eines beliebigen Nutzers, um Tool-Fehler, Probleme in der Agentenschleife und fehlende Funktionen zu finden. Die Sitzung wird nicht gespeichert, und der Bericht ersetzt die Daten der Konversation durch Platzhalter.",
+    conversationId: "Konversations-ID",
+    open: "Öffnen",
+    notFound: "Konversation nicht gefunden",
+    emptyTitle: "Konversation öffnen",
+    emptyDescription:
+      "Gib die ID der Konversation eines beliebigen Nutzers ein, um sie zu debuggen.",
+    placeholder: "Frage zu dieser Konversation …",
+    report: "Bericht schreiben",
+    reportTitle: "Bericht",
+    reportDescription:
+      "Aus dieser Sitzung verdichtet, die Daten der Konversation sind durch Platzhalter ersetzt.",
+    masked_one:
+      "{{count}} Stelle wiederholte noch die Konversation und wurde als <REDACTED_n> maskiert. Prüfe den Bericht, bevor du ihn teilst.",
+    masked_other:
+      "{{count}} Stellen wiederholten noch die Konversation und wurden als <REDACTED_n> maskiert. Prüfe den Bericht, bevor du ihn teilst.",
+  },
   toolDebugger: {
     title: "Tool-Debugger",
     description:
       "Rufe ein beliebiges Agent-Tool direkt auf, um zustandsbehaftetes Verhalten wie die pgvector-Suche zu testen. Argumente und ihre Typen werden aus dem Schema des jeweiligen Tools abgeleitet.",
-    adminRequired: "Admin-Zugriff erforderlich",
-    adminRequiredDescription: "Der Tool-Debugger ist nur für Admins verfügbar.",
     loadFailed: "Tools konnten nicht geladen werden",
     selectTool: "Wähle ein Tool zum Debuggen aus",
     run: "Tool ausführen",
@@ -86,6 +109,8 @@ export const app = {
       transcribeAudio: "Die Audioaufnahme konnte nicht transkribiert werden",
       fetchTools: "Tools konnten nicht geladen werden",
       fetchToolSchemas: "Tool-Schemas konnten nicht geladen werden",
+      fetchDebugConversation: "Die Konversation konnte nicht geöffnet werden",
+      writeDebugReport: "Der Bericht konnte nicht geschrieben werden",
       runTool: "Tool konnte nicht ausgeführt werden",
       testMcpServer: "Der MCP-Server konnte nicht getestet werden",
       upload: "Upload fehlgeschlagen",

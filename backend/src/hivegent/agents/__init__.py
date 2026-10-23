@@ -16,6 +16,7 @@ from .capabilities import (
     unlisted_tool_names,
 )
 from .common import ExploreTaskArg, RunPrefix, UserDeps
+from .debugger import debug_agent, report_agent
 from .tools import (
     SubagentName,
     conversation_toolset,
@@ -38,12 +39,14 @@ __all__ = [
     "check_tool_settings",
     "collect_tool_schemas",
     "conversation_toolset",
+    "debug_agent",
     "discard_unapproved_changes",
     "explore_agent",
     "explore_toolset",
     "invoke_agent_tool",
     "memory_toolset",
     "record_known_urls",
+    "report_agent",
     "subagent_toolset",
     "summary_agent",
     "title_agent",

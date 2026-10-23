@@ -21,21 +21,23 @@ from .guards import (
 from .window import CompactionWindow
 
 __all__ = [
+    "default_model_settings",
     "explore_agent",
+    "guards",
     "summary_agent",
     "title_agent",
     "turn_usage_limits",
     "user_agent",
 ]
 
-_default_model_settings = ModelSettings(
+default_model_settings = ModelSettings(
     timeout=settings.llm.request_timeout_seconds,
 )
 
 # Carried by the agents rather than composed per run: a run-level
 # ``capabilities`` argument adds to these rather than replacing them, so every
 # run is guarded, including the subagent and MCP ones that compose their own.
-_guards = [
+guards = [
     EnglishToolCalls(),
     IncompleteToolCallGuard(),
     PromptImageLimit(max_images=settings.multimodal.max_images),
@@ -67,8 +69,8 @@ def _user_agent(name: str) -> Agent[UserDeps, str]:
         name=name,
         deps_type=UserDeps,
         retries=settings.llm.retries,
-        model_settings=_default_model_settings,
-        capabilities=[_window, *_guards, _spill],
+        model_settings=default_model_settings,
+        capabilities=[_window, *guards, _spill],
     )
 
 
@@ -82,8 +84,8 @@ summary_agent = _user_agent("summarize")
 title_agent: Agent[None, str] = Agent(
     name="title",
     retries=settings.llm.retries,
-    model_settings=_default_model_settings,
-    capabilities=_guards,
+    model_settings=default_model_settings,
+    capabilities=guards,
 )
 
 
@@ -92,7 +94,7 @@ title_agent: Agent[None, str] = Agent(
 # ``ctx.usage_limits``, so these bound the whole turn (main agent plus every
 # subagent) collectively, without them each run only inherits pydantic-ai's
 # implicit default of 50 requests and no tool-call cap.  Built once at import
-# like ``_default_model_settings``, since ``UsageLimits`` is read-only run
+# like ``default_model_settings``, since ``UsageLimits`` is read-only run
 # config (pydantic-ai mutates ``usage``, never ``limits``).
 turn_usage_limits = UsageLimits(
     request_limit=settings.llm.request_limit,

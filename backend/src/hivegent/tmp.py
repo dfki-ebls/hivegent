@@ -34,6 +34,7 @@ from .workspace import Gateway
 from .workspace.operations import Folder, Quota
 
 __all__ = [
+    "RESULTS_DIR",
     "TMP_FOLDER",
     "TMP_SCOPE",
     "clear_tmp",
@@ -49,10 +50,10 @@ TMP_FOLDER = "tmp"
 TMP_SCOPE = PrefixScope("/tmp")
 """How every agent surface spells a conversation's folder."""
 
-_RESULTS_DIR = ".tool-results"
+RESULTS_DIR = ".tool-results"
 """The folder below ``/tmp`` that holds the tool results too large to show whole."""
 
-_POLICY = Direct(reserved=_RESULTS_DIR)
+_POLICY = Direct(reserved=RESULTS_DIR)
 """Written directly, the saved results kept for the host."""
 
 
@@ -80,7 +81,7 @@ def tmp_root(folder: Path) -> Folder:
     run's own state cannot.
     """
     return Folder(
-        folder, TMP_SCOPE, _POLICY, Quota(settings.tmp.max_bytes, _RESULTS_DIR)
+        folder, TMP_SCOPE, _POLICY, Quota(settings.tmp.max_bytes, RESULTS_DIR)
     )
 
 
@@ -98,7 +99,7 @@ async def save_result(folder: Path, name: str, content: str) -> str:
     if name in {"", ".."} or Path(name).name != name:
         raise ToolRetry("A saved result must have a single filename.")
 
-    target = TMP_SCOPE.render(f"{_RESULTS_DIR}/{name}")
+    target = TMP_SCOPE.render(f"{RESULTS_DIR}/{name}")
 
     with mutation_errors(ToolRetry):
         _ = await Gateway((tmp_root(folder),), host=True).apply(

@@ -22,6 +22,9 @@ import {
   type ConversationSummary,
   type ConversationArchive,
   ConversationSummarySchema,
+  type DebugReport,
+  type DebugRequestConfig,
+  DebugReportSchema,
   type ServerConversation,
   type DirectoryTreeResponse,
   DirectoryTreeResponseSchema,
@@ -343,6 +346,29 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
     "runTool",
     ToolRunResultSchema,
     jsonRequest("POST", args),
+  );
+}
+
+/** Fetch any user's conversation summary for the chat debugger (admin only). */
+export async function getDebugConversation(id: string): Promise<ConversationSummary> {
+  return requestJson(
+    `${API_BASE_URL}/api/debug/conversations/${encodeURIComponent(id)}`,
+    "fetchDebugConversation",
+    ConversationSummarySchema,
+  );
+}
+
+/** Condense a chat debugger session into a report free of the conversation's data (admin only). */
+export async function writeDebugReport(
+  id: string,
+  messages: ChatMessage[],
+  config: DebugRequestConfig,
+): Promise<DebugReport> {
+  return requestJson(
+    `${API_BASE_URL}/api/debug/conversations/${encodeURIComponent(id)}/report`,
+    "writeDebugReport",
+    DebugReportSchema,
+    jsonRequest("POST", { ...config, messages }),
   );
 }
 

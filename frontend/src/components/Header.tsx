@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { BugIcon, LogOutIcon, UserCogIcon, UserIcon } from "lucide-react";
+import { BugIcon, LogOutIcon, UserCogIcon, UserIcon, WrenchIcon } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useOidc } from "@/oidc";
+import { DebugChatDialog } from "@/components/DebugChatDialog";
 import { DocsLink } from "@/components/DocsLink";
 import { LicensesLink } from "@/components/LicensesLink";
 import { JobTray } from "@/components/JobTray";
@@ -27,6 +29,7 @@ function UserMenu() {
   const oidc = useOidc();
   const isAdmin = useIsAdmin();
   const userName = useUserName();
+  const [debugChatOpen, setDebugChatOpen] = useState(false);
 
   if (!oidc.isUserLoggedIn) {
     return null;
@@ -35,41 +38,52 @@ function UserMenu() {
   const { decodedIdToken, logout } = oidc;
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="sm" aria-label={userName} />}>
-        <UserIcon data-icon="inline-start" />
-        <span className="hidden sm:inline">{userName}</span>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-auto">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>
-            <Item size="xs">
-              <ItemContent>
-                <ItemTitle>{userName}</ItemTitle>
-                {decodedIdToken.email && <ItemDescription>{decodedIdToken.email}</ItemDescription>}
-              </ItemContent>
-            </Item>
-          </DropdownMenuLabel>
-          <DropdownMenuItem render={<Link to="/settings/account" />}>
-            <UserCogIcon />
-            {t(($) => $.app.userMenu.account)}
-          </DropdownMenuItem>
-          <DropdownMenuItem render={<DocsLink />} />
-          <DropdownMenuItem render={<LicensesLink />} />
-          {isAdmin && (
-            <DropdownMenuItem render={<Link to="/debug" />}>
-              <BugIcon />
-              {t(($) => $.app.userMenu.toolDebugger)}
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="sm" aria-label={userName} />}>
+          <UserIcon data-icon="inline-start" />
+          <span className="hidden sm:inline">{userName}</span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-auto">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>
+              <Item size="xs">
+                <ItemContent>
+                  <ItemTitle>{userName}</ItemTitle>
+                  {decodedIdToken.email && (
+                    <ItemDescription>{decodedIdToken.email}</ItemDescription>
+                  )}
+                </ItemContent>
+              </Item>
+            </DropdownMenuLabel>
+            <DropdownMenuItem render={<Link to="/settings/account" />}>
+              <UserCogIcon />
+              {t(($) => $.app.userMenu.account)}
             </DropdownMenuItem>
-          )}
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => logout({ redirectTo: "home" })}>
-          <LogOutIcon />
-          {t(($) => $.app.userMenu.signOut)}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+            <DropdownMenuItem render={<DocsLink />} />
+            <DropdownMenuItem render={<LicensesLink />} />
+            {isAdmin && (
+              <>
+                <DropdownMenuItem render={<Link to="/debug/tools" />}>
+                  <WrenchIcon />
+                  {t(($) => $.app.userMenu.toolDebugger)}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDebugChatOpen(true)}>
+                  <BugIcon />
+                  {t(($) => $.app.userMenu.chatDebugger)}
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => logout({ redirectTo: "home" })}>
+            <LogOutIcon />
+            {t(($) => $.app.userMenu.signOut)}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {isAdmin && <DebugChatDialog open={debugChatOpen} onOpenChange={setDebugChatOpen} />}
+    </>
   );
 }
 

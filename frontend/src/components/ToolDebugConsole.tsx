@@ -4,11 +4,10 @@
  * Lists every agent tool exposed by the backend, renders a form for the
  * selected tool inferred from the JSON Schema of its Pydantic arguments, and
  * invokes it directly. The main use is exercising stateful behaviour that
- * unit tests don't cover, such as pgvector retrieval. Admin only.
+ * unit tests don't cover, such as pgvector retrieval.
  */
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { LockIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -19,7 +18,6 @@ import { prettyPrint } from "@/lib/chat/tool-part";
 import type { ToolRunResult } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 import { toolQueries } from "@/queries/tools";
-import { useIsAdmin } from "@/queries/settings";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorAlert } from "@/components/ErrorAlert";
 import { HighlightedCode } from "@/components/HighlightedCode";
@@ -124,11 +122,7 @@ function ResultPanel({ result }: { result: ToolRunResult }) {
 
 export function ToolDebugConsole() {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const isAdmin = useIsAdmin();
-  const { data: tools = [], error: loadError } = useQuery({
-    ...toolQueries.schemas(),
-    enabled: isAdmin,
-  });
+  const { data: tools = [], error: loadError } = useQuery(toolQueries.schemas());
   const [selected, setSelected] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const run = useMutation({
@@ -150,17 +144,6 @@ export function ToolDebugConsole() {
     setSelected(name);
     run.reset();
     setValues(tool && isJsonSchema(tool.parameters) ? defaultValues(tool.parameters) : {});
-  }
-
-  if (!isAdmin) {
-    return (
-      <EmptyState
-        icon={<LockIcon />}
-        title={t(($) => $.adminRequired)}
-        description={t(($) => $.adminRequiredDescription)}
-        className="h-full"
-      />
-    );
   }
 
   return (

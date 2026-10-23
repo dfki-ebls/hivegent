@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DebugRouteImport } from './routes/debug'
 import { Route as ConversationsIdRouteImport } from './routes/conversations.$id'
+import { Route as DebugChatRouteImport } from './routes/debug.chat'
+import { Route as DebugToolsRouteImport } from './routes/debug.tools'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 
 const IndexRoute = IndexRouteImport.update({
@@ -29,6 +31,16 @@ const ConversationsIdRoute = ConversationsIdRouteImport.update({
   path: '/conversations/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DebugChatRoute = DebugChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => DebugRoute,
+} as any)
+const DebugToolsRoute = DebugToolsRouteImport.update({
+  id: '/tools',
+  path: '/tools',
+  getParentRoute: () => DebugRoute,
+} as any)
 const SettingsAccountRoute = SettingsAccountRouteImport.update({
   id: '/settings/account',
   path: '/settings/account',
@@ -37,34 +49,59 @@ const SettingsAccountRoute = SettingsAccountRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/conversations/$id': typeof ConversationsIdRoute
+  '/debug/chat': typeof DebugChatRoute
+  '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/conversations/$id': typeof ConversationsIdRoute
+  '/debug/chat': typeof DebugChatRoute
+  '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/conversations/$id': typeof ConversationsIdRoute
+  '/debug/chat': typeof DebugChatRoute
+  '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/debug' | '/conversations/$id' | '/settings/account'
+  fullPaths:
+    | '/'
+    | '/debug'
+    | '/conversations/$id'
+    | '/debug/chat'
+    | '/debug/tools'
+    | '/settings/account'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/debug' | '/conversations/$id' | '/settings/account'
-  id: '__root__' | '/' | '/debug' | '/conversations/$id' | '/settings/account'
+  to:
+    | '/'
+    | '/debug'
+    | '/conversations/$id'
+    | '/debug/chat'
+    | '/debug/tools'
+    | '/settings/account'
+  id:
+    | '__root__'
+    | '/'
+    | '/debug'
+    | '/conversations/$id'
+    | '/debug/chat'
+    | '/debug/tools'
+    | '/settings/account'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  DebugRoute: typeof DebugRoute
+  DebugRoute: typeof DebugRouteWithChildren
   ConversationsIdRoute: typeof ConversationsIdRoute
   SettingsAccountRoute: typeof SettingsAccountRoute
 }
@@ -92,6 +129,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConversationsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/debug/chat': {
+      id: '/debug/chat'
+      path: '/chat'
+      fullPath: '/debug/chat'
+      preLoaderRoute: typeof DebugChatRouteImport
+      parentRoute: typeof DebugRoute
+    }
+    '/debug/tools': {
+      id: '/debug/tools'
+      path: '/tools'
+      fullPath: '/debug/tools'
+      preLoaderRoute: typeof DebugToolsRouteImport
+      parentRoute: typeof DebugRoute
+    }
     '/settings/account': {
       id: '/settings/account'
       path: '/settings/account'
@@ -102,9 +153,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface DebugRouteChildren {
+  DebugChatRoute: typeof DebugChatRoute
+  DebugToolsRoute: typeof DebugToolsRoute
+}
+
+const DebugRouteChildren: DebugRouteChildren = {
+  DebugChatRoute: DebugChatRoute,
+  DebugToolsRoute: DebugToolsRoute,
+}
+
+const DebugRouteWithChildren = DebugRoute._addFileChildren(DebugRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  DebugRoute: DebugRoute,
+  DebugRoute: DebugRouteWithChildren,
   ConversationsIdRoute: ConversationsIdRoute,
   SettingsAccountRoute: SettingsAccountRoute,
 }

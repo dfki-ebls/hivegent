@@ -41,6 +41,9 @@ __all__ = [
     "CollectionProgressEvent",
     "ConversationArchive",
     "ConversationListResponse",
+    "DebugReport",
+    "DebugReportRequest",
+    "DebugRequestConfig",
     "DirectoryEntry",
     "DirectoryTreeResponse",
     "DocumentFilter",
@@ -234,6 +237,34 @@ class ToolRunResult(BaseModel):
     )
     error: str | None = None
     elapsed_ms: float
+
+
+class DebugRequestConfig(BaseModel):
+    """The run configuration a chat debugger request carries beside its messages.
+
+    Validated straight off the body like :class:`ChatRequestConfig`, extras ignored.
+    """
+
+    llm: LlmConfig = Field(default_factory=LlmConfig)
+    reasoning_effort: ReasoningEffort = Field(
+        default="medium",
+        description="Reasoning effort level",
+    )
+
+
+class DebugReportRequest(DebugRequestConfig):
+    """The chat debugger's session, to condense into a report."""
+
+    messages: list[UIMessage]
+
+
+class DebugReport(BaseModel):
+    """A chat debugger report, free of the analyzed conversation's data."""
+
+    markdown: str
+    masked: int = Field(
+        description="Spans masked as <REDACTED_n> after the model failed to replace them.",
+    )
 
 
 type Mode = Literal["interactive", "read", "write"]

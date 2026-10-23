@@ -8,6 +8,7 @@ import { errorMessage } from "@/lib/utils";
 type KeyScope =
   | "admin"
   | "conversations"
+  | "debug"
   | "jobs"
   | "pipelines"
   | "settings"
