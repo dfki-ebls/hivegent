@@ -26,7 +26,7 @@ Die Datei `compose.yaml` im Repository ist ein sofort lauffähiges Beispiel mit 
 
 Das Backend liest `/data/config.toml` und `HIVEGENT_*`-Umgebungsvariablen, die Vorrang haben.
 Verschachtelte Schlüssel verwenden einen doppelten Unterstrich, aus `[llm] model` wird `HIVEGENT_LLM__MODEL`.
-Binden Sie Geheimnisse wie API-Schlüssel als Dateien mit dem Namen ihrer Variablen unter `/run/secrets` ein, etwa mit Compose `secrets`.
+Binden Sie Geheimnisse wie API-Schlüssel als Dateien `hivegent.<NAME>` für die Variable `HIVEGENT_<NAME>` unter `/run/secrets` ein, etwa `hivegent.LLM__API_KEY` mit Compose `secrets`.
 
 ```toml
 [db]

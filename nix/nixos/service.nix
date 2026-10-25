@@ -12,7 +12,7 @@ let
   configFile = tomlFormat.generate "hivegent-config.toml" cfg.settings;
 
   hardening = import ./hardening.nix;
-  credentials = import ./credentials.nix lib;
+  credentials = import ./credentials.nix lib "hivegent";
 
   # `enableTorchCompile` is an argument of the hivegent backend derivation:
   # it puts the C toolchain TorchInductor needs for runtime codegen on the
@@ -173,8 +173,8 @@ in
 
     credentials = credentials.option ''
       {
-        HIVEGENT_TRANSPARENCY__SECRET_KEY = "/run/secrets/hivegent-transparency-secret-key";
-        HIVEGENT_MCP__CLIENT_SECRET = "/run/secrets/hivegent-mcp-client-secret";
+        TRANSPARENCY__SECRET_KEY = "/run/secrets/hivegent-transparency-secret-key";
+        MCP__CLIENT_SECRET = "/run/secrets/hivegent-mcp-client-secret";
       }
     '';
 
@@ -272,44 +272,37 @@ in
           }
           // cfg.environment;
 
-          serviceConfig = lib.mkMerge [
-            (credentials.serviceConfig cfg.credentials)
-            (
-              hardening
-              // {
-                Type = "exec";
-                Restart = "on-failure";
-                RestartSec = 5;
-                TimeoutStartSec = 600;
-                # Must exceed uvicorn's `timeout_graceful_shutdown` (30s) so teardown finishes before SIGKILL.
-                TimeoutStopSec = 45;
+          serviceConfig =
+            credentials.serviceConfig cfg.credentials
+            // hardening
+            // {
+              Type = "exec";
+              Restart = "on-failure";
+              RestartSec = 5;
+              TimeoutStartSec = 600;
+              # Must exceed uvicorn's `timeout_graceful_shutdown` (30s) so teardown finishes before SIGKILL.
+              TimeoutStopSec = 45;
 
-                DynamicUser = true;
-                StateDirectory = "hivegent";
-                CacheDirectory = "hivegent";
-                WorkingDirectory = "/var/lib/hivegent";
+              DynamicUser = true;
+              StateDirectory = "hivegent";
+              CacheDirectory = "hivegent";
+              WorkingDirectory = "/var/lib/hivegent";
 
-                EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
-                # Also every `HIVEGENT_*` credential in the system credstore, plain
-                # files in the root-only /etc/credstore or `systemd-creds encrypt`
-                # output in /etc/credstore.encrypted, so a secret needs no config.
-                ImportCredential = "HIVEGENT_*";
+              EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
 
-                ExecStart = utils.escapeSystemdExecArgs [
-                  (lib.getExe' package "hivegent")
-                  "serve"
-                  "--host"
-                  cfg.host
-                  "--port"
-                  (toString cfg.port)
-                ];
+              ExecStart = utils.escapeSystemdExecArgs [
+                (lib.getExe' package "hivegent")
+                "serve"
+                "--host"
+                cfg.host
+                "--port"
+                (toString cfg.port)
+              ];
 
-                SocketBindAllow = "tcp:${toString cfg.port}";
-                # CUDA-backed document/OCR models need the host NVIDIA character devices.
-                PrivateDevices = false;
-              }
-            )
-          ];
+              SocketBindAllow = "tcp:${toString cfg.port}";
+              # CUDA-backed document/OCR models need the host NVIDIA character devices.
+              PrivateDevices = false;
+            };
 
           unitConfig = {
             StartLimitBurst = 5;

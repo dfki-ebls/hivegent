@@ -1070,6 +1070,7 @@ class Settings(BaseSettings):
             file_secret_settings,
             secrets_dir=os.environ.get("CREDENTIALS_DIRECTORY"),
             secrets_dir_missing="ok",
+            secrets_prefix="hivegent.",
         )
 
         return (

@@ -73,10 +73,12 @@ function isMissing(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
+const CREDENTIAL_PREFIX = "hivegent-bridge.";
+
 /**
- * Credential files named like the env var they replace, e.g. `OIDC_CLIENT_SECRET`,
- * from `$CREDENTIALS_DIRECTORY`, which systemd sets for the unit's credentials and
- * the container image points at `/run/secrets`. A missing directory holds none.
+ * Credential files `hivegent-bridge.<VAR>` in `$CREDENTIALS_DIRECTORY`, keyed by
+ * `<VAR>`, ignoring other files. systemd sets the directory for the unit and the
+ * container image points it at `/run/secrets`. A missing directory holds none.
  */
 export function readCredentials(dir: string | undefined): Record<string, string> {
   if (!dir) {
@@ -86,8 +88,11 @@ export function readCredentials(dir: string | undefined): Record<string, string>
   try {
     return Object.fromEntries(
       readdirSync(dir, { withFileTypes: true })
-        .filter((entry) => entry.isFile())
-        .map((entry) => [entry.name, readFileSync(join(dir, entry.name), "utf8").trim()]),
+        .filter((entry) => entry.isFile() && entry.name.startsWith(CREDENTIAL_PREFIX))
+        .map((entry) => [
+          entry.name.slice(CREDENTIAL_PREFIX.length),
+          readFileSync(join(dir, entry.name), "utf8").trim(),
+        ]),
     );
   } catch (err) {
     if (isMissing(err)) {

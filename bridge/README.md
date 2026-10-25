@@ -50,7 +50,8 @@ Environment variables override a JSON file read from `BRIDGE_CONFIG_FILE` (defau
 - File shape: `{ hivegentUrl, oidc: { issuer, clientId }, reasoningEffort, botUserName, host, port, adapters: { teams, web } }`.
 - `host` defaults to `127.0.0.1`, `port` to `3001`, `reasoningEffort` to the server default.
 - `ENABLE_<NAME>` overrides an adapter, which otherwise uses its default (Teams on, Web off).
-- Secrets (`OIDC_CLIENT_SECRET`, `POSTGRES_URL`, `TEAMS_APP_*`) go in credential files named like the variable in `$CREDENTIALS_DIRECTORY`.
+- Secrets (`OIDC_CLIENT_SECRET`, `POSTGRES_URL`, `TEAMS_APP_*`) go in credential files named `hivegent-bridge.<VAR>` in `$CREDENTIALS_DIRECTORY`.
+  Other files, such as the backend's `hivegent.*` secrets in a shared directory, are ignored.
   A set variable wins over its file.
 
 The bot needs an OIDC client-credentials token whose groups claim carries `team-kb`.

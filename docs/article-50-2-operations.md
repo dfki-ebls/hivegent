@@ -46,11 +46,11 @@ report_issuer = "https://hivegent.example.eu"
 contact_email = "responsible-operator@example.eu"
 ```
 
-`secret_key` and the optional `detector_api_key` are secrets, so pass them as credentials `HIVEGENT_TRANSPARENCY__SECRET_KEY` and `HIVEGENT_TRANSPARENCY__DETECTOR_API_KEY`, never in the TOML file.
+`secret_key` and the optional `detector_api_key` are secrets, so pass them as credentials `hivegent.TRANSPARENCY__SECRET_KEY` and `hivegent.TRANSPARENCY__DETECTOR_API_KEY`, never in the TOML file.
 On NixOS, store the signing secret in the root-only system credential store:
 
 ```bash
-(umask 077; openssl rand -base64 32 > /etc/credstore/HIVEGENT_TRANSPARENCY__SECRET_KEY)
+(umask 077; openssl rand -base64 32 > /etc/credstore/hivegent.TRANSPARENCY__SECRET_KEY)
 ```
 
 `detector_url` is vLLM's reference detector, here the llmhop detector named `watermark`, which takes `{"text": "..."}` and answers with `score`, `p_value`, `num_scored_tokens`, and `is_watermarked`.

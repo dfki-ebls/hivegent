@@ -122,7 +122,7 @@ def test_credential_files_override_toml(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A file in ``$CREDENTIALS_DIRECTORY`` supplies a nested secret setting."""
-    (tmp_path / "HIVEGENT_TRANSPARENCY__SECRET_KEY").write_text("x" * 32 + "\n")
+    (tmp_path / "hivegent.TRANSPARENCY__SECRET_KEY").write_text("x" * 32 + "\n")
     monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
     monkeypatch.setenv("HIVEGENT_TRANSPARENCY__DETECTOR_URL", "http://detector/detect")
     monkeypatch.setenv("HIVEGENT_TRANSPARENCY__REPORT_ISSUER", "https://hivegent.test")

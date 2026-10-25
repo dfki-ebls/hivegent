@@ -7,9 +7,10 @@ import { describe, expect, it } from "vitest";
 import { readCredentials, resolveConfig } from "./config.js";
 
 describe("readCredentials", () => {
-  it("reads one trimmed credential per file and tolerates a missing directory", () => {
+  it("reads one trimmed prefixed credential per file and tolerates a missing directory", () => {
     const dir = mkdtempSync(join(tmpdir(), "credentials-"));
-    writeFileSync(join(dir, "OIDC_CLIENT_SECRET"), "s3cret\n");
+    writeFileSync(join(dir, "hivegent-bridge.OIDC_CLIENT_SECRET"), "s3cret\n");
+    writeFileSync(join(dir, "hivegent.LLM__API_KEY"), "backend\n");
 
     expect(readCredentials(dir)).toEqual({ OIDC_CLIENT_SECRET: "s3cret" });
     expect(readCredentials(join(dir, "missing"))).toEqual({});

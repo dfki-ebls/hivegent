@@ -42,7 +42,7 @@
   enableMcp ? false,
   # Run the chat bridge (Vercel Chat SDK) as a third supervised service and route
   # `/api/webhooks/*` to it. Requires the `bridge` package; its config comes from
-  # a mounted `${dataDir}/bridge-config.json` plus `OIDC_*`/`TEAMS_*` env vars.
+  # a mounted `${dataDir}/bridge-config.json` plus `hivegent-bridge.*` secrets.
   enableBridge ? false,
   bridge ? null,
   bridgeHost ? "127.0.0.1",
@@ -101,7 +101,8 @@ let
 
   # Docker and Podman mount secrets as files under /run/secrets, the same
   # interface systemd credentials offer, so both services read them from there.
-  # Name each secret like the env var it replaces, e.g. `HIVEGENT_LLM__API_KEY`.
+  # Name each secret `<service>.<NAME>` after the setting it supplies, e.g.
+  # `hivegent.LLM__API_KEY` or `hivegent-bridge.POSTGRES_URL`.
   credentialsDirectory = "/run/secrets";
 
   # HIVEGENT_CONFIG_FILE is an absolute path so it resolves regardless of cwd;
@@ -122,7 +123,8 @@ let
   };
 
   # Non-secret bridge env; secrets (POSTGRES_URL, OIDC_CLIENT_SECRET, TEAMS_*)
-  # come from /run/secrets, non-secrets from `${dataDir}/bridge-config.json`.
+  # come from `hivegent-bridge.*` files in /run/secrets, non-secrets from
+  # `${dataDir}/bridge-config.json`.
   bridgeEnv = toEnvFile "bridge.env" {
     HOME = dataDir;
     NODE_ENV = "production";

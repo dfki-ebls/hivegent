@@ -52,8 +52,9 @@ In production the systemd unit from [`nixosModules.default`](../nix/nixos/servic
 ### Secrets are credential files
 
 Settings layer init arguments over environment variables, `.env`, credential files, and the TOML file.
-A credential is a file named like the environment variable it replaces (`HIVEGENT_LLM__API_KEY`) in `$CREDENTIALS_DIRECTORY`, which systemd sets for the unit and the container image points at `/run/secrets`.
-On NixOS the unit imports every `HIVEGENT_*` credential from the root-only `/etc/credstore` or from `/etc/credstore.encrypted`, where a file encrypted with `systemd-creds encrypt --name=<variable>` loads only under that name, and `services.hivegent.credentials` loads one from elsewhere.
+A credential is a file in `$CREDENTIALS_DIRECTORY`, which systemd sets for the unit and the container image points at `/run/secrets`.
+It is named `hivegent.<NAME>` for the variable `HIVEGENT_<NAME>` it replaces, e.g. `hivegent.LLM__API_KEY`, so the bridge's `hivegent-bridge.*` credentials stay apart in a shared directory.
+On NixOS the unit also imports every `hivegent.*` credential from the system credential store, see `services.hivegent.credentials`.
 Unlike an environment file, a credential is readable only by the unit's user and stays out of every subprocess's environment.
 Every secret setting is a `SecretStr`, unwrapped by `config.reveal` only where a client needs the value.
 

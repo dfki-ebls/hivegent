@@ -26,7 +26,7 @@ The repository's `compose.yaml` is a ready-to-run example with Rauthy.
 
 The backend reads `/data/config.toml` and `HIVEGENT_*` environment variables, which win.
 Nested keys use a double underscore, so `[llm] model` becomes `HIVEGENT_LLM__MODEL`.
-Mount secrets such as API keys as files named like their variable under `/run/secrets`, for example with Compose `secrets`.
+Mount secrets such as API keys as files `hivegent.<NAME>` for the variable `HIVEGENT_<NAME>` under `/run/secrets`, for example `hivegent.LLM__API_KEY` with Compose `secrets`.
 
 ```toml
 [db]

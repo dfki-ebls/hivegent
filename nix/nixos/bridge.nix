@@ -18,7 +18,7 @@ let
   configFile = jsonFormat.generate "hivegent-bridge-config.json" settings;
 
   hardening = import ./hardening.nix;
-  credentials = import ./credentials.nix lib;
+  credentials = import ./credentials.nix lib "hivegent-bridge";
 in
 {
   options.services.hivegent.bridge = {
@@ -118,29 +118,26 @@ in
         BRIDGE_CONFIG_FILE = "${configFile}";
       };
 
-      serviceConfig = lib.mkMerge [
-        (credentials.serviceConfig cfg.credentials)
-        (
-          hardening
-          // {
-            Type = "exec";
-            Restart = "on-failure";
-            RestartSec = 5;
-            # Must exceed the graceful shutdown window before SIGKILL.
-            TimeoutStopSec = 15;
+      serviceConfig =
+        credentials.serviceConfig cfg.credentials
+        // hardening
+        // {
+          Type = "exec";
+          Restart = "on-failure";
+          RestartSec = 5;
+          # Must exceed the graceful shutdown window before SIGKILL.
+          TimeoutStopSec = 15;
 
-            DynamicUser = true;
-            StateDirectory = "hivegent-bridge";
-            WorkingDirectory = "/var/lib/hivegent-bridge";
+          DynamicUser = true;
+          StateDirectory = "hivegent-bridge";
+          WorkingDirectory = "/var/lib/hivegent-bridge";
 
-            EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
+          EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
 
-            ExecStart = lib.getExe cfg.package;
+          ExecStart = lib.getExe cfg.package;
 
-            SocketBindAllow = "tcp:${toString cfg.port}";
-          }
-        )
-      ];
+          SocketBindAllow = "tcp:${toString cfg.port}";
+        };
 
       unitConfig = {
         StartLimitBurst = 5;

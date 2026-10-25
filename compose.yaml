@@ -26,7 +26,8 @@
 # threads the `bridge` package in), then on the `hivegent` service below: mount a
 # `bridge-config.json` at `/data/bridge-config.json` (non-secrets: `hivegentUrl`,
 # `oidc.issuer`, `oidc.clientId`, `adapters.teams`) and pass the secrets like
-# the backend's below (`POSTGRES_URL=postgres://hivegent:hivegent@postgresql:5432/hivegent`,
+# the backend's below as `hivegent-bridge.<NAME>`
+# (`POSTGRES_URL=postgres://hivegent:hivegent@postgresql:5432/hivegent`,
 # `OIDC_CLIENT_SECRET`, and `TEAMS_APP_ID/PASSWORD/TENANT_ID` for Teams). Caddy then
 # routes `/api/webhooks/*` to the bridge. Create a `hivegent-bot` client-credentials
 # client in Rauthy (`CLIENT_CREDENTIALS_MAP_SUB = true` and a static custom `groups`
@@ -130,11 +131,12 @@ services:
       # `HIVEGENT_*` env vars still override individual keys.
       - source: hivegent-config
         target: /data/config.toml
-    # Secrets are files named like the env var they replace, mounted under
-    # /run/secrets and readable by uid 65534. The demo needs none, a hosted
-    # LLM would take its key from the top-level `secrets` entry below:
+    # Secrets are files `hivegent.<NAME>` for the env var `HIVEGENT_<NAME>` they
+    # replace, mounted under /run/secrets and readable by uid 65534. The demo
+    # needs none, a hosted LLM would take its key from the top-level `secrets`
+    # entry below:
     # secrets:
-    #   - HIVEGENT_LLM__API_KEY
+    #   - hivegent.LLM__API_KEY
     ports:
       - "8080:8080"
     volumes:
@@ -150,7 +152,7 @@ services:
     #           capabilities: [gpu]
 
 # secrets:
-#   HIVEGENT_LLM__API_KEY:
+#   hivegent.LLM__API_KEY:
 #     file: ./secrets/llm-api-key
 
 volumes:
