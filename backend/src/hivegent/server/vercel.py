@@ -113,6 +113,11 @@ _SAVE_FAILED = Localized(
     de="Die Konversation konnte nicht gesichert werden.",
 )
 
+_RUN_FAILED = Localized(
+    en="The response failed. Please try again.",
+    de="Die Antwort ist fehlgeschlagen. Bitte versuchen Sie es erneut.",
+)
+
 # Message metadata key mapping each tool call a user decision resolved to that
 # decision, set on the request that carries their returns (see `record_approvals`).
 _APPROVAL_DECISIONS_KEY = "approvalDecisions"
@@ -187,6 +192,18 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
 
     _thinking_started_at: float | None = None
     _thinking_durations_ms: list[int] = field(default_factory=list[int])
+
+    @override
+    async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
+        """Log the run error and stream a generic one, keeping internals server-side."""
+        logger.error("Chat run failed", exc_info=error)
+
+        async for chunk in super().on_error(error):
+            yield (
+                ErrorChunk(error_text=_RUN_FAILED.current)
+                if isinstance(chunk, ErrorChunk)
+                else chunk
+            )
 
     async def handle_capability_event(
         self, event: CapabilityEvent

@@ -266,7 +266,7 @@ async def test_errored_turn_closes_its_dangling_tool_call() -> None:
         if part.tool_call_id == call.tool_call_id
     )
     assert ret.outcome == "failed"
-    assert "simulated tool failure" in str(ret.content)
+    assert "simulated tool failure" not in str(ret.content)
     assert _tool_states(messages) == ["output-error"]
 
 
@@ -607,8 +607,9 @@ async def test_generic_run_error_is_recorded_for_reload() -> None:
 
     assert isinstance(target, ModelRequest)
     assert target.metadata is not None
-    assert "provider exploded" in target.metadata[CHAT_ERROR_KEY]
-    assert "provider exploded" in body  # the same error streamed live
+    # Internals stay server-side, the user sees the same generic error live.
+    assert "provider exploded" not in body
+    assert target.metadata[CHAT_ERROR_KEY] in body
 
 
 async def test_interrupted_stream_persists_the_partial_answer() -> None:

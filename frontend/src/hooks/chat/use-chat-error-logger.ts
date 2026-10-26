@@ -3,9 +3,8 @@ import type { UIMessage } from "@ai-sdk/react";
 import { useEffect, useEffectEvent } from "react";
 
 /**
- * pydantic-ai streams errors in-band as ErrorChunks, so the backend has no
- * server-side log of failed runs — dumping the full request payload here is
- * the only way to recover the exact inputs that caused the failure.
+ * The backend logs the run error but streams only a generic one, so dumping the
+ * full request payload here recovers the exact inputs that caused the failure.
  */
 export function useChatErrorLogger(
   error: Error | undefined,
