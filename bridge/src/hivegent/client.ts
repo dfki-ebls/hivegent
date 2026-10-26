@@ -56,22 +56,36 @@ function authHeaders(token: string | undefined): Record<string, string> {
   return headers;
 }
 
-function postChat(
+// Bounds the wait for the response headers only, so a hung backend fails the
+// turn instead of stalling the thread's queue, while the answer may stream longer.
+const HEADERS_TIMEOUT_MS = 60_000;
+
+async function postChat(
   path: string,
   text: string,
   token: string | undefined,
   cfg: BridgeConfig,
 ): Promise<Response> {
-  return fetch(`${cfg.hivegentUrl}${path}`, {
-    method: "POST",
-    headers: authHeaders(token),
-    body: JSON.stringify(
-      buildRequestBody(text, {
-        reasoningEffort: cfg.reasoningEffort,
-        disabledTools: cfg.disabledTools,
-      }),
-    ),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error("hivegent did not respond in time"));
+  }, HEADERS_TIMEOUT_MS);
+
+  try {
+    return await fetch(`${cfg.hivegentUrl}${path}`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(
+        buildRequestBody(text, {
+          reasoningEffort: cfg.reasoningEffort,
+          disabledTools: cfg.disabledTools,
+        }),
+      ),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function ensureOk(response: Response): Promise<void> {

@@ -44,14 +44,18 @@ const token = cfg.oidc ? new ServiceTokenProvider(cfg.oidc) : undefined;
 const chat = await createBot(cfg, { token });
 
 const app = express();
+app.disable("x-powered-by");
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+// Raw JSON body for the adapters, which validate the platform JWT.
+// Platforms send uncompressed bodies, so skip the decompressors altogether.
+const rawJson = express.raw({ type: "application/json", inflate: false });
+
 for (const [name, handler] of Object.entries(chat.webhooks)) {
-  // Raw body for every content-type; the adapter validates the platform JWT.
-  app.post(`/api/webhooks/${name}`, express.raw({ type: "*/*" }), async (req, res) => {
+  app.post(`/api/webhooks/${name}`, rawJson, async (req, res) => {
     try {
       const response = await handler(toWebRequest(req));
       sendWebResponse(res, response);

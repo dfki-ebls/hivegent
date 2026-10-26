@@ -13,6 +13,16 @@ interface TokenResponse {
 }
 
 const REFRESH_SKEW_MS = 30_000;
+// Bounds each IdP round-trip, since a hung one would stall every turn behind it.
+const IDP_TIMEOUT_MS = 10_000;
+
+/** Whether the client secret may be sent to `url`: HTTPS, or HTTP on loopback for dev. */
+function isSecureEndpoint(url: URL): boolean {
+  return (
+    url.protocol === "https:" ||
+    (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+  );
+}
 
 export class ServiceTokenProvider {
   readonly #config: OidcConfig;
@@ -43,16 +53,21 @@ export class ServiceTokenProvider {
     }
 
     const url = `${this.#config.issuer}/.well-known/openid-configuration`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(IDP_TIMEOUT_MS) });
 
     if (!res.ok) {
       throw new Error(`OIDC discovery failed (${res.status}) at ${url}`);
     }
 
-    const doc = (await res.json()) as { token_endpoint?: string };
+    const doc = (await res.json()) as { issuer?: string; token_endpoint?: string };
 
-    if (!doc.token_endpoint) {
-      throw new Error("OIDC discovery document is missing token_endpoint");
+    // OpenID Connect Discovery 1.0, section 4.3.
+    if (doc.issuer?.replace(/\/+$/, "") !== this.#config.issuer) {
+      throw new Error(`OIDC discovery issuer ${doc.issuer} does not match ${this.#config.issuer}`);
+    }
+
+    if (!doc.token_endpoint || !isSecureEndpoint(new URL(doc.token_endpoint))) {
+      throw new Error(`OIDC discovery token_endpoint ${doc.token_endpoint} is missing or insecure`);
     }
 
     this.#tokenEndpoint = doc.token_endpoint;
@@ -78,6 +93,7 @@ export class ServiceTokenProvider {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body,
+      signal: AbortSignal.timeout(IDP_TIMEOUT_MS),
     });
 
     if (!res.ok) {

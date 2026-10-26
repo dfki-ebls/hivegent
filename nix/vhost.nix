@@ -104,6 +104,10 @@ in
     # Chat-platform webhooks are handled by the bridge, not the API backend.
     # Placed before `/api/*` so its mutually-exclusive `handle` group wins.
     handle /api/webhooks/* {
+      # Just above the bridge's 100 kB body-parser default.
+      request_body {
+        max_size 128KB
+      }
       reverse_proxy ${bridgeUpstream} {
         flush_interval -1
       }

@@ -28,6 +28,11 @@ export const ADAPTER_REGISTRY: Record<string, AdapterSpec> = {
     // peers out of the production dependency graph.
     enabledByDefault: false,
     create: async (cfg) => {
+      // Unauthenticated, so it would answer anyone with the bot's identity.
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("The web adapter is for development and refuses NODE_ENV=production");
+      }
+
       const { createWebAdapter } = await import("@chat-adapter/web");
       return createWebAdapter({ userName: cfg.botUserName, getUser: () => ({ id: "dev" }) });
     },
