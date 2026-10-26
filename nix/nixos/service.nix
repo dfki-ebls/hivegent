@@ -266,6 +266,12 @@ in
             HF_HOME = "/var/cache/hivegent";
             PYTHONUNBUFFERED = "1";
             HIVEGENT_CONFIG_FILE = "${configFile}";
+            # The unit may only reach loopback, so third-party downloaders such
+            # as the Hugging Face hub fetch models through the egress proxy.
+            # Hivegent's own clients ignore these (`trust_env=False`).
+            HTTP_PROXY = egressProxy.url;
+            HTTPS_PROXY = egressProxy.url;
+            NO_PROXY = "localhost,127.0.0.1,::1";
           }
           // lib.optionalAttrs cfg.torchCompile {
             TORCHINDUCTOR_CACHE_DIR = "/var/cache/hivegent/inductor";
@@ -300,6 +306,10 @@ in
               ];
 
               SocketBindAllow = "tcp:${toString cfg.port}";
+              # Makes the egress proxy mandatory, so off-host endpoints such as
+              # the OIDC issuer must resolve to loopback for this unit.
+              IPAddressDeny = "any";
+              IPAddressAllow = "localhost";
               # CUDA-backed document/OCR models need the host NVIDIA character devices.
               PrivateDevices = false;
             };
