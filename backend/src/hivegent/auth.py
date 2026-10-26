@@ -130,7 +130,8 @@ def fetch_oidc_configuration(
         if timeout_seconds is None
         else timeout_seconds
     )
-    response = httpx2.get(str(config_url), timeout=timeout)
+    # Connects directly like the JWKS fetch, as the issuer is operator-configured.
+    response = httpx2.get(str(config_url), timeout=timeout, trust_env=False)
     response.raise_for_status()
     return OIDCConfiguration.model_validate({**response.json(), "strict": False})
 
