@@ -68,7 +68,7 @@ User-provided LLM and MCP URLs stay disabled until their hosts are listed under 
 An entry permits the domain and its subdomains, and `"*"` permits any public host.
 These requests and all model-controlled web requests pass through the bundled Smokescreen proxy, which rejects private and reserved addresses.
 Operator-configured URLs such as `llm.base_url` connect directly.
-Under the NixOS module the backend may only reach loopback, so these must be local or a unix socket, while model downloads go through the proxy.
+The NixOS option `services.hivegent.allowedAddresses` additionally confines the backend to loopback and the listed addresses, so these must then be local, a unix socket, or listed, while model downloads go through the proxy.
 
 Web search needs a metasearch service, which Hivegent does not ship, the same way it leaves PostgreSQL to you.
 SearXNG is the default backend: `compose.yaml` runs its upstream image, and the NixOS option `services.hivegent.searxng.createLocally` wires in the host's `services.searx`.
