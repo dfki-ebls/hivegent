@@ -141,7 +141,6 @@ export const chat = {
   citation: {
     openDocument: "Aktuelles Dokument öffnen",
     openEvidence: "Erfasste Zeilen öffnen",
-    noEvidence: "Für diese Zeilen wurde keine belegende Tool-Ausgabe erfasst.",
     evidenceDescription:
       "{{position}} aus der Tool-Ausgabe, die mit dieser Konversation gesichert wurde. Der Dokumentlink öffnet separat die aktuelle Version im Arbeitsbereich.",
     capturedBy: "Erfasst durch {{source}}",

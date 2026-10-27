@@ -33,15 +33,16 @@ describe("Citation", () => {
     expect(screen.getByText("Captured by Read")).toBeTruthy();
   });
 
-  it("disables a line with no supporting tool output", () => {
+  it("hides lines without captured evidence and still opens the current document", () => {
     render(
       <TooltipProvider>
         <Citation src="~/report.md" line="8" />
       </TooltipProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "Line 8" }).getAttribute("aria-disabled")).toBe(
-      "true",
-    );
+    expect(screen.queryByText("Line 8")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "report.md" }));
+
+    expect(screen.getByText("Current document")).toBeTruthy();
   });
 });

@@ -154,27 +154,16 @@ export function Citation({ src, line }: CitationProps) {
         <TooltipContent>{t(($) => $.openDocument)}</TooltipContent>
       </Tooltip>
       {positions.map((position, index) => {
-        const available = evidence[index].length > 0;
+        if (evidence[index].length === 0) return null;
 
         return (
           <Tooltip key={index}>
             <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="xs"
-                  disabled={!available}
-                  focusableWhenDisabled
-                  className="aria-disabled:opacity-50"
-                  onClick={() => show(index)}
-                />
-              }
+              render={<Button variant="outline" size="xs" onClick={() => show(index)} />}
             >
               {chunkPositionLabel(position)}
             </TooltipTrigger>
-            <TooltipContent>
-              {available ? t(($) => $.openEvidence) : t(($) => $.noEvidence)}
-            </TooltipContent>
+            <TooltipContent>{t(($) => $.openEvidence)}</TooltipContent>
           </Tooltip>
         );
       })}

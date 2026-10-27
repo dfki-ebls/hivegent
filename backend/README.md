@@ -284,7 +284,7 @@ A report that leaks gets one more turn to fix it, and what it still leaks is mas
 A `ConversationArchive` has two halves: `backend`, the persisted active path plus the instructions each turn actually ran under (read off `ModelRequest.instructions`), and `frontend`, what the tab held, including a turn that errored before it was persisted.
 Import restores `backend` when it has messages and falls back to `frontend`, and archived prompts are never replayed.
 
-Citation line chips only show evidence captured in persisted read, grep, or search outputs, kept apart by tool call id, and a chip without supporting output is disabled.
+Citation line chips only show evidence captured in persisted read, grep, or search outputs, kept apart by tool call id, and a chip without supporting output is hidden.
 Opening the document never applies a historical line anchor to current content.
 
 A chat turn attaches only images in `converters.INGESTIBLE_IMAGE_MEDIA_TYPES`, so nothing converts on the chat's latency path, and anything else belongs in a workspace, which indexes it once instead of re-sending it every turn.

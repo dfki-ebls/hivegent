@@ -138,7 +138,6 @@ export const chat = {
   citation: {
     openDocument: "Open the current document",
     openEvidence: "Open the captured lines",
-    noEvidence: "No supporting tool output was captured for these lines.",
     evidenceDescription:
       "{{position}} from the tool output stored with this conversation. The document link opens the current workspace version separately.",
     capturedBy: "Captured by {{source}}",
