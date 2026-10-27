@@ -70,9 +70,12 @@ describe("tool approval", () => {
     const { decide, card } = renderMessage(["call-1"]);
 
     expect(screen.queryByRole("button", { name: "Approve all" })).toBeNull();
-    fireEvent.change(card(0).getByLabelText("Note for the assistant on Send Mail (optional)"), {
-      target: { value: " Wrong folder. " },
-    });
+    fireEvent.change(
+      card(0).getByLabelText("Instruction for the assistant on Send Mail (optional)"),
+      {
+        target: { value: " Wrong folder. " },
+      },
+    );
     fireEvent.click(card(0).getByRole("button", { name: "Deny" }));
 
     expect(decide.mock.calls).toEqual([
@@ -87,9 +90,12 @@ describe("tool approval", () => {
     fireEvent.click(card(0).getByRole("button", { name: "Approve" }));
     fireEvent.click(card(1).getByRole("button", { name: "Approve" }));
     fireEvent.click(card(1).getByRole("button", { name: "Deny" }));
-    fireEvent.change(card(1).getByLabelText("Note for the assistant on Send Mail (optional)"), {
-      target: { value: "Not this one." },
-    });
+    fireEvent.change(
+      card(1).getByLabelText("Instruction for the assistant on Send Mail (optional)"),
+      {
+        target: { value: "Not this one." },
+      },
+    );
 
     expect(decide).not.toHaveBeenCalled();
     expect(card(1).getByRole("button", { name: "Deny", pressed: true })).toBeTruthy();
@@ -109,7 +115,7 @@ describe("tool approval", () => {
   it("answers several requests at once with the shared note", () => {
     const { decide } = renderMessage(["call-1", "call-2"]);
 
-    fireEvent.change(screen.getByLabelText("Note for all actions (optional)"), {
+    fireEvent.change(screen.getByLabelText("Instruction for all actions (optional)"), {
       target: { value: "Keep backups." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Approve all" }));
@@ -127,7 +133,7 @@ describe("tool approval", () => {
   it("keeps a shared note as requests arrive and starts the next round blank", () => {
     const { decide, rerender } = renderMessage(["call-1", "call-2"]);
 
-    fireEvent.change(screen.getByLabelText("Note for all actions (optional)"), {
+    fireEvent.change(screen.getByLabelText("Instruction for all actions (optional)"), {
       target: { value: "Keep backups." },
     });
     rerender(["call-1", "call-2", "call-3"]);
@@ -142,7 +148,10 @@ describe("tool approval", () => {
     ]);
 
     rerender(["call-4", "call-5"]);
-    expect(screen.getByLabelText("Note for all actions (optional)")).toHaveProperty("value", "");
+    expect(screen.getByLabelText("Instruction for all actions (optional)")).toHaveProperty(
+      "value",
+      "",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Deny all" }));
 
     expect(decide).toHaveBeenLastCalledWith([

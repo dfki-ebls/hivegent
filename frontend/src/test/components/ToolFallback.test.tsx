@@ -57,7 +57,7 @@ describe("ToolFallback", () => {
     fireEvent.click(screen.getByText("Write Document"));
 
     expect(screen.getByText("Wrong folder.", { exact: false }).textContent).toBe(
-      "Denied · Your note: Wrong folder.",
+      "Denied · Your instruction: Wrong folder.",
     );
   });
 
