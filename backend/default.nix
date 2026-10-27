@@ -7,6 +7,7 @@
   pyproject-nix,
   pyproject-build-systems,
   makeBinaryWrapper,
+  cacert,
   autoAddDriverRunpath,
   jq,
   pandoc,
@@ -138,7 +139,11 @@ let
               })
             ]
             ++ runtimeInputs
-            ++ [ pandoc ];
+            # httpx2 reads `SSL_CERT_FILE` up front, which the sandbox points at nothing.
+            ++ [
+              cacert
+              pandoc
+            ];
             dontConfigure = true;
             buildPhase = ''
               runHook preBuild
