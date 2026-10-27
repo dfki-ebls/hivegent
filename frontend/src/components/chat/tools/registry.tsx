@@ -10,6 +10,7 @@ import {
 import { syncReadDocumentOutput } from "@/components/chat/tools/read-document";
 import { RunPythonTool } from "@/components/chat/tools/run-python";
 import { syncSearchOutput } from "@/components/chat/tools/search";
+import { ToolFallback } from "@/components/chat/tools/ToolFallback";
 import { syncWebFetchOutput } from "@/components/chat/tools/web-fetch";
 import { syncWebSearchOutput } from "@/components/chat/tools/web-search";
 import { WriteDocumentTool } from "@/components/chat/tools/write-document";
@@ -26,6 +27,10 @@ export interface ToolHandler {
 
 // Keyed by the display-name catalog, so a handler for a misspelled or unnamed tool fails to compile.
 const TOOL_HANDLERS: Partial<Record<ToolName, ToolHandler>> = {
+  apply_changes: {
+    // The changeset id is internal.
+    render: ({ part }) => <ToolFallback toolName="apply_changes" part={part} parameters={null} />,
+  },
   search: { syncOutput: syncSearchOutput },
   read_document: { syncOutput: syncReadDocumentOutput },
   read_binary_document: {

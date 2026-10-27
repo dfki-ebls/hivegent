@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ToolFallback } from "@/components/chat/tools/ToolFallback";
+import { getToolHandler } from "@/components/chat/tools/registry";
 import type { ToolPart } from "@/lib/chat/tool-part";
 
 function part(state: ToolPart["state"], approval?: ToolPart["approval"]): ToolPart {
@@ -14,6 +15,21 @@ function part(state: ToolPart["state"], approval?: ToolPart["approval"]): ToolPa
 }
 
 describe("ToolFallback", () => {
+  it("hides the internal changeset id of apply_changes", () => {
+    const call: ToolPart = {
+      type: "tool-apply_changes",
+      toolCallId: "call-1",
+      state: "output-available",
+      input: { changeset_id: "internal-id" },
+      output: "Applied changes.",
+    };
+    render(getToolHandler("apply_changes")?.render?.({ part: call, metadata: null }));
+    fireEvent.click(screen.getByText("Apply Changes"));
+
+    expect(screen.getByText("Applied changes.")).toBeTruthy();
+    expect(screen.queryByText(/changeset_id/)).toBeNull();
+  });
+
   it("expands when the running call turns into an approval request", () => {
     const { rerender } = render(
       <ToolFallback toolName="write_document" part={part("input-available")} />,

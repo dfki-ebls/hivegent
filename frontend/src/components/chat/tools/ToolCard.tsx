@@ -14,7 +14,7 @@ interface ToolCardProps {
   part: ToolPart;
   /** Override the title, which defaults to the tool's display name. */
   title?: string;
-  /** Present the call's input, which defaults to the raw arguments. */
+  /** Present the call's input, defaulting to raw arguments. Use null to hide it. */
   parameters?: ReactNode;
   /** Present the call's output. */
   children?: ReactNode;
@@ -41,7 +41,8 @@ export function ToolCard({
   const input = toolInput<Record<string, unknown>>(part);
   const name = title ?? toolDisplayName(t, toolName);
   const icon = <ToolIcon name={toolName} />;
-  const details = parameters ?? (input && <ToolParameters params={input} />);
+  const details =
+    parameters === undefined ? input && <ToolParameters params={input} /> : parameters;
 
   if (part.state === "approval-requested") {
     return (
