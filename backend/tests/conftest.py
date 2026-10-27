@@ -5,7 +5,13 @@ filesystem and module-level Python state guarded by ``monkeypatch``.
 No test connects to a live database or any other stateful service.
 """
 
+import os
 from pathlib import Path
+
+# Settings resolve once on import, so the variables of a developer's shell,
+# such as a live database URL, would otherwise reach every test.
+for name in [name for name in os.environ if name.startswith("HIVEGENT_")]:
+    del os.environ[name]
 
 import pytest
 from pydantic_ai import models

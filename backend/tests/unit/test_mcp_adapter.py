@@ -50,21 +50,23 @@ async def test_a_read_tool_runs_as_the_agent_s_and_tmp_is_out_of_reach() -> None
                 "write_document", {"file_path": "/tmp/a.md", "content": "x"}
             )
 
-    assert {"grep", "read_document", "write_document", "explore"} <= names
+    assert {"grep", "read_document", "write_document"} <= names
     assert "apply_changes" not in names
     assert "~/notes.md" in _text(result.content)
 
 
-async def test_explore_is_withheld_without_a_main_model(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("model", ["", "main-model"])
+async def test_explore_is_served_only_with_a_main_model(
+    monkeypatch: pytest.MonkeyPatch, model: str
 ) -> None:
-    monkeypatch.setattr(settings.llm, "model", "")
+    monkeypatch.setattr(settings.llm, "model", model)
     app = FastMCP("probe")
     adapter.serve_agent_tools(app)
 
     names = {tool.name for tool in await app.list_tools()}
 
-    assert "grep" in names and "explore" not in names
+    assert "grep" in names
+    assert ("explore" in names) == bool(model)
 
 
 async def test_a_write_asks_then_applies_on_the_confirmed_retry(

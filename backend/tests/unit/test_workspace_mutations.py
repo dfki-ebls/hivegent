@@ -80,6 +80,11 @@ def workspace_dir(
     async def _no_rows(*_args: object, **_kwargs: object) -> int:
         return 0
 
+    @asynccontextmanager
+    async def _session() -> AsyncGenerator[object]:
+        yield object()
+
+    monkeypatch.setattr(db_engine, "session", _session)
     monkeypatch.setattr(changeset, "chunk_and_index_document", _noop)
     monkeypatch.setattr(db_documents, "get_entry_metadata", _noop)
     monkeypatch.setattr(db_documents, "delete_subtree", _no_rows)
@@ -662,12 +667,8 @@ class TestSyncEntryFromDisk:
 
 @pytest.fixture()
 def deleted_rows(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """The rows a changeset deletes, in a transaction that reaches no database."""
+    """The rows a changeset deletes, beside the stubbed ``workspace_dir`` session."""
     deleted: list[str] = []
-
-    @asynccontextmanager
-    async def session() -> AsyncGenerator[object]:
-        yield object()
 
     async def no_rows(*_args: object, **_kwargs: object) -> dict[object, object]:
         return {}
@@ -677,7 +678,6 @@ def deleted_rows(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         deleted.append(reference)
         return True
 
-    monkeypatch.setattr(db_engine, "session", session)
     monkeypatch.setattr(db_documents, "get_entries_metadata", no_rows)
     monkeypatch.setattr(db_documents, "delete_document", delete_document)
 
