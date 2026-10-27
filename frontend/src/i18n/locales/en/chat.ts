@@ -125,7 +125,7 @@ export const chat = {
       "Check text for Hivegent’s imperceptible watermark. The text is processed only for this check and is not retained.",
     textLabel: "Text",
     textDescription:
-      "For a reliable negative result, use more than {{tokens}} tokens. Watermarks can be damaged by editing or translation, so a negative result never proves human authorship.",
+      "Longer, unedited text improves detection, but no length guarantees a positive result. With fewer than {{tokens}} scored tokens (word pieces, repeated passages may count once), a negative result is inconclusive. Editing or translation can damage the watermark, so a negative result never proves human authorship.",
     placeholder: "Paste the text to verify …",
     resultLabel: "Result",
     resultDescription:

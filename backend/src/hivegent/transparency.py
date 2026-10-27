@@ -39,10 +39,8 @@ PROVENANCE_TYPE = "ai-provenance+jwt"
 
 _DetectionStatus = Literal["detected", "not_detected", "inconclusive"]
 
-# vLLM marks all sampled text, but text shorter than this cannot be detected
-# with even a basic level of reliability, so a negative result says nothing
-# about it. The threshold is the state of the art, not a
-# constant of the scheme, and drops as detection improves.
+# Application threshold for inconclusive negative results, not a vLLM
+# recommendation or a guarantee of detection above this length.
 MINIMUM_WATERMARK_TOKENS = 200
 
 
@@ -172,7 +170,7 @@ def _message(status: _DetectionStatus) -> str:
         return "A Hivegent text watermark was detected."
 
     if status == "inconclusive":
-        return "The text is too short for a reliable negative result."
+        return "Too few tokens were scored for a conclusive negative result."
 
     return (
         "No Hivegent text watermark was detected. This does not prove that the "

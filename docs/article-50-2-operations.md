@@ -10,7 +10,7 @@ Hivegent is not a signatory, so this record is the gap analysis the Commission g
 ## What is marked
 
 Free-form text is marked at inference time by the watermark of the LLM inference endpoint.
-Detection needs about 200 tokens for a reliable negative result, so shorter text is not reliably covered.
+A negative result counts as conclusive only with at least 200 scored tokens, and no length guarantees a positive result.
 A single watermark layer is what the Code considers sufficient for free-form text, since such text carries no metadata, and very short text is exempt from it (Sub-measure 1.1.2).
 
 Conversation exports carry a `provenance` field, a JWT signed with the report key that states the content is AI-generated (Code, Sub-measure 1.1.1).

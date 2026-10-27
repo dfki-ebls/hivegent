@@ -2,7 +2,8 @@
 
 Hivegent kennzeichnet sich in der Chat-Oberfläche und in der ersten Antwort jeder Teams-Unterhaltung als KI-System.
 Wenn die Wasserzeichenfunktion aktiviert ist, markiert Hivegent erzeugte Texte gemäß dem [Verhaltenskodex der Europäischen Kommission](https://ec.europa.eu/newsroom/dae/redirection/document/129555).
-Texte mit weniger als 200 Tokens lassen sich nicht zuverlässig erkennen.
+Längere, unveränderte Texte verbessern die Erkennung, aber keine Länge garantiert ein positives Ergebnis.
+Bei weniger als 200 ausgewerteten Tokens ist ein negatives Ergebnis nicht aussagekräftig, und Wiederholungen zählen unter Umständen nur einmal.
 Exportierte Unterhaltungen enthalten eine signierte Angabe, dass sie KI-generierte Texte enthalten.
 
 ## Text prüfen

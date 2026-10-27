@@ -128,7 +128,7 @@ export const chat = {
       "Prüfe einen Text auf das nicht wahrnehmbare Wasserzeichen von Hivegent. Der Text wird nur für diese Prüfung verarbeitet und nicht gespeichert.",
     textLabel: "Text",
     textDescription:
-      "Verwende für ein verlässliches negatives Ergebnis mehr als {{tokens}} Tokens. Wasserzeichen können durch Bearbeitung oder Übersetzung beschädigt werden, daher beweist ein negatives Ergebnis nie, dass ein Mensch den Text verfasst hat.",
+      "Längere, unveränderte Texte verbessern die Erkennung, aber keine Länge garantiert ein positives Ergebnis. Bei weniger als {{tokens}} ausgewerteten Tokens (Wortbausteine, Wiederholungen zählen unter Umständen nur einmal) ist ein negatives Ergebnis nicht aussagekräftig. Bearbeitung oder Übersetzung können das Wasserzeichen beschädigen, daher beweist ein negatives Ergebnis nie, dass ein Mensch den Text verfasst hat.",
     placeholder: "Füge den zu prüfenden Text ein …",
     resultLabel: "Ergebnis",
     resultDescription:

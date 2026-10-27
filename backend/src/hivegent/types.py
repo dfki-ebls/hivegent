@@ -570,7 +570,7 @@ class TransparencyConfig(BaseModel):
         description="Operator contact for external expert detector access"
     )
     minimum_watermark_tokens: int = Field(
-        description="Minimum text length for a reliable negative detection result"
+        description="Minimum scored tokens for a conclusive negative detection result"
     )
 
 

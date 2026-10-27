@@ -2,7 +2,8 @@
 
 Hivegent identifies itself as an AI system in the chat interface and in the first reply of every Teams conversation.
 When watermarking is enabled, it marks generated text under the European Commission's [Code of Practice](https://ec.europa.eu/newsroom/dae/redirection/document/129555).
-Text shorter than 200 tokens cannot be reliably detected.
+Longer, unedited text improves detection, but no length guarantees a positive result.
+With fewer than 200 scored tokens, a negative result is inconclusive, and repeated passages may count only once.
 Conversation exports carry a signed statement that they contain AI-generated text.
 
 ## Verify text
