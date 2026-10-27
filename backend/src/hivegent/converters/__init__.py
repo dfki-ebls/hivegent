@@ -83,7 +83,6 @@ class ConversionPipeline(StrEnum):
     ANYDOC = "anydoc"
     PDF_INSPECTOR = "pdf-inspector"
     PDF_OXIDE = "pdf-oxide"
-    TABLE_CHEF = "table-chef"
     PLAIN_TEXT = "plain-text"
 
 
@@ -171,12 +170,6 @@ def _load_pdf_oxide() -> PipelineImplementation[DocumentConverter]:
     from .pdf_oxide import PdfOxideConverter, PdfOxideConverterConfig
 
     return PipelineImplementation(PdfOxideConverter, PdfOxideConverterConfig)
-
-
-def _load_table_chef() -> PipelineImplementation[DocumentConverter]:
-    from .chonkie_table import ChonkieTableConverter
-
-    return PipelineImplementation(ChonkieTableConverter)
 
 
 def _load_plain_text() -> PipelineImplementation[DocumentConverter]:
@@ -314,10 +307,6 @@ _CONVERTERS: dict[ConversionPipeline, _ConverterRegistration] = {
         loader=_load_pdf_oxide,
         extensions=frozenset({".pdf"}),
         dependencies=("pdf_oxide",),
-    ),
-    ConversionPipeline.TABLE_CHEF: _ConverterRegistration(
-        loader=_load_table_chef,
-        extensions=frozenset({".csv", ".xls", ".xlsx"}),
     ),
     # A routing preference, not a capability: these overlap richer converters
     # and so need an explicit AUTO priority, while every other suffix reaches

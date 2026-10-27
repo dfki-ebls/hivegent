@@ -63,10 +63,6 @@ export const options = {
       label: "pdf_oxide",
       description: "High-performance Rust-based PDF to markdown converter",
     },
-    "table-chef": {
-      label: "Table Chef",
-      description: "CSV/Excel to markdown tables via pandas",
-    },
     "plain-text": {
       label: "Plain Text",
       description: "Text, configuration, data-serialization, and source files as-is",

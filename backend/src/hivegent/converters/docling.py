@@ -228,8 +228,9 @@ class DoclingConverter(DocumentConverter):
         result = converter.convert(str(path))
         doc = result.document
 
-        # Export markdown with default placeholder mode (``<!-- image -->``).
-        markdown = str(doc.export_to_markdown())
+        # Export markdown with default placeholder mode (``<!-- image -->``),
+        # and unpadded tables, whose padding would chunk into whitespace.
+        markdown = str(doc.export_to_markdown(compact_tables=True))
 
         # Replace each placeholder with a proper reference by iterating
         # PictureItems in document order (same order as the placeholders).

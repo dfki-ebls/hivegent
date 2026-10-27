@@ -258,7 +258,7 @@ def collect_dir_images(root: Path, relative_to: Path) -> dict[str, ExtractedImag
 class DocumentConverter(ABC):
     """Abstract base class for document converters.
 
-    CPU/model-bound converters (docling, marker, markitdown, chonkie chefs, …)
+    CPU/model-bound converters (docling, marker, markitdown, …)
     implement the sync :meth:`_convert_sync`; the base :meth:`_convert` offloads
     it through :func:`hivegent.workers.pool.run_offloaded` (a persistent worker
     process when the pool is on, a lock-guarded thread otherwise).  Native-async
