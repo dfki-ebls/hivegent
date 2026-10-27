@@ -24,6 +24,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -898,7 +900,10 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
         (
             "n3",
             ModelRequest(
-                parts=[ToolReturnPart(tool_name="t", content="r", tool_call_id="c1")]
+                parts=[
+                    ToolReturnPart(tool_name="t", content="r", tool_call_id="c1"),
+                    RetryFeedbackPart("Answer.", retry=RetryInfo(cause="no_output")),
+                ]
             ),
         ),
         (
@@ -912,8 +917,8 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
 
     ui = dump_messages_with_ids(pairs, siblings={"n2": ["n2", "n5"]})
 
-    # The turn folds into its first response, as it streamed, and the
-    # tool-return-only request emits no UIMessage.
+    # The turn folds into its first response, as it streamed, and the request
+    # holding only a tool return and harness feedback emits no UIMessage.
     assert [msg.id for msg in ui] == ["n1", "n2"]
 
     answer = ui[1]

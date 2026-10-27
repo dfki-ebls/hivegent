@@ -22,7 +22,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any, TypedDict, override
 
@@ -34,7 +34,9 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -538,6 +540,26 @@ def _fold_turns(messages: Iterable[UIMessage]) -> list[UIMessage]:
     return folded
 
 
+_HARNESS_PARTS = (RetryFeedbackPart, ToolAvailabilityDeltaPart)
+
+
+def _shown(message: ModelMessage) -> ModelMessage:
+    """*message* without the harness parts a transcript leaves out.
+
+    Retry feedback and tool availability are addressed to the model, and the
+    adapter would dump each as a message of its own between two responses of
+    one turn, which then no longer folds into the message it streamed as.
+    """
+    if not isinstance(message, ModelRequest):
+        return message
+
+    parts = [part for part in message.parts if not isinstance(part, _HARNESS_PARTS)]
+
+    return (
+        message if len(parts) == len(message.parts) else replace(message, parts=parts)
+    )
+
+
 def dump_messages_with_ids(
     pairs: Sequence[tuple[str, ModelMessage]],
     *,
@@ -549,8 +571,9 @@ def dump_messages_with_ids(
     regenerate / branch-select ``messageId`` maps straight back to a tree node.
     The adapter invokes the id generator with the exact objects passed here (it
     iterates this same list), so the identity lookup is an exact match and
-    stays correct even when one request emits two ``UIMessage``s (system +
-    user); a tool-return-only request emits none and is never looked up.  An
+    stays correct even when one request emits several ``UIMessage``s, one per
+    run of same-role parts; a request left with only tool returns once the
+    harness parts are dropped (see :func:`_shown`) emits none.  An
     unmapped object — unreachable today — degrades to a fresh non-addressable id
     rather than raising.  When given, *siblings* maps a forking node to its
     ordered sibling ids; its :class:`BranchInfo` is merged under a ``branch``
@@ -560,6 +583,7 @@ def dump_messages_with_ids(
     pending questions are reopened rather than shown as approval requests, and
     each assistant turn is one message, as it streamed (see :func:`_fold_turns`).
     """
+    pairs = [(node_id, _shown(msg)) for node_id, msg in pairs]
     node_by_obj = {id(msg): node_id for node_id, msg in pairs}
 
     if siblings:
