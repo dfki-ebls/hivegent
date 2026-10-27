@@ -121,12 +121,10 @@ pydantic-evals = "1 day"
 antlr4-python3-runtime = ["setuptools"]
 ebooklib = ["setuptools"]
 pylatexenc = ["setuptools"]
-cysignals = ["meson-python", "cython"]
 # No wheel matches nixpkgs' darwin SDK (tesserocr's macOS wheels are tagged
 # macosx_15_0, while `stdenv.hostPlatform.darwinSdkVersion` is 14.4), so darwin
-# builds the sdist, which declares no build backend at all and cythonizes
-# against cysignals' headers.
-tesserocr = ["setuptools", "cython", "cysignals"]
+# builds the sdist, which declares no build backend at all.
+tesserocr = ["setuptools", "cython"]
 
 [tool.uv.sources]
 # cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }

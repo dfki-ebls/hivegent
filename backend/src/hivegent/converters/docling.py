@@ -24,10 +24,6 @@ from docling_core.types.doc import DoclingDocument, PictureItem
 from docling_core.types.doc.labels import PictureClassificationLabel
 from pydantic import BaseModel, Field
 
-# Selected converters are loaded before their work is offloaded, so this import
-# initializes tesserocr and cysignals on the process main thread.
-import tesserocr  # noqa: F401  # isort: skip
-
 from ..config import settings
 from .base import (
     AssetBBox,

@@ -14,7 +14,6 @@
   poppler-utils,
   ripgrep,
   tessdata,
-  ninja,
   pkg-config,
   leptonica,
   tesseract,
@@ -89,14 +88,6 @@ let
       })
     );
   packageOverlay = final: prev: {
-    cysignals = prev.cysignals.overrideAttrs (old: {
-      buildInputs = (old.buildInputs or [ ]) ++ [ ninja ];
-      # cysignals installs its own stack-overflow/signal handlers and refuses
-      # to compile with glibc fortification (same fix as nixpkgs' cysignals).
-      # The nix cc-wrapper appends -D_FORTIFY_SOURCE after the build system's
-      # -U_FORTIFY_SOURCE, so it must be disabled at the wrapper level.
-      hardeningDisable = [ "fortify" ];
-    });
     # Built from the sdist (darwin, see `pyproject.toml`), tesserocr resolves the
     # libraries it links through `pkg-config tesseract lept` rather than bundling
     # them as the wheels do.  Gated on the source form, not the platform, since

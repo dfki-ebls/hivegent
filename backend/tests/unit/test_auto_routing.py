@@ -50,16 +50,12 @@ def test_auto_routes_plain_text(filename: str, expected: ConversionPipeline) -> 
     assert resolve_auto_pipeline(filename) is expected
 
 
-def test_auto_routing_is_dependency_free_in_worker_thread() -> None:
+def test_auto_routing_imports_no_converter() -> None:
     code = (
         "import sys\n"
-        "from concurrent.futures import ThreadPoolExecutor\n"
-        "def route():\n"
-        "    from hivegent.converters import resolve_auto_pipeline\n"
-        "    return resolve_auto_pipeline('report.pdf').value\n"
-        "with ThreadPoolExecutor(max_workers=1) as executor:\n"
-        "    pipeline = executor.submit(route).result()\n"
-        "print(pipeline, 'cysignals' in sys.modules)\n"
+        "from hivegent.converters import resolve_auto_pipeline\n"
+        "pipeline = resolve_auto_pipeline('report.pdf').value\n"
+        "print(pipeline, 'hivegent.converters.docling' in sys.modules)\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
