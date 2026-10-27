@@ -262,8 +262,8 @@ async def replace_original(
     filepath: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
+    pipeline_spec: Annotated[str, Form()] = "{}",
+    llm_config: Annotated[str, Form()] = "{}",
 ) -> JobView:
     """Replace the original binary file and reconvert the document as a job.
 
@@ -299,9 +299,9 @@ async def upload_document(
     filepath: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
-    overwrite: bool = Form(default=False),
+    pipeline_spec: Annotated[str, Form()] = "{}",
+    llm_config: Annotated[str, Form()] = "{}",
+    overwrite: Annotated[bool, Form()] = False,
 ) -> JobView:
     """Accept a document upload and process it as a background job.
 
@@ -338,8 +338,8 @@ async def upload_collection(
     target: str,
     file: UploadFile,
     user: Annotated[User, Depends(get_current_user)],
-    pipeline_spec: str = Form(default="{}"),
-    llm_config: str = Form(default="{}"),
+    pipeline_spec: Annotated[str, Form()] = "{}",
+    llm_config: Annotated[str, Form()] = "{}",
 ) -> JobView:
     """Accept a ZIP collection and process it as a background job.
 
