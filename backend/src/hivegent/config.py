@@ -929,9 +929,9 @@ class ConversionSettings(BaseModel):
 class LimitsSettings(BaseModel):
     """Upload, collection, and decoder size/count limits.
 
-    ``max_image_pixels`` raises Pillow's decompression-bomb threshold
-    so large embedded images inside PDFs (common with scanned pages)
-    decode successfully; the value still guards against truly
+    ``max_image_pixels`` raises Pillow's decompression-bomb threshold and
+    docling's own image bound, so large scans and images embedded in PDFs
+    or web pages decode successfully; the value still guards against truly
     degenerate inputs.
 
     ``max_attachment_bytes`` bounds one image attached to a chat turn.  It

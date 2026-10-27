@@ -8,6 +8,11 @@ from typing import Any
 import PIL.Image
 import PIL.PngImagePlugin
 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
+from docling.datamodel.backend_options import (
+    HTMLBackendOptions,
+    MarkdownBackendOptions,
+    PdfBackendOptions,
+)
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
     ConvertPipelineOptions,
@@ -129,6 +134,14 @@ class DoclingConverterConfig(BaseModel):
 
 # Formats that use the threaded PDF pipeline options.
 _PDF_FORMATS = frozenset({InputFormat.PDF, InputFormat.IMAGE, InputFormat.METS_GBS})
+# Backends that bound image pixels with an option of their own, ignoring
+# Pillow's global limit.
+_PIXEL_BOUNDED_BACKENDS = {
+    InputFormat.IMAGE: PdfBackendOptions,
+    InputFormat.HTML: HTMLBackendOptions,
+    InputFormat.MHTML: HTMLBackendOptions,
+    InputFormat.MD: MarkdownBackendOptions,
+}
 # Formats docling reads only through what the project does not ship: audio and
 # video through a Whisper backend (videos are sampled into frames instead, see
 # `converters.video`), and legacy Office, RTF and OpenDocument through
@@ -164,15 +177,24 @@ def _build_converter(config: DoclingConverterConfig) -> DoclingDocumentConverter
     """
     converter = DoclingDocumentConverter(allowed_formats=list(_ALLOWED_FORMATS))
     # Start from default format options (which include the correct backend
-    # and pipeline_cls) and only override pipeline_options.
+    # and pipeline_cls) and only override pipeline and backend options.
     for fmt in converter.format_to_options:
         default = converter.format_to_options[fmt]
         opts = config.pdf_options if fmt in _PDF_FORMATS else config.convert_options
+
         if fmt in _PDF_FORMATS:
             opts = opts.model_copy(update={"generate_picture_images": True})
-        converter.format_to_options[fmt] = default.model_copy(
-            update={"pipeline_options": opts}
-        )
+
+        update: dict[str, Any] = {"pipeline_options": opts}
+
+        if (backend_options := _PIXEL_BOUNDED_BACKENDS.get(fmt)) is not None:
+            # Validated from a mapping, since docling declares its defaults
+            # positionally in `Field`, which type checkers do not read.
+            update["backend_options"] = backend_options.model_validate(
+                {"max_image_pixels": settings.limits.max_image_pixels}
+            )
+
+        converter.format_to_options[fmt] = default.model_copy(update=update)
     return converter
 
 
