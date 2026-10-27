@@ -257,13 +257,18 @@ dockerTools.streamLayeredImage {
       Retries = 5;
     };
   };
-  # Packages the image runs that are referenced only by store path, which the
-  # SBOM cannot reach through the derivation (`nix/sbom.nix`).
-  passthru.runtimeInputs = [
-    caddy
-    dinit
-    curlMinimal
-  ];
+  passthru = {
+    # The SBOM reads the component version from here, since the image's name
+    # carries none and BSI TR-03183-2 requires one.
+    inherit (backend) version;
+    # Packages the image runs that are referenced only by store path, which the
+    # SBOM cannot reach through the derivation (`nix/sbom.nix`).
+    runtimeInputs = [
+      caddy
+      dinit
+      curlMinimal
+    ];
+  };
   meta = {
     description = "Hivegent container with inbound and outbound proxies";
     maintainers = with lib.maintainers; [ mirkolenz ];
