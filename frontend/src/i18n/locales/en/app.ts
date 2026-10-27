@@ -3,6 +3,7 @@ export const app = {
   userMenu: {
     fallbackName: "User",
     account: "Account",
+    verifyText: "Verify AI text",
     documentation: "Documentation",
     licenses: "Licenses",
     toolDebugger: "Tool Debugger",

@@ -12,7 +12,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
@@ -26,6 +25,8 @@ import { cn, errorMessage } from "@/lib/utils";
 const T_OPTIONS = keyPrefix(($) => $.chat.transparency);
 
 interface AiTransparencyDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   contactEmail: string | null;
   minimumTokens: number;
 }
@@ -37,7 +38,12 @@ const STATUS_STYLES = {
   inconclusive: "text-amber-700 dark:text-amber-400",
 } as const;
 
-export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTransparencyDialogProps) {
+export function AiTransparencyDialog({
+  open,
+  onOpenChange,
+  contactEmail,
+  minimumTokens,
+}: AiTransparencyDialogProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const [text, setText] = useState("");
   const detection = useMutation({
@@ -46,8 +52,10 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
   });
   const { data: result, error, isPending: checking } = detection;
 
-  function changeOpen(open: boolean): void {
-    if (!open) {
+  function changeOpen(next: boolean): void {
+    onOpenChange(next);
+
+    if (!next) {
       setText("");
       detection.reset();
     }
@@ -63,10 +71,7 @@ export function AiTransparencyDialog({ contactEmail, minimumTokens }: AiTranspar
   }
 
   return (
-    <Dialog onOpenChange={changeOpen}>
-      <DialogTrigger render={<Button variant="link" size="xs" className="h-auto px-1" />}>
-        {t(($) => $.trigger)}
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <ScrollDialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t(($) => $.title)}</DialogTitle>

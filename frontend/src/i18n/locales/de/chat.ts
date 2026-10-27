@@ -123,7 +123,6 @@ export const chat = {
     notice: "Hivegent ist eine KI und kann Fehler machen. Überprüfe die Antworten bitte.",
   },
   transparency: {
-    trigger: "KI-Text prüfen",
     title: "Hivegent-Text prüfen",
     description:
       "Prüfe einen Text auf das nicht wahrnehmbare Wasserzeichen von Hivegent. Der Text wird nur für diese Prüfung verarbeitet und nicht gespeichert.",

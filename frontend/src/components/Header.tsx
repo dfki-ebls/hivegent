@@ -1,15 +1,23 @@
 import { Link } from "@tanstack/react-router";
-import { BugIcon, LogOutIcon, UserCogIcon, UserIcon, WrenchIcon } from "lucide-react";
+import {
+  BugIcon,
+  LogOutIcon,
+  ScanSearchIcon,
+  UserCogIcon,
+  UserIcon,
+  WrenchIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useOidc } from "@/oidc";
 import { DebugChatDialog } from "@/components/DebugChatDialog";
+import { AiTransparencyDialog } from "@/components/AiTransparencyDialog";
 import { DocsLink } from "@/components/DocsLink";
 import { LicensesLink } from "@/components/LicensesLink";
 import { JobTray } from "@/components/JobTray";
 import { Logo } from "@/components/Logo";
 import { VersionBadge } from "@/components/VersionBadge";
-import { useIsAdmin } from "@/queries/settings";
+import { useIsAdmin, useServerSettings } from "@/queries/settings";
 import { useUserName } from "@/hooks/use-user-name";
 import { PRODUCT_NAME } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -28,8 +36,10 @@ function UserMenu() {
   const { t } = useTranslation();
   const oidc = useOidc();
   const isAdmin = useIsAdmin();
+  const transparency = useServerSettings((s) => s.transparency);
   const userName = useUserName();
   const [debugChatOpen, setDebugChatOpen] = useState(false);
+  const [transparencyOpen, setTransparencyOpen] = useState(false);
 
   if (!oidc.isUserLoggedIn) {
     return null;
@@ -60,6 +70,12 @@ function UserMenu() {
               <UserCogIcon />
               {t(($) => $.app.userMenu.account)}
             </DropdownMenuItem>
+            {transparency?.enabled && (
+              <DropdownMenuItem onClick={() => setTransparencyOpen(true)}>
+                <ScanSearchIcon />
+                {t(($) => $.app.userMenu.verifyText)}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem render={<DocsLink />} />
             <DropdownMenuItem render={<LicensesLink />} />
             {isAdmin && (
@@ -83,6 +99,14 @@ function UserMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
       {isAdmin && <DebugChatDialog open={debugChatOpen} onOpenChange={setDebugChatOpen} />}
+      {transparency?.enabled && (
+        <AiTransparencyDialog
+          open={transparencyOpen}
+          onOpenChange={setTransparencyOpen}
+          contactEmail={transparency.contact_email}
+          minimumTokens={transparency.minimum_watermark_tokens}
+        />
+      )}
     </>
   );
 }

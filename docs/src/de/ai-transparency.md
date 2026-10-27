@@ -7,7 +7,7 @@ Exportierte Unterhaltungen enthalten eine signierte Angabe, dass sie KI-generier
 
 ## Text prüfen
 
-Wählen Sie **KI-Text prüfen** unter dem Chat-Eingabefeld und fügen Sie den Text ein.
+Wählen Sie **KI-Text prüfen** im Benutzermenü und fügen Sie den Text ein.
 Sie können einen signierten Bericht mit dem Hash des Textes herunterladen, aber nicht mit dem Text selbst.
 Den Bericht oder das Feld `provenance` eines Exports prüfen Sie mit dem öffentlichen Schlüssel unter `/api/transparency/jwks`.
 Der eingereichte Text wird weder gespeichert noch protokolliert.

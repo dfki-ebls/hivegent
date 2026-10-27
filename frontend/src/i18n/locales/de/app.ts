@@ -5,6 +5,7 @@ export const app = {
   userMenu: {
     fallbackName: "Benutzer:in",
     account: "Account",
+    verifyText: "KI-Text prüfen",
     documentation: "Dokumentation",
     licenses: "Lizenzen",
     toolDebugger: "Tool-Debugger",

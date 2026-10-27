@@ -120,7 +120,6 @@ export const chat = {
     notice: "Hivegent is AI and can make mistakes. Please double-check responses.",
   },
   transparency: {
-    trigger: "Verify AI text",
     title: "Verify Hivegent text",
     description:
       "Check text for Hivegent’s imperceptible watermark. The text is processed only for this check and is not retained.",
