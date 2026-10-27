@@ -60,9 +60,12 @@ class SearchResult:
 
 
 SearchQueriesArg = Annotated[
-    list[str],
+    list[Annotated[str, Field(min_length=20)]],
     batch_field(
-        "Natural language search queries, each searched on its own and the "
+        "Concrete query phrases naming the task's subject, entities, and "
+        "constraints rather than generic topics or padded wording, using only "
+        "details known from the task or documents. For a short term, name, or "
+        "code, use grep instead. Each query is searched on its own and the "
         "rankings merged, so a chunk several of them find ranks higher and is "
         "returned once. Phrase each in the language the documents are likely "
         "written in, and add phrasings in another language (e.g. English or "
@@ -142,8 +145,12 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
     ) -> ToolOutput[list[R]]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval.
 
+        Start here to find content, since it scales to large collections,
+        and use grep for short exact terms or structural patterns.
         Several queries are searched together and their rankings merged by
         reciprocal rank fusion into one list of at most ``max_results``.
+        Results are candidates, not proof of relevance. Read and check the
+        relevant passages against the task before using them in an answer.
         """
         rankings = await self._search(
             list(dict.fromkeys(queries)), max_results, search_type

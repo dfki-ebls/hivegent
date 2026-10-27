@@ -3,10 +3,11 @@
 from typing import Any, ClassVar, cast
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from hivegent import retrieval
 from hivegent.config import settings
+from hivegent.tools.base import ToolSpec
 from hivegent.tools.formatting import LineClip
 from hivegent.tools.retrieval import (
     SearchResult,
@@ -14,6 +15,21 @@ from hivegent.tools.retrieval import (
     _format_results,
     _fuse,
 )
+
+
+def search() -> VectorSearchTool:
+    return VectorSearchTool()
+
+
+def test_search_query_minimum_is_published_and_validated() -> None:
+    spec = ToolSpec.from_factory(search)
+    queries = spec.parameters_json_schema["properties"]["queries"]
+
+    assert queries["items"]["minLength"] == 20
+    spec.validate_arguments({"queries": ["x" * 20]})
+
+    with pytest.raises(ValidationError, match="at least 20 characters"):
+        spec.validate_arguments({"queries": ["x" * 20, "x" * 19]})
 
 
 def test_format_results_truncates_long_lines() -> None:

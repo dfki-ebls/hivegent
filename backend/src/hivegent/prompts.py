@@ -337,7 +337,7 @@ Your task is to survey a collection of documents and produce a concise summary o
 
 Guidelines:
 - Start with list_documents to see what is available, passing `patterns` to match filenames.
-- Use grep and search tools to find relevant content.
+- Start with search for relevant content, using concrete phrases, and use grep for short exact terms or structural patterns.
 - Use read_document to read specific sections when needed, every document you need in one call, and give a read `offset` and `limit` to page through a large file.
 - For a spreadsheet or CSV, use query_table rather than read_document: a SQL query returns the rows you need, where reading a table wastes the context on rows you do not and cuts off the trailing columns of every row it does return.
 - Focus on answering the specific exploration task given to you.

@@ -399,6 +399,9 @@ class GrepTool(AsyncPathTool[list[GrepMatch]]):
     ) -> ToolOutput[list[GrepMatch]]:
         """Search documents for a pattern.
 
+        Suited to short exact terms, names, or codes and to structural matches
+        through patterns, while search finds content by phrase across large
+        collections and comes first.
         Defaults to case-insensitive regex search.  Set ``literal=True``
         to disable regex interpretation, or ``case_sensitive=True`` for
         exact case matching.  Use ``output_mode`` to switch between full
