@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextPart,
     ThinkingPart,
     UserPromptPart,
@@ -190,15 +190,8 @@ def conversation_steps(messages: Iterable[ModelMessage]) -> Iterator[Step]:
                             took=_since(called.get(part.tool_call_id), part.timestamp),
                         )
 
-                    case RetryPromptPart():
-                        yield Step(
-                            next(n),
-                            "retry",
-                            part.model_response(),
-                            tool=part.tool_name,
-                            call_id=part.tool_call_id,
-                            took=_since(called.get(part.tool_call_id), part.timestamp),
-                        )
+                    case RetryFeedbackPart():
+                        yield Step(next(n), "retry", part.model_response())
 
                     case _:
                         pass

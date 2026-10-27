@@ -179,4 +179,6 @@ def test_self_hosted_models_resolve_their_own_family_profile(
     assert (
         qwen.profile.get("json_schema_transformer") is InlineDefsJsonSchemaTransformer
     )
-    assert unknown.profile.get("json_schema_transformer") is OpenAIJsonSchemaTransformer
+    transformer = unknown.profile.get("json_schema_transformer")
+    assert transformer is not None
+    assert issubclass(transformer, OpenAIJsonSchemaTransformer)

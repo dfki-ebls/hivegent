@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -670,7 +669,7 @@ def close_orphan_tool_calls(
         part.tool_call_id
         for message in messages
         for part in message.parts
-        if isinstance(part, (ToolReturnPart, RetryPromptPart))
+        if isinstance(part, ToolReturnPart)
     }
     orphans = {
         part.tool_call_id: part.tool_name

@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import pytest
 from pydantic_ai import (
@@ -20,9 +20,9 @@ from pydantic_ai.messages import (
     FinishReason,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -363,7 +363,9 @@ async def test_data_too_large_for_the_frontend_is_dropped(data_dir: Path) -> Non
 
 async def test_a_retry_prompt_is_bounded_like_a_result() -> None:
     async def fail(_args: Any) -> Any:
-        raise ToolRetryError(RetryPromptPart(content="x\n" * 2_000, tool_name="grep"))
+        raise ToolRetryError(
+            ToolReturnPart("grep", "x\n" * 2_000, "call-1", outcome="retried")
+        )
 
     with pytest.raises(ToolRetryError) as caught:
         await ToolOutputSpill(max_chars=1_000, max_data_bytes=50_000).wrap_tool_execute(
@@ -441,6 +443,10 @@ async def test_the_approval_note_wraps_the_spill_whatever_the_list_order(
     assert note == approval_note_text("Keep it.")
 
 
+def _is_retry(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[ToolReturnPart]:
+    return isinstance(part, ToolReturnPart) and part.outcome == "retried"
+
+
 async def test_the_retry_note_rides_a_rejected_calls_retry_prompt() -> None:
     """Arguments failing validation count against the same budget.
 
@@ -454,7 +460,7 @@ async def test_the_retry_note_rides_a_rejected_calls_retry_prompt() -> None:
 
     def call_count(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if any(
-            isinstance(part, RetryPromptPart) and "in a row" in part.model_response()
+            _is_retry(part) and "in a row" in part.model_response_str()
             for part in messages[-1].parts
         ):
             return ModelResponse(parts=[TextPart(content="giving up")])
@@ -468,10 +474,10 @@ async def test_the_retry_note_rides_a_rejected_calls_retry_prompt() -> None:
         toolsets=[toolset],
     )
     retries = [
-        part.model_response()
+        part.model_response_str()
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, RetryPromptPart)
+        if _is_retry(part)
     ]
 
     assert len(retries) == 3

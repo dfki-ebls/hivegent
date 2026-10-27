@@ -36,7 +36,7 @@ from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -180,8 +180,10 @@ def _cuts(messages: Sequence[ModelMessage]) -> list[_Cut]:
         for part in message.parts:
             if isinstance(part, ToolCallPart):
                 open_calls.add(part.tool_call_id)
-            elif isinstance(part, ToolReturnPart | RetryPromptPart):
+            elif isinstance(part, ToolReturnPart):
                 open_calls.discard(part.tool_call_id)
+                answered = True
+            elif isinstance(part, RetryFeedbackPart):
                 answered = True
 
         if isinstance(message, ModelResponse):

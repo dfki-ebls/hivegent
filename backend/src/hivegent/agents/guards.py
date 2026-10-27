@@ -72,7 +72,8 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -564,7 +565,10 @@ class LimitNotes(AbstractCapability[Any]):
         return notes
 
     def _raise_noted(
-        self, ctx: RunContext[Any], retry: RetryPromptPart, error: Exception
+        self,
+        ctx: RunContext[Any],
+        retry: ToolReturnPart | RetryFeedbackPart,
+        error: Exception,
     ) -> NoReturn:
         """Raise *error* again, as its *retry* prompt with the due notes if any."""
         if not (notes := self._due_notes(ctx)):
@@ -584,8 +588,16 @@ class LimitNotes(AbstractCapability[Any]):
         error: ValidationError | ModelRetry,
     ) -> ValidatedToolArgs:
         """Add the due notes to a rejected call's retry prompt."""
-        retry = RetryPromptPart.from_error(
-            error, tool_name=call.tool_name, tool_call_id=call.tool_call_id
+        invalid = isinstance(error, ValidationError)
+        retry = ToolReturnPart(
+            call.tool_name,
+            error.errors(include_url=False, include_context=False)
+            if invalid
+            else error.message,
+            call.tool_call_id,
+            tool_kind=call.tool_kind,
+            outcome="retried",
+            retry=RetryInfo(cause="validation_error" if invalid else "model_retry"),
         )
         self._raise_noted(ctx, retry, error)
 

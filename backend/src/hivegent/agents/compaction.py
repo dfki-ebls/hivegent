@@ -21,7 +21,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     ToolReturnPart,
     post_compaction_window,
 )
@@ -63,7 +63,7 @@ def is_compaction(message: ModelMessage) -> bool:
 def _is_prompt(message: ModelMessage) -> bool:
     """Whether *message* opens a turn, a prompt that answers no call."""
     return is_user_request(message) and not any(
-        isinstance(part, ToolReturnPart | RetryPromptPart) for part in message.parts
+        isinstance(part, ToolReturnPart | RetryFeedbackPart) for part in message.parts
     )
 
 
