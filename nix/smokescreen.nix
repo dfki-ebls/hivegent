@@ -15,6 +15,8 @@ buildGoModule (finalAttrs: {
   };
   vendorHash = null;
   excludedPackages = [ "cmd/check_config" ];
+  # The proxy tests bind loopback listeners inside the Darwin sandbox.
+  __darwinAllowLocalNetworking = true;
   # TestInvalidHost asserts on the "no such host" resolver error, which needs a
   # DNS server answering NXDOMAIN, while the sandbox has none and refuses the
   # connection instead.
