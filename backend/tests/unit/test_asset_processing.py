@@ -10,15 +10,16 @@ from hivegent.converters.asset_processing import (
     image_context_windows,
     perceptual_key,
 )
-from hivegent.converters.base import AssetRole, ExtractedImage
+from hivegent.converters.base import AssetRole, ExtractedImage, pil_to_png_bytes
 from hivegent.llm_config import LlmConfig
 from hivegent.types import AssetProcessingMode
 
 
-def _png(img: Image.Image) -> bytes:
-    buf = io.BytesIO()
-    img.save(buf, "PNG")
-    return buf.getvalue()
+@pytest.mark.parametrize(("mode", "stored"), [("I", "I;16"), ("CMYK", "RGB")])
+def test_a_mode_png_cannot_store_is_converted(mode: str, stored: str) -> None:
+    png = pil_to_png_bytes(Image.new(mode, (2, 2)))
+
+    assert Image.open(io.BytesIO(png)).mode == stored
 
 
 def test_image_context_windows_collects_every_occurrence() -> None:
@@ -30,11 +31,14 @@ def test_image_context_windows_collects_every_occurrence() -> None:
 
 
 def test_perceptual_key_dedups_identical_and_skips_uniform() -> None:
-    textured = _png(Image.radial_gradient("L").convert("RGB"))
+    textured = pil_to_png_bytes(Image.radial_gradient("L").convert("RGB"))
     assert perceptual_key(textured) is not None
     assert perceptual_key(textured) == perceptual_key(textured)
     # Solid-color images carry no signal and must not be merged blindly.
-    assert perceptual_key(_png(Image.new("RGB", (80, 60), (40, 40, 40)))) is None
+    assert (
+        perceptual_key(pil_to_png_bytes(Image.new("RGB", (80, 60), (40, 40, 40))))
+        is None
+    )
 
 
 async def test_prepare_conversion_assets_captions_duplicates_once(
@@ -54,14 +58,14 @@ async def test_prepare_conversion_assets_captions_duplicates_once(
 
     monkeypatch.setattr(workspace.prepare, "_build_image_description", fake_describe)
 
-    dup = _png(Image.radial_gradient("L").convert("RGB"))
+    dup = pil_to_png_bytes(Image.radial_gradient("L").convert("RGB"))
     images = {
         "fig_a.png": ExtractedImage(
             data=dup, role=AssetRole.INFORMATIVE, caption="Figure 1"
         ),
         "fig_b.png": ExtractedImage(data=dup, role=AssetRole.INFORMATIVE),
         "logo.png": ExtractedImage(
-            data=_png(Image.new("RGB", (80, 60), (10, 10, 10))),
+            data=pil_to_png_bytes(Image.new("RGB", (80, 60), (10, 10, 10))),
             role=AssetRole.DECORATIVE,
         ),
     }

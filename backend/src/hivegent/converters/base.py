@@ -6,8 +6,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import ClassVar
 from urllib.parse import urlsplit
+
+import PIL.Image
 
 from ..workers.pool import run_offloaded
 
@@ -137,13 +139,6 @@ def is_external_ref(ref: str) -> bool:
     return ref.startswith("/") or "\\" in ref
 
 
-class _PngSerializable(Protocol):
-    """Image-like object that can serialize itself into PNG bytes."""
-
-    def save(self, fp: BytesIO, format: str) -> object:
-        """Write the image to a file-like object."""
-
-
 class AssetRole(str, Enum):
     """Normalized semantic role of an extracted asset.
 
@@ -217,8 +212,15 @@ class ConversionResult:
     source_encoding: str | None = None
 
 
-def pil_to_png_bytes(img: _PngSerializable) -> bytes:
+_PNG_MODES = frozenset({"1", "L", "LA", "P", "RGB", "RGBA", "I;16"})
+
+
+def pil_to_png_bytes(img: PIL.Image.Image) -> bytes:
     """Serialize a PIL image to PNG bytes.
+
+    A mode PNG cannot store is converted first: 32-bit integers to 16-bit
+    ones, which is what Pillow wrote for them before refusing to, and every
+    other mode to RGB, or RGBA where it carries transparency.
 
     Args:
         img: A PIL ``Image`` object.
@@ -226,6 +228,11 @@ def pil_to_png_bytes(img: _PngSerializable) -> bytes:
     Returns:
         PNG-encoded bytes.
     """
+    if img.mode == "I":
+        img = img.convert("I;16")
+    elif img.mode not in _PNG_MODES:
+        img = img.convert("RGBA" if img.has_transparency_data else "RGB")
+
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
