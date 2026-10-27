@@ -275,6 +275,7 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
             accept=self.accept,
             sdk_version=self.sdk_version,
             server_message_id=self.server_message_id,
+            manage_system_prompt=self.manage_system_prompt,
         )
 
     @cached_property
