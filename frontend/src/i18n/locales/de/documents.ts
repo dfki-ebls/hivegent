@@ -24,6 +24,13 @@ export const documents = {
     fallbackAlt: "Bild",
     unavailable: "Nicht verfügbar",
   },
+  preview: {
+    previewTab: "Vorschau",
+    textTab: "Text",
+    unavailable: "Das Original kann im Browser nicht angezeigt werden",
+    sheet: "Tabellenblatt",
+    truncated: "Angezeigt werden die ersten {{rows}} Zeilen",
+  },
   filter: {
     include: "Chat hierauf lenken",
     stopIncluding: "Chat nicht mehr hierauf lenken",

@@ -22,6 +22,13 @@ export const documents = {
     fallbackAlt: "image",
     unavailable: "Unavailable",
   },
+  preview: {
+    previewTab: "Preview",
+    textTab: "Text",
+    unavailable: "The original cannot be shown in the browser",
+    sheet: "Sheet",
+    truncated: "Showing the first {{rows}} rows",
+  },
   filter: {
     include: "Point chat at this",
     stopIncluding: "Stop pointing chat at this",

@@ -13,6 +13,7 @@ import {
   type ChangeOperation,
   type DeleteKind,
   deleteAssetDescription,
+  downloadOriginal,
   generateAssetDescription,
   getDirectories,
   getDocumentChunks,
@@ -31,6 +32,7 @@ import type {
   LlmConfig,
   PipelineSpec,
 } from "@/lib/types";
+import { type DocumentKind, parseOriginal } from "@/lib/original-preview";
 import { withDirectory } from "@/lib/utils";
 import {
   awaitJobSettled,
@@ -118,6 +120,12 @@ export const documentQueries = {
     queryOptions({
       queryKey: [...all, "assets", path],
       queryFn: () => listDocumentAssets(path),
+    }),
+  /** The original of a workspace document, parsed for its *kind* of preview. */
+  original: <K extends DocumentKind>(path: string, kind: K) =>
+    queryOptions({
+      queryKey: [...all, "original", path, kind],
+      queryFn: async ({ signal }) => parseOriginal[kind](await downloadOriginal(path, signal)),
     }),
   /**
    * The indexed line count of a document, `null` when the backend has none

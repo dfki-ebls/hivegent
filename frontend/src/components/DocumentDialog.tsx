@@ -17,10 +17,17 @@ import { useConversationId } from "@/hooks/chat/use-conversation-id";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
 import { basename, centerInScroller, cn, errorMessage, isWebUrl, previewText } from "@/lib/utils";
-import { buildAuxLlmConfig, canonicalPath, formatTarget, splitScopePath } from "@/lib/api";
+import {
+  buildAuxLlmConfig,
+  canonicalPath,
+  formatTarget,
+  isWorkspacePath,
+  splitScopePath,
+} from "@/lib/api";
+import { type DocumentPreview, previewKind } from "@/lib/original-preview";
 import { documentMutations, documentQueries } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
-import { AssetMedia, isPreviewable } from "@/components/documents/AssetMedia";
+import { type PreviewTab, PreviewTabs } from "@/components/documents/PreviewTabs";
 import { EmptyState, LoadingState } from "@/components/EmptyState";
 import { ItemButton } from "@/components/RowButtons";
 import { ScrollDialogContent } from "@/components/ScrollDialogContent";
@@ -113,8 +120,8 @@ interface ContentModel {
   loading: boolean;
   error: string | null;
   assetsDir: string | null;
-  /** The original, when the browser can show it inline above its description. */
-  preview: { path: string; mime: string } | null;
+  /** The original, when the browser can render it in the preview tab. */
+  preview: DocumentPreview | null;
   metadata: ChunkedDocumentResponse | null;
 }
 
@@ -173,35 +180,38 @@ function lineStarts(content: string): number[] {
   return starts;
 }
 
-/** A scrolling pane with a centered image or video above its description. */
-function MediaPane({
-  filePath,
-  mediaType,
-  alt,
-  children,
-}: {
-  filePath: string;
-  mediaType?: string | null;
-  alt: string;
-  children?: ReactNode;
-}) {
+/** A scrolling pane with the description of an image or video and its file metadata. */
+function DescriptionPane({ children }: { children: ReactNode }) {
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <div className="flex flex-col gap-4 p-4">
-        <div className="flex justify-center">
-          <AssetMedia
-            key={filePath}
-            filePath={filePath}
-            mediaType={mediaType}
-            alt={alt}
-            wrapperClassName="min-h-32 min-w-32 rounded-xl border"
-            className="max-h-[70dvh] w-auto max-w-full object-contain"
-          />
-        </div>
-        {children}
-      </div>
+      <div className="flex flex-col gap-2 p-4">{children}</div>
     </ScrollArea>
   );
+}
+
+/** The preview of the original behind the entry at *documentPath*, if the browser can render it. */
+function entryPreview(
+  documentPath: string,
+  metadata: ChunkedDocumentResponse | null,
+): DocumentPreview | null {
+  const originalPath = metadata?.original_path;
+  const kind = originalPath ? previewKind(metadata.mime, originalPath) : null;
+
+  if (!originalPath || !kind) return null;
+
+  return kind === "media"
+    ? {
+        kind,
+        path: canonicalPath(splitScopePath(documentPath).scope, originalPath),
+        mediaType: metadata.mime,
+        alt: documentPath,
+      }
+    : { kind, documentPath };
+}
+
+/** A highlighted chunk opens on its text, anything else on the rendered original. */
+function defaultTab(view: View): PreviewTab {
+  return view.mode === "chunk" ? "text" : "preview";
 }
 
 /** The document text as one wrapped, scrolling code block filling the pane. */
@@ -352,6 +362,7 @@ function DocumentDialogBody({
   const [editFilename, setEditFilename] = useState(filename);
   const [editContent, setEditContent] = useState("");
 
+  const [tab, setTab] = useState(() => defaultTab(view));
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chunks");
   const [assetDescriptionDraft, setAssetDescriptionDraft] = useState("");
   const [isEditingAssetDescription, setIsEditingAssetDescription] = useState(false);
@@ -372,7 +383,9 @@ function DocumentDialogBody({
   );
 
   const isWeb = isWebUrl(filename);
-  const wantsManagedChunks = isManagedMode && !!filename && !isNew;
+  // The entry metadata names the original, which a fetched image already shows.
+  const wantsMetadata =
+    !!filename && !isNew && isWorkspacePath(filename) && (isManagedMode || !image);
   const needsContent =
     !!filename && !isNew && !isWeb && (isManagedMode || storedFullContent == null);
 
@@ -384,7 +397,7 @@ function DocumentDialogBody({
   });
   const chunksQuery = useQuery({
     ...documentQueries.chunks(filename),
-    enabled: wantsManagedChunks,
+    enabled: wantsMetadata,
   });
   // Loaded on the first switch to the assets tab
   // (404 when the document has none → tab stays hidden via assets_dir)
@@ -393,7 +406,7 @@ function DocumentDialogBody({
     enabled: sidebarTab === "assets",
   });
   const assetsData = assetsQuery.data;
-  const managedData = chunksQuery.data ?? null;
+  const metadata = chunksQuery.data ?? null;
   // Both responses name their files relative to the workspace of *filename*.
   const { scope } = splitScopePath(filename);
   const managedLoading = chunksQuery.isLoading;
@@ -411,7 +424,7 @@ function DocumentDialogBody({
       return {
         content: contentQuery.data ?? null,
         chunks:
-          managedData?.chunks.map((item, index) => ({
+          metadata?.chunks.map((item, index) => ({
             id: `managed:${index}`,
             content: item.text,
             badge: t(($) => $.documents.dialog.chunkNumber, { index }),
@@ -420,14 +433,9 @@ function DocumentDialogBody({
           })) ?? [],
         loading: isLoading || managedLoading,
         error: chunksQuery.error && errorMessage(chunksQuery.error),
-        assetsDir: managedData?.assets_dir ?? null,
-        // Keyed on the original's media type rather than the entry kind, so an SVG
-        // indexed as text previews like a captioned raster image.
-        preview:
-          managedData?.original_path && isPreviewable(managedData.mime)
-            ? { path: canonicalPath(scope, managedData.original_path), mime: managedData.mime }
-            : null,
-        metadata: managedData,
+        assetsDir: metadata?.assets_dir ?? null,
+        preview: entryPreview(filename, metadata),
+        metadata,
       };
     }
 
@@ -441,7 +449,9 @@ function DocumentDialogBody({
       loading: isLoading,
       error: null,
       assetsDir: null,
-      preview: image ? { path: image.filePath, mime: image.mediaType } : null,
+      preview: image
+        ? { kind: "media", path: image.filePath, mediaType: image.mediaType, alt: filename }
+        : entryPreview(filename, metadata),
       metadata: null,
     };
   }, [
@@ -450,8 +460,7 @@ function DocumentDialogBody({
     isLoading,
     isManagedMode,
     contentQuery.data,
-    managedData,
-    scope,
+    metadata,
     chunksQuery.error,
     managedLoading,
     chunks,
@@ -507,9 +516,10 @@ function DocumentDialogBody({
   // An uploaded image or video is shown like an extracted asset (the media, its
   // description, and file metadata), which drops the chunk/asset sidebar entirely.
   const preview = contentModel.preview;
+  const mediaEntry = isManagedMode && preview?.kind === "media" ? preview : null;
   const hasAssets = contentModel.assetsDir != null;
   const hasSidebar =
-    isNew || (isManagedMode && preview)
+    isNew || mediaEntry
       ? false
       : isManagedMode
         ? contentModel.loading || contentModel.chunks.length > 0 || hasAssets
@@ -518,7 +528,10 @@ function DocumentDialogBody({
   // Switch the main pane, leaving any asset description edit behind.
   const showView = (next: View) => {
     setIsEditingAssetDescription(false);
-    startTransition(() => setView(next));
+    startTransition(() => {
+      setView(next);
+      setTab(defaultTab(next));
+    });
   };
 
   const renderMainContent = () => {
@@ -570,28 +583,42 @@ function DocumentDialogBody({
       );
     }
 
+    // An extracted asset previews itself, any other view the entry's original.
+    const shownPreview: DocumentPreview | null = activeAsset
+      ? {
+          kind: "media",
+          path: canonicalPath(scope, activeAsset.path),
+          mediaType: activeAsset.media_type,
+          alt: activeAsset.description || activeAsset.name,
+        }
+      : preview;
+
+    return (
+      <PreviewTabs preview={shownPreview} tab={tab} onTabChange={setTab}>
+        {activeChunk?.originLabel && (
+          <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
+            <ChunkBadges chunk={activeChunk} />
+          </div>
+        )}
+        {renderText()}
+      </PreviewTabs>
+    );
+  };
+
+  const renderText = () => {
     if (isLoading) return <LoadingState />;
 
     // Full-doc markdown view
     if (view.mode === "full-doc") {
-      // Previewable entry: mirror the extracted-asset view, the media itself,
-      // its description (the source for a markup image), and file metadata badges.
-      if (preview) {
+      // An uploaded image or video mirrors the extracted-asset view, its description
+      // (the source for a markup image) and file metadata badges.
+      if (mediaEntry) {
         return (
-          <MediaPane filePath={preview.path} mediaType={preview.mime} alt={filename}>
-            {isManagedMode ? (
-              <div className="flex flex-col gap-2">
-                <DescriptionHeading />
-                <DescriptionBody markdown={fullContent} />
-                <FileMetaBadges name={basename(preview.path)} mediaType={preview.mime} />
-              </div>
-            ) : (
-              // A fetched image doc shows its description below once read.
-              fullContent && (
-                <WorkspaceMarkdown documentPath={filename}>{fullContent}</WorkspaceMarkdown>
-              )
-            )}
-          </MediaPane>
+          <DescriptionPane>
+            <DescriptionHeading />
+            <DescriptionBody markdown={fullContent} />
+            <FileMetaBadges name={basename(mediaEntry.path)} mediaType={mediaEntry.mediaType} />
+          </DescriptionPane>
         );
       }
 
@@ -620,7 +647,7 @@ function DocumentDialogBody({
             description={
               isWeb
                 ? t(($) => $.documents.dialog.pageNotFetched)
-                : !filename.toLowerCase().endsWith(".md")
+                : !preview && !filename.toLowerCase().endsWith(".md")
                   ? t(($) => $.documents.dialog.binaryFile)
                   : t(($) => $.documents.dialog.contentUnavailable)
             }
@@ -639,120 +666,113 @@ function DocumentDialogBody({
 
     // Asset view
     if (activeAsset) {
-      const assetPath = canonicalPath(scope, activeAsset.path);
       const assetActionPending = pendingAssetAction !== null;
 
       return (
-        <MediaPane
-          filePath={assetPath}
-          mediaType={activeAsset.media_type}
-          alt={activeAsset.description || activeAsset.name}
-        >
-          <div className="flex flex-col gap-2">
-            <DescriptionHeading
-              actions={
-                editable &&
-                !isEditingAssetDescription && (
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      disabled={assetActionPending}
-                      // Alt-text uses the auxiliary model, like the import-time describe pipeline.
-                      onClick={() =>
-                        assetAction.mutate({
-                          action: "generate",
-                          name: activeAsset.name,
-                          llm: buildAuxLlmConfig(overrides),
-                        })
-                      }
-                    >
-                      {pendingAssetAction === "generate" ? (
-                        <Spinner aria-hidden data-icon="inline-start" />
-                      ) : (
-                        <Sparkles data-icon="inline-start" />
-                      )}
-                      {t(($) => $.documents.dialog.generate)}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      disabled={assetActionPending}
-                      onClick={() => {
-                        setAssetDescriptionDraft(activeAsset.description);
-                        setIsEditingAssetDescription(true);
-                      }}
-                    >
-                      <Pencil data-icon="inline-start" />
-                      {t(($) => $.common.actions.edit)}
-                    </Button>
-                    {activeAsset.description && (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        disabled={assetActionPending}
-                        onClick={() =>
-                          assetAction.mutate({ action: "delete", name: activeAsset.name })
-                        }
-                      >
-                        {pendingAssetAction === "delete" ? (
-                          <Spinner aria-hidden data-icon="inline-start" />
-                        ) : (
-                          <Trash2 data-icon="inline-start" />
-                        )}
-                        {t(($) => $.common.actions.delete)}
-                      </Button>
-                    )}
-                  </div>
-                )
-              }
-            />
-
-            {isEditingAssetDescription ? (
-              <>
-                <Textarea
-                  aria-label={t(($) => $.documents.dialog.descriptionHeading)}
-                  value={assetDescriptionDraft}
-                  onChange={(e) => setAssetDescriptionDraft(e.target.value)}
-                  className="min-h-36 font-mono text-sm"
-                />
-                <div className="flex gap-2">
+        <DescriptionPane>
+          <DescriptionHeading
+            actions={
+              editable &&
+              !isEditingAssetDescription && (
+                <div className="flex gap-1">
                   <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setIsEditingAssetDescription(false)}
-                  >
-                    {t(($) => $.common.actions.cancel)}
-                  </Button>
-                  <Button
-                    size="sm"
+                    variant="ghost"
+                    size="xs"
                     disabled={assetActionPending}
+                    // Alt-text uses the auxiliary model, like the import-time describe pipeline.
                     onClick={() =>
                       assetAction.mutate({
-                        action: "save",
+                        action: "generate",
                         name: activeAsset.name,
-                        description: assetDescriptionDraft,
+                        llm: buildAuxLlmConfig(overrides),
                       })
                     }
                   >
-                    {pendingAssetAction === "save" && (
+                    {pendingAssetAction === "generate" ? (
                       <Spinner aria-hidden data-icon="inline-start" />
+                    ) : (
+                      <Sparkles data-icon="inline-start" />
                     )}
-                    {t(($) => $.common.actions.save)}
+                    {t(($) => $.documents.dialog.generate)}
                   </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    disabled={assetActionPending}
+                    onClick={() => {
+                      setAssetDescriptionDraft(activeAsset.description);
+                      setIsEditingAssetDescription(true);
+                    }}
+                  >
+                    <Pencil data-icon="inline-start" />
+                    {t(($) => $.common.actions.edit)}
+                  </Button>
+                  {activeAsset.description && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      disabled={assetActionPending}
+                      onClick={() =>
+                        assetAction.mutate({ action: "delete", name: activeAsset.name })
+                      }
+                    >
+                      {pendingAssetAction === "delete" ? (
+                        <Spinner aria-hidden data-icon="inline-start" />
+                      ) : (
+                        <Trash2 data-icon="inline-start" />
+                      )}
+                      {t(($) => $.common.actions.delete)}
+                    </Button>
+                  )}
                 </div>
-              </>
-            ) : (
-              <DescriptionBody markdown={activeAsset.description} />
-            )}
+              )
+            }
+          />
 
-            <FileMetaBadges
-              name={activeAsset.name}
-              mediaType={activeAsset.media_type}
-              sizeBytes={activeAsset.size_bytes}
-            />
-          </div>
-        </MediaPane>
+          {isEditingAssetDescription ? (
+            <>
+              <Textarea
+                aria-label={t(($) => $.documents.dialog.descriptionHeading)}
+                value={assetDescriptionDraft}
+                onChange={(e) => setAssetDescriptionDraft(e.target.value)}
+                className="min-h-36 font-mono text-sm"
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setIsEditingAssetDescription(false)}
+                >
+                  {t(($) => $.common.actions.cancel)}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={assetActionPending}
+                  onClick={() =>
+                    assetAction.mutate({
+                      action: "save",
+                      name: activeAsset.name,
+                      description: assetDescriptionDraft,
+                    })
+                  }
+                >
+                  {pendingAssetAction === "save" && (
+                    <Spinner aria-hidden data-icon="inline-start" />
+                  )}
+                  {t(($) => $.common.actions.save)}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <DescriptionBody markdown={activeAsset.description} />
+          )}
+
+          <FileMetaBadges
+            name={activeAsset.name}
+            mediaType={activeAsset.media_type}
+            sizeBytes={activeAsset.size_bytes}
+          />
+        </DescriptionPane>
       );
     }
 
@@ -1015,11 +1035,6 @@ function DocumentDialogBody({
         {renderSidebar()}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {activeChunk?.originLabel && (
-            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-              <ChunkBadges chunk={activeChunk} />
-            </div>
-          )}
           {renderMainContent()}
         </div>
       </div>

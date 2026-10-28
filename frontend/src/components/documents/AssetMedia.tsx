@@ -16,11 +16,6 @@ interface AssetMediaProps {
   wrapperClassName?: string;
 }
 
-/** Whether the browser can be asked to show a file of *mediaType* inline. */
-export function isPreviewable(mediaType: string | null | undefined): mediaType is string {
-  return !!mediaType && (mediaType.startsWith("image/") || mediaType.startsWith("video/"));
-}
-
 /**
  * Lazily fetches a workspace image or video and renders it once scrolled into view.
  * A format the browser cannot decode (TIFF outside Safari, AVI) falls back like a failed fetch.

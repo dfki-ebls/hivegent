@@ -113,6 +113,15 @@ Every browser receives a copy of the bundle, so the licenses travel with it.
 A plugin in `vite.config.ts` prefixes it with the project's license and additional terms from the repo root, the latter in their canonical German version.
 It walks the JS module graph, so CSS has to be imported from JS to be listed, like the Inter font in `main.tsx`.
 
+## Originals preview in a tab
+
+`PreviewTabs` (`components/documents/PreviewTabs.tsx`) shows every document, uploaded image, and extracted asset of the document dialog the same way, a Preview tab with the original and a Text tab with its markdown or plain text projection.
+The tabs only appear when the original has a renderer, picked by `previewKind` (`lib/original-preview.ts`) from its media type, else its extension, and a highlighted chunk opens on the text.
+Images and videos load through the asset route as before.
+A PDF goes to the browser's own viewer in an unsandboxed `iframe`, since Chromium refuses PDFs in sandboxed frames, on an object URL retyped as `application/pdf`, so no pdf.js is bundled.
+A DOCX is converted by `mammoth` and sanitized by `dompurify`, and an XLSX is read by `read-excel-file` into a plain table of its first 500 rows, one sheet at a time.
+Only the active tab mounts, so `documentQueries.original` fetches the original from `/documents/original` only once the preview is opened, and the parsers are imported dynamically, keeping them out of the main bundle.
+
 ## Moves and deletes are one request
 
 Every move, delete, and new directory is one `applyChanges` request that the backend applies all or nothing.

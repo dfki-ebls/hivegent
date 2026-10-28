@@ -46,6 +46,8 @@ Markdown-Dokumente können Sie auch direkt im Browser erstellen und bearbeiten.
 ### Dokumente verwalten
 
 Sie können jedes Dokument ansehen, herunterladen, verschieben oder löschen.
+Ein Dokument, dessen Original der Browser anzeigen kann, etwa ein PDF, ein Word-Dokument, eine Tabelle, ein Bild oder ein Video, öffnet sich im Tab Vorschau mit dem Original, neben dem Tab Text mit dem umgewandelten Text.
+Eine Passage, die der Assistent gelesen hat, öffnet sich im Tab Text, im Dokument hervorgehoben.
 Außerdem können Sie Dokumente in die aktuelle Unterhaltung einschließen oder daraus ausschließen.
 
 ## Unterhaltungen

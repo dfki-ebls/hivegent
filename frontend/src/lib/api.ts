@@ -178,8 +178,8 @@ async function requestText(url: string, error: ApiError): Promise<string> {
   return (await checkedResponse(url, error)).text();
 }
 
-async function requestBlob(url: string, error: ApiError): Promise<Blob> {
-  return (await checkedResponse(url, error)).blob();
+async function requestBlob(url: string, error: ApiError, options?: RequestInit): Promise<Blob> {
+  return (await checkedResponse(url, error, options)).blob();
 }
 
 function jsonRequest(method: "POST" | "PUT" | "PATCH" | "DELETE", body: unknown): RequestInit {
@@ -277,6 +277,13 @@ export function splitScopePath(canonical: string): { scope: string; local: strin
   return slash === -1
     ? { scope: canonical, local: "" }
     : { scope: canonical.slice(0, slash), local: canonical.slice(slash + 1) };
+}
+
+/** Whether *path* names a document of a user or group workspace, not a web page or a `/tmp` file. */
+export function isWorkspacePath(path: string): boolean {
+  const { scope } = splitScopePath(path);
+
+  return scope === PERSONAL_SCOPE || (scope.startsWith("@") && scope.length > 1);
 }
 
 /**
@@ -683,10 +690,11 @@ export async function fetchDocumentAsset(
 }
 
 /** Download the original binary file for a document. */
-export async function downloadOriginal(filepath: string): Promise<Blob> {
+export async function downloadOriginal(filepath: string, signal?: AbortSignal): Promise<Blob> {
   return requestBlob(
     `${API_BASE_URL}/api/documents/original/${encodeFilePath(filepath)}`,
     "download",
+    { signal },
   );
 }
 

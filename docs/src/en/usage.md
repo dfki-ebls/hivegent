@@ -46,6 +46,8 @@ You can also create and edit Markdown documents in the browser.
 ### Managing documents
 
 You can view, download, move, or delete each document.
+A document whose original the browser can display, such as a PDF, a Word document, a spreadsheet, an image, or a video, opens on a Preview tab with the original, next to a Text tab with the converted text.
+A passage the assistant read opens on the Text tab, highlighted in the document.
 You can also include or exclude documents from the current conversation.
 
 ## Conversations
