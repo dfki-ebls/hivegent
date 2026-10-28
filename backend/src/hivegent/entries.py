@@ -239,6 +239,11 @@ class EntryPaths:
             if path is not None
         )
 
+    @property
+    def source_path(self) -> str:
+        """The original the entry was made from, else its description."""
+        return self.original_path or self.description_path
+
     def at(self, stem_path: str) -> Self:
         """The entry relocated to *stem_path*, every companion it has renamed along.
 

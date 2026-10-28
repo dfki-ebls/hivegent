@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "number",
+      "const": 3
+    },
+    "author": {
+      "default": "",
+      "type": "string"
+    },
+    "project": {
+      "default": "",
+      "type": "string"
+    },
+    "notes": {
+      "default": "",
+      "type": "string"
+    },
+    "language": {
+      "default": "en",
+      "type": "string",
+      "enum": [
+        "en",
+        "de"
+      ]
+    },
+    "createdAt": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "updatedAt": {
+      "$ref": "#/$defs/Timestamp"
+    },
+    "annotations": {
+      "default": {},
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/Annotation"
+      }
+    },
+    "documents": {
+      "default": {},
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/Document"
+      }
+    }
+  },
+  "required": [
+    "version",
+    "createdAt",
+    "updatedAt"
+  ],
+  "title": "AnnotationData",
+  "$defs": {
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Annotation": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1
+        },
+        "questionType": {
+          "type": "string",
+          "enum": [
+            "simple",
+            "simple_w_condition",
+            "comparison",
+            "aggregation",
+            "set",
+            "multi-hop",
+            "post-processing",
+            "false_premise"
+          ]
+        },
+        "answerability": {
+          "default": "answerable",
+          "type": "string",
+          "enum": [
+            "answerable",
+            "partial",
+            "unanswerable"
+          ]
+        },
+        "passages": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Passage"
+          }
+        },
+        "response": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keyFacts": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KeyFact"
+          }
+        },
+        "origin": {
+          "default": "",
+          "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "type": "string"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "query",
+        "questionType",
+        "response",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Passage": {
+      "type": "object",
+      "properties": {
+        "documentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "default": "",
+          "type": "string"
+        },
+        "grade": {
+          "type": "string",
+          "enum": [
+            "needed",
+            "helpful",
+            "misleading"
+          ]
+        }
+      },
+      "required": [
+        "documentId",
+        "text",
+        "grade"
+      ]
+    },
+    "KeyFact": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "importance": {
+          "type": "string",
+          "enum": [
+            "must",
+            "nice"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "importance"
+      ]
+    },
+    "Document": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "notes": {
+          "default": "",
+          "type": "string"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "name",
+        "size",
+        "sha256",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  }
+}

@@ -68,7 +68,7 @@ from .directories import (
 from .documents import rechunk
 from .indexing import sync_entries_from_disk
 from .locks import inflight_stems
-from .metadata import find_original, resolve_entry
+from .metadata import find_original, find_source, resolve_entry
 from .operations import Location, Upload, route
 from .uploads import reconvert, replace_original, upload
 
@@ -84,6 +84,7 @@ __all__ = [
     "delete_workspace_root",
     "describe",
     "find_original",
+    "find_source",
     "generate_asset_description",
     "inflight_stems",
     "plan_changeset",

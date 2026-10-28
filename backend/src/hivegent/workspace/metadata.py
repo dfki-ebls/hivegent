@@ -7,6 +7,7 @@ chunks.
 """
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -16,10 +17,11 @@ from ..config import settings
 from ..converters import EntryProjection, projection_for
 from ..db import documents as db_documents
 from ..entries import ContentStat, EntryPaths, entry_exists, resolve_entry_paths
+from ..l10n import Localized
 from ..store import Casebase
 from .paths import _shown, document_not_found, no_original
 
-__all__ = ["current_entry_metadata", "find_original", "resolve_entry"]
+__all__ = ["current_entry_metadata", "find_original", "find_source", "resolve_entry"]
 
 
 def _merge_entry_paths(
@@ -66,10 +68,35 @@ def _entry_paths(
 
 async def resolve_entry(store: Casebase, reference: str) -> EntryPaths:
     """Resolve a logical entry's paths from disk, overlaid with its SQL row."""
-    return _merge_entry_paths(
-        resolve_entry_paths(store.workspace_dir(settings.data_dir), reference),
-        await db_documents.get_entry_metadata(store, reference),
+    resolved, metadata = await asyncio.gather(
+        asyncio.to_thread(
+            lambda: resolve_entry_paths(store.workspace_dir(settings.data_dir), reference)
+        ),
+        db_documents.get_entry_metadata(store, reference),
     )
+
+    return _merge_entry_paths(resolved, metadata)
+
+
+async def _find_file(
+    store: Casebase,
+    reference: str,
+    local: str | None,
+    missing: Callable[[str], Localized[str]],
+) -> Path:
+    def locate() -> Path | None:
+        full_path = store.locate(local) if local else None
+
+        return full_path if full_path is not None and full_path.is_file() else None
+
+    full_path = await asyncio.to_thread(locate)
+
+    if full_path is None:
+        raise HTTPException(
+            status_code=404, detail=missing(_shown(store, reference)).current
+        )
+
+    return full_path
 
 
 async def find_original(store: Casebase, reference: str) -> Path:
@@ -78,21 +105,20 @@ async def find_original(store: Casebase, reference: str) -> Path:
     Raises:
         HTTPException: When the entry has no original on disk.
     """
-    original_path = (await resolve_entry(store, reference)).original_path
+    entry = await resolve_entry(store, reference)
 
-    def locate() -> Path | None:
-        full_path = store.locate(original_path) if original_path else None
+    return await _find_file(store, reference, entry.original_path, no_original)
 
-        return full_path if full_path is not None and full_path.is_file() else None
 
-    full_path = await asyncio.to_thread(locate)
+async def find_source(store: Casebase, reference: str) -> Path:
+    """The absolute path of *reference*'s original, else its description.
 
-    if full_path is None:
-        raise HTTPException(
-            status_code=404, detail=no_original(_shown(store, reference)).current
-        )
+    Raises:
+        HTTPException: When the entry has neither on disk.
+    """
+    entry = await resolve_entry(store, reference)
 
-    return full_path
+    return await _find_file(store, reference, entry.source_path, document_not_found)
 
 
 async def current_entry_metadata(store: Casebase, reference: str) -> EntryMetadata:

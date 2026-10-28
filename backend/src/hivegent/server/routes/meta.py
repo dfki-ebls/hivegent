@@ -86,6 +86,7 @@ async def get_settings(
             max_count=settings.multimodal.max_images,
         ),
         transparency=get_transparency_config(),
+        ragold_url=None if settings.ragold.url is None else str(settings.ragold.url),
     )
 
 

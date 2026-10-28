@@ -635,6 +635,9 @@ class SettingsResponse(BaseModel):
     transparency: TransparencyConfig = Field(
         description="AI-generated text marking and detection configuration"
     )
+    ragold_url: str | None = Field(
+        description="Where RAGold is served, or null when the transfer is hidden"
+    )
 
 
 class OidcPublicConfig(BaseModel):

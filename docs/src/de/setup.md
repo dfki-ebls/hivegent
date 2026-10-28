@@ -62,6 +62,8 @@ Häufige Ergänzungen sind `HIVEGENT_TOOLS__SEARCH_URL` für die Websuche, `HIVE
 Voreingestellt ist `["list_conversations", "get_conversation"]`, da Unteragenten frühere Unterhaltungen bereits erreichen.
 Ein unbekannter Name verhindert den Serverstart.
 
+`HIVEGENT_RAGOLD__URL` gibt an, wo eine RAGold-Instanz läuft, wodurch Nutzer eine Antwort mit ihren Dokumenten als Goldstandard-Eintrag übertragen können.
+
 Unterhaltungsdateien (`/tmp` und vorgemerkte Änderungen) werden nach `conversations.ttl_hours` ohne Aktivität gelöscht (Standard 72), einstellbar mit `HIVEGENT_CONVERSATIONS__TTL_HOURS`.
 
 Von Benutzern angegebene LLM- und MCP-URLs bleiben deaktiviert, bis ihre Hosts unter `[security.user_urls] allow_hosts` stehen.

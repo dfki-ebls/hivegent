@@ -8,7 +8,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from pydantic import BaseModel, Field, PositiveInt, SecretStr
+from pydantic import BaseModel, Field, HttpUrl, PositiveInt, SecretStr
 from pydantic_settings import (
     BaseSettings,
     NestedSecretsSettingsSource,
@@ -44,6 +44,7 @@ __all__ = [
     "McpSettings",
     "MultimodalSettings",
     "NetworkSettings",
+    "RagoldSettings",
     "RerankSettings",
     "SecuritySettings",
     "Settings",
@@ -466,6 +467,18 @@ class TransparencySettings(BaseModel):
     #: and exports signed before a planned rotation still verify. Leave a
     #: compromised key out, since it could sign backdated reports.
     retired_public_keys: list[str] = []
+
+
+class RagoldSettings(BaseModel):
+    """Hand-off of conversation turns to RAGold as gold benchmark entries.
+
+    ``url`` is where the RAGold app is served, and the transfer is hidden
+    while it is unset.
+
+    Configurable via ``HIVEGENT_RAGOLD__*`` environment variables.
+    """
+
+    url: HttpUrl | None = None
 
 
 class EmbeddingSettings(BaseModel):
@@ -1088,6 +1101,7 @@ class Settings(BaseSettings):
     logging: LoggingSettings = LoggingSettings()
     logfire: LogfireSettings = LogfireSettings()
     transparency: TransparencySettings | None = None
+    ragold: RagoldSettings = RagoldSettings()
     mcp: McpSettings = McpSettings()
     claims: ClaimSettings = ClaimSettings()
     auth: AuthSettings = AuthSettings()

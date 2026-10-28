@@ -22,9 +22,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.ui import NativeEvent
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
-from ... import conversation_files
+from ... import conversation_files, workspace
 from ...agents import (
     RunPrefix,
     UserDeps,
@@ -42,7 +42,7 @@ from ...agents.compaction import (
 )
 from ...agents.subagent_events import SubagentUpdate
 from ...auth import get_current_user
-from ...config import settings
+from ...config import RagoldSettings, settings
 from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
 from ...converters.images import sanitize_image_bytes
 from ...db._common import new_id
@@ -66,11 +66,12 @@ from ...db.conversations import (
     set_conversation_title,
 )
 from ...humanize import format_bytes, pluralize
-from ...l10n import Localized
+from ...l10n import Localized, current_language
 from ...llm import (
     model_from_config,
     thinking_model_settings,
 )
+from ...ragold import RagoldRequest, build_archive, iter_archive
 from ...store import User
 from ...tools.formatting import BLOCK_SEP
 from ...transparency import sign_provenance
@@ -90,6 +91,7 @@ from ..common import (
     build_run_prefix,
     found,
     prepare_llm_config,
+    resolve_workspace_path,
 )
 from ..operations import attachment_disposition
 from ..vercel import (
@@ -168,6 +170,9 @@ def _too_many_images(cap: int) -> Localized[str]:
 
 
 _INVALID_CHAT_REQUEST = Localized(en="Invalid chat request", de="Ungültige Chatanfrage")
+_RAGOLD_DISABLED = Localized(
+    en="RAGold export is disabled", de="Der RAGold-Export ist deaktiviert"
+)
 
 
 async def _owned_conversation(
@@ -183,6 +188,17 @@ async def _owned_conversation(
 
 
 type Owned = Annotated[OwnedConversation, Depends(_owned_conversation)]
+
+
+def _require_ragold() -> RagoldSettings:
+    """Hide the RAGold transfer while it is not configured."""
+    if settings.ragold.url is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _RAGOLD_DISABLED.current)
+
+    return settings.ragold
+
+
+type RagoldConfigured = Annotated[RagoldSettings, Depends(_require_ragold)]
 
 
 @router.get("/conversations")
@@ -360,6 +376,40 @@ async def export_conversation_route(conversation: Owned) -> Response:
                 f"conversation-{conversation.id}.json"
             )
         },
+    )
+
+
+@router.post("/conversations/{conversation_id}/ragold")
+async def export_ragold_route(
+    conversation: Owned, request: RagoldRequest, _ragold: RagoldConfigured
+) -> StreamingResponse:
+    """Build one RAGold gold entry with its original documents as a zip.
+
+    Every document resolves with the caller's access and the zip is complete
+    before the first byte is sent, so a failure is an HTTP error, never a
+    truncated archive.
+    """
+    user = conversation.user
+    paths = list(dict.fromkeys(request.documents))
+    # Every scope is checked before any document is read.
+    located = [resolve_workspace_path(user, path) for path in paths]
+    sources = await asyncio.gather(
+        *(workspace.find_source(store, safe) for store, safe in located)
+    )
+    files = dict(zip(paths, sources, strict=True))
+
+    spool = await asyncio.to_thread(
+        build_archive,
+        request,
+        files,
+        author=user.name or "",
+        language=current_language(),
+    )
+
+    return StreamingResponse(
+        iter_archive(spool),
+        media_type="application/zip",
+        headers={"Content-Disposition": attachment_disposition("ragold.zip")},
     )
 
 

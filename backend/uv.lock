@@ -1449,6 +1449,7 @@ dependencies = [
     { name = "httpx2" },
     { name = "joserfc" },
     { name = "logfire" },
+    { name = "markdown-it-py" },
     { name = "markdownify" },
     { name = "nanoid" },
     { name = "openai" },
@@ -1499,6 +1500,7 @@ semantic = [
 dev = [
     { name = "dirty-equals" },
     { name = "inline-snapshot" },
+    { name = "jsonschema" },
     { name = "openpyxl" },
     { name = "pydantic-evals" },
     { name = "pytest" },
@@ -1523,6 +1525,7 @@ requires-dist = [
     { name = "joserfc", specifier = ">=1,<2" },
     { name = "kreuzberg", marker = "extra == 'kreuzberg'", specifier = ">=4,<5" },
     { name = "logfire", specifier = ">=5,<6" },
+    { name = "markdown-it-py", specifier = ">=4,<5" },
     { name = "markdownify", specifier = ">=1,<2" },
     { name = "markitdown", extras = ["docx", "outlook", "pdf", "pptx", "xls", "xlsx"], marker = "extra == 'markitdown'", specifier = ">=0.1,<1" },
     { name = "nanoid", specifier = ">=2,<3" },
@@ -1553,6 +1556,7 @@ provides-extras = ["all", "docling", "kreuzberg", "markitdown", "pdf-oxide", "se
 dev = [
     { name = "dirty-equals", specifier = ">=0.10,<1" },
     { name = "inline-snapshot", specifier = ">=0.30,<1" },
+    { name = "jsonschema", specifier = ">=4,<5" },
     { name = "openpyxl", specifier = ">=3,<4" },
     { name = "pydantic-evals", specifier = ">=2,<3" },
     { name = "pytest", specifier = ">=9,<10" },

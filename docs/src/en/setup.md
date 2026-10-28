@@ -62,6 +62,8 @@ Common extras are `HIVEGENT_TOOLS__SEARCH_URL` for web search, `HIVEGENT_SECURIT
 It defaults to `["list_conversations", "get_conversation"]`, since sub-agents already reach past conversations.
 An unknown name stops the server at startup.
 
+`HIVEGENT_RAGOLD__URL` names where a RAGold instance is served, which lets users transfer a reply with its documents as a gold benchmark entry.
+
 Conversation files (`/tmp` and staged changes) are deleted after `conversations.ttl_hours` of inactivity (default 72), set with `HIVEGENT_CONVERSATIONS__TTL_HOURS`.
 
 User-provided LLM and MCP URLs stay disabled until their hosts are listed under `[security.user_urls] allow_hosts`.

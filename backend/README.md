@@ -290,6 +290,17 @@ Opening the document never applies a historical line anchor to current content.
 A chat turn attaches only images in `converters.INGESTIBLE_IMAGE_MEDIA_TYPES`, so nothing converts on the chat's latency path, and anything else belongs in a workspace, which indexes it once instead of re-sending it every turn.
 `/settings` serves the same table and size cap as `AttachmentLimits`.
 
+### RAGold entries are built from what the turn stored
+
+`POST /conversations/{id}/ragold` turns one edited turn into a RAGold zip (schema version 3): `annotations.json` with one entry and every listed document under `files/<documentId>/<name>`.
+The client sends canonical workspace paths, which resolve with the caller's access like any document route, and ships the original file, or the markdown of a markdown-only entry (`find_source`).
+Passage text comes from the markdown projection, so its `location` stays empty, and key facts are left to RAGold.
+Since RAGold matches passages against the rendered original, `RagoldPassage` turns their markdown into plain text (`plain_text`), one block per line with table cells joined by tabs, and refuses a passage of markdown syntax alone with a 422.
+The text still differs from RAGold's rendering in whitespace and line breaks, which RAGold and its evaluators tolerate by normalizing both sides as its README specifies.
+The zip is spooled in full, hashing each file while it is copied, before the first byte is sent, so a failure is an HTTP error rather than a truncated archive.
+`tests/fixtures/ragold-schema.json` is RAGold's published schema, which the contract test validates against, so refresh it when RAGold changes the format.
+The route and the client action are hidden while `settings.ragold.url` is unset.
+
 ## Document tools
 
 The tools under `tools/` must not read `hivegent.config.settings`: every tunable is a dataclass field with a default set where `agents/tools/*` instantiates the tool.

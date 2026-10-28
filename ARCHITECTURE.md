@@ -52,6 +52,7 @@ flowchart LR
 - REST for documents, conversations, and settings.
 - Vercel AI Data Stream Protocol for chat, Server-Sent Events for job progress and workspace changes.
 - Chat configuration (model, reasoning effort, mode, document filters, tools) travels with each chat request.
+- RAGold receives a reply as a gold benchmark entry: the backend builds the zip (`POST /api/conversations/{id}/ragold`) and the SPA hands it to a RAGold tab by `postMessage`, enabled by `settings.ragold.url` (env `HIVEGENT_RAGOLD__URL`).
 - The browser language (English or German) is sent as `Accept-Language` on every request.
   It selects the language of backend errors, job titles, and the agent's instructions.
 
