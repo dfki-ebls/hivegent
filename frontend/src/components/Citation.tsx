@@ -15,15 +15,8 @@ import { Dialog, DialogDescription, DialogHeader, DialogTitle } from "@/componen
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { keyPrefix } from "@/i18n";
-import {
-  chunkOriginLabel,
-  chunkPositionLabel,
-  type FetchedChunk,
-  isLinePosition,
-  lineBounds,
-  type LinePosition,
-  parseLinePositions,
-} from "@/lib/types";
+import { type ResolvedPosition, resolveCitation } from "@/lib/citations";
+import { chunkOriginLabel, chunkPositionLabel } from "@/lib/types";
 import { basename } from "@/lib/utils";
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
@@ -35,59 +28,19 @@ interface CitationProps extends ExtraProps {
   line?: string;
 }
 
-interface Evidence {
-  chunk: FetchedChunk;
-  startLine: number;
-  text: string;
-}
-
 /** The dialog a citation opens: the current document, or the evidence of one of its positions. */
 type DialogTarget = "document" | number;
-
-function evidenceFromChunk(chunk: FetchedChunk, position: LinePosition): Evidence | null {
-  const contentLines = chunk.content.split("\n");
-  const chunkBounds: [number, number] | undefined = isLinePosition(chunk.position)
-    ? lineBounds(chunk.position)
-    : chunk.position.type === "full_document"
-      ? [1, contentLines.length]
-      : undefined;
-  if (!chunkBounds) return null;
-
-  const [start, end] = lineBounds(position);
-  const [chunkStart, chunkEnd] = chunkBounds;
-  if (start < chunkStart || end > chunkEnd) return null;
-
-  const firstIndex = start - chunkStart;
-  const selected = contentLines.slice(firstIndex, firstIndex + end - start + 1);
-  if (selected.length !== end - start + 1) return null;
-
-  return { chunk, startLine: start, text: selected.join("\n") };
-}
-
-function evidenceForPosition(chunks: FetchedChunk[], position: LinePosition): Evidence[] {
-  const unique = new Map<string, Evidence>();
-
-  for (const chunk of chunks) {
-    const evidence = evidenceFromChunk(chunk, position);
-    if (!evidence) continue;
-    if (!unique.has(evidence.text)) unique.set(evidence.text, evidence);
-  }
-
-  return [...unique.values()];
-}
 
 function EvidenceDialog({
   open,
   onOpenChange,
   filename,
-  position,
-  evidence,
+  resolved: { position, evidence },
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   filename: string;
-  position: LinePosition;
-  evidence: Evidence[];
+  resolved: ResolvedPosition;
 }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
@@ -130,15 +83,11 @@ export function Citation({ src, line }: CitationProps) {
     src ? state.documents.get(src) : undefined,
   );
 
-  const positions = useMemo(() => parseLinePositions(line), [line]);
   const documentChunks = useMemo(
     () => (document ? chunksForDocument(document, chunks) : []),
     [document, chunks],
   );
-  const evidence = useMemo(
-    () => positions.map((position) => evidenceForPosition(documentChunks, position)),
-    [documentChunks, positions],
-  );
+  const positions = useMemo(() => resolveCitation(documentChunks, line), [documentChunks, line]);
 
   if (!src) return null;
 
@@ -153,8 +102,8 @@ export function Citation({ src, line }: CitationProps) {
         </TooltipTrigger>
         <TooltipContent>{t(($) => $.openDocument)}</TooltipContent>
       </Tooltip>
-      {positions.map((position, index) => {
-        if (evidence[index].length === 0) return null;
+      {positions.map(({ position, evidence }, index) => {
+        if (evidence.length === 0) return null;
 
         return (
           <Tooltip key={index}>
@@ -173,8 +122,7 @@ export function Citation({ src, line }: CitationProps) {
           open={open}
           onOpenChange={setOpen}
           filename={src}
-          position={positions[target]}
-          evidence={evidence[target]}
+          resolved={positions[target]}
         />
       )}
     </span>
