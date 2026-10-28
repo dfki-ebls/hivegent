@@ -114,6 +114,7 @@ describe("getSettings", () => {
         contact_email: "operator@example.com",
         minimum_watermark_tokens: 200,
       },
+      ragold_url: null,
     };
 
     vi.mocked(fetch).mockResolvedValueOnce(

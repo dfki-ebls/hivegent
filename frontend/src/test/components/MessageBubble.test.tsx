@@ -1,11 +1,14 @@
-import { render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { screen } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
 import { MessageBubble } from "@/components/chat/MessageBubble";
+import { renderWithQueries } from "@/test/render";
+
+vi.mock("@/oidc", () => ({ useOidc: () => ({ isUserLoggedIn: false }) }));
 
 it("offers to copy each text part right after it, even when a tool call follows", () => {
   const noop = () => {};
 
-  render(
+  renderWithQueries(
     <MessageBubble
       message={{
         id: "m1",

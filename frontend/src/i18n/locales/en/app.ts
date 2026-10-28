@@ -123,6 +123,7 @@ export const app = {
       update: "Update failed",
       generateTitle: "Title generation failed",
       importConversation: "Import failed",
+      exportRagold: "Failed to export to RAGold",
       fetchPipelines: "Failed to fetch pipelines",
       fetchPipelineConfig: "Failed to fetch pipeline configuration",
       fetchChunks: "Failed to fetch chunks",

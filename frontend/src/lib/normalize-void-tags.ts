@@ -18,7 +18,8 @@
  */
 const VOID_TAGS = ["cite", "imgref"] as const;
 
-const VOID_TAG_RE = new RegExp(
+/** An opening void tag with its name and attributes, or a stray closing one without them. */
+export const VOID_TAG_RE = new RegExp(
   `<(${VOID_TAGS.join("|")})\\b([^>]*?)\\s*/?>|</(?:${VOID_TAGS.join("|")})>`,
   "gi",
 );

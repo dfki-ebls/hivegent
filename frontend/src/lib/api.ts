@@ -1,4 +1,5 @@
 import type { ChatMessage } from "@/lib/chat/chat-utils";
+import type { RagoldRequest } from "@/lib/ragold";
 import { z } from "zod";
 
 import type { McpServerEntry, ToolsPayload, ToolsSpec } from "@/lib/types";
@@ -687,6 +688,15 @@ export async function fetchDocumentAsset(
     await checkedResponse(documentUrl(filepath, conversationId), "fetchDocumentAsset", { signal })
   ).blob();
   return URL.createObjectURL(blob);
+}
+
+/** Build the RAGold archive of one turn: its gold entry and the original documents. */
+export async function exportRagold(conversationId: string, request: RagoldRequest): Promise<Blob> {
+  return requestBlob(
+    `${API_BASE_URL}/api/conversations/${conversationId}/ragold`,
+    "exportRagold",
+    jsonRequest("POST", request),
+  );
 }
 
 /** Download the original binary file for a document. */

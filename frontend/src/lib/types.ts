@@ -238,6 +238,8 @@ export const BackendSettingsSchema = z.object({
   user: UserResponseSchema,
   attachments: AttachmentLimitsSchema,
   transparency: TransparencyConfigSchema,
+  /** Where RAGold is served, null while the transfer is hidden. */
+  ragold_url: z.string().nullable(),
 });
 export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 

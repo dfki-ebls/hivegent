@@ -43,6 +43,14 @@ export function joinTextParts(parts: UIMessage["parts"] | undefined): string | u
   return texts.length > 0 ? texts.join("\n") : undefined;
 }
 
+/** The text of the last user message before the message *id*, empty when there is none. */
+export function precedingUserText(messages: UIMessage[], id: string): string {
+  const index = messages.findIndex((message) => message.id === id);
+  const user = messages.findLast((message, at) => at < index && message.role === "user");
+
+  return joinTextParts(user?.parts) ?? "";
+}
+
 /**
  * Index of the message a turn sent, or -1.
  *

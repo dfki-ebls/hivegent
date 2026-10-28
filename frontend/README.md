@@ -96,6 +96,14 @@ It composes the shadcn/ui `Questionnaire`, one step per question, and sends all 
 `chat-utils.shouldContinueRun` resumes the run, instead of `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
 A dismissal is an `output-error`, and an overtaken question is dismissed like an approval.
 
+## Replies transfer to RAGold through its tab
+
+`RagoldAction` (`components/chat/RagoldDialog.tsx`) offers the last text of a reply to RAGold when `/settings` names a `ragold_url`.
+`draftFromTurn` (`lib/ragold.ts`) prefills the entry from the user turn, the reply without its tags, and the lines each citation names, resolved from the captured tool outputs like a citation chip (`lib/citations.ts`).
+Documents are added from those outputs or from the workspace trees through a combobox that renders a bounded number of matches, and a passage is the text selected in the document's markdown, where the dialog stays open so several passages of one document are added in one go.
+RAGold keeps its data in the browser, so Hivegent cannot upload to it: the click opens `<ragold_url>#import` synchronously, which popup blockers allow, while the backend builds the zip.
+`sendToRagold` waits for `ragold:ready` from that tab and origin, posts `ragold:import` with the zip, and reports `ragold:result`, failing when the tab closes, stays silent for 30 seconds, or the zip fails, which also closes the tab.
+
 ## Interface language
 
 All text lives in typed catalogs under `src/i18n/locales/{en,de}`, read with the react-i18next selector API (`t(($) => $.chat.composer.placeholder)`).

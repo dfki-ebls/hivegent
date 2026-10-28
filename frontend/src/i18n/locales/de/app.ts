@@ -127,6 +127,7 @@ export const app = {
       update: "Aktualisieren fehlgeschlagen",
       generateTitle: "Titel konnte nicht erstellt werden",
       importConversation: "Import fehlgeschlagen",
+      exportRagold: "Export nach RAGold fehlgeschlagen",
       fetchPipelines: "Pipelines konnten nicht geladen werden",
       fetchPipelineConfig: "Konfiguration der Pipeline konnte nicht geladen werden",
       fetchChunks: "Chunks konnten nicht geladen werden",

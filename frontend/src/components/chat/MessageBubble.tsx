@@ -6,6 +6,7 @@ import { ApprovalScope } from "@/components/chat/ApprovalScope";
 import { ChainOfThought, ProcessingStep, ProcessingTrace } from "@/components/chat/ChainOfThought";
 import { type ChatPart, MessagePart, partLayout } from "@/components/chat/MessagePart";
 import { ImagePart } from "@/components/chat/parts/ImagePart";
+import { RagoldAction } from "@/components/chat/RagoldDialog";
 import { UserTextPart } from "@/components/chat/parts/UserTextPart";
 import { TooltipButton } from "@/components/TooltipButton";
 import { AttachmentGroup } from "@/components/ui/attachment";
@@ -154,6 +155,7 @@ function AssistantMessage({
                   {block.part.type === "text" && !streaming && (
                     <MessageFooter className="px-0">
                       <CopyAction text={block.part.text} />
+                      {index === lastText && <RagoldAction messageId={message.id} reply={block.part.text} />}
                       {index === lastText && retry}
                     </MessageFooter>
                   )}

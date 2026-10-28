@@ -1,3 +1,4 @@
+import { VOID_TAG_RE } from "@/lib/normalize-void-tags";
 import {
   type FetchedChunk,
   isLinePosition,
@@ -5,6 +6,30 @@ import {
   type LinePosition,
   parseLinePositions,
 } from "@/lib/types";
+
+const ATTRIBUTE_RE = /([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+
+/** The attributes of a `<cite>` tag, which `Citation` renders. */
+export interface CiteTag {
+  src?: string;
+  line?: string;
+}
+
+/** The `<cite>` tags of *text* in order. */
+export function parseCitations(text: string): CiteTag[] {
+  return Array.from(text.matchAll(VOID_TAG_RE))
+    .filter(([, tag]) => tag?.toLowerCase() === "cite")
+    .map(([, , attributes = ""]) => {
+      const values = new Map(
+        Array.from(attributes.matchAll(ATTRIBUTE_RE), ([, name, double, single]) => [
+          name.toLowerCase(),
+          double ?? single,
+        ]),
+      );
+
+      return { src: values.get("src"), line: values.get("line") };
+    });
+}
 
 /** The lines a citation position names, as one captured chunk shows them. */
 export interface Evidence {
