@@ -1,77 +1,64 @@
 #!/usr/bin/env node
-/** Standalone Express bootstrap: mount every adapter webhook and start the server. */
+/** Standalone srvx bootstrap: route every adapter webhook and start the server. */
 
-import { Readable } from "node:stream";
-
-import express, { type Request as ExpressRequest, type Response as ExpressResponse } from "express";
+import { serve, type ServerRequest } from "srvx";
 
 import { createBot } from "./bot.js";
 import { loadConfig } from "./config.js";
 import { ServiceTokenProvider } from "./hivegent/auth.js";
 
-function toWebRequest(req: ExpressRequest): Request {
-  const headers = new Headers();
-
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (Array.isArray(value)) {
-      headers.set(key, value.join(", "));
-    } else if (typeof value === "string") {
-      headers.set(key, value);
-    }
-  }
-
-  const url = `${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`;
-  const body = Buffer.isBuffer(req.body) ? req.body : undefined;
-
-  return new Request(url, { method: req.method, headers, body });
-}
-
-function sendWebResponse(res: ExpressResponse, response: Response): void {
-  res.status(response.status);
-  response.headers.forEach((value, key) => {
-    res.setHeader(key, value);
-  });
-
-  if (response.body) {
-    Readable.fromWeb(response.body).pipe(res);
-  } else {
-    res.end();
-  }
-}
+// Adapters buffer the body before verifying the platform JWT, so cap what an anonymous sender can make us hold.
+const MAX_BODY_BYTES = 1024 * 1024;
 
 const cfg = loadConfig();
 const token = cfg.oidc ? new ServiceTokenProvider(cfg.oidc) : undefined;
 const chat = await createBot(cfg, { token });
 
-const app = express();
-app.disable("x-powered-by");
-
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
-});
-
-// Raw JSON body for the adapters, which validate the platform JWT.
-// Platforms send uncompressed bodies, so skip the decompressors altogether.
-const rawJson = express.raw({ type: "application/json", inflate: false });
-
-for (const [name, handler] of Object.entries(chat.webhooks)) {
-  app.post(`/api/webhooks/${name}`, rawJson, async (req, res) => {
-    try {
-      const response = await handler(toWebRequest(req));
-      sendWebResponse(res, response);
-    } catch (err) {
-      console.error(`webhook ${name} failed`, err);
-
-      if (!res.headersSent) {
-        res.status(500).end();
-      }
-    }
-  });
-}
+// Exact `METHOD /path` keys, so unknown routes and methods fall through to 404.
+// Turns run in the background after the webhook answers, `waitUntil` lets shutdown await them.
+const routes = new Map<string, (request: ServerRequest) => Response | Promise<Response>>([
+  ["GET /health", () => Response.json({ status: "ok" })],
+  ...Object.entries(chat.webhooks).map(
+    ([name, handler]) =>
+      [
+        `POST /api/webhooks/${name}`,
+        (request: ServerRequest) => handler(request, { waitUntil: request.waitUntil }),
+      ] as const,
+  ),
+]);
 
 await chat.initialize();
 
-app.listen(cfg.port, cfg.host, () => {
-  const names = Object.keys(chat.webhooks).join(", ") || "none";
-  console.log(`hivegent bridge listening on ${cfg.host}:${cfg.port} (adapters: ${names})`);
+const server = serve({
+  hostname: cfg.host,
+  port: cfg.port,
+  silent: true,
+  maxRequestBodySize: MAX_BODY_BYTES,
+  gracefulShutdown: false,
+  fetch: (request) =>
+    routes.get(`${request.method} ${new URL(request.url).pathname}`)?.(request) ??
+    new Response(null, { status: 404 }),
+  // Without this handler, a rejected webhook would be an unhandled rejection.
+  error: (err) => {
+    if (err instanceof Error && "code" in err && err.code === "ERR_BODY_TOO_LARGE") {
+      return new Response(null, { status: 413 });
+    }
+
+    console.error("request failed", err);
+    return new Response(null, { status: 500 });
+  },
 });
+
+// Drain requests and in-flight turns, then close the Postgres pool that would keep the process alive.
+async function shutdown(): Promise<void> {
+  await server.close();
+  await chat.shutdown();
+  process.exit();
+}
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
+
+await server.ready();
+const names = Object.keys(chat.webhooks).join(", ") || "none";
+console.log(`hivegent bridge listening on ${cfg.host}:${cfg.port} (adapters: ${names})`);

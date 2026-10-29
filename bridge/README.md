@@ -1,6 +1,6 @@
 # hivegent bridge
 
-A small Node and Express service that exposes the hivegent backend through the Vercel Chat SDK, for Microsoft Teams and any other Chat SDK adapter.
+A small Node service on srvx that exposes the hivegent backend through the Vercel Chat SDK, for Microsoft Teams and any other Chat SDK adapter.
 
 The same handlers serve every adapter.
 The bridge holds one service identity, maps each platform thread to a hivegent conversation, and streams the reply back.
@@ -9,7 +9,7 @@ Its only contract with hivegent is the HTTP chat call.
 ## How it works
 
 ```
-Platform ──webhook──▶ Express ──chat.webhooks[name]──▶ handler
+Platform ──webhook──▶ srvx ──chat.webhooks[name]──▶ handler
     handler: thread.state → hivegent conversationId
              POST /api/conversations[/{id}]/chat  (Bearer service token)
              parse the UI Message Stream: text-delta → text, tool-input-start → typing status
@@ -27,7 +27,7 @@ Every turn runs in read mode, so no workspace is writable whatever the claim gra
 - `src/hivegent/stream.ts`: stream event parser
 - `src/adapters.ts`: adapter registry (Teams and Web)
 - `src/turn.ts`: platform-agnostic turn handler
-- `src/bot.ts`, `src/index.ts`: bot wiring and Express bootstrap
+- `src/bot.ts`, `src/index.ts`: bot wiring and srvx bootstrap
 
 ## Develop
 
