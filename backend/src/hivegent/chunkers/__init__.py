@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from ..config import settings
 from ..l10n import Localized
 from ..pipeline_registry import (
     PipelineConfigInfo,
@@ -115,6 +116,11 @@ def _load_late() -> PipelineImplementation[DocumentChunker]:
     return PipelineImplementation(LateDocumentChunker, LateChunkerConfig)
 
 
+def _local_embedding_model() -> bool:
+    """Whether the retrieval embedding model is local, as late chunking needs."""
+    return settings.embedding.provider == "sentence-transformers"
+
+
 def _load_slumber() -> PipelineImplementation[DocumentChunker]:
     from .slumber import SlumberChunkerConfig, SlumberDocumentChunker
 
@@ -156,6 +162,7 @@ _CHUNKERS: dict[ChunkingPipeline, PipelineRegistration[DocumentChunker]] = {
     ),
     ChunkingPipeline.LATE: PipelineRegistration(
         loader=_load_late,
+        requires=_local_embedding_model,
     ),
     ChunkingPipeline.SLUMBER: PipelineRegistration(
         loader=_load_slumber,
@@ -189,14 +196,19 @@ def get_chunker(
         A configured DocumentChunker instance.
 
     Raises:
-        ImportError: If the chunker's dependencies are not installed.
+        ValueError: If the pipeline's requirements or condition are not met.
+        ImportError: If the chunker's dependencies fail to import.
         ValidationError: If the config is invalid for the pipeline.
     """
     if pipeline == ChunkingPipeline.AUTO:
         pipeline = ChunkingPipeline.RECURSIVE
 
+    registration = _CHUNKERS[pipeline]
+    if not registration.available:
+        raise ValueError(_not_available(pipeline.value).current)
+
     try:
-        implementation = _CHUNKERS[pipeline].load(pipeline.value)
+        implementation = registration.load(pipeline.value)
     except ImportError as exc:
         raise ImportError(
             f"Chunking pipeline '{pipeline.value}' is not available. "

@@ -55,11 +55,15 @@ class PipelineRegistration[T: NamedPipeline]:
     loader: Callable[[], PipelineImplementation[T]]
     dependencies: tuple[str, ...] = ()
     executables: tuple[str, ...] = ()
+    requires: Callable[[], bool] | None = None
+    """Runtime condition beyond installed requirements, such as a setting."""
 
     @property
     def available(self) -> bool:
-        """Return whether the pipeline's declared modules and executables are installed."""
-        return _requirements_available(self.dependencies, self.executables)
+        """Return whether the pipeline's requirements are installed and its condition holds."""
+        return _requirements_available(self.dependencies, self.executables) and (
+            self.requires is None or self.requires()
+        )
 
     def load(self, expected_name: str) -> PipelineImplementation[T]:
         """Load the registered implementation and validate its persisted name.

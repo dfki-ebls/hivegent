@@ -6,12 +6,11 @@ from functools import lru_cache
 from chonkie import LateChunker
 from pydantic import Field
 
+from ..config import settings
 from .base import ChunkData, DocumentChunker
 from .chonkie import BaseChonkieConfig, apply_chonkie
 
 __all__ = ["LateChunkerConfig", "LateDocumentChunker"]
-
-_DEFAULT_EMBEDDING_MODEL = "nomic-ai/modernbert-embed-base"
 
 
 class LateChunkerConfig(BaseChonkieConfig):
@@ -31,12 +30,12 @@ class LateChunkerConfig(BaseChonkieConfig):
 
 
 @lru_cache(maxsize=2)
-def _build_chunker(config_json: str, device: str) -> LateChunker:
+def _build_chunker(config_json: str, embedding_model: str, device: str) -> LateChunker:
     config = LateChunkerConfig.model_validate_json(config_json)
     # ``device`` forwards through LateChunker's kwargs to the underlying
     # SentenceTransformer (``None`` lets it self-detect via the process env).
     return LateChunker(
-        embedding_model=_DEFAULT_EMBEDDING_MODEL,
+        embedding_model=embedding_model,
         chunk_size=config.chunk_size,
         min_characters_per_chunk=config.min_characters_per_chunk,
         device=None if device == "auto" else device,
@@ -47,7 +46,8 @@ def _build_chunker(config_json: str, device: str) -> LateChunker:
 class LateDocumentChunker(DocumentChunker):
     """Chunker that uses late-interaction embeddings for chunking.
 
-    Uses chonkie's LateChunker with a ModernBERT embedding model.
+    Uses chonkie's LateChunker with the retrieval embedding model,
+    which must be a sentence-transformers one for its token embeddings.
     Best suited for documents needing embedding-aware chunk boundaries.
     """
 
@@ -57,5 +57,7 @@ class LateDocumentChunker(DocumentChunker):
     """Compute device for the model (``"auto"`` self-detects); code-level, not a setting."""
 
     def _split_sync(self, text: str) -> list[ChunkData]:
-        chunks = _build_chunker(self.config.model_dump_json(), self.device).chunk(text)
+        chunks = _build_chunker(
+            self.config.model_dump_json(), settings.embedding.model, self.device
+        ).chunk(text)
         return apply_chonkie(chunks, self.config.refineries)
