@@ -46,6 +46,7 @@ def _request(**changes: object) -> RagoldRequest:
             "passages": [
                 {"path": "~/report.md", "text": "**Bees**", "grade": "needed"}
             ],
+            "keyFacts": [{"text": "Bees", "importance": "must"}],
             "documents": ["~/report.md", "~/notes.md"],
         }
         | changes
@@ -88,11 +89,12 @@ async def test_archive_matches_the_ragold_schema() -> None:
         assert annotation["passages"] == [
             {"documentId": document_id, "text": "Bees", "location": "", "grade": "needed"}
         ]
+        assert annotation["keyFacts"] == [{"text": "Bees", "importance": "must"}]
         assert data["author"] == "Ada"
 
 
 async def test_refuses_unreachable_and_unlisted_documents() -> None:
-    """A group the caller is not in is refused, and passages must name a shipped document."""
+    """A group the caller is not in is refused, passages must name a shipped document, and key facts must quote the response."""
     with pytest.raises(HTTPException) as refused:
         await export_ragold_route(
             owned("c1"),
@@ -104,6 +106,9 @@ async def test_refuses_unreachable_and_unlisted_documents() -> None:
 
     with pytest.raises(ValueError, match="unlisted"):
         _request(documents=["~/notes.md"])
+
+    with pytest.raises(ValueError, match="Key facts missing"):
+        _request(keyFacts=[{"text": "Wasps", "importance": "must"}])
 
     with pytest.raises(ValueError, match="markdown syntax"):
         _request(passages=[{"path": "~/report.md", "text": "---", "grade": "needed"}])

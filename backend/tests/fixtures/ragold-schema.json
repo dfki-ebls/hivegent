@@ -85,7 +85,6 @@
           ]
         },
         "answerability": {
-          "default": "answerable",
           "type": "string",
           "enum": [
             "answerable",
@@ -129,6 +128,7 @@
       "required": [
         "query",
         "questionType",
+        "answerability",
         "response",
         "createdAt",
         "updatedAt"

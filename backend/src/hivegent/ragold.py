@@ -2,7 +2,7 @@
 
 RAGold imports a zip holding ``annotations.json`` (schema version 3) and the
 original documents under ``files/<documentId>/<name>``.  The archive carries
-one finished entry, while key facts are left to RAGold.
+one finished entry, with its key facts.
 """
 
 import hashlib
@@ -25,8 +25,10 @@ from .l10n import Language
 
 __all__ = [
     "Answerability",
+    "KeyFactImportance",
     "PassageGrade",
     "QuestionType",
+    "RagoldKeyFact",
     "RagoldPassage",
     "RagoldRequest",
     "build_archive",
@@ -50,6 +52,8 @@ type Answerability = Literal["answerable", "partial", "unanswerable"]
 """MTRAG answerability (Katsis et al. 2025, arXiv 2501.03468)."""
 
 type PassageGrade = Literal["needed", "helpful", "misleading"]
+
+type KeyFactImportance = Literal["must", "nice"]
 
 SCHEMA_VERSION = 3
 
@@ -158,6 +162,13 @@ class RagoldPassage(_Camel):
         return plain
 
 
+class RagoldKeyFact(_Camel):
+    """A verbatim excerpt of the response that a good answer has to contain."""
+
+    text: str = Field(min_length=1)
+    importance: KeyFactImportance
+
+
 class RagoldRequest(_Camel):
     """One conversation turn as a RAGold entry, with the documents it ships."""
 
@@ -168,9 +179,17 @@ class RagoldRequest(_Camel):
     origin: str = Field(description="URL of the conversation the entry comes from")
     notes: str = ""
     passages: list[RagoldPassage] = []
+    key_facts: list[RagoldKeyFact] = []
     documents: list[str] = Field(
         default=[], description="Canonical workspace paths of the shipped documents"
     )
+
+    @model_validator(mode="after")
+    def _key_facts_are_excerpts(self) -> Self:
+        if missing := [fact.text for fact in self.key_facts if fact.text not in self.response]:
+            raise ValueError(f"Key facts missing from the response: {missing}")
+
+        return self
 
     @model_validator(mode="after")
     def _passages_are_shipped(self) -> Self:
@@ -204,7 +223,7 @@ class _Annotation(_Camel):
     answerability: Answerability
     passages: list[_Passage]
     response: str
-    key_facts: tuple[()] = ()
+    key_facts: list[RagoldKeyFact]
     origin: str
     notes: str
     created_at: datetime
@@ -270,6 +289,7 @@ def _write_archive(
                 for item in request.passages
             ],
             response=request.response,
+            key_facts=request.key_facts,
             origin=request.origin,
             notes=request.notes,
             created_at=now,
