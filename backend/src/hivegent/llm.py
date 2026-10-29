@@ -287,24 +287,11 @@ def model_from_config(config: LlmConfig) -> OpenAIChatModel:
     )
 
 
-# Per-request reasoning caps for self-hosted endpoints, keyed by the generic
-# effort level before any model-specific mapping.  llama.cpp and vLLM force
-# the reasoning block closed at the cap without truncating the answer.
-# llama.cpp honours a request cap only while ``--reasoning-budget`` remains at
-# its -1 default.  vLLM requires a reasoning parser and runner with
-# thinking-budget support.
-_THINKING_BUDGET_TOKENS: Mapping[ReasoningEffort, int] = {
-    "low": 4096,
-    "medium": 16384,
-    "high": 32768,
-}
-
-
 # Generic-to-native effort remapping for models whose reasoning levels do not
 # line up with pydantic-ai's, keyed by a casefolded model-name prefix (the part
 # after any ``<org>/``).  Levels a model does not implement, such as Qwen3.8's
-# missing ``high``, are mapped onto the nearest one it does, while the budget
-# above stays keyed on the generic level.
+# missing ``high``, are mapped onto the nearest one it does, while the
+# configured thinking budget stays keyed on the generic level.
 _REASONING_EFFORT_OVERRIDES: Mapping[str, Mapping[ReasoningEffort, ThinkingEffort]] = {
     "qwen3.8": {"high": "xhigh"},
 }
@@ -331,7 +318,7 @@ def _reasoning_extra_body(
         "chat_template_kwargs": {"enable_thinking": thinking is not False}
     }
     if thinking is not False:
-        extra_body[budget_field] = _THINKING_BUDGET_TOKENS[thinking]
+        extra_body[budget_field] = settings.llm.thinking_budget_tokens[thinking]
 
     return extra_body
 

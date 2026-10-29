@@ -1,8 +1,7 @@
 """Reasoning-effort to request-settings mapping for self-hosted endpoints."""
 
-from hivegent.config import InferenceProvider
+from hivegent.config import InferenceProvider, settings
 from hivegent.llm import (
-    _THINKING_BUDGET_TOKENS,
     SUMMARY_MAX_TOKENS,
     summary_model_settings,
     thinking_model_settings,
@@ -27,22 +26,22 @@ OPENAI = LlmConfig(
 
 
 def test_self_hosted_level_selects_its_budget() -> None:
-    settings = thinking_model_settings("medium", SELF_HOSTED)
+    model_settings = thinking_model_settings("medium", SELF_HOSTED)
 
-    assert settings.get("thinking") == "medium"
-    assert settings.get("extra_body") == {
+    assert model_settings.get("thinking") == "medium"
+    assert model_settings.get("extra_body") == {
         "chat_template_kwargs": {"enable_thinking": True},
-        "thinking_budget_tokens": _THINKING_BUDGET_TOKENS["medium"],
+        "thinking_budget_tokens": settings.llm.thinking_budget_tokens["medium"],
     }
 
 
 def test_qwen38_maps_high_to_native_xhigh_with_high_budget() -> None:
-    settings = thinking_model_settings("high", QWEN38)
+    model_settings = thinking_model_settings("high", QWEN38)
 
-    assert settings.get("thinking") == "xhigh"
-    assert settings.get("extra_body") == {
+    assert model_settings.get("thinking") == "xhigh"
+    assert model_settings.get("extra_body") == {
         "chat_template_kwargs": {"enable_thinking": True},
-        "thinking_token_budget": _THINKING_BUDGET_TOKENS["high"],
+        "thinking_token_budget": settings.llm.thinking_budget_tokens["high"],
     }
 
 
@@ -53,17 +52,17 @@ def test_false_disables_thinking_without_a_budget() -> None:
 
 
 def test_openai_endpoint_never_receives_self_hosted_fields() -> None:
-    settings = thinking_model_settings("high", OPENAI)
+    model_settings = thinking_model_settings("high", OPENAI)
 
-    assert settings.get("thinking") == "high"
-    assert "extra_body" not in settings
+    assert model_settings.get("thinking") == "high"
+    assert "extra_body" not in model_settings
 
 
 def test_summary_settings_disable_reasoning_and_cap_the_completion() -> None:
-    settings = summary_model_settings(SELF_HOSTED)
+    model_settings = summary_model_settings(SELF_HOSTED)
 
-    assert settings.get("thinking") is False
-    assert settings.get("max_tokens") == SUMMARY_MAX_TOKENS
-    assert settings.get("extra_body") == {
+    assert model_settings.get("thinking") is False
+    assert model_settings.get("max_tokens") == SUMMARY_MAX_TOKENS
+    assert model_settings.get("extra_body") == {
         "chat_template_kwargs": {"enable_thinking": False}
     }

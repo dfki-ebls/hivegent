@@ -6,7 +6,7 @@ import re
 import unicodedata
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel, Field, HttpUrl, PositiveInt, SecretStr
 from pydantic_settings import (
@@ -48,6 +48,7 @@ __all__ = [
     "RerankSettings",
     "SecuritySettings",
     "Settings",
+    "ThinkingBudgets",
     "TmpSettings",
     "TransparencySettings",
     "UrlPolicySettings",
@@ -294,6 +295,14 @@ class InferenceProvider(StrEnum):
     OPENAI = "openai"
 
 
+class ThinkingBudgets(TypedDict):
+    """Reasoning token cap per generic effort level, all three required."""
+
+    low: PositiveInt
+    medium: PositiveInt
+    high: PositiveInt
+
+
 class LlmSettings(BaseModel):
     """LLM provider defaults, configurable via environment variables.
 
@@ -328,6 +337,13 @@ class LlmSettings(BaseModel):
     safe assumption for an endpoint that rejects what it does not know.  An
     operator pointing ``base_url`` at llama.cpp or vLLM opts into the
     compensation by naming it.
+
+    ``thinking_budget_tokens`` caps reasoning per request on llama.cpp and
+    vLLM, keyed by the generic effort level before any model-specific mapping.
+    Both force the reasoning block closed at the cap without truncating the
+    answer.  llama.cpp honours it only while ``--reasoning-budget`` remains at
+    its -1 default, and vLLM needs a reasoning parser and runner with
+    thinking-budget support.
 
     The remaining knobs bound an agent run.  ``request_timeout_seconds`` is the
     per-request timeout applied to every model call (as ``ModelSettings.timeout``):
@@ -382,6 +398,11 @@ class LlmSettings(BaseModel):
     max_tokens: int | None = None
     aux_max_tokens: int | None = 8192
     inference_provider: InferenceProvider = InferenceProvider.OPENAI
+    thinking_budget_tokens: ThinkingBudgets = {
+        "low": 4096,
+        "medium": 16384,
+        "high": 32768,
+    }
     request_timeout_seconds: float = 600.0
     tool_timeout_seconds: float | None = 600.0
     request_limit: int = 500
