@@ -100,7 +100,7 @@ async def test_each_request_extends_the_previous_one(
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     monkeypatch.setattr(llm_module, "get_trusted_http_client", lambda: client)
     model = create_openai_chat_model(
-        "qwen3.6",
+        "qwen3.8-27b",
         api_key="test",
         base_url="http://llm/v1",
         inference_provider=InferenceProvider.VLLM,

@@ -49,7 +49,7 @@ def test_llamacpp_structured_type() -> None:
     error = ModelHTTPError.for_category(
         None,
         status_code=400,
-        model_name="qwen3.6-27b",
+        model_name="qwen3.8-27b",
         body={
             "code": 400,
             "message": (

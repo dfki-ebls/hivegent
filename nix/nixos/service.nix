@@ -105,7 +105,7 @@ in
             issuer = "https://auth.example.com";
           };
           llm = {
-            model = "qwen3.6-35b-a3b";
+            model = "qwen3.8-27b";
             base_url = "http://localhost:18000/v1";
             inference_provider = "llama.cpp";
           };
