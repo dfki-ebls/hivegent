@@ -26,6 +26,9 @@ export type Answerability = (typeof ANSWERABILITIES)[number];
 export const PASSAGE_GRADES = ["needed", "helpful", "misleading"] as const;
 export type PassageGrade = (typeof PASSAGE_GRADES)[number];
 
+export const KEY_FACT_IMPORTANCES = ["must", "nice"] as const;
+export type KeyFactImportance = (typeof KEY_FACT_IMPORTANCES)[number];
+
 /** A passage of a workspace document that bears on the answer. */
 export interface RagoldPassage {
   path: string;
@@ -33,19 +36,60 @@ export interface RagoldPassage {
   grade: PassageGrade;
 }
 
+/** A passage being edited, whose grade stays unset until the user picks it. */
+export type RagoldDraftPassage = Omit<RagoldPassage, "grade"> & { grade: PassageGrade | null };
+
+/** A verbatim excerpt of the response that a good answer has to contain. */
+export interface RagoldKeyFact {
+  text: string;
+  importance: KeyFactImportance;
+}
+
 /** One turn as a RAGold entry, the body of `POST /conversations/{id}/ragold` without its origin. */
-export interface RagoldDraft {
+export interface RagoldEntry {
   query: string;
   response: string;
   questionType: QuestionType;
   answerability: Answerability;
   notes: string;
   passages: RagoldPassage[];
+  keyFacts: RagoldKeyFact[];
   /** The documents the archive ships, every passage path among them. */
   documents: string[];
 }
 
-export type RagoldRequest = RagoldDraft & { origin: string };
+export type RagoldRequest = RagoldEntry & { origin: string };
+
+/** An entry being edited, whose classification and grades stay unset until the user picks them. */
+export interface RagoldDraft extends Omit<
+  RagoldEntry,
+  "questionType" | "answerability" | "passages"
+> {
+  questionType: QuestionType | null;
+  answerability: Answerability | null;
+  passages: RagoldDraftPassage[];
+}
+
+/** *draft* as an entry once everything is filled in, or null while something is missing. */
+export function completeEntry(draft: RagoldDraft): RagoldEntry | null {
+  const { questionType, answerability } = draft;
+  const passages = draft.passages.flatMap(({ grade, ...passage }) =>
+    grade ? [{ ...passage, grade }] : [],
+  );
+
+  if (
+    !draft.query.trim() ||
+    !draft.response.trim() ||
+    !questionType ||
+    !answerability ||
+    passages.length < draft.passages.length ||
+    !draft.keyFacts.every((fact) => draft.response.includes(fact.text))
+  ) {
+    return null;
+  }
+
+  return { ...draft, questionType, answerability, passages };
+}
 
 /** *draft* with the document *path* added if missing. */
 export function withDocument(draft: RagoldDraft, path: string): RagoldDraft {
@@ -55,8 +99,15 @@ export function withDocument(draft: RagoldDraft, path: string): RagoldDraft {
 }
 
 /** *draft* with *passage* added, and its document if missing. */
-export function withPassage(draft: RagoldDraft, passage: RagoldPassage): RagoldDraft {
+export function withPassage(draft: RagoldDraft, passage: RagoldDraftPassage): RagoldDraft {
   return withDocument({ ...draft, passages: [...draft.passages, passage] }, passage.path);
+}
+
+/** *draft* with *fact* added unless a key fact with its text exists. */
+export function withKeyFact(draft: RagoldDraft, fact: RagoldKeyFact): RagoldDraft {
+  return draft.keyFacts.some((item) => item.text === fact.text)
+    ? draft
+    : { ...draft, keyFacts: [...draft.keyFacts, fact] };
 }
 
 /**
@@ -73,10 +124,11 @@ export function draftFromTurn(
   let draft: RagoldDraft = {
     query: query.trim(),
     response: stripVoidTags(reply).trim(),
-    questionType: "simple",
-    answerability: "answerable",
+    questionType: null,
+    answerability: null,
     notes: "",
     passages: [],
+    keyFacts: [],
     documents: [],
   };
 
@@ -95,7 +147,7 @@ export function draftFromTurn(
       ),
     );
 
-    for (const text of texts) draft = withPassage(draft, { path: src, text, grade: "needed" });
+    for (const text of texts) draft = withPassage(draft, { path: src, text, grade: null });
   }
 
   return draft;

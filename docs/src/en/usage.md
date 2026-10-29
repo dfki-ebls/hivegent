@@ -59,7 +59,9 @@ The sidebar lists past conversations.
 - Edit an earlier message or regenerate a reply to try a different direction.
 - Export a conversation to a file and import it later.
 - Transfer a reply to RAGold as a gold benchmark entry, when your deployment offers it.
-  The dialog starts from the question, the reply, and the lines it cites, and lets you edit them, grade them as passages, and add documents and further passages, several from one document at a time, before RAGold opens in a new tab.
+  The dialog starts from the question, the reply, and the lines it cites, and lets you edit them, grade them as passages, and add documents and further passages, several from one document at a time.
+  Nothing is preselected, so you pick the question type, the answerability, and every grade yourself, and mark key facts by selecting words in the reply.
+  Once everything is filled in, RAGold opens in a new tab with the entry loaded.
   Allow pop-ups for Hivegent if the browser blocks that tab.
 
 Use Compact to summarize a long conversation so it fits the model's context.

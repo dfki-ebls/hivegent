@@ -1,10 +1,17 @@
 import { type QueryObserverResult, useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { FileTextIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  type RefObject,
+  type SyntheticEvent,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import { LoadingState } from "@/components/EmptyState";
-import { OptionSelect } from "@/components/OptionSelect";
+import { type Option, OptionSelect } from "@/components/OptionSelect";
 import { DialogBody, ScrollDialogContent } from "@/components/ScrollDialogContent";
 import { TooltipButton } from "@/components/TooltipButton";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +32,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import {
   Item,
   ItemActions,
@@ -51,19 +66,23 @@ import {
 import { precedingUserText } from "@/lib/chat/chat-utils";
 import {
   ANSWERABILITIES,
+  completeEntry,
   draftFromTurn,
+  KEY_FACT_IMPORTANCES,
   PASSAGE_GRADES,
   type PassageGrade,
   QUESTION_TYPES,
   type RagoldDraft,
-  type RagoldPassage,
+  type RagoldDraftPassage,
+  type RagoldEntry,
   RagoldTransferError,
   sendToRagold,
   withDocument,
+  withKeyFact,
   withPassage,
 } from "@/lib/ragold";
 import type { DirectoryTreeResponse } from "@/lib/types";
-import { basename, collectFilePaths, errorMessage } from "@/lib/utils";
+import { basename, cn, collectFilePaths, errorMessage } from "@/lib/utils";
 import { documentQueries } from "@/queries/documents";
 import { useServerSettings } from "@/queries/settings";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
@@ -87,8 +106,96 @@ function useOptions() {
         label: t(($) => $.answerabilities[value]),
       })),
       grades: PASSAGE_GRADES.map((value) => ({ value, label: t(($) => $.grades[value]) })),
+      importances: KEY_FACT_IMPORTANCES.map((value) => ({
+        value,
+        label: t(($) => $.importances[value]),
+      })),
     }),
     [t],
+  );
+}
+
+/** The trimmed text selected in *ref*, and a way to collapse the selection once it is used. */
+function useTextSelection(ref: RefObject<HTMLTextAreaElement | null>) {
+  const [text, setText] = useState("");
+
+  const onSelect = ({
+    currentTarget: { value, selectionStart, selectionEnd },
+  }: SyntheticEvent<HTMLTextAreaElement>) => setText(value.slice(selectionStart, selectionEnd).trim());
+
+  const clear = () => {
+    setText("");
+    ref.current?.setSelectionRange(ref.current.selectionEnd, ref.current.selectionEnd);
+  };
+
+  return { text, onSelect, clear };
+}
+
+/** One button per option that adds the selected text with that option, so each pick is explicit. */
+function AddButtons<T extends string>({
+  options,
+  disabled,
+  onAdd,
+}: {
+  options: readonly Option<T>[];
+  disabled: boolean;
+  onAdd: (value: T) => void;
+}) {
+  return options.map((option) => (
+    <Button
+      key={option.value}
+      variant="outline"
+      disabled={disabled}
+      onClick={() => onAdd(option.value)}
+    >
+      <PlusIcon data-icon="inline-start" />
+      {option.label}
+    </Button>
+  ));
+}
+
+/** An excerpt with its choice, such as a passage with its grade, and an action to remove it. */
+function ExcerptRow<T extends string>({
+  text,
+  value,
+  options,
+  label,
+  removeLabel,
+  error,
+  className,
+  onChange,
+  onRemove,
+}: {
+  className?: string;
+  text: string;
+  value: T | null;
+  options: readonly Option<T>[];
+  label: string;
+  removeLabel: string;
+  error?: string;
+  onChange: (value: T) => void;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+
+  return (
+    <div className={cn("flex items-start gap-2", className)}>
+      <div className="min-w-0 flex-1">
+        <p className="line-clamp-4 font-mono text-xs whitespace-pre-wrap">{text}</p>
+        {error && <FieldError>{error}</FieldError>}
+      </div>
+      <OptionSelect
+        size="sm"
+        aria-label={label}
+        value={value}
+        options={options}
+        placeholder={t(($) => $.choose)}
+        onChange={onChange}
+      />
+      <TooltipButton label={removeLabel} destructive onClick={onRemove}>
+        <Trash2Icon />
+      </TooltipButton>
+    </div>
   );
 }
 
@@ -177,20 +284,15 @@ function PassageDialog({
   const options = useOptions();
   const conversationId = useConversationId();
   const textarea = useRef<HTMLTextAreaElement>(null);
-  const [selection, setSelection] = useState("");
-  const [grade, setGrade] = useState<PassageGrade>("needed");
+  const selection = useTextSelection(textarea);
   const content = useQuery({
     ...documentQueries.content(path ?? "", conversationId),
     enabled: path !== null,
   });
 
-  const add = () => {
-    onAdd(selection, grade);
-    setSelection("");
-    textarea.current?.setSelectionRange(
-      textarea.current.selectionEnd,
-      textarea.current.selectionEnd,
-    );
+  const add = (grade: PassageGrade) => {
+    onAdd(selection.text, grade);
+    selection.clear();
   };
 
   return (
@@ -209,9 +311,7 @@ function PassageDialog({
             ref={textarea}
             readOnly
             value={content.isError ? errorMessage(content.error) : content.data}
-            onSelect={({ currentTarget: { value, selectionStart, selectionEnd } }) =>
-              setSelection(value.slice(selectionStart, selectionEnd).trim())
-            }
+            onSelect={selection.onSelect}
             className="min-h-0 flex-1 resize-none font-mono text-sm"
           />
         )}
@@ -219,11 +319,7 @@ function PassageDialog({
           <p aria-live="polite" className="text-sm text-muted-foreground sm:mr-auto sm:self-center">
             {t(($) => $.passageCount, { count: passageCount })}
           </p>
-          <OptionSelect value={grade} options={options.grades} onChange={setGrade} />
-          <Button variant="outline" disabled={!selection} onClick={add}>
-            <PlusIcon data-icon="inline-start" />
-            {t(($) => $.addSelection)}
-          </Button>
+          <AddButtons options={options.grades} disabled={!selection.text} onAdd={add} />
           <DialogClose render={<Button />}>{t(($) => $.close)}</DialogClose>
         </DialogFooter>
       </ScrollDialogContent>
@@ -247,13 +343,13 @@ function DocumentItem({
   onAddPassages,
 }: {
   path: string;
-  passages: RagoldPassage[];
+  passages: RagoldDraftPassage[];
   setDraft: (update: (prev: RagoldDraft) => RagoldDraft) => void;
   onAddPassages: () => void;
 }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const options = useOptions();
-  const updatePassages = (update: (passages: RagoldPassage[]) => RagoldPassage[]) =>
+  const updatePassages = (update: (passages: RagoldDraftPassage[]) => RagoldDraftPassage[]) =>
     setDraft((prev) => ({ ...prev, passages: update(prev.passages) }));
 
   return (
@@ -286,29 +382,21 @@ function DocumentItem({
         </ItemActions>
       </div>
       {passages.map((passage, index) => (
-        <div key={index} className="flex items-start gap-2 pl-6">
-          <p className="line-clamp-4 min-w-0 flex-1 font-mono text-xs whitespace-pre-wrap">
-            {passage.text}
-          </p>
-          <OptionSelect
-            size="sm"
-            aria-label={t(($) => $.grade)}
-            value={passage.grade}
-            options={options.grades}
-            onChange={(grade) =>
-              updatePassages((prev) =>
-                prev.map((item) => (item === passage ? { ...item, grade } : item)),
-              )
-            }
-          />
-          <TooltipButton
-            label={t(($) => $.removePassage)}
-            destructive
-            onClick={() => updatePassages((prev) => prev.filter((item) => item !== passage))}
-          >
-            <Trash2Icon />
-          </TooltipButton>
-        </div>
+        <ExcerptRow
+          key={index}
+          className="pl-6"
+          text={passage.text}
+          value={passage.grade}
+          options={options.grades}
+          label={t(($) => $.grade)}
+          removeLabel={t(($) => $.removePassage)}
+          onChange={(grade) =>
+            updatePassages((prev) =>
+              prev.map((item) => (item === passage ? { ...item, grade } : item)),
+            )
+          }
+          onRemove={() => updatePassages((prev) => prev.filter((item) => item !== passage))}
+        />
       ))}
     </Item>
   );
@@ -320,6 +408,70 @@ interface RagoldFormProps {
   ragoldUrl: string;
   conversationId: string;
   onClose: () => void;
+}
+
+/** Key facts marked by selecting text of the response, each with its importance. */
+function KeyFactsField({
+  draft,
+  setDraft,
+}: {
+  draft: RagoldDraft;
+  setDraft: (update: (prev: RagoldDraft) => RagoldDraft) => void;
+}) {
+  const { t } = useTranslation(undefined, T_OPTIONS);
+  const options = useOptions();
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const selection = useTextSelection(textarea);
+  const updateKeyFacts = (
+    update: (keyFacts: RagoldDraft["keyFacts"]) => RagoldDraft["keyFacts"],
+  ) => setDraft((prev) => ({ ...prev, keyFacts: update(prev.keyFacts) }));
+
+  return (
+    <>
+      <Field>
+        <FieldLabel htmlFor="ragold-response">{t(($) => $.response)}</FieldLabel>
+        <Textarea
+          ref={textarea}
+          id="ragold-response"
+          value={draft.response}
+          onChange={(event) => setDraft((prev) => ({ ...prev, response: event.target.value }))}
+          onSelect={selection.onSelect}
+          className="max-h-64"
+        />
+      </Field>
+      <FieldSet>
+        <FieldLegend variant="label">{t(($) => $.keyFacts)}</FieldLegend>
+        <FieldDescription>{t(($) => $.keyFactsDescription)}</FieldDescription>
+        <div className="flex flex-wrap gap-2">
+          <AddButtons
+            options={options.importances}
+            disabled={!selection.text}
+            onAdd={(importance) => {
+              setDraft((prev) => withKeyFact(prev, { text: selection.text, importance }));
+              selection.clear();
+            }}
+          />
+        </div>
+        {draft.keyFacts.map((fact) => (
+          <ExcerptRow
+            key={fact.text}
+            text={fact.text}
+            value={fact.importance}
+            options={options.importances}
+            label={t(($) => $.importance)}
+            removeLabel={t(($) => $.removeKeyFact)}
+            error={draft.response.includes(fact.text) ? undefined : t(($) => $.staleKeyFact)}
+            onChange={(importance) =>
+              updateKeyFacts((prev) =>
+                prev.map((item) => (item === fact ? { ...item, importance } : item)),
+              )
+            }
+            onRemove={() => updateKeyFacts((prev) => prev.filter((item) => item !== fact))}
+          />
+        ))}
+      </FieldSet>
+    </>
+  );
 }
 
 /** The entry of one turn, prefilled from the reply and its citations, and its transfer. */
@@ -335,10 +487,11 @@ function RagoldForm({ messageId, reply, ragoldUrl, conversationId, onClose }: Ra
   const [passageFor, setPassageFor] = useState<string | null>(null);
   const passagesByPath = Map.groupBy(draft.passages, (passage) => passage.path);
   const update = (changes: Partial<RagoldDraft>) => setDraft((prev) => ({ ...prev, ...changes }));
+  const entry = completeEntry(draft);
   const send = useMutation({
-    mutationFn: (tab: Window) => {
+    mutationFn: ({ tab, entry }: { tab: Window; entry: RagoldEntry }) => {
       const origin = new URL(`/conversations/${conversationId}`, window.location.origin).href;
-      const zip = exportRagold(conversationId, { ...draft, origin });
+      const zip = exportRagold(conversationId, { ...entry, origin });
 
       return sendToRagold(tab, new URL(ragoldUrl).origin, zip);
     },
@@ -351,6 +504,8 @@ function RagoldForm({ messageId, reply, ragoldUrl, conversationId, onClose }: Ra
 
   // Opened in the click itself, so popup blockers let it through.
   const transfer = () => {
+    if (!entry) return;
+
     const tab = window.open(`${ragoldUrl}#import`);
 
     if (!tab) {
@@ -358,7 +513,7 @@ function RagoldForm({ messageId, reply, ragoldUrl, conversationId, onClose }: Ra
       return;
     }
 
-    send.mutate(tab);
+    send.mutate({ tab, entry });
   };
 
   return (
@@ -377,15 +532,7 @@ function RagoldForm({ messageId, reply, ragoldUrl, conversationId, onClose }: Ra
               onChange={(event) => update({ query: event.target.value })}
             />
           </Field>
-          <Field>
-            <FieldLabel htmlFor="ragold-response">{t(($) => $.response)}</FieldLabel>
-            <Textarea
-              id="ragold-response"
-              value={draft.response}
-              onChange={(event) => update({ response: event.target.value })}
-              className="max-h-64"
-            />
-          </Field>
+          <KeyFactsField draft={draft} setDraft={setDraft} />
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="ragold-question-type">{t(($) => $.questionType)}</FieldLabel>
@@ -393,6 +540,7 @@ function RagoldForm({ messageId, reply, ragoldUrl, conversationId, onClose }: Ra
                 id="ragold-question-type"
                 value={draft.questionType}
                 options={options.questionTypes}
+                placeholder={t(($) => $.choose)}
                 onChange={(questionType) => update({ questionType })}
               />
             </Field>
@@ -402,6 +550,7 @@ function RagoldForm({ messageId, reply, ragoldUrl, conversationId, onClose }: Ra
                 id="ragold-answerability"
                 value={draft.answerability}
                 options={options.answerabilities}
+                placeholder={t(($) => $.choose)}
                 onChange={(answerability) => update({ answerability })}
               />
             </Field>
@@ -436,13 +585,15 @@ function RagoldForm({ messageId, reply, ragoldUrl, conversationId, onClose }: Ra
         </FieldGroup>
       </DialogBody>
       <DialogFooter>
+        {!entry && (
+          <p className="text-sm text-muted-foreground sm:mr-auto sm:self-center">
+            {t(($) => $.incomplete)}
+          </p>
+        )}
         <DialogClose render={<Button variant="outline" />}>
           {i18n.t(($) => $.common.actions.cancel)}
         </DialogClose>
-        <Button
-          disabled={send.isPending || !draft.query.trim() || !draft.response.trim()}
-          onClick={transfer}
-        >
+        <Button disabled={send.isPending || !entry} onClick={transfer}>
           {send.isPending ? (
             <Spinner data-icon="inline-start" />
           ) : (

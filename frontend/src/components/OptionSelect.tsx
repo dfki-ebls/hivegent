@@ -19,7 +19,8 @@ interface OptionSelectProps<T extends string> extends Pick<
   ComponentProps<typeof SelectTrigger>,
   "id" | "className" | "size"
 > {
-  value: T;
+  /** Null shows the placeholder until the user picks an option. */
+  value: T | null;
   options: readonly Option<T>[];
   onChange: (value: T) => void;
   placeholder?: string;

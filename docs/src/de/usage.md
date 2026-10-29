@@ -59,7 +59,9 @@ Die Seitenleiste listet frühere Unterhaltungen auf.
 - Bearbeiten Sie eine frühere Nachricht oder erzeugen Sie eine Antwort neu, um eine andere Richtung auszuprobieren.
 - Exportieren Sie eine Unterhaltung in eine Datei und importieren Sie sie später wieder.
 - Übertragen Sie eine Antwort als Goldstandard-Eintrag an RAGold, sofern Ihre Installation das anbietet.
-  Der Dialog beginnt mit der Frage, der Antwort und den zitierten Zeilen, die Sie bearbeiten, als Passagen bewerten und um Dokumente und weitere Passagen ergänzen können, auch mehrere aus einem Dokument nacheinander, bevor sich RAGold in einem neuen Tab öffnet.
+  Der Dialog beginnt mit der Frage, der Antwort und den zitierten Zeilen, die Sie bearbeiten, als Passagen bewerten und um Dokumente und weitere Passagen ergänzen können, auch mehrere aus einem Dokument nacheinander.
+  Nichts ist vorausgewählt, Sie wählen also Fragetyp, Beantwortbarkeit und jede Bewertung selbst und markieren Kernaussagen, indem Sie Wörter in der Antwort auswählen.
+  Sobald alles ausgefüllt ist, öffnet sich RAGold in einem neuen Tab mit dem geladenen Eintrag.
   Erlauben Sie Pop-ups für Hivegent, falls der Browser diesen Tab blockiert.
 
 Mit Komprimieren fassen Sie eine lange Unterhaltung zusammen, damit sie in den Kontext des Modells passt.

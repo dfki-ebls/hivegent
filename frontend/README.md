@@ -101,6 +101,8 @@ A dismissal is an `output-error`, and an overtaken question is dismissed like an
 `RagoldAction` (`components/chat/RagoldDialog.tsx`) offers the last text of a reply to RAGold when `/settings` names a `ragold_url`.
 `draftFromTurn` (`lib/ragold.ts`) prefills the entry from the user turn, the reply without its tags, and the lines each citation names, resolved from the captured tool outputs like a citation chip (`lib/citations.ts`).
 Documents are added from those outputs or from the workspace trees through a combobox that renders a bounded number of matches, and a passage is the text selected in the document's markdown, where the dialog stays open so several passages of one document are added in one go.
+The transfer ships a complete entry, so nothing is preselected: the question type, the answerability, and every grade start unset, a selected passage or key fact is added through one button per grade or importance, and key facts are marked by selecting text of the response.
+`completeEntry` turns the draft into the request only once everything is picked and every key fact still appears in the response, and the transfer stays disabled until then.
 RAGold keeps its data in the browser, so Hivegent cannot upload to it: the click opens `<ragold_url>#import` synchronously, which popup blockers allow, while the backend builds the zip.
 `sendToRagold` waits for `ragold:ready` from that tab and origin, posts `ragold:import` with the zip, and reports `ragold:result`, failing when the tab closes, stays silent for 30 seconds, or the zip fails, which also closes the tab.
 

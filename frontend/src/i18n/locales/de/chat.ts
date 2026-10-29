@@ -148,11 +148,12 @@ export const chat = {
   ragold: {
     action: "An RAGold übertragen",
     description:
-      "Mache aus dieser Antwort einen Goldstandard-Eintrag mit seinen Dokumenten. Kernaussagen werden in RAGold ergänzt.",
+      "Mache aus dieser Antwort einen Goldstandard-Eintrag mit seinen Dokumenten. Nichts ist vorausgewählt, wähle also jeden Typ und jede Bewertung selbst.",
     query: "Anfrage",
     response: "Antwort",
     questionType: "Fragetyp",
     answerability: "Beantwortbarkeit",
+    choose: "Auswählen …",
     questionTypes: {
       simple: "Einfach",
       simple_w_condition: "Einfach mit Bedingung",
@@ -170,6 +171,14 @@ export const chat = {
     },
     grade: "Bewertung",
     grades: { needed: "Notwendig", helpful: "Hilfreich", misleading: "Irreführend" },
+    keyFacts: "Kernaussagen",
+    keyFactsDescription:
+      "Markiere Wörter in der Antwort und füge sie als Fakten hinzu, die eine gute Antwort erwähnen muss oder sollte.",
+    importance: "Wichtigkeit",
+    importances: { must: "Muss erwähnt werden", nice: "Sollte erwähnt werden" },
+    removeKeyFact: "Kernaussage entfernen",
+    staleKeyFact:
+      "Nicht mehr in der Antwort enthalten. Stelle den Wortlaut wieder her oder entferne die Kernaussage.",
     documents: "Dokumente und Passagen",
     noDocuments:
       "Noch keine Dokumente. Zitierte Zeilen erscheinen hier, und Dokumente lassen sich aus dieser Konversation oder einer Sammlung hinzufügen.",
@@ -179,7 +188,6 @@ export const chat = {
     addPassages: "Passagen hinzufügen",
     passageDescription:
       "Markiere Text aus {{document}} und füge ihn als Passage hinzu. Mehrere Passagen lassen sich nacheinander hinzufügen.",
-    addSelection: "Markierung hinzufügen",
     passageCount_one: "{{count}} Passage aus diesem Dokument",
     passageCount_other: "{{count}} Passagen aus diesem Dokument",
     close: "Fertig",
@@ -187,6 +195,8 @@ export const chat = {
     removePassage: "Passage entfernen",
     notes: "Notizen",
     transfer: "Übertragen",
+    incomplete:
+      "Fülle Anfrage und Antwort aus und wähle Typ, Beantwortbarkeit und jede Bewertung.",
     done_one: "RAGold hat {{count}} Eintrag importiert",
     done_other: "RAGold hat {{count}} Einträge importiert",
     popupBlocked:

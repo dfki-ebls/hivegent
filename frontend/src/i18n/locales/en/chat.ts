@@ -145,11 +145,12 @@ export const chat = {
   ragold: {
     action: "Transfer to RAGold",
     description:
-      "Turn this reply into a gold benchmark entry with its documents. Key facts are added in RAGold.",
+      "Turn this reply into a gold benchmark entry with its documents. Nothing is preselected, so pick every type and grade yourself.",
     query: "Query",
     response: "Response",
     questionType: "Question type",
     answerability: "Answerability",
+    choose: "Choose …",
     questionTypes: {
       simple: "Simple",
       simple_w_condition: "Simple with condition",
@@ -167,6 +168,13 @@ export const chat = {
     },
     grade: "Grade",
     grades: { needed: "Needed", helpful: "Helpful", misleading: "Misleading" },
+    keyFacts: "Key facts",
+    keyFactsDescription:
+      "Select words in the response and add them as the facts a good answer must or should mention.",
+    importance: "Importance",
+    importances: { must: "Must mention", nice: "Nice to mention" },
+    removeKeyFact: "Remove key fact",
+    staleKeyFact: "No longer in the response, restore the wording or remove the key fact.",
     documents: "Documents and passages",
     noDocuments:
       "No documents yet. Cited lines appear here, and documents can be added from this conversation or a collection.",
@@ -176,7 +184,6 @@ export const chat = {
     addPassages: "Add passages",
     passageDescription:
       "Select text of {{document}} and add it as a passage. Several passages can be added one after another.",
-    addSelection: "Add selection",
     passageCount_one: "{{count}} passage from this document",
     passageCount_other: "{{count}} passages from this document",
     close: "Done",
@@ -184,6 +191,7 @@ export const chat = {
     removePassage: "Remove the passage",
     notes: "Notes",
     transfer: "Transfer",
+    incomplete: "Fill in the query and response, and pick the type, answerability, and every grade.",
     done_one: "RAGold imported {{count}} entry",
     done_other: "RAGold imported {{count}} entries",
     popupBlocked: "The browser blocked the RAGold tab. Allow pop-ups for this site and try again.",
