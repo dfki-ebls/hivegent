@@ -63,6 +63,7 @@ It defaults to `["list_conversations", "get_conversation"]`, since sub-agents al
 An unknown name stops the server at startup.
 
 `HIVEGENT_RAGOLD__URL` names where a RAGold instance is served, which lets users transfer a reply with its documents as a gold benchmark entry.
+`HIVEGENT_RAGOLD__PROJECT` names the RAGold project these entries are filed under (default `Hivegent`).
 
 Conversation files (`/tmp` and staged changes) are deleted after `conversations.ttl_hours` of inactivity (default 72), set with `HIVEGENT_CONVERSATIONS__TTL_HOURS`.
 

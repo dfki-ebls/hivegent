@@ -63,6 +63,7 @@ Voreingestellt ist `["list_conversations", "get_conversation"]`, da Unteragenten
 Ein unbekannter Name verhindert den Serverstart.
 
 `HIVEGENT_RAGOLD__URL` gibt an, wo eine RAGold-Instanz läuft, wodurch Nutzer eine Antwort mit ihren Dokumenten als Goldstandard-Eintrag übertragen können.
+`HIVEGENT_RAGOLD__PROJECT` benennt das RAGold-Projekt, dem diese Einträge zugeordnet werden (Standard `Hivegent`).
 
 Unterhaltungsdateien (`/tmp` und vorgemerkte Änderungen) werden nach `conversations.ttl_hours` ohne Aktivität gelöscht (Standard 72), einstellbar mit `HIVEGENT_CONVERSATIONS__TTL_HOURS`.
 

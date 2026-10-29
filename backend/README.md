@@ -294,7 +294,8 @@ A chat turn attaches only images in `converters.INGESTIBLE_IMAGE_MEDIA_TYPES`, s
 
 `POST /conversations/{id}/ragold` turns one edited turn into a RAGold zip (schema version 3): `annotations.json` with one entry and every listed document under `files/<documentId>/<name>`.
 The client sends canonical workspace paths, which resolve with the caller's access like any document route, and ships the original file, or the markdown of a markdown-only entry (`find_source`).
-Passage text comes from the markdown projection, so its `location` stays empty.
+Passage text comes from the markdown projection, so it carries no `location`.
+The author is the user's name, falling back to their ID, and the project is `settings.ragold.project`.
 The entry is complete when it leaves hivegent: question type, answerability, and every passage grade are picked by the user without defaults, and key facts are marked in the response, which `RagoldRequest` checks to be verbatim excerpts.
 Since RAGold matches passages against the rendered original, `RagoldPassage` turns their markdown into plain text (`plain_text`), one block per line with table cells joined by tabs, and refuses a passage of markdown syntax alone with a 422.
 The text still differs from RAGold's rendering in whitespace and line breaks, which RAGold and its evaluators tolerate by normalizing both sides as its README specifies.

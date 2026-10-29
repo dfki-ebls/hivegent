@@ -7,12 +7,12 @@
       "const": 3
     },
     "author": {
-      "default": "",
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "project": {
-      "default": "",
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "notes": {
       "default": "",
@@ -55,6 +55,8 @@
   },
   "required": [
     "version",
+    "author",
+    "project",
     "createdAt",
     "updatedAt"
   ],
@@ -111,8 +113,16 @@
           }
         },
         "origin": {
-          "default": "",
-          "type": "string"
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "notes": {
           "default": "",
@@ -138,16 +148,32 @@
       "type": "object",
       "properties": {
         "documentId": {
-          "type": "string",
-          "minLength": 1
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "text": {
           "type": "string",
           "minLength": 1
         },
         "location": {
-          "default": "",
-          "type": "string"
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "grade": {
           "type": "string",
@@ -159,7 +185,6 @@
         }
       },
       "required": [
-        "documentId",
         "text",
         "grade"
       ]

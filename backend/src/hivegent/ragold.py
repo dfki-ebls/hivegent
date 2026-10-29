@@ -169,20 +169,18 @@ class RagoldKeyFact(_Camel):
     importance: KeyFactImportance
 
 
-class RagoldRequest(_Camel):
-    """One conversation turn as a RAGold entry, with the documents it ships."""
+class _Entry(_Camel):
+    """The fields a request shares with the annotation it becomes."""
 
     query: str = Field(min_length=1)
     response: str = Field(min_length=1)
     question_type: QuestionType
     answerability: Answerability
-    origin: str = Field(description="URL of the conversation the entry comes from")
-    notes: str = ""
-    passages: list[RagoldPassage] = []
-    key_facts: list[RagoldKeyFact] = []
-    documents: list[str] = Field(
-        default=[], description="Canonical workspace paths of the shipped documents"
+    origin: str = Field(
+        min_length=1, description="URL of the conversation the entry comes from"
     )
+    notes: str = ""
+    key_facts: list[RagoldKeyFact] = []
 
     @model_validator(mode="after")
     def _key_facts_are_excerpts(self) -> Self:
@@ -190,6 +188,15 @@ class RagoldRequest(_Camel):
             raise ValueError(f"Key facts missing from the response: {missing}")
 
         return self
+
+
+class RagoldRequest(_Entry):
+    """One conversation turn as a RAGold entry, with the documents it ships."""
+
+    passages: list[RagoldPassage] = []
+    documents: list[str] = Field(
+        default=[], description="Canonical workspace paths of the shipped documents"
+    )
 
     @model_validator(mode="after")
     def _passages_are_shipped(self) -> Self:
@@ -201,43 +208,34 @@ class RagoldRequest(_Camel):
         return self
 
 
-class _Document(_Camel):
+class _Stamped(_Camel):
+    """A record created now and unchanged since."""
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda data: data["created_at"])
+
+
+class _Document(_Stamped):
     name: str
     size: int
     sha256: str
-    notes: str = ""
-    created_at: datetime
-    updated_at: datetime
 
 
 class _Passage(_Camel):
     document_id: str
     text: str
-    location: str = ""
     grade: PassageGrade
 
 
-class _Annotation(_Camel):
-    query: str
-    question_type: QuestionType
-    answerability: Answerability
+class _Annotation(_Entry, _Stamped):
     passages: list[_Passage]
-    response: str
-    key_facts: list[RagoldKeyFact]
-    origin: str
-    notes: str
-    created_at: datetime
-    updated_at: datetime
 
 
-class _Envelope(_Camel):
+class _Envelope(_Stamped):
     version: Literal[3] = SCHEMA_VERSION
-    author: str
-    project: str = ""
-    notes: str = ""
+    author: str = Field(min_length=1)
+    project: str = Field(min_length=1)
     language: Language
-    created_at: datetime
-    updated_at: datetime
     annotations: dict[str, _Annotation]
     documents: dict[str, _Document]
 
@@ -262,9 +260,9 @@ def _write_archive(
     files: Mapping[str, Path],
     *,
     author: str,
+    project: str,
     language: Language,
 ) -> None:
-    now = datetime.now(UTC)
     # Paths naming the same file, such as an entry's description and its original, share a document.
     ids = {file: str(uuid4()) for file in files.values()}
     documents: dict[str, _Document] = {}
@@ -274,32 +272,21 @@ def _write_archive(
             size, sha256 = _write_document(
                 archive, file, f"files/{document_id}/{file.name}"
             )
-            documents[document_id] = _Document(
-                name=file.name, size=size, sha256=sha256, created_at=now, updated_at=now
-            )
+            documents[document_id] = _Document(name=file.name, size=size, sha256=sha256)
 
         annotation = _Annotation(
-            query=request.query,
-            question_type=request.question_type,
-            answerability=request.answerability,
+            **request.model_dump(by_alias=False, exclude={"passages", "documents"}),
             passages=[
                 _Passage(
                     document_id=ids[files[item.path]], text=item.text, grade=item.grade
                 )
                 for item in request.passages
             ],
-            response=request.response,
-            key_facts=request.key_facts,
-            origin=request.origin,
-            notes=request.notes,
-            created_at=now,
-            updated_at=now,
         )
         envelope = _Envelope(
             author=author,
+            project=project,
             language=language,
-            created_at=now,
-            updated_at=now,
             annotations={str(uuid4()): annotation},
             documents=documents,
         )
@@ -311,6 +298,7 @@ def build_archive(
     files: Mapping[str, Path],
     *,
     author: str,
+    project: str,
     language: Language,
 ) -> SpooledTemporaryFile[bytes]:
     """Write the RAGold zip of *request*, rewound for reading.
@@ -320,7 +308,9 @@ def build_archive(
     """
     with ExitStack() as cleanup:
         spool = cleanup.enter_context(SpooledTemporaryFile(max_size=_SPOOL_MEMORY))
-        _write_archive(spool, request, files, author=author, language=language)
+        _write_archive(
+            spool, request, files, author=author, project=project, language=language
+        )
         spool.seek(0)
         # Built in full, so the caller owns the open archive from here.
         cleanup.pop_all()

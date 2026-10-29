@@ -87,10 +87,10 @@ async def test_archive_matches_the_ragold_schema() -> None:
         }
         (annotation,) = data["annotations"].values()
         assert annotation["passages"] == [
-            {"documentId": document_id, "text": "Bees", "location": "", "grade": "needed"}
+            {"documentId": document_id, "text": "Bees", "grade": "needed"}
         ]
         assert annotation["keyFacts"] == [{"text": "Bees", "importance": "must"}]
-        assert data["author"] == "Ada"
+        assert (data["author"], data["project"]) == ("Ada", "Hivegent")
 
 
 async def test_refuses_unreachable_and_unlisted_documents() -> None:

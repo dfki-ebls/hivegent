@@ -381,7 +381,7 @@ async def export_conversation_route(conversation: Owned) -> Response:
 
 @router.post("/conversations/{conversation_id}/ragold")
 async def export_ragold_route(
-    conversation: Owned, request: RagoldRequest, _ragold: RagoldConfigured
+    conversation: Owned, request: RagoldRequest, ragold: RagoldConfigured
 ) -> StreamingResponse:
     """Build one RAGold gold entry with its original documents as a zip.
 
@@ -402,7 +402,8 @@ async def export_ragold_route(
         build_archive,
         request,
         files,
-        author=user.name or "",
+        author=user.name or user.id,
+        project=ragold.project,
         language=current_language(),
     )
 

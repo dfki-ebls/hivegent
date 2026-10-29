@@ -494,12 +494,14 @@ class RagoldSettings(BaseModel):
     """Hand-off of conversation turns to RAGold as gold benchmark entries.
 
     ``url`` is where the RAGold app is served, and the transfer is hidden
-    while it is unset.
+    while it is unset, and ``project`` names the RAGold project every entry
+    is filed under.
 
     Configurable via ``HIVEGENT_RAGOLD__*`` environment variables.
     """
 
     url: HttpUrl | None = None
+    project: str = Field(default="Hivegent", min_length=1)
 
 
 class EmbeddingSettings(BaseModel):
