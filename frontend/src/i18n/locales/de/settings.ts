@@ -18,7 +18,7 @@ export const settings = {
       label: "Modell",
       description:
         "Das Hauptmodell für den Chat. Lass das Feld leer, um den Standard des Servers zu verwenden.",
-      placeholder: "z. B. openai/gpt-4o",
+      placeholder: "Modell-ID deines Anbieters",
     },
     apiKey: {
       label: "API-Schlüssel (optional)",
@@ -36,8 +36,8 @@ export const settings = {
     auxModel: {
       label: "Hilfsmodell (optional)",
       description:
-        "Muss klein, schnell und bildfähig sein. Übernimmt Dokumentkonvertierung, Alternativtexte, Titel, Komprimierung, Erkundung durch Subagents und LLM-gestütztes Chunking. Bei diesen umfangreichen Aufgaben zählen Kosten und Latenz mehr als ein ausgeprägter Denkprozess. Verwendet dieselben Anbietereinstellungen wie das Hauptmodell.",
-      placeholder: "z. B. openai/gpt-4o-mini",
+        "Muss klein, schnell und bildfähig sein. Übernimmt Dokumentkonvertierung, Alternativtexte, Titel und LLM-gestütztes Chunking. Bei diesen umfangreichen Aufgaben zählen Kosten und Latenz mehr als ein ausgeprägter Denkprozess. Verwendet dieselben Anbietereinstellungen wie das Hauptmodell.",
+      placeholder: "Modell-ID deines Anbieters",
     },
     personality: {
       label: "Persönlichkeit",

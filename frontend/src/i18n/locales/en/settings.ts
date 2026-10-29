@@ -15,7 +15,7 @@ export const settings = {
     model: {
       label: "Model",
       description: "The main model to use for chat. Leave empty to use the server default.",
-      placeholder: "e.g., openai/gpt-4o",
+      placeholder: "Model ID from your provider",
     },
     apiKey: {
       label: "API Key (optional)",
@@ -33,8 +33,8 @@ export const settings = {
     auxModel: {
       label: "Auxiliary Model (optional)",
       description:
-        "Must be small, fast, and vision-capable. Drives document conversion, alt-text generation, title generation, compaction, subagent exploration, and LLM-guided chunking, all high-volume workloads where cost and latency matter more than reasoning depth. Uses the same provider settings as the main model.",
-      placeholder: "e.g., openai/gpt-4o-mini",
+        "Must be small, fast, and vision-capable. Drives document conversion, alt-text generation, title generation, and LLM-guided chunking, all high-volume workloads where cost and latency matter more than reasoning depth. Uses the same provider settings as the main model.",
+      placeholder: "Model ID from your provider",
     },
     personality: {
       label: "Personality",
