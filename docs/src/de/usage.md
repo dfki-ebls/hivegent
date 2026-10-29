@@ -21,7 +21,7 @@ Stellen Sie konkrete Fragen zu bestimmten Themen.
 
 ## Quellen und Kontext
 
-Der Kontextbereich zeigt die Dokumente und Stellen hinter jeder Antwort.
+Der Kontextbereich zeigt die Dokumente und Belege hinter jeder Antwort.
 Klicken Sie darauf, um genau zu sehen, woher die Information stammt.
 
 Der Assistent durchsucht stets Ihre Dokumente und gibt wieder, was sie sagen, ohne auszuschmücken.

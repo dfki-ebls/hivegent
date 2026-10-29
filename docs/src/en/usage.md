@@ -21,7 +21,7 @@ Ask specific questions about concrete topics.
 
 ## Sources and context
 
-The context panel shows the documents and passages behind each answer.
+The context panel shows the documents and evidence behind each answer.
 Click one to see exactly where the information came from.
 
 The assistant always searches your documents and reports what they say without embellishing.
