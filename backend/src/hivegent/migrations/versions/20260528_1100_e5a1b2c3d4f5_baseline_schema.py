@@ -18,9 +18,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# Dim of the default ``paraphrase-multilingual-MiniLM-L12-v2`` model.
-# Operators running a different embedding model must generate a
-# follow-up revision ALTERing ``chunks.embedding`` to the matching dim.
+# Fixed so the migration stays independent of runtime config.
+# ``reconcile_index_state`` resizes the column to the configured model at boot.
 _VECTOR_DIM = 384
 
 # FTS configs (default ``HIVEGENT_EMBEDDING__TEXT_SEARCH_CONFIG``): the

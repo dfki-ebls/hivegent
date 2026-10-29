@@ -513,10 +513,10 @@ class EmbeddingSettings(BaseModel):
     the output size of the default ``sentence-transformers`` model, and
     must be set explicitly (``HIVEGENT_EMBEDDING__DIMENSION``) whenever
     ``model`` is changed to one with a different size (e.g. ``1536`` for
-    ``text-embedding-3-small``).  Keeping it a plain configured value —
-    rather than probing the model — means importing the ORM never loads
-    embedding weights; the boot-time guard validates the live column
-    against this number.
+    ``text-embedding-3-small``).  Keeping it a plain configured value,
+    rather than probing the model, means importing the ORM never loads
+    embedding weights.  On a change, the boot resizes the live column and
+    re-embeds every chunk.
     """
 
     provider: Literal["sentence-transformers", "openai"] = "sentence-transformers"

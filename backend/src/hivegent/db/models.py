@@ -342,9 +342,8 @@ class Document(Timestamped, Base):
 
 # Schema dim is the plain configured ``HIVEGENT_EMBEDDING__DIMENSION``
 # (never a model probe), so importing this module for Alembic
-# autogenerate, the server, or unit tests stays offline.  A
-# schema-vs-runtime mismatch is caught either by autogenerate (drift)
-# or by the boot-time guard in the FastAPI lifespan.
+# autogenerate, the server, or unit tests stays offline.
+# ``reconcile_index_state`` resizes the live column to match at boot.
 _VECTOR_DIM = settings.embedding.dimension
 
 

@@ -40,35 +40,6 @@ logger = logging.getLogger(__name__)
 mcp_http_app = mcp_app.http_app(path="/") if settings.mcp.enable else None
 
 
-async def _verify_vector_dim() -> None:
-    """Fail loudly when the live ``chunks.embedding`` dim differs from settings.
-
-    pgvector stores the dimension in the column's ``atttypmod``.  We
-    compare it to ``settings.embedding.dimension`` at boot so an
-    operator who flipped the embedding model without generating a
-    follow-up migration sees the error here, not mid-request.
-    """
-    from ..db.engine import get_engine
-
-    expected = settings.embedding.dimension
-    async with get_engine().connect() as conn:
-        result = await conn.execute(
-            sa.text(
-                "SELECT atttypmod FROM pg_attribute "
-                "WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"
-            )
-        )
-        actual = result.scalar_one_or_none()
-    if actual is None:
-        raise RuntimeError("chunks.embedding column not found — did migrations run?")
-    if actual != expected:
-        raise RuntimeError(
-            f"Embedding dim mismatch: chunks.embedding is {actual}, "
-            f"settings.embedding resolves to {expected}.  Generate an Alembic "
-            "revision against the new model before booting."
-        )
-
-
 async def _verify_fts_config() -> None:
     """Fail loudly when the live ``chunks.tsv`` configs differ from settings.
 
@@ -77,7 +48,7 @@ async def _verify_fts_config() -> None:
     migration would silently desync the stored ``tsvector`` from the
     query-side ``tsquery``.  We read the live generated expression and
     compare the ordered ``to_tsvector`` configurations to the configured
-    ones at boot, mirroring :func:`_verify_vector_dim`.
+    ones at boot.
     """
     from ..db.engine import get_engine
 
@@ -152,7 +123,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     ):
         await apply_migrations()
         await background.enter_async_context(_housekeeping())
-        await _verify_vector_dim()
         await _verify_fts_config()
         cleanup_spool_dir()
         await load_persisted_state(app)

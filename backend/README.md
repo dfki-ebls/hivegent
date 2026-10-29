@@ -33,7 +33,7 @@ The one accepted exception is a best-effort last-write-wins update with no const
 
 Alembic owns the schema, and the migration tree lives in the package at `src/hivegent/migrations/`, so revisions ship with the wheel.
 Chunk metadata, text, and vectors live in the `chunks` table and cascade with their document, so there is no separate vector index.
-The FastAPI lifespan runs `apply_migrations()` before accepting traffic and refuses to boot when the live `chunks.vector` dimension differs from `settings.embedding.dimension`.
+The FastAPI lifespan runs `apply_migrations()` before accepting traffic, then `reconcile_index_state()` resizes `chunks.embedding` to `settings.embedding.dimension` and re-embeds every chunk when the embedding model changed.
 
 Revisions are written by hand, since `--autogenerate` needs a live PostgreSQL with `pgvector`.
 Every change to `db/models.py` gets a matching revision under `migrations/versions/` in the same commit, named `YYYYMMDD_HHMM_<revision>_<slug>.py`, with `down_revision` set to the current head, symmetric `upgrade()` and `downgrade()`, and constraint names as the naming convention on `Base.metadata` produces them (`pk_users`, `fk_documents_owner_user_id_users`), wrapped in `op.f(...)`.

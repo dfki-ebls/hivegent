@@ -17,24 +17,26 @@ Public surface:
   chunk rows with fresh embeddings.
 - :func:`build_search_tool` builds a search tool scoped to the
   casebases the caller can access.
-- :func:`reconcile_index_state` re-embeds in place when the configured
-  embedding model differs from the persisted fingerprint.
+- :func:`reconcile_index_state` resizes the vector column and re-embeds
+  in place when the configured embedding model changes.
 """
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import cast
 
 import cbrkit
 import logfire
 import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from cbrkit import filter as cbrkit_filter
 from cbrkit.indexable import pgvector_async as PgvectorAsync
 from cbrkit.typing import AsyncRetrieverFunc
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import Connection
 
 from .chunkers.base import ChunkData, RetrievedChunk
 from .concurrency import shield_to_completion
@@ -199,10 +201,10 @@ class _RetrievalState:
                 conversion_func=await self.get_embedding_func(),
                 index_type="hybrid",
                 key_type="str",
-                key_column="id",
-                value_column="text",
-                pgvector_column="embedding",
-                tsvector_column="tsv",
+                key_column=Chunk.id.key,
+                value_column=Chunk.text.key,
+                pgvector_column=Chunk.embedding.key,
+                tsvector_column=Chunk.tsv.key,
                 tsvector_config=settings.embedding.text_search_config,
             )
             return self._storage
@@ -258,60 +260,120 @@ async def index_document(document_id: str, chunks: Sequence[ChunkData]) -> None:
     await shield_to_completion(storage.replace_where(where, data))
 
 
+# Through ``metadata``, since ``Chunk.__table__`` is typed as a bare ``FromClause``.
+_CHUNKS = Chunk.metadata.tables[Chunk.__tablename__]
+_EMBEDDING = _CHUNKS.c.embedding
+_EMBEDDING_INDEX = next(
+    index for index in _CHUNKS.indexes if index.columns.contains_column(_EMBEDDING)
+)
+
+
+@asynccontextmanager
+async def _index_state_lock() -> AsyncGenerator[None]:
+    """Hold a session-level advisory lock so booting replicas reconcile in turn.
+
+    The connection autocommits, so it holds no transaction open, and with it
+    no snapshot that would keep vacuum from the rows a rebuild rewrites.
+    """
+    from .db.engine import get_engine
+
+    key = sa.func.hashtextextended(IndexState.__tablename__, 0)
+    async with get_engine().connect() as conn:
+        conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        await conn.execute(sa.select(sa.func.pg_advisory_lock(key)))
+        try:
+            yield
+        finally:
+            await conn.execute(sa.select(sa.func.pg_advisory_unlock(key)))
+
+
+def _schema_ops(conn: Connection) -> Operations:
+    """Alembic's schema operations, run at boot outside a migration."""
+    return Operations(MigrationContext.configure(conn))
+
+
+def _fit_embedding_column(conn: Connection) -> bool:
+    """Retype the live embedding column to the one the ORM declares.
+
+    Vectors cannot be cast across dimensions, so a resize swaps in an empty,
+    nullable column, which changes only the catalog and takes the HNSW index
+    along.  It stays nullable until a re-embed fills it.
+
+    Returns:
+        Whether the column holds a complete set of vectors.
+    """
+    live = next(
+        column
+        for column in sa.inspect(conn).get_columns(_CHUNKS.name)
+        if column["name"] == _EMBEDDING.name
+    )
+    live_type = live["type"].compile(conn.dialect)
+    declared_type = _EMBEDDING.type.compile(conn.dialect)
+    if live_type == declared_type:
+        return not live["nullable"]
+
+    logger.warning("Resizing %s from %s to %s", _EMBEDDING, live_type, declared_type)
+    ops = _schema_ops(conn)
+    ops.drop_column(_CHUNKS.name, _EMBEDDING.name)
+    ops.add_column(_CHUNKS.name, sa.Column(_EMBEDDING.name, _EMBEDDING.type))
+
+    return False
+
+
+def _complete_embedding_column(conn: Connection) -> None:
+    """Restore ``NOT NULL`` and build the HNSW index once over the filled column."""
+    _schema_ops(conn).alter_column(_CHUNKS.name, _EMBEDDING.name, nullable=False)
+    _EMBEDDING_INDEX.create(conn, checkfirst=True)
+
+
 async def reconcile_index_state() -> None:
-    """Drive an in-place ``reembed_all`` when the embedding model changes.
+    """Fit the vector index to the configured embedding model before serving.
 
-    Idempotent: on a clean install inserts the singleton
-    :class:`IndexState` row; subsequent calls only act when the
-    ``(provider, model)`` pair differs from the persisted one.  The new
-    fingerprint is committed only *after* the rebuild completes, so a
-    crash mid-rebuild leaves the previous fingerprint and the next
-    boot retries.
+    A changed dimension resizes the embedding column (see
+    :func:`_fit_embedding_column`), and that or a changed ``(provider,
+    model)`` fingerprint re-embeds every row in place.  The HNSW index is
+    dropped for the rebuild and built once over the loaded vectors, which
+    pgvector recommends over updating through the index.
 
-    ``reembed_all`` commits page by page rather than atomically, so a torn
-    rebuild leaves ``chunks`` holding vectors from two models at once, across
-    which distances are meaningless.  What makes that acceptable is the
-    lifespan awaiting this *before* the server serves: no request can observe
-    the mixed state, and the retry above closes it.  Move this call off the
-    startup path (or into a background task) and it must become
-    ``reembed_all(atomic=True)``, which buffers every new vector in memory.
+    A nullable column marks an unfinished resize and the fingerprint is
+    committed only after the rebuild, so a crash at any point makes the next
+    boot retry.  ``reembed_all`` commits page by page, so a torn rebuild mixes
+    vectors from two models.  What makes that acceptable is the lifespan
+    awaiting this *before* the server serves.  Move this call off the startup
+    path and it must become ``reembed_all(atomic=True)``, which buffers every
+    new vector in memory.
     """
     current = settings.embedding.fingerprint()
-    async with session() as s:
-        row = (await s.execute(sa.select(IndexState))).scalar_one_or_none()
-        if row is None:
-            # Idempotent: a concurrent fresh boot may insert the singleton
-            # between our SELECT and this INSERT.  DO NOTHING means both
-            # bootstrappers settle on the same fingerprint without reembed.
-            await s.execute(
-                pg_insert(IndexState)
-                .values(
-                    id=1,
+    async with _index_state_lock():
+        async with session() as s:
+            conn = await s.connection()
+            complete = await conn.run_sync(_fit_embedding_column)
+            row = (await s.execute(sa.select(IndexState))).scalar_one_or_none()
+            if row is None:
+                row = IndexState(
                     embedding_provider=current["provider"],
                     embedding_model=current["model"],
                 )
-                .on_conflict_do_nothing()
-            )
-            return
-        previous = {
-            "provider": row.embedding_provider,
-            "model": row.embedding_model,
-        }
-        if previous == current:
-            return
+                s.add(row)
 
-    logger.warning(
-        "Embedding config changed (was %s, now %s) — re-embedding in place",
-        previous,
-        current,
-    )
-    storage = await _state.get_storage()
-    await storage.reembed_all()
-    async with session() as s:
-        row = (await s.execute(sa.select(IndexState))).scalar_one()
-        row.embedding_provider = current["provider"]
-        row.embedding_model = current["model"]
-        row.fingerprint_set_at = datetime.now(UTC)
+            previous = {"provider": row.embedding_provider, "model": row.embedding_model}
+            if complete and previous == current:
+                return
+
+            await conn.run_sync(_EMBEDDING_INDEX.drop, checkfirst=True)
+
+        logger.warning(
+            "Embedding config changed (was %s, now %s), re-embedding in place",
+            previous,
+            current,
+        )
+        storage = await _state.get_storage()
+        await storage.reembed_all()
+        async with session() as s:
+            await (await s.connection()).run_sync(_complete_embedding_column)
+            row = (await s.execute(sa.select(IndexState))).scalar_one()
+            row.embedding_provider = current["provider"]
+            row.embedding_model = current["model"]
 
 
 # ─── Search-tool builder ──────────────────────────────────────────────
