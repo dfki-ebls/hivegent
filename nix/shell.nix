@@ -44,6 +44,8 @@ mkShell {
   HIVEGENT_LLM__AUX_MODEL = "qwen3.5-0.8b";
   HIVEGENT_LLM__BASE_URL = "http://localhost:18000/v1";
   HIVEGENT_LLM__INFERENCE_PROVIDER = "llama.cpp";
+  # RAGold's dev server (`npm run dev` in the ragold repo).
+  HIVEGENT_RAGOLD__URL = "http://localhost:3002";
   UV_PYTHON = lib.getExe python313;
   # tesserocr (in-process docling OCR) resolves tessdata from this prefix.
   TESSDATA_PREFIX = backend.tessdata;
