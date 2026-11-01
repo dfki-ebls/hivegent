@@ -22,7 +22,7 @@ The components use Base UI, so triggers take a `render` element instead of `asCh
 `npm run shadcnup` refreshes the installed components only, so remove a file from `components/ui` to keep it and its dependencies out.
 The CLI's Base UI variants and animations are vendored unchanged as `src/shadcn.css`, so refresh it alongside from the URL in its header.
 
-`partLayout` (`chat/MessagePart.tsx`) sorts a reply's parts into steps and blocks.
+`partLayout` (`chat/message-part.tsx`) sorts a reply's parts into steps and blocks.
 Each run of steps between two blocks is one Chain of Thought that opens to its `Trace`.
 Every step is a trace line that expands to its detail, including subagents, changesets, and the steering queue.
 An approval or `ask_user` question is a block, an `Item` outside the trace, until it is answered.
@@ -31,7 +31,7 @@ A failed or stopped step is routine for an agent, so its line stays muted and on
 While nothing on screen shows the model working, a "Processing" line closes the running trace or stands where the next one starts (`isProcessing`).
 Only the last user message is a scroll anchor, since the scroller jumps to the first anchor it never scrolled to whenever one item swaps for another.
 
-Replies render with Streamdown, but fenced code goes to the shared `CodeBlock` (`MarkdownCode` in `chat/markdown/MarkdownText.tsx`).
+Replies render with Streamdown, but fenced code goes to the shared `CodeBlock` (`MarkdownCode` in `chat/markdown/markdown-text.tsx`).
 It uses the Shiki core with the JavaScript regex engine and the languages in `lib/highlighter.tsx`, which avoids a chunk per language and the Oniguruma WASM.
 Mermaid is imported lazily on the first diagram.
 
@@ -98,7 +98,7 @@ A dismissal is an `output-error`, and an overtaken question is dismissed like an
 
 ## Replies transfer to RAGold through its tab
 
-`RagoldAction` (`components/chat/RagoldDialog.tsx`) offers the last text of a reply to RAGold when `/settings` names a `ragold_url`.
+`RagoldAction` (`components/chat/ragold-dialog.tsx`) offers the last text of a reply to RAGold when `/settings` names a `ragold_url`.
 `draftFromTurn` (`lib/ragold.ts`) prefills the entry from the user turn, the reply without its tags, and the lines each citation names, resolved from the captured tool outputs like a citation chip (`lib/citations.ts`).
 Documents are added from those outputs or from the workspace trees through a combobox that renders a bounded number of matches, and a passage is the text selected in the document's markdown, where the dialog stays open so several passages of one document are added in one go.
 The transfer ships a complete entry, so nothing is preselected: the question type, the answerability, and every grade start unset, a selected passage or key fact is added through one button per grade or importance, and key facts are marked by selecting text of the response.
@@ -125,7 +125,7 @@ It walks the JS module graph, so CSS has to be imported from JS to be listed, li
 
 ## Originals preview in a tab
 
-`PreviewTabs` (`components/documents/PreviewTabs.tsx`) shows every document, uploaded image, and extracted asset of the document dialog the same way, a Preview tab with the original and a Text tab with its markdown or plain text projection.
+`PreviewTabs` (`components/documents/preview-tabs.tsx`) shows every document, uploaded image, and extracted asset of the document dialog the same way, a Preview tab with the original and a Text tab with its markdown or plain text projection.
 The tabs only appear when the original has a renderer, picked by `previewKind` (`lib/original-preview.ts`) from its media type, else its extension, and a highlighted chunk opens on the text.
 Images and videos load through the asset route as before.
 A PDF goes to the browser's own viewer in an unsandboxed `iframe`, since Chromium refuses PDFs in sandboxed frames, on an object URL retyped as `application/pdf`, so no pdf.js is bundled.

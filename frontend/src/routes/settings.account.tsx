@@ -19,9 +19,9 @@ import {
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { PageHeader } from "@/components/PageHeader";
-import { TooltipButton } from "@/components/TooltipButton";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { PageHeader } from "@/components/page-header";
+import { TooltipButton } from "@/components/tooltip-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {

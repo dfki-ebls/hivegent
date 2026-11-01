@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { createRootRoute, Outlet } from "@tanstack/react-router";
 
-import { AppErrorBoundary } from "@/components/AppErrorBoundary";
-import { Header } from "@/components/Header";
-import { ImpersonationBanner } from "@/components/ImpersonationBanner";
-import { MaintenanceScreen } from "@/components/MaintenanceScreen";
-import { NotFound } from "@/components/NotFound";
+import { AppErrorBoundary } from "@/components/app-error-boundary";
+import { Header } from "@/components/header";
+import { ImpersonationBanner } from "@/components/impersonation-banner";
+import { MaintenanceScreen } from "@/components/maintenance-screen";
+import { NotFound } from "@/components/not-found";
 import { Toaster } from "@/components/ui/toast";
 import { MaintenanceError } from "@/lib/api";
 import { useOidc } from "@/oidc";

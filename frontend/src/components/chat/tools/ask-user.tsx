@@ -1,7 +1,7 @@
 import { MessageCircleQuestionIcon } from "lucide-react";
 import type { FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { TraceStepCollapsible } from "@/components/chat/TraceStep";
+import { TraceStepCollapsible } from "@/components/chat/trace-step";
 import { PromptItem } from "@/components/chat/tools/approval";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

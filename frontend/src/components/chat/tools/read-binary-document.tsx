@@ -3,7 +3,7 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { parseBatch } from "@/components/chat/tools/batch";
-import { ToolCard } from "@/components/chat/tools/ToolCard";
+import { ToolCard } from "@/components/chat/tools/tool-card";
 import {
   Attachment,
   AttachmentContent,

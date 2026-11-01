@@ -3,11 +3,11 @@ import { LogInIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { DocsLink } from "@/components/DocsLink";
-import { LicensesLink } from "@/components/LicensesLink";
-import { Logo } from "@/components/Logo";
-import { VersionBadge } from "@/components/VersionBadge";
-import { ChatLayout } from "@/components/ChatLayout";
+import { DocsLink } from "@/components/docs-link";
+import { LicensesLink } from "@/components/licenses-link";
+import { Logo } from "@/components/logo";
+import { VersionBadge } from "@/components/version-badge";
+import { ChatLayout } from "@/components/chat-layout";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useOidc } from "@/oidc";

@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 
-import { ConnectingScreen } from "@/components/ConnectingScreen";
+import { ConnectingScreen } from "@/components/connecting-screen";
 import { browserLanguage, i18n } from "@/i18n";
 
 afterEach(async () => {

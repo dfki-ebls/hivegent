@@ -3,17 +3,17 @@ import { FileCodeIcon, SquareFunctionIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
-import { HighlightedCode } from "@/components/HighlightedCode";
-import { TraceStepCollapsible } from "@/components/chat/TraceStep";
+import { HighlightedCode } from "@/components/highlighted-code";
+import { TraceStepCollapsible } from "@/components/chat/trace-step";
 import {
   ChangesetSummarySchema,
   ChangesetView,
   changeCount,
 } from "@/components/chat/tools/changeset";
-import { ToolCard } from "@/components/chat/tools/ToolCard";
+import { ToolCard } from "@/components/chat/tools/tool-card";
 import { ToolCode, ToolOutputResult } from "@/components/chat/tools/display";
-import { ErrorAlert } from "@/components/ErrorAlert";
-import { ScrollDialogContent } from "@/components/ScrollDialogContent";
+import { ErrorAlert } from "@/components/error-alert";
+import { ScrollDialogContent } from "@/components/scroll-dialog-content";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

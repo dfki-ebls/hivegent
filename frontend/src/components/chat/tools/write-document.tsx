@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
-import { ToolCard } from "@/components/chat/tools/ToolCard";
+import { ToolCard } from "@/components/chat/tools/tool-card";
 import { ToolCode, ToolOutputResult } from "@/components/chat/tools/display";
 import { Badge } from "@/components/ui/badge";
 import { type ToolPart, toolDisplayName, toolInputAs } from "@/lib/chat/tool-part";

@@ -1,6 +1,6 @@
 import { type ComponentProps, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { HighlightedCode } from "@/components/HighlightedCode";
+import { HighlightedCode } from "@/components/highlighted-code";
 import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
 
 type ToolCodeProps = Pick<

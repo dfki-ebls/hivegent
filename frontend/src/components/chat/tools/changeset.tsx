@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
-import { TraceStep, TraceStepCollapsible } from "@/components/chat/TraceStep";
+import { TraceStep, TraceStepCollapsible } from "@/components/chat/trace-step";
 import { CodeBlock, CodeBlockContent, CodeBlockLine } from "@/components/ui/code-block";
 import { Trace } from "@/components/ui/trace";
 import { keyPrefix } from "@/i18n";

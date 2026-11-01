@@ -4,7 +4,7 @@ import { ThemeProvider } from "next-themes";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 
-import { BootstrapGate } from "@/components/BootstrapGate";
+import { BootstrapGate } from "@/components/bootstrap-gate";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/i18n";
 import { createQueryClient } from "@/lib/query-client";

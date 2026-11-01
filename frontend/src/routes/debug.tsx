@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
 import { useIsAdmin } from "@/queries/settings";
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState } from "@/components/empty-state";
 import { enforceLogin } from "@/oidc";
 
 const T_OPTIONS = keyPrefix(($) => $.app.adminOnly);
