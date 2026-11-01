@@ -7,6 +7,7 @@ import unicodedata
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Literal, TypedDict
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, HttpUrl, PositiveInt, SecretStr
 from pydantic_settings import (
@@ -54,6 +55,8 @@ __all__ = [
     "UrlPolicySettings",
     "content_digest",
     "content_hash",
+    "is_canonical_uuid",
+    "new_id",
     "normalize_unicode",
     "reveal",
     "sanitize_conversation_id",
@@ -210,12 +213,39 @@ def sanitize_group_id(group_id: str) -> str:
 
 
 def sanitize_conversation_id(conversation_id: str) -> str:
-    """Sanitize a conversation ID, which names its ``/tmp`` folder on disk.
+    """Check a conversation ID, a canonical UUID, which names its folder on disk.
 
     Raises:
-        ValueError: If the ID is invalid or contains unsafe characters.
+        ValueError: If the ID is no canonical UUID.
     """
-    return _sanitize_id(conversation_id, _CONVERSATION)
+    if not is_canonical_uuid(conversation_id):
+        raise ValueError(_invalid_id(_CONVERSATION, conversation_id).current)
+
+    return conversation_id
+
+
+def new_id() -> str:
+    """A fresh id, the random UUID form every id the app and its clients mint takes."""
+    return str(uuid4())
+
+
+def is_canonical_uuid(value: str) -> bool:
+    """Whether *value* is a UUID in its canonical lowercase spelling.
+
+    The one form a client may choose an id in, so every id it mints is a safe
+    path segment and has exactly one spelling.
+
+    >>> is_canonical_uuid(new_id())
+    True
+    >>> is_canonical_uuid("0B6C4C9E-4F9A-4F0E-9D7A-3F6E2B1C8A90")
+    False
+    >>> is_canonical_uuid("V1StGXR8_Z5jdHi6B-myT")
+    False
+    """
+    try:
+        return str(UUID(value)) == value
+    except ValueError:
+        return False
 
 
 def normalize_unicode(value: str) -> str:
@@ -863,7 +893,7 @@ class SandboxSettings(BaseModel):
 class ConversationSettings(BaseModel):
     """Lifetime of a conversation's folder on disk.
 
-    The folder is ``<data_dir>/conversations/<conversation_id>/``, holding its
+    The folder is ``<data_dir>/conversations/<user_id>/<conversation_id>/``, holding its
     ``/tmp`` and staged changesets alike.  It goes whole once untouched for
     ``ttl_hours``, whether or not its conversation still exists, in a sweep
     that runs in the background at startup and every ``sweep_interval_hours``
@@ -877,7 +907,7 @@ class ConversationSettings(BaseModel):
 class TmpSettings(BaseModel):
     """Size of a conversation's ``/tmp`` folder.
 
-    ``/tmp`` is ``<data_dir>/conversations/<conversation_id>/tmp/``, outside
+    ``/tmp`` is ``<data_dir>/conversations/<user_id>/<conversation_id>/tmp/``, outside
     every workspace.  ``max_bytes`` caps what one ``/tmp`` may hold, checked on
     every write into it.
     """

@@ -228,10 +228,10 @@ async def index_document(document_id: str, chunks: Sequence[ChunkData]) -> None:
     """Atomically replace *document_id*'s chunk rows with *chunks*.
 
     Each chunk is passed to cbrkit as a :class:`Chunk` instance keyed by
-    its auto-generated nanoid; cbrkit derives the ``embedding`` from the
+    its auto-generated id; cbrkit derives the ``embedding`` from the
     row's ``text`` via the storage's ``conversion_func`` (off the event loop,
     and before the write transaction opens) and Postgres generates ``tsv``.
-    The cbrkit PK (``chunks.id``) is the nanoid — the real chunk identity is
+    The cbrkit PK (``chunks.id``) is a generated id — the real chunk identity is
     the UNIQUE ``(document_id, idx)`` pair, kept normalised on its own columns.
 
     Empty *chunks* just deletes any existing rows for the document.

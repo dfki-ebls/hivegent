@@ -5,6 +5,7 @@ calls directly.
 """
 
 import io
+from uuid import NAMESPACE_URL, uuid5
 
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
@@ -20,6 +21,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+from hivegent.config import is_canonical_uuid
 from hivegent.db.conversations import OwnedConversation
 from hivegent.store import User
 from hivegent.tools.base import Batch, ItemFailure
@@ -52,9 +54,18 @@ MEMORY_READ: list[ModelMessage] = [
 """The read ``MemoryNote`` reports beside the first prompt of a window."""
 
 
-def owned(conversation_id: str, user: User | None = None) -> OwnedConversation:
-    """*conversation_id* as a conversation of *user*, ``u`` when none is given."""
-    return OwnedConversation(user or User("u"), conversation_id)
+def conversation_id(label: str) -> str:
+    """The conversation id a test names *label*, a UUID as a client mints it.
+
+    >>> conversation_id("c1") == conversation_id("c1") != conversation_id("c2")
+    True
+    """
+    return label if is_canonical_uuid(label) else str(uuid5(NAMESPACE_URL, label))
+
+
+def owned(label: str, user: User | None = None) -> OwnedConversation:
+    """The conversation named *label* (see :func:`conversation_id`) of *user*, ``u`` when none is given."""
+    return OwnedConversation(user or User("u"), conversation_id(label))
 
 
 def png_bytes(info: PngInfo | None = None) -> bytes:

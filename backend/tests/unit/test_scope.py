@@ -7,6 +7,7 @@ import pytest
 from hivegent import entries
 from hivegent.agents.common import UserDeps
 from hivegent.changes import Changeset, Delete
+from hivegent.db.conversations import OwnedConversation
 from hivegent.server.common import parse_document_scope
 from hivegent.store import Casebase, User, WorkspaceScope
 from hivegent.tmp import tmp_dir
@@ -96,7 +97,7 @@ class TestConversationTmp:
         )
 
         with pytest.raises(ValueError, match="Invalid conversation ID"):
-            _ = owned("../c1")
+            _ = OwnedConversation(User("u"), "../c1")
 
 
 class TestCaseFolding:

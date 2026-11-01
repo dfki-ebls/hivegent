@@ -43,7 +43,7 @@ async def test_invalid_chat_configuration_returns_422(body: dict[str, Any]) -> N
     request = _request(body)
 
     with pytest.raises(ValidationError) as raised:
-        await _run_chat(owned("conversation"), request)
+        await _run_chat(owned("conversation"), request, exists=True)
 
     response = await validation_error_handler(request, raised.value)
 

@@ -61,7 +61,7 @@ from ..agents.approval import APPROVAL_NOTE_KEY
 from ..agents.compaction import Compacted
 from ..agents.subagent_events import SubagentUpdate
 from ..agents.tools.ask import ANSWERS, ASK_USER_TOOL, DISMISSED_QUESTIONS
-from ..db._common import new_id
+from ..config import new_id
 from ..db.conversations import CHAT_ERROR_KEY, is_user_request
 from ..l10n import Localized
 

@@ -36,7 +36,7 @@ flowchart LR
 - Run state that changes during a conversation is an instruction whose changes are appended to the history rather than rewriting the instructions, which keeps the provider's prompt cache valid.
 - PostgreSQL with `pgvector` and cbrkit provide dense, sparse, and hybrid retrieval, plus conversations and memory.
 - Each user or group workspace lives under `data/workspace/<store_key>/`, keyed by the same `user:<id>` or `group:<id>` token that scopes SQL rows.
-- Each conversation owns `data/conversations/<id>/`, outside every workspace.
+- Each conversation owns `data/conversations/<user_id>/<id>/`, outside every workspace.
   Its `tmp/` is the agent's `/tmp`, writable without approval and holding oversized tool results under `/tmp/.tool-results/`.
   Its `changesets/` holds what programs staged for approval.
   The whole folder is swept after one idle TTL (`settings.conversations`, env `HIVEGENT_CONVERSATIONS__*`).
@@ -52,6 +52,7 @@ flowchart LR
 - REST for documents, conversations, and settings.
 - Vercel AI Data Stream Protocol for chat, Server-Sent Events for job progress and workspace changes.
 - Chat configuration (model, reasoning effort, mode, document filters, tools) travels with each chat request.
+- The client mints conversation and user message ids as UUIDs and chats at `POST /api/conversations/{id}/chat`, which claims an id no conversation holds, while the server stays authoritative for history and authorizes every access.
 - RAGold receives a reply as a gold benchmark entry: the backend builds the zip (`POST /api/conversations/{id}/ragold`) and the SPA hands it to a RAGold tab by `postMessage`, enabled by `settings.ragold.url` (env `HIVEGENT_RAGOLD__URL`).
 - The browser language (English or German) is sent as `Accept-Language` on every request.
   It selects the language of backend errors, job titles, and the agent's instructions.

@@ -12,9 +12,10 @@ Its changes commit through the one changeset gateway as a
 approval, while this module keeps what is ``/tmp``'s own: its size cap and the
 saved tool results only the host writes and the cap may evict.
 
-There is no user level: conversation ids are server-generated keys and the
-``conversations`` row names the one user a folder belongs to, so ownership is
-read from the database and never from the path.  :func:`tmp_dir` takes only an
+The folder lies below its user's (``conversations/<user_id>/<id>/``), so what
+a run writes after its conversation was deleted stays its user's, while
+ownership is still read from the database and never from the path.
+:func:`tmp_dir` takes only an
 :class:`~hivegent.db.conversations.OwnedConversation`, and the folder ends with
 its conversation's (:mod:`hivegent.conversation_files`).
 """

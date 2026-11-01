@@ -10,21 +10,17 @@ from typing import Any
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Base, Document, _nid
+from .models import Base, Document
 
 __all__ = [
     "affected_rows",
     "ensure_row",
-    "new_id",
     "stem_subtree_filter",
 ]
 
 
 def affected_rows(result: Any) -> int:
     return int(getattr(result, "rowcount", 0) or 0)
-
-
-new_id = _nid
 
 
 async def ensure_row(s: AsyncSession, model: type[Base], /, **values: Any) -> None:

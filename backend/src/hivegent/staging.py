@@ -20,14 +20,12 @@ guessing its id.
 """
 
 import asyncio
-import re
 from pathlib import Path
-from uuid import uuid4
 
 from pydantic import TypeAdapter, ValidationError
 
 from .changes import Changeset
-from .config import settings
+from .config import is_canonical_uuid, new_id, settings
 from .db.conversations import OwnedConversation
 from .files import atomic_write
 
@@ -41,7 +39,6 @@ __all__ = [
 CHANGESETS_FOLDER = "changesets"
 """The folder below a conversation's own that holds what it staged."""
 
-_ID = re.compile(r"[0-9a-f]{32}")
 _ADAPTER = TypeAdapter(Changeset[str])
 
 
@@ -57,14 +54,14 @@ def _path(conversation: OwnedConversation, changeset_id: str) -> Path | None:
     """
     return (
         _folder(conversation) / f"{changeset_id}.json"
-        if _ID.fullmatch(changeset_id)
+        if is_canonical_uuid(changeset_id)
         else None
     )
 
 
 async def stage(conversation: OwnedConversation, changeset: Changeset[str]) -> str:
     """Store *changeset* for *conversation* and return the id that applies it."""
-    changeset_id = uuid4().hex
+    changeset_id = new_id()
     data = _ADAPTER.dump_json(changeset)
     await asyncio.to_thread(
         atomic_write, _folder(conversation) / f"{changeset_id}.json", data

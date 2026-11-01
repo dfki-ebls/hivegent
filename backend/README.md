@@ -122,8 +122,9 @@ Edits are not checked, since they change a file they did not build.
 ### A conversation's `/tmp`
 
 `/tmp` holds a conversation's working state that is never a document: intermediates, state for a later `run_python` call, scripts, and spilled tool results.
-Each conversation owns `<data_dir>/conversations/<id>/` (`OwnedConversation.folder`), outside every workspace, holding its `tmp/` and the `changesets/` its programs staged.
-Ownership comes from the `conversations` row, never the path, and an `OwnedConversation` is obtained only from the database or minted for a new chat with an id that must be a safe path segment, so no caller can name another user's folder.
+Each conversation owns `<data_dir>/conversations/<user_id>/<id>/` (`OwnedConversation.folder`), outside every workspace, holding its `tmp/` and the `changesets/` its programs staged.
+Ownership comes from the `conversations` row, never the path, and an `OwnedConversation` is obtained only from the database or by `open_conversation` for an absent id, with an id that must be a safe path segment, so no caller can name another user's folder.
+The user level keeps what a run writes after its conversation was deleted with its user, so another user who claims the freed id never reaches it, and the sweep removes it once idle.
 `tmp.tmp_dir` is the one place an id becomes a path, and every `{conversation_id}` route resolves through one dependency.
 
 `/tmp` is a root beside the workspace roots: `UserDeps.search_paths` appends `tmp.tmp_search_path`, so the read tools reach it with no code of their own, and it is never reconciled, indexed, searched, filtered, or announced.
@@ -137,7 +138,7 @@ A move between `/tmp` and a workspace is refused by the gateway, since no one co
 `settings.tmp.max_bytes` caps a folder through its `Quota`, charged with what a changeset adds, so a refused change writes nothing and an over-cap folder may still shrink.
 `GET /api/documents/{filepath}` reads a `/tmp` path when given a `conversation_id` the user owns.
 
-`conversation_files` ends a folder's life, since no row cascade reaches it: deleting conversations removes rows and folders together, a reset removes every folder, and `DELETE /api/tmp` empties only each `tmp/`, keeping pending approvals.
+`conversation_files` ends a folder's life, since no row cascade reaches it: deleting conversations removes folders and then rows, a reset removes every folder, and `DELETE /api/tmp` empties only each `tmp/`, keeping pending approvals.
 `sweep_conversations` removes a whole folder once nothing below it changed for `settings.conversations.ttl_hours`, runs in a background task after the migrations and every `sweep_interval_hours`, needs no database, and checks each folder again under its `/tmp` lock.
 
 `TMP_INSTRUCTIONS` is shared by the `python` and `write` features, and `PYTHON_INSTRUCTIONS` names `/tmp` as the home of a rerunnable `.py`, since a `.py` in a workspace is an original that gets chunked.
@@ -178,10 +179,24 @@ No message count is stored, since the active-path count is a path aggregate.
 The client sends only the new message plus `trigger` and `messageId`.
 `_run_chat` replays the active-path prefix up to the fork point (`resolve_fork`), and `append_branch` persists only the new tail below it: a submit forks at the leaf, an edit at the edited message's parent, a regenerate at the nearest user turn, so prior branches stay as siblings.
 `dump_messages_with_ids` anchors each `UIMessage.id` to its node id and annotates forks for branch navigation.
-
-A freshly sent message carries only an SDK-minted id, so `_run_chat` reserves its node before the run and returns it as `X-Message-Id`, like `X-Conversation-Id` for a new conversation.
-Only a request carrying a user prompt reserves an id, and `resolve_fork` treats `messageId` as an edit only when it names a user turn on the active path, since the SDK also sends it when continuing after an approval.
+`resolve_fork` treats `messageId` as an edit only when it names a user turn on the active path, since the SDK also sends it when continuing after an approval.
 For the same reason `ChatAdapter` keeps only the client's user messages, since appending the approval resend would duplicate a `tool_call_id` and make the model reissue the call.
+
+### Clients choose conversation and message ids
+
+The client mints a conversation's id and the id of every new user message as canonical lowercase UUIDs (`config.new_id`, the form every id the server mints takes too), so it never waits for the server to name what it addresses next, and no response header carries an id.
+`POST /api/conversations/{id}/chat` is the only chat route, and `open_conversation` resolves its id: every conversation id is a canonical UUID (`OwnedConversation` checks it), an owned conversation is used, an absent id opens a new one, and an invalid id or another user's answers 404.
+Migration `e3f4a5b6c7d8` rewrote every earlier id into one (UUIDv5 of the old id) and moved each folder below its user's, so links to an old id answer 404.
+`open_conversation` also reports whether the row exists, and only for an absent one does `claim_conversation` create it right before the run, behind every check that can refuse the request, so a refused request leaves no row.
+Its `INSERT ... ON CONFLICT DO NOTHING` lets the database decide between racing claims: the second waits for the first to commit and answers 404 unless the caller owns the row.
+`append_branch` never creates a row, and titles an untitled one from its first user message.
+`GET /api/conversations/{id}/messages` answers `[]` for an absent id, so a client opens a new chat at its own id, and a deleted conversation's id is absent again.
+
+The new user message is stored under the client's `UIMessage.id` (`_prompt_id`), refused with 422 unless it is a canonical UUID, and with 409 when a node of the conversation holds it (checked by `resolve_fork` in the session that loads the history), since a collision at the write after streaming would lose the turn.
+Node ids are keyed per conversation, `(conversation_id, id)`, so no id another conversation holds is ever probed, and a parent always lies in its child's conversation.
+Every node is inserted, never upserted, so a chosen id can neither replace nor re-parent a node, and a 409 tells only that an id the client already knows is taken.
+An edit sends the edited node as `messageId` and the edited message under a fresh id, which becomes a sibling of the edited node.
+A regenerate, a compaction, and a post-approval continuation carry no new user message, so their nodes take server ids.
 
 An approval or question the user never answers is closed by the next turn (`abandon_pending_calls`), stored as its own node before the run, since pydantic-ai would otherwise repair the dangling call as "interrupted" and the model would reissue it on every turn.
 

@@ -28,12 +28,11 @@ import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
-from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
 from .changes import WorkspaceChanged
-from .config import settings
+from .config import new_id, settings
 from .l10n import Localized
 
 __all__ = [
@@ -243,7 +242,7 @@ class JobManager:
         self._prune()
         now = time.monotonic()
         job = _Job(
-            id=uuid4().hex,
+            id=new_id(),
             kind=kind,
             title=title,
             owner=owner,

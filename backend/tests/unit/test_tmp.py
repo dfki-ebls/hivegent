@@ -32,7 +32,7 @@ from hivegent.tools.table import QueryTableTool
 from hivegent.tools.workspace_os import ChangesetLimits
 from hivegent.workspace import Gateway, Location, PlannedChangeset
 from hivegent.workspace import changeset as gateway
-from tests.helpers import LIMITS, owned
+from tests.helpers import LIMITS, conversation_id, owned
 
 
 def _gateway(folder: Path) -> Gateway:
@@ -310,23 +310,39 @@ async def test_the_sweep_removes_a_folder_only_once_all_of_it_is_idle(
     data_dir: Path,
 ) -> None:
     """A stale `/tmp` beside a fresh changeset stays, and the other way round."""
-    root = data_dir / "conversations"
+    root = OwnedConversation.user_root(data_dir, owned("idle").user)
 
     for name in ("idle", "fresh-tmp", "fresh-changeset"):
         folder = tmp_dir(data_dir, owned(name))
         folder.mkdir(parents=True)
         (folder / "state.json").write_text("{}")
         _ = await staging.stage(owned(name), Changeset(()))
-        _age(*(root / name).rglob("*"), root / name, touched=_stale())
+        whole = owned(name).folder(data_dir)
+        _age(*whole.rglob("*"), whole, touched=_stale())
 
     os.utime(tmp_dir(data_dir, owned("fresh-tmp")) / "state.json")
-    os.utime(next((root / "fresh-changeset" / staging.CHANGESETS_FOLDER).iterdir()))
+    changesets = owned("fresh-changeset").folder(data_dir) / staging.CHANGESETS_FOLDER
+    os.utime(next(changesets.iterdir()))
 
     assert await sweep_conversations() == 1
-    assert sorted(path.name for path in root.iterdir()) == [
-        "fresh-changeset",
-        "fresh-tmp",
-    ]
+    assert sorted(path.name for path in root.iterdir()) == sorted(
+        conversation_id(name) for name in ("fresh-changeset", "fresh-tmp")
+    )
+
+
+async def test_each_user_has_their_own_folder_and_the_sweep_drops_an_empty_one(
+    data_dir: Path,
+) -> None:
+    """A run still writing after its conversation's deletion stays its user's."""
+    alice, bob = owned("c1", User("alice")), owned("c1", User("bob"))
+    assert alice.folder(data_dir) != bob.folder(data_dir)
+
+    folder = tmp_dir(data_dir, alice)
+    folder.mkdir(parents=True)
+    _age(folder, folder.parent, touched=_stale())
+
+    assert await sweep_conversations() == 1
+    assert not OwnedConversation.user_root(data_dir, alice.user).exists()
 
 
 async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:

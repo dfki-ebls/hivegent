@@ -24,11 +24,11 @@ from typing import Any, ClassVar
 
 import sqlalchemy as sa
 from cbrkit.indexable import PGVECTOR, TSVECTOR, tsvector_computed
-from nanoid import generate as _nanoid
 from sqlalchemy import (
     CheckConstraint,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     MetaData,
     UniqueConstraint,
@@ -43,7 +43,7 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.types import DateTime, TypeEngine
 
-from ..config import settings
+from ..config import new_id, settings
 
 __all__ = [
     "ApplicationSettings",
@@ -92,10 +92,6 @@ class Base(DeclarativeBase):
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-def _nid() -> str:
-    return _nanoid(size=21)
 
 
 class Timestamped:
@@ -232,7 +228,8 @@ class Conversation(Timestamped, Base):
     __tablename__ = "conversations"
     __table_args__ = (Index(None, "user_id", "updated_at"),)
 
-    id: Mapped[str] = mapped_column(primary_key=True, default=_nid)
+    # Chosen by the client, so it has no default.
+    id: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     title: Mapped[str | None]
 
@@ -255,19 +252,28 @@ class Message(Base):
     above them, so each carries only
     ``created_at`` (with a ``server_default``); the ``(conversation_id,
     created_at)`` index orders that newest-leaf lookup and the per-conversation
-    walks, while the ``parent_id`` index backs its childless test.
+    walks, while the ``(conversation_id, parent_id)`` index backs its childless
+    test.  A node id is unique within its conversation, since clients choose
+    the ids of their messages, and a parent always lies in its child's
+    conversation.
     """
 
     __tablename__ = "messages"
-    __table_args__ = (Index(None, "conversation_id", "created_at"),)
+    __table_args__ = (
+        Index(None, "conversation_id", "created_at"),
+        Index(None, "conversation_id", "parent_id"),
+        ForeignKeyConstraint(
+            ["conversation_id", "parent_id"],
+            ["messages.conversation_id", "messages.id"],
+            ondelete="CASCADE",
+        ),
+    )
 
-    id: Mapped[str] = mapped_column(primary_key=True, default=_nid)
     conversation_id: Mapped[str] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE")
+        ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
     )
-    parent_id: Mapped[str | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="CASCADE"), index=True
-    )
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    parent_id: Mapped[str | None]
     payload: Mapped[dict[str, Any]]
     created_at: Mapped[datetime] = mapped_column(
         default=_now, server_default=sa.func.now()
@@ -297,7 +303,7 @@ class Document(Timestamped, Base):
         UniqueConstraint("owner_group_id", "stem_path"),
     )
 
-    id: Mapped[str] = mapped_column(primary_key=True, default=_nid)
+    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
     owner_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE")
     )
@@ -352,7 +358,7 @@ _VECTOR_DIM = settings.embedding.dimension
 # generated dataclass ``__init__`` is what statically verifies every
 # write — a column rename, retype, or new required column breaks every
 # ``Chunk(...)`` call site at type-check time.  ``init=False`` columns
-# are cbrkit-owned (``id`` nanoid key, ``embedding``, ``tsv``) and never
+# are cbrkit-owned (``id`` generated key, ``embedding``, ``tsv``) and never
 # passed by the host; ``kw_only`` frees us from default-ordering rules.
 class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUnsafeMultipleInheritance]
     """Per-row chunk content + embedding + host metadata, one row each.
@@ -381,7 +387,7 @@ class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUns
         Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
     )
 
-    id: Mapped[str] = mapped_column(primary_key=True, init=False, default_factory=_nid)
+    id: Mapped[str] = mapped_column(primary_key=True, init=False, default_factory=new_id)
     text: Mapped[str]
     document_id: Mapped[str] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), index=True

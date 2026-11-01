@@ -42,16 +42,17 @@ from ...agents.compaction import (
 )
 from ...agents.subagent_events import SubagentUpdate
 from ...auth import get_current_user
-from ...config import RagoldSettings, settings
+from ...config import RagoldSettings, is_canonical_uuid, settings
 from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
 from ...converters.images import sanitize_image_bytes
-from ...db._common import new_id
 from ...db.conversations import (
     UNTITLED,
     ConversationSummary,
+    MessageIdTaken,
     MessagePair,
     OwnedConversation,
     append_branch,
+    claim_conversation,
     import_conversation,
     insert_above,
     is_user_request,
@@ -59,6 +60,7 @@ from ...db.conversations import (
     load_active_for_display,
     load_conversation,
     load_conversation_summary,
+    open_conversation,
     owned_conversation,
     prompt_items,
     prompt_text,
@@ -170,6 +172,14 @@ def _too_many_images(cap: int) -> Localized[str]:
 
 
 _INVALID_CHAT_REQUEST = Localized(en="Invalid chat request", de="Ungültige Chatanfrage")
+_INVALID_MESSAGE_ID = Localized(
+    en="A new message needs a lowercase UUID as its id",
+    de="Eine neue Nachricht braucht eine UUID in Kleinbuchstaben als ID",
+)
+_MESSAGE_ID_TAKEN = Localized(
+    en="A message with this id exists already, send it under a new id",
+    de="Eine Nachricht mit dieser ID existiert bereits, sende sie unter einer neuen ID",
+)
 _RAGOLD_DISABLED = Localized(
     en="RAGold export is disabled", de="Der RAGold-Export ist deaktiviert"
 )
@@ -188,6 +198,17 @@ async def _owned_conversation(
 
 
 type Owned = Annotated[OwnedConversation, Depends(_owned_conversation)]
+
+
+async def _opened_conversation(
+    conversation_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+) -> tuple[OwnedConversation, bool]:
+    """The path's conversation and whether its row exists (:func:`open_conversation`)."""
+    return found(await open_conversation(user, conversation_id))
+
+
+type Opened = Annotated[tuple[OwnedConversation, bool], Depends(_opened_conversation)]
 
 
 def _require_ragold() -> RagoldSettings:
@@ -302,15 +323,19 @@ async def delete_all_conversations_route(
 
 
 @router.get("/conversations/{conversation_id}/messages")
-async def get_conversation_messages(conversation: Owned) -> list[UIMessage]:
+async def get_conversation_messages(opened: Opened) -> list[UIMessage]:
     """Get the active path of a conversation in Vercel AI format.
 
     Each ``UIMessage.id`` is the tree-node id the client addresses for edit /
-    regenerate; forking nodes carry branch metadata.
+    regenerate, and forking nodes carry branch metadata.  An absent id has no
+    messages yet, so a client opens a new chat at the id it chose.
     """
-    result = await load_active_for_display(conversation)
+    conversation, exists = opened
+    result = await load_active_for_display(conversation) if exists else None
+
     if result is None:
         return []
+
     pairs, siblings = result
     return dump_messages_with_ids(pairs, siblings=siblings)
 
@@ -500,15 +525,15 @@ def _accept_attachments(messages: Sequence[ModelMessage]) -> None:
         _accept_attachment(item)
 
 
-async def _run_chat(conversation: OwnedConversation, request: Request) -> Response:
+async def _run_chat(
+    conversation: OwnedConversation, request: Request, *, exists: bool
+) -> Response:
     """Stream a chat turn for *conversation* via the Vercel AI protocol.
 
-    A turn that carries a new user message returns its tree-node id in the
-    ``X-Message-Id`` response header, under the same CORS constraint as
-    ``X-Conversation-Id``.
-
-    A request flagged ``compact`` compacts the active path instead of running
-    a turn.
+    A turn that carries a new user message stores it under the id the client
+    gave it (:func:`_prompt_id`).  A request flagged ``compact`` compacts the
+    active path instead of running a turn.  A conversation whose row does not
+    *exist* yet is claimed right before the run.
     """
     # The body is the AI SDK's, with the run configuration spliced in beside
     # its messages. Extras are ignored.
@@ -538,6 +563,8 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
     # persistence both see the admitted bytes.
     _accept_attachments(adapter.messages)
 
+    user_node_id = _prompt_id(adapter)
+
     # Live subagent transcript snapshots flow through this sink; the streaming
     # response drains it concurrently with the run (see `run_and_persist`).
     subagent_sink: asyncio.Queue[SubagentUpdate] = asyncio.Queue()
@@ -546,15 +573,26 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
     # History is server-authoritative: load the active-path prefix up to the
     # fork point from the DB and replay it, ignoring the browser echo.  The
     # client sends only the new message (none for a regenerate or compaction).
-    prefix, fork_id = await resolve_fork(
-        conversation,
-        regenerate=config.trigger == "regenerate-message",
-        message_id=config.message_id,
-    )
+    # Its id is checked before anything is written or run, since the turn is
+    # persisted only once it streamed and a taken id would lose it then.
+    try:
+        prefix, fork_id = await resolve_fork(
+            conversation,
+            regenerate=config.trigger == "regenerate-message",
+            message_id=config.message_id,
+            prompt_id=user_node_id,
+        )
+    except MessageIdTaken as exc:
+        raise HTTPException(status_code=409, detail=_MESSAGE_ID_TAKEN.current) from exc
 
     # Ahead of the approvals and answers below, which a compaction leaves pending.
     if config.compact:
         return _compact_active_path(conversation, adapter, run_prefix, prefix, fork_id)
+
+    # Every check that can refuse the request is behind, so a refused one
+    # leaves no row.  An id taken since it was opened is no longer the caller's.
+    if not exists and not await claim_conversation(conversation):
+        raise HTTPException(status_code=404, detail=CONVERSATION_NOT_FOUND.current)
 
     # Changes a program staged for an approval this request denies or abandons
     # can never be applied, so they go now rather than at the next boot sweep.
@@ -579,15 +617,6 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
             prefix = [*prefix, declined]
 
     record_known_urls(deps.known_urls, chain(prefix, adapter.messages))
-
-    # Reserve the node id the new user message will be persisted under, so the
-    # client can address it for an edit without waiting for a reload.  Only a
-    # request carrying a user prompt reserves one: a regenerate and a
-    # post-approval continuation start their delta with a message the client
-    # never addresses.
-    user_node_id = (
-        new_id() if adapter.messages and is_user_request(adapter.messages[-1]) else None
-    )
 
     stream = adapter.run_stream(
         deps=deps,
@@ -615,8 +644,8 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
 
     async def persist(messages: Sequence[ModelMessage]) -> None:
         # Append only the turn's new messages (past the replayed prefix) as a
-        # branch under the fork point.  The delta's user message is the one
-        # whose id was announced, so it lands under exactly that id.
+        # branch under the fork point.  The delta's user message is the
+        # client's, so it lands under the id the client gave it.
         delta = messages[prefix_len:]
 
         # A compaction that took the place of the regenerated prompt, the fork
@@ -628,12 +657,33 @@ async def _run_chat(conversation: OwnedConversation, request: Request) -> Respon
 
         await append_branch(conversation, fork_id, delta, prompt_id=user_node_id)
 
-    response = await run_and_persist(
+    return await run_and_persist(
         adapter, stream, persist=persist, subagent_sink=subagent_sink
     )
-    if user_node_id is not None:
-        response.headers["X-Message-Id"] = user_node_id
-    return response
+
+
+def _prompt_id(adapter: ChatAdapter[UserDeps, str]) -> str | None:
+    """The id the client gave the turn's new user message, ``None`` without one.
+
+    A regenerate, a compaction, and a post-approval continuation carry no new
+    user message, so the client addresses none of their nodes.
+
+    Raises:
+        HTTPException: 422 when the id is no canonical UUID.
+    """
+    if not adapter.messages or not is_user_request(adapter.messages[-1]):
+        return None
+
+    message_id = next(
+        message.id
+        for message in reversed(adapter.run_input.messages)
+        if message.role == "user"
+    )
+
+    if not is_canonical_uuid(message_id):
+        raise HTTPException(status_code=422, detail=_INVALID_MESSAGE_ID.current)
+
+    return message_id
 
 
 def _compact_active_path(
@@ -676,39 +726,9 @@ def _compact_active_path(
     return adapter.streaming_response(adapter.transform_stream(events()))
 
 
-@router.post("/conversations/chat")
-async def create_new_conversation_chat(
-    request: Request,
-    user: Annotated[User, Depends(get_current_user)],
-) -> Response:
-    """Start a new conversation: mint a server ID and stream the first turn.
-
-    The conversation row is created lazily when the turn is persisted (see
-    :func:`append_branch`), so an abandoned chat never leaves an empty
-    row behind.  Because the turn is persisted on an errored finish too,
-    a first turn that errors still becomes a real row under the minted ID —
-    which the client adopts so its retry targets that conversation instead
-    of minting a duplicate.  The minted ID is returned in the
-    ``X-Conversation-Id`` response header for the client to adopt.
-
-    CORS constraint: the frontend can only read this header (and the
-    ``X-Message-Id`` every turn returns) same-origin or when the edge proxy
-    lists them under ``Access-Control-Expose-Headers``.  Same-origin needs no
-    config; cross-origin deployments must expose them explicitly (custom
-    response headers are hidden from JS otherwise).
-    """
-    conversation = OwnedConversation.mint(user)
-    response = await _run_chat(conversation, request)
-    response.headers["X-Conversation-Id"] = conversation.id
-    return response
-
-
 @router.post("/conversations/{conversation_id}/chat")
-async def create_conversation_chat(conversation: Owned, request: Request) -> Response:
-    """Continue an existing conversation.
+async def create_conversation_chat(opened: Opened, request: Request) -> Response:
+    """Run a turn in a conversation, starting it at a fresh id the client chose."""
+    conversation, exists = opened
 
-    Only conversations that already hold a message exist as rows, so an ID
-    the server never issued is a 404 rather than a silently created
-    conversation — clients cannot mint their own IDs.
-    """
-    return await _run_chat(conversation, request)
+    return await _run_chat(conversation, request, exists=exists)

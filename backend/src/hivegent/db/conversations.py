@@ -16,11 +16,11 @@ stored JSON on the way back out.
 """
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -53,10 +53,14 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from ..config import sanitize_conversation_id
+from ..config import (
+    new_id,
+    sanitize_conversation_id,
+    sanitize_user_id,
+)
 from ..l10n import Localized
 from ..store import User
-from ._common import affected_rows, new_id
+from ._common import affected_rows, ensure_row
 from .engine import session
 from .models import Conversation, Message
 from .users import ensure_user
@@ -66,11 +70,12 @@ __all__ = [
     "UNTITLED",
     "ConversationData",
     "ConversationSummary",
+    "MessageIdTaken",
     "MessagePair",
     "OwnedConversation",
     "any_conversation",
     "append_branch",
-    "delete_all_conversations",
+    "claim_conversation",
     "extract_title",
     "import_conversation",
     "insert_above",
@@ -79,11 +84,12 @@ __all__ = [
     "load_active_for_display",
     "load_conversation",
     "load_conversation_summary",
+    "open_conversation",
     "owned_conversation",
     "owned_conversations",
     "prompt_items",
     "prompt_text",
-    "remove_conversation",
+    "remove_conversations",
     "render_prompt",
     "resolve_fork",
     "set_conversation_title",
@@ -95,9 +101,12 @@ class OwnedConversation:
     """A conversation id together with the user it belongs to.
 
     Built only by :func:`owned_conversation` and its siblings, which read the
-    owner from the database, or by :meth:`mint`, so holding one is the proof
-    of ownership the message tree and the conversation's :meth:`folder`
-    require.  The id is checked to be a safe path segment, since it names it.
+    owner from the database, or by :func:`open_conversation` for an id no
+    conversation holds, so holding one is the proof of ownership the message
+    tree and the conversation's :meth:`folder` require.  An absent id proves no
+    more than that it was free, so it is claimed (:func:`claim_conversation`)
+    before anything is written, and every statement still matches the owner
+    too.  The id is checked to be a safe path segment, since it names it.
     """
 
     user: User
@@ -106,23 +115,33 @@ class OwnedConversation:
     def __post_init__(self) -> None:
         sanitize_conversation_id(self.id)
 
-    @classmethod
-    def mint(cls, user: User) -> Self:
-        """A fresh conversation for *user*, whose row its first persisted turn creates."""
-        return cls(user, new_id())
-
     @staticmethod
     def root(data_dir: Path) -> Path:
         """Where every conversation's :meth:`folder` lives."""
         return data_dir / "conversations"
 
+    @staticmethod
+    def user_root(data_dir: Path, user: User) -> Path:
+        """Where the :meth:`folder` of every conversation *user* owns lives."""
+        return OwnedConversation.root(data_dir) / sanitize_user_id(user.id)
+
     def folder(self, data_dir: Path) -> Path:
         """The one folder holding what this conversation keeps on disk, without creating it.
 
         Its ``/tmp`` and its staged changesets live below it, so deleting the
-        conversation's files is deleting this folder.
+        conversation's files is deleting this folder.  It lies below its user's
+        :meth:`user_root`, so a run still writing after its conversation was
+        deleted never reaches another user who claims the freed id.
         """
-        return self.root(data_dir) / self.id
+        return self.user_root(data_dir, self.user) / self.id
+
+
+class MessageIdTaken(Exception):
+    """A node of the conversation holds the id a client chose for its new message.
+
+    The client learns it before its turn runs, since the turn is only written
+    once it streamed.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,7 +304,14 @@ def _newest_leaf_id(conversation_id: str) -> ColumnElement[str]:
     otherwise-impossible exact-timestamp tie so the pick stays stable.
     """
     child = aliased(Message)
-    is_leaf = ~select(literal(1)).where(child.parent_id == Message.id).exists()
+    is_leaf = (
+        ~select(literal(1))
+        .where(
+            child.conversation_id == Message.conversation_id,
+            child.parent_id == Message.id,
+        )
+        .exists()
+    )
     return (
         select(Message.id)
         .where(Message.conversation_id == conversation_id, is_leaf)
@@ -435,7 +461,7 @@ def _row(conversation: OwnedConversation) -> ColumnElement[bool]:
 async def _get_owned(
     s: AsyncSession, conversation: OwnedConversation
 ) -> Conversation | None:
-    """Return *conversation*'s row, ``None`` before its first turn is persisted."""
+    """Return *conversation*'s row, ``None`` before its first turn claims it."""
     return await s.scalar(select(Conversation).where(_row(conversation)))
 
 
@@ -476,8 +502,45 @@ async def any_conversation(conversation_id: str) -> OwnedConversation | None:
     return None if owner is None else OwnedConversation(User(owner), conversation_id)
 
 
+async def open_conversation(
+    user: User, conversation_id: str
+) -> tuple[OwnedConversation, bool] | None:
+    """*conversation_id* as *user*'s and whether its row exists, or ``None``.
+
+    Another user's id is ``None`` like an invalid one.
+    """
+    try:
+        conversation = OwnedConversation(user, conversation_id)
+    except ValueError:
+        return None
+
+    found = await any_conversation(conversation_id)
+
+    if found is not None and found.user.id != user.id:
+        return None
+
+    return conversation, found is not None
+
+
+async def claim_conversation(conversation: OwnedConversation) -> bool:
+    """Create *conversation*'s row unless its id is taken, returning whether it is its user's.
+
+    One insert that skips a taken id decides between racing claims: a second
+    one waits for the first to commit and then finds the row there, which is
+    the caller's only when they own it.
+    """
+    async with session() as s:
+        await ensure_user(s, conversation.user.id)
+        await ensure_row(
+            s, Conversation, id=conversation.id, user_id=conversation.user.id
+        )
+        owned = await s.scalar(select(Conversation.id).where(_row(conversation)))
+
+    return owned is not None
+
+
 async def load_conversation(conversation: OwnedConversation) -> ConversationData | None:
-    """Return full conversation data (active path), or ``None`` before its first turn."""
+    """Return full conversation data (active path), or ``None`` before it is claimed."""
     async with session() as s:
         conv = await _get_owned(s, conversation)
         if conv is None:
@@ -499,7 +562,7 @@ async def load_active_for_display(
 
     The node ids anchor each ``UIMessage.id`` so the client can address a
     message for edit / regenerate; the sibling map lists each forking node's
-    siblings.  ``None`` before the conversation's first turn.
+    siblings.  ``None`` before the conversation is claimed.
     """
     async with session() as s:
         conv = await _get_owned(s, conversation)
@@ -524,7 +587,7 @@ async def list_conversations(user: User) -> list[ConversationSummary]:
 async def load_conversation_summary(
     conversation: OwnedConversation,
 ) -> ConversationSummary | None:
-    """Return one conversation's summary, or ``None`` before its first turn."""
+    """Return one conversation's summary, or ``None`` before it is claimed."""
     async with session() as s:
         conv = await _get_owned(s, conversation)
     return None if conv is None else _to_summary(conv)
@@ -597,18 +660,41 @@ def _fork_for_path(
 
 
 async def resolve_fork(
-    conversation: OwnedConversation, *, regenerate: bool, message_id: str | None
+    conversation: OwnedConversation,
+    *,
+    regenerate: bool,
+    message_id: str | None,
+    prompt_id: str | None,
 ) -> tuple[list[ModelMessage], str | None]:
     """Return the history prefix and fork-parent node for the next turn.
 
     Reads the active path; a conversation with no persisted turn yet forks at
     the root with an empty prefix.
+
+    Raises:
+        MessageIdTaken: If a node of the conversation holds *prompt_id*, the id
+            the client chose for its new message.
     """
     async with session() as s:
+        if prompt_id is not None and await s.scalar(
+            select(
+                select(Message.id)
+                .where(
+                    Message.conversation_id == conversation.id,
+                    Message.id == prompt_id,
+                )
+                .exists()
+            )
+        ):
+            raise MessageIdTaken
+
         conv = await _get_owned(s, conversation)
+
         if conv is None:
             return [], None
+
         path = await _load_active_path(s, conv.id)
+
     return _fork_for_path(path, regenerate=regenerate, message_id=message_id)
 
 
@@ -626,15 +712,16 @@ async def append_branch(
     Each becomes a node chained by ``parent_id``; the last one is the newest
     message and therefore the new active leaf, so the turn extends the active
     path (plain submit) or forks a sibling branch (edit / regenerate) without
-    touching the preserved prior branches.  Empty delta is a no-op.  The
-    conversation row is created lazily on the first turn, titled by *title* or,
-    when omitted, derived from the first user message.  Raises on failure so
-    the caller can surface a hard error rather than silently lose the turn.
+    touching the preserved prior branches.  Empty delta is a no-op.  An
+    untitled conversation is titled by *title* or, when omitted, derived from
+    the first user message.  Raises on failure so the caller can surface a hard
+    error rather than silently lose the turn, ``NoResultFound`` when its user
+    does not own *conversation*.
 
-    *prompt_id* forces the id of the delta's first user request instead of
-    minting one, so the chat route can announce the new user message's id
-    before the turn is persisted (see ``X-Message-Id`` in ``backend/README.md``),
-    even when a compaction the turn made lands ahead of it.
+    *prompt_id* is the id of the delta's first user request instead of a
+    minted one, the id the client chose for its new message, even when a
+    compaction the turn made lands ahead of it.  Every node is inserted, so a
+    taken id fails the whole write rather than replacing or moving a node.
     """
     msg_list = list(messages)
     if not msg_list:
@@ -642,14 +729,7 @@ async def append_branch(
 
     async with session() as s:
         await _lock(s, conversation.id)
-        await ensure_user(s, conversation.user.id)
-
-        # A minted id has no row until this first write; one another user
-        # holds is not matched and fails on the primary key instead.
-        conv = await _get_owned(s, conversation)
-        if conv is None:
-            conv = Conversation(id=conversation.id, user_id=conversation.user.id)
-            s.add(conv)
+        conv = (await s.scalars(select(Conversation).where(_row(conversation)))).one()
 
         prompt_index = next(
             (i for i, message in enumerate(msg_list) if is_user_request(message)),
@@ -685,15 +765,16 @@ async def insert_above(
     stay siblings.
 
     Raises:
-        NoResultFound: If *node_id* is not a node of *conversation*.
+        NoResultFound: If *node_id* is not a node of *conversation* its user
+            owns.
     """
     async with session() as s:
         await _lock(s, conversation.id)
         parent_id = (
             await s.execute(
-                select(Message.parent_id).where(
-                    Message.id == node_id, Message.conversation_id == conversation.id
-                )
+                select(Message.parent_id)
+                .join(Conversation, Conversation.id == Message.conversation_id)
+                .where(Message.id == node_id, _row(conversation))
             )
         ).scalar_one()
         inserted = Message(
@@ -729,21 +810,20 @@ async def set_conversation_title(
     return None if conv is None else _to_summary(conv)
 
 
-async def remove_conversation(conversation: OwnedConversation) -> bool:
-    """Delete a conversation (cascades to its messages)."""
-    async with session() as s:
-        result = await s.execute(delete(Conversation).where(_row(conversation)))
-    return affected_rows(result) > 0
+async def remove_conversations(user: User, ids: Collection[str]) -> int:
+    """Delete *user*'s conversations among *ids* (cascades to their messages).
 
+    Returns how many were deleted.
+    """
+    if not ids:
+        return 0
 
-async def delete_all_conversations(user: User) -> list[OwnedConversation]:
-    """Delete every conversation owned by *user*, returning them."""
     async with session() as s:
-        result = await s.scalars(
-            delete(Conversation).where(_owned(user)).returning(Conversation.id)
+        result = await s.execute(
+            delete(Conversation).where(_owned(user), Conversation.id.in_(ids))
         )
 
-        return [OwnedConversation(user, cid) for cid in result.all()]
+    return affected_rows(result)
 
 
 async def import_conversation(
@@ -767,7 +847,8 @@ async def import_conversation(
     if not messages:
         raise ValueError(_NO_MESSAGES.current)
 
-    conversation = OwnedConversation.mint(user)
+    conversation = OwnedConversation(user, new_id())
+    await claim_conversation(conversation)
     await append_branch(conversation, None, messages, title=title)
 
     summary = await load_conversation_summary(conversation)
