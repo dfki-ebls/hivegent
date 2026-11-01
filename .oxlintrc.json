@@ -13,6 +13,11 @@
     "unicorn",
     "vitest"
   ],
+  "rules": {
+    "import/no-cycle": ["error", { "ignoreTypes": false }],
+    "typescript/no-deprecated": "error",
+    "no-unused-expressions": ["warn", { "allowTaggedTemplates": true }]
+  },
   "ignorePatterns": [
     "**/src/components/ui/**",
     "**/src/hooks/use-highlighted-code.ts",
