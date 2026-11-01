@@ -1,5 +1,5 @@
 import { i18n } from "@/i18n";
-import type { DirectoryEntry, DocumentInfo, WorkspaceChanged } from "@/lib/types";
+import type { WorkspaceChanged } from "@/api/jobs";
 
 export { cn, type ClassValue } from "cn";
 
@@ -78,73 +78,6 @@ export function commonParentDir(paths: string[]): string {
     },
     parentDir(paths[0] ?? ""),
   );
-}
-
-/** Collect all file entries under a directory entry (recursive). */
-export function collectFileEntries(
-  entry: DirectoryEntry,
-  out: DirectoryEntry[] = [],
-): DirectoryEntry[] {
-  if (entry.type === "file") {
-    out.push(entry);
-  } else {
-    for (const child of entry.children ?? []) {
-      collectFileEntries(child, out);
-    }
-  }
-  return out;
-}
-
-/** Collect all file paths under a directory entry (recursive). */
-export function collectFilePaths(entry: DirectoryEntry): string[] {
-  return collectFileEntries(entry).map((file) => file.path);
-}
-
-/** Derive the flat document listing from a directory tree's file entries. */
-export function treeDocuments(root: DirectoryEntry): DocumentInfo[] {
-  return collectFileEntries(root).map((file) => ({
-    filename: file.path,
-    display_name: file.name,
-    size_bytes: file.size_bytes ?? 0,
-    modified_at: file.modified_at ?? "",
-    chunk_count: file.chunk_count,
-    has_original: file.has_original ?? false,
-    original_path: file.original_path,
-    assets_dir: file.assets_dir,
-  }));
-}
-
-/** Return a copy of *root* with an empty directory at *path* (and any missing
- * ancestors) grafted in.
- *
- * Lets a create land in the view without waiting for a fresh tree from the
- * server, whose walk covers the whole workspace. Parents are created
- * implicitly and an existing segment is reused, matching the backend, so it is
- * idempotent and the refresh that follows simply confirms it. Placement is not
- * its concern: the tree view sorts children as it renders them. */
-export function withDirectory(root: DirectoryEntry, path: string): DirectoryEntry {
-  const segments = path.split("/").filter(Boolean);
-  if (segments.length === 0) return root;
-
-  const graft = (node: DirectoryEntry, [name, ...rest]: string[]): DirectoryEntry => {
-    const children = node.children ?? [];
-    const existing = children.find((c) => c.type === "directory" && c.name === name);
-    const created: DirectoryEntry = existing ?? {
-      type: "directory",
-      name,
-      path: joinPath(node.path, name),
-      children: [],
-    };
-    const updated = rest.length > 0 ? graft(created, rest) : created;
-    return {
-      ...node,
-      children: existing
-        ? children.map((c) => (c === existing ? updated : c))
-        : [...children, updated],
-    };
-  };
-
-  return graft(root, segments);
 }
 
 /** Convert a snake_case string to Title Case. */

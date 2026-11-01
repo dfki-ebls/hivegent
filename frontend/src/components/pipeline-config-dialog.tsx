@@ -9,10 +9,10 @@ import { RotateCcwIcon, SettingsIcon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import type { PipelineKind } from "@/api/pipelines";
 import { cn } from "@/lib/utils";
-import type { PipelineKind } from "@/lib/types";
 import { DialogBody, ScrollDialogContent } from "@/components/scroll-dialog-content";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {

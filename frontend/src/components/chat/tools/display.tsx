@@ -1,6 +1,6 @@
 import { type ComponentProps, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { HighlightedCode } from "@/components/highlighted-code";
+import { HighlightedCode, ValueCode } from "@/components/common/highlighted-code";
 import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
 
 type ToolCodeProps = Pick<
@@ -63,9 +63,12 @@ export function ToolValue({
   value,
   ...props
 }: Omit<ToolCodeProps, "code" | "language"> & { value: unknown }) {
-  const { code, language } = useMemo(() => codeOf(value), [value]);
+  const parsed = useMemo(
+    () => (typeof value === "string" ? (parseJson<unknown>(value) ?? value) : value),
+    [value],
+  );
 
-  return <ToolCode code={code} language={language} {...props} />;
+  return <ValueCode value={parsed} wrap contentClassName="max-h-64" {...props} />;
 }
 
 /**

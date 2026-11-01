@@ -1,5 +1,6 @@
 import type { SyncOutputContext } from "@/lib/chat/tool-part";
-import type { ChunkOrigin, LineRange } from "@/lib/types";
+import type { ChunkOrigin } from "@/lib/chunks";
+import type { LineRange } from "@/lib/chat/tool-outputs";
 
 /** Store *range* under *filename*, where spanning the whole text means a full-document fetch. */
 export function syncLineRange(

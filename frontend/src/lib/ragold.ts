@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { isWorkspacePath } from "@/lib/api";
+import { isWorkspacePath } from "@/api/documents";
+import type { FetchedChunk, FetchedDocument } from "@/lib/chunks";
 import { parseCitations, resolveCitation } from "@/lib/citations";
 import { stripVoidTags } from "@/lib/normalize-void-tags";
-import type { FetchedChunk, FetchedDocument } from "@/lib/types";
 import { chunksForDocument } from "@/stores/fetched-documents-store";
 
 /** CRAG question types (Yang et al. 2024, https://doi.org/10.52202/079017-0335). */
@@ -17,7 +17,7 @@ export const QUESTION_TYPES = [
   "post-processing",
   "false_premise",
 ] as const;
-export type QuestionType = (typeof QUESTION_TYPES)[number];
+type QuestionType = (typeof QUESTION_TYPES)[number];
 
 /** MTRAG answerability (Katsis et al. 2025, arXiv 2501.03468). */
 export const ANSWERABILITIES = ["answerable", "partial", "unanswerable"] as const;
@@ -27,10 +27,10 @@ export const PASSAGE_GRADES = ["needed", "helpful", "misleading"] as const;
 export type PassageGrade = (typeof PASSAGE_GRADES)[number];
 
 export const KEY_FACT_IMPORTANCES = ["must", "nice"] as const;
-export type KeyFactImportance = (typeof KEY_FACT_IMPORTANCES)[number];
+type KeyFactImportance = (typeof KEY_FACT_IMPORTANCES)[number];
 
 /** A passage of a workspace document that bears on the answer. */
-export interface RagoldPassage {
+interface RagoldPassage {
   path: string;
   text: string;
   grade: PassageGrade;
@@ -40,7 +40,7 @@ export interface RagoldPassage {
 export type RagoldDraftPassage = Omit<RagoldPassage, "grade"> & { grade: PassageGrade | null };
 
 /** A verbatim excerpt of the response that a good answer has to contain. */
-export interface RagoldKeyFact {
+interface RagoldKeyFact {
   text: string;
   importance: KeyFactImportance;
 }

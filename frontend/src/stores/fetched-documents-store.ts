@@ -6,9 +6,9 @@ import {
   type FetchedDocument,
   type FetchedImage,
   makeChunkId,
-} from "@/lib/types";
+} from "@/lib/chunks";
 
-export interface FetchedDocumentsStore {
+interface FetchedDocumentsStore {
   chunks: Map<string, FetchedChunk>;
   documents: Map<string, FetchedDocument>;
   /** The tool output payloads synced since the last reset, which keep their identity across streaming updates. */
@@ -48,7 +48,6 @@ export interface FetchedDocumentsStore {
 export type AddChunk = FetchedDocumentsStore["addChunk"];
 export type MarkFullDocument = FetchedDocumentsStore["markFullDocument"];
 export type AddImage = FetchedDocumentsStore["addImage"];
-export type ClaimOutput = FetchedDocumentsStore["claimOutput"];
 
 /** Resolve a document's chunks through the `chunkIds` index the store maintains. */
 export function chunksForDocument(

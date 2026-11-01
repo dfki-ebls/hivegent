@@ -5,10 +5,12 @@ import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 
 import { BootstrapGate } from "@/components/bootstrap-gate";
+import { NotFound } from "@/components/not-found";
+import { RouteError } from "@/components/route-error";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/i18n";
 import { createQueryClient } from "@/lib/query-client";
-import { syncWorkspaceQueries } from "@/queries/documents";
+import { syncWorkspaceQueries } from "@/api/documents";
 import { OidcInitializationGate } from "@/oidc";
 import { routeTree } from "@/routeTree.gen";
 
@@ -29,11 +31,13 @@ syncWorkspaceQueries(queryClient);
 
 const router = createRouter({
   routeTree,
-  context: {},
+  context: { queryClient },
   defaultPreload: "intent",
   scrollRestoration: true,
   defaultStructuralSharing: true,
   defaultPreloadStaleTime: 0,
+  defaultErrorComponent: RouteError,
+  defaultNotFoundComponent: NotFound,
 });
 
 declare module "@tanstack/react-router" {

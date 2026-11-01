@@ -17,9 +17,9 @@ import { LicensesLink } from "@/components/licenses-link";
 import { JobTray } from "@/components/job-tray";
 import { Logo } from "@/components/logo";
 import { VersionBadge } from "@/components/version-badge";
-import { useIsAdmin, useServerSettings } from "@/queries/settings";
-import { useUserName } from "@/hooks/use-user-name";
+import { useIsAdmin, useServerSettings } from "@/api/settings";
 import { PRODUCT_NAME } from "@/lib/utils";
+import { useUserName } from "@/hooks/use-user-name";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

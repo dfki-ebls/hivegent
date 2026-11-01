@@ -12,13 +12,13 @@ import {
   AttachmentMedia,
   AttachmentTitle,
 } from "@/components/ui/attachment";
-import { Spinner } from "@/components/ui/spinner";
-import { useConversationId } from "@/hooks/chat/use-conversation-id";
+import { Spinner } from "@/components/common/spinner";
+import { useConversationId } from "@/components/chat/chat-context";
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { keyPrefix } from "@/i18n";
-import { fetchDocumentAsset } from "@/lib/api";
-import type { SyncOutput, ToolPart } from "@/lib/chat/tool-part";
+import { fetchDocumentAsset } from "@/api/documents";
 import { basename, fileStem } from "@/lib/utils";
+import type { SyncOutput, ToolRenderProps } from "@/lib/chat/tool-part";
 import { formatDecimal, formatFileSize, formatNumber } from "@/i18n/format";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.binary);
@@ -120,17 +120,12 @@ export const syncReadBinaryDocumentOutput: SyncOutput = ({ metadata, addImage })
   }
 };
 
-interface ReadBinaryDocumentToolProps {
-  part: ToolPart;
-  metadata: unknown;
-}
-
 /** The files the call attached, plus the ones it could not attach and why. */
-export function ReadBinaryDocumentTool({ part, metadata }: ReadBinaryDocumentToolProps) {
+export function ReadBinaryDocumentTool({ part, metadata, prompt }: ToolRenderProps) {
   const { results, failures } = parseBatch(metadata, BinaryReadResultSchema);
 
   return (
-    <ToolCard toolName="read_binary_document" part={part}>
+    <ToolCard toolName="read_binary_document" part={part} prompt={prompt}>
       {results.length + failures.length > 0 && (
         <AttachmentGroup className="flex-wrap">
           {results.map((result, index) => (

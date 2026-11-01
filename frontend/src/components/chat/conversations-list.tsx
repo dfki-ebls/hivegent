@@ -5,20 +5,21 @@ import {
   SparklesIcon,
   TrashIcon,
   XIcon,
+  CircleAlertIcon,
 } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { type KeyboardEvent, type Ref, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { keyPrefix } from "@/i18n";
-import { buildAuxLlmConfig } from "@/lib/api";
+import { buildAuxLlmConfig } from "@/api/settings";
+import { conversationMutations, conversationQueries } from "@/api/conversations";
 import { centerInScroller, cn, errorMessage } from "@/lib/utils";
-import { conversationMutations, conversationQueries } from "@/queries/conversations";
 import { useSettingsStore } from "@/stores/settings-store";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { EmptyState, LoadingState } from "@/components/empty-state";
+import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
 import { REVEAL_ON_HOVER } from "@/components/row-buttons";
 import { SearchInput } from "@/components/search-input";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Button } from "@/components/ui/button";
 import {
   InputGroup,
@@ -27,7 +28,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { useFuzzySearch } from "@/hooks/use-fuzzy-search";
 import { formatRelativeTime } from "@/i18n/format";
@@ -208,8 +209,7 @@ export function ConversationsList({
   const remove = useMutation({
     ...conversationMutations.delete(),
     // Deleting the open conversation leaves the chat view bound to an id the
-    // server no longer knows; start a fresh draft so its stale content and
-    // dangling route don't linger.
+    // server no longer knows, so a new chat replaces it.
     onSuccess: (_, id) => {
       if (id === currentConversationId) onActiveConversationDeleted();
     },
@@ -218,27 +218,28 @@ export function ConversationsList({
   // A refetch keeps the cached list on screen,
   // so it neither flickers nor loses its scroll position.
   if (isPending) {
-    return <LoadingState className="h-full" />;
+    return <LoadingPanel className="h-full" />;
   }
 
   if (error) {
     return (
-      <EmptyState
+      <StatusPanel
+        icon={CircleAlertIcon}
         title={t(($) => $.common.states.error)}
         description={errorMessage(error)}
-        destructive
-      >
-        <Button variant="outline" size="sm" onClick={() => void refetch()}>
-          {t(($) => $.common.actions.retry)}
-        </Button>
-      </EmptyState>
+        action={
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            {t(($) => $.common.actions.retry)}
+          </Button>
+        }
+      />
     );
   }
 
   if (conversations.length === 0) {
     return (
-      <EmptyState
-        icon={<MessagesSquareIcon />}
+      <StatusPanel
+        icon={MessagesSquareIcon}
         title={t(($) => $.chat.conversations.emptyTitle)}
         description={t(($) => $.chat.conversations.emptyDescription)}
       />
@@ -257,8 +258,8 @@ export function ConversationsList({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {matches.length === 0 ? (
-          <EmptyState
-            icon={<MessagesSquareIcon />}
+          <StatusPanel
+            icon={MessagesSquareIcon}
             title={t(($) => $.chat.conversations.noMatchesTitle)}
             description={t(($) => $.chat.conversations.noMatchesDescription)}
           />

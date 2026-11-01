@@ -1,6 +1,6 @@
 import { parseBatch } from "@/components/chat/tools/batch";
 import { syncLineRange } from "@/components/chat/tools/line-range";
-import { DocumentRangeSchema } from "@/lib/types";
+import { DocumentRangeSchema } from "@/lib/chat/tool-outputs";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
 /** Each read is a DocumentRange under its own path. */

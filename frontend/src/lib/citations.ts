@@ -5,12 +5,12 @@ import {
   lineBounds,
   type LinePosition,
   parseLinePositions,
-} from "@/lib/types";
+} from "@/lib/chunks";
 
 const ATTRIBUTE_RE = /([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 
 /** The attributes of a `<cite>` tag, which `Citation` renders. */
-export interface CiteTag {
+interface CiteTag {
   src?: string;
   line?: string;
 }
@@ -21,7 +21,7 @@ export function parseCitations(text: string): CiteTag[] {
     .filter(([, tag]) => tag?.toLowerCase() === "cite")
     .map(([, , attributes = ""]) => {
       const values = new Map(
-        Array.from(attributes.matchAll(ATTRIBUTE_RE), ([, name, double, single]) => [
+        Array.from(attributes.matchAll(ATTRIBUTE_RE), ([, name = "", double, single]) => [
           name.toLowerCase(),
           double ?? single,
         ]),
@@ -32,7 +32,7 @@ export function parseCitations(text: string): CiteTag[] {
 }
 
 /** The lines a citation position names, as one captured chunk shows them. */
-export interface Evidence {
+interface Evidence {
   chunk: FetchedChunk;
   startLine: number;
   text: string;

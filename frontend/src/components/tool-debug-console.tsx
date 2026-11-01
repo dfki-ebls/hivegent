@@ -13,14 +13,11 @@ import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
 import { formatDecimal } from "@/i18n/format";
-import { runTool } from "@/lib/api";
+import { runTool, type ToolRunResult, toolQueries } from "@/api/tools";
 import { prettyPrint } from "@/lib/chat/tool-part";
-import type { ToolRunResult } from "@/lib/types";
-import { errorMessage } from "@/lib/utils";
-import { toolQueries } from "@/queries/tools";
-import { EmptyState } from "@/components/empty-state";
-import { ErrorAlert } from "@/components/error-alert";
-import { HighlightedCode } from "@/components/highlighted-code";
+import { StatusPanel } from "@/components/common/status-panel";
+import { ErrorAlert } from "@/components/common/error-alert";
+import { HighlightedCode } from "@/components/common/highlighted-code";
 import { PageHeader } from "@/components/page-header";
 import { isJsonSchema, type JsonSchema, SchemaForm } from "@/components/schema-form";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +39,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
+import { PlayIcon } from "lucide-react";
 
 const T_OPTIONS = keyPrefix(($) => $.app.toolDebugger);
 
@@ -157,9 +155,7 @@ export function ToolDebugConsole() {
       {/* Body: one scroll region on mobile, two independent columns on desktop. */}
       <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         <div className="flex flex-col gap-6 p-6 lg:w-1/2 lg:overflow-y-auto lg:border-r">
-          {loadError && (
-            <ErrorAlert title={t(($) => $.loadFailed)}>{errorMessage(loadError)}</ErrorAlert>
-          )}
+          <ErrorAlert title={t(($) => $.loadFailed)} error={loadError} />
 
           <Select value={selected} onValueChange={handleSelect}>
             <SelectTrigger className="w-full">
@@ -212,9 +208,10 @@ export function ToolDebugConsole() {
           {run.data ? (
             <ResultPanel result={run.data} />
           ) : run.error ? (
-            <ErrorAlert title={t(($) => $.requestFailed)}>{errorMessage(run.error)}</ErrorAlert>
+            <ErrorAlert title={t(($) => $.requestFailed)} error={run.error} />
           ) : (
-            <EmptyState
+            <StatusPanel
+              icon={PlayIcon}
               title={t(($) => $.noResults)}
               description={t(($) => $.noResultsDescription)}
             />

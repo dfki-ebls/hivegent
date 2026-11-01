@@ -1,7 +1,7 @@
 import type { ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 
-import { type FetchedChunk, chunkOriginLabel, chunkPositionLabel } from "@/lib/types";
+import { type FetchedChunk, chunkOriginLabel, chunkPositionLabel } from "@/lib/chunks";
 import { cn, previewText } from "@/lib/utils";
 import { ItemButton } from "@/components/row-buttons";
 import { Badge } from "@/components/ui/badge";

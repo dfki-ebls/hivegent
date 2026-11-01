@@ -9,7 +9,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 
 interface ConfirmDialogProps {
   open: boolean;

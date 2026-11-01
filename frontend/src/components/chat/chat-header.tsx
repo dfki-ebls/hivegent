@@ -7,7 +7,7 @@ import {
   UploadIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { keyPrefix } from "@/i18n";
 

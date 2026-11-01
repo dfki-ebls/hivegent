@@ -2,12 +2,11 @@ import { isToolUIPart } from "ai";
 import { CircleCheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { ChatPart } from "@/components/chat/message-part";
+import type { ChatPart } from "@/lib/chat/layout";
 import { TraceStep, TraceStepCollapsible } from "@/components/chat/trace-step";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 import { Trace } from "@/components/ui/trace";
-import { toolLineState } from "@/lib/chat/tool-part";
-import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
+import { type Live, toolLineState } from "@/lib/chat/tool-part";
 
 /** The line that says the model works while nothing else on screen does, a step of the trace it sits in. */
 export function ProcessingStep() {
@@ -28,7 +27,8 @@ export function ProcessingTrace() {
 }
 
 interface ChainOfThoughtProps {
-  steps: ChatPart[];
+  steps: readonly ChatPart[];
+  live: Live;
   /** Whether the agent still works on these steps, which nothing follows yet. */
   running: boolean;
   /** The rendered steps. */
@@ -40,11 +40,10 @@ interface ChainOfThoughtProps {
  * Failed steps are routine for an agent, so the line counts them without alarming.
  * It opens while the agent works and closes once the reply moves on, unless the user toggled it.
  */
-export function ChainOfThought({ steps, running, children }: ChainOfThoughtProps) {
+export function ChainOfThought({ steps, live, running, children }: ChainOfThoughtProps) {
   const { t } = useTranslation();
-  const streaming = useMessageStreaming();
   const failed = steps.filter(
-    (part) => isToolUIPart(part) && toolLineState(part, streaming).failed,
+    (part) => isToolUIPart(part) && toolLineState(part, live).failed,
   ).length;
 
   return (

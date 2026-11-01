@@ -4,12 +4,11 @@ import type { TFunction } from "i18next";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { ACTIVE_JOB_STATUSES, type JobView } from "@/lib/types";
+import { ACTIVE_JOB_STATUSES, type JobView, jobMutations } from "@/api/jobs";
 import { cn } from "@/lib/utils";
-import { jobMutations } from "@/queries/jobs";
 import { onJobStarted, useJobsStore } from "@/stores/jobs-store";
 import { type UploadItem, onUploadAdded, useUploadQueue } from "@/stores/upload-queue-store";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Button } from "@/components/ui/button";
 import {
   Item,
@@ -28,7 +27,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Progress, ProgressValue } from "@/components/ui/progress";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 
 // A row's visual tone, decoupled from whether it came from a job or an upload.
 type Tone = "active" | "success" | "error" | "muted";

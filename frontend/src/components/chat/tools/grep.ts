@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { type ChunkPosition, GrepMatchSchema } from "@/lib/types";
+import type { ChunkPosition } from "@/lib/chunks";
+import { GrepMatchSchema } from "@/lib/chat/tool-outputs";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
 /** The match blocks of content mode, and the listed files without lines in the counting modes. */
@@ -12,10 +13,13 @@ export const syncGrepOutput: SyncOutput = ({ input, metadata, addChunk, sourceId
   if (!matches?.length || !pattern) return;
 
   for (const match of matches) {
-    if (match.lines.length === 0) continue;
-    const startLine = match.lines[0].line_number;
-    const endLine = match.lines[match.lines.length - 1].line_number;
-    if (startLine <= 0) continue;
+    const first = match.lines[0];
+    const last = match.lines.at(-1);
+
+    if (!first || !last || first.line_number <= 0) continue;
+
+    const startLine = first.line_number;
+    const endLine = last.line_number;
 
     const position: ChunkPosition =
       match.lines.length > 1

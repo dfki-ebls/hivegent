@@ -3,7 +3,7 @@ import { type ComponentProps, useId } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Item } from "@/components/ui/item";

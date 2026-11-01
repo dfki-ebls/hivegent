@@ -32,7 +32,7 @@ export interface TreeItemDrag {
 }
 
 /** Recover a tree drag payload from adapter data, or `null` for other drags. */
-export function getTreeItemDrag(data: Record<string | symbol, unknown>): TreeItemDrag | null {
+function getTreeItemDrag(data: Record<string | symbol, unknown>): TreeItemDrag | null {
   return (data[TREE_ITEM_KEY] as TreeItemDrag | undefined) ?? null;
 }
 
@@ -65,8 +65,9 @@ export function isValidMove(drag: TreeItemDrag, destScope: string, destDir: stri
   // destination in that same form.
   const destPrefix = destDir ? `${destDir}/` : "";
 
-  if (drag.kind === "directory") {
-    const src = drag.paths[0];
+  const src = drag.paths[0];
+
+  if (drag.kind === "directory" && src !== undefined) {
     if (below(destDir, src) !== null) return false;
     return parentDir(src) !== destPrefix;
   }

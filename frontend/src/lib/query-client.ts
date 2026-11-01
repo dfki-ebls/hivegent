@@ -1,7 +1,7 @@
 import { matchQuery, MutationCache, QueryClient } from "@tanstack/react-query";
 
 import { toast } from "@/components/ui/toast";
-import { HttpError } from "@/lib/api";
+import { HttpError } from "@/api/client";
 import { errorMessage } from "@/lib/utils";
 
 /** The first segment of every query and mutation key, so a stray key fails to type-check. */

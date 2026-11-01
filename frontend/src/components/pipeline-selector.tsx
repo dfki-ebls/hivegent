@@ -8,8 +8,8 @@ import {
   ConversionPipeline,
   type PipelineByKind,
   type PipelineKind,
-} from "@/lib/types";
-import { pipelineQueries } from "@/queries/pipelines";
+  pipelineQueries,
+} from "@/api/pipelines";
 import { PIPELINE_CONFIG_FIELDS, useSettingsStore } from "@/stores/settings-store";
 import { PipelineConfigDialog } from "@/components/pipeline-config-dialog";
 import { LabeledOptionSelect } from "@/components/option-select";

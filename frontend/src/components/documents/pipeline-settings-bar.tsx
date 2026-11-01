@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
 import { featureFlags } from "@/lib/feature-flags";
-import { AssetProcessingMode, type ChunkingPipeline, type ConversionPipeline } from "@/lib/types";
+import {
+  AssetProcessingMode,
+  type ChunkingPipeline,
+  type ConversionPipeline,
+} from "@/api/pipelines";
 import { PipelineSelector } from "@/components/pipeline-selector";
 import { LabeledOptionSelect } from "@/components/option-select";
 

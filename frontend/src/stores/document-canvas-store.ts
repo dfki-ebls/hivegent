@@ -3,7 +3,7 @@
  *
  * The active tab is persisted to sessionStorage so a reload keeps the user on
  * the view they were last looking at. Navigation, by contrast, is app-driven:
- * opening a conversation surfaces its Context, while a fresh draft starts on
+ * opening a conversation surfaces its Context, while a new one starts on
  * Documents. `openChat` reconciles the two — a reload restores the remembered
  * tab, a real in-session navigation surfaces the destination's primary view.
  *
@@ -12,10 +12,16 @@
  * such a view earns its own auto-surface trigger.
  */
 
+import { z } from "zod";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { type DocumentCanvasTab, DocumentCanvasTabSchema } from "@/lib/types";
+/**
+ * Tabs of the document canvas, in display order. Persisted to sessionStorage,
+ * so the schema doubles as the allow-list that validates the restored value.
+ */
+const DocumentCanvasTabSchema = z.enum(["documents", "context"]);
+export type DocumentCanvasTab = z.infer<typeof DocumentCanvasTabSchema>;
 
 interface DocumentCanvasState {
   activeTab: DocumentCanvasTab;
@@ -26,7 +32,8 @@ interface DocumentCanvasState {
   lastChatId: string | null;
   restored: boolean;
   setActiveTab: (tab: DocumentCanvasTab) => void;
-  openChat: (id: string, draft: boolean) => void;
+  /** Surface the primary view of the chat *id*, the documents for an *empty* one. */
+  openChat: (id: string, empty: boolean) => void;
 }
 
 export const useDocumentCanvasStore = create<DocumentCanvasState>()(
@@ -36,13 +43,13 @@ export const useDocumentCanvasStore = create<DocumentCanvasState>()(
       lastChatId: null,
       restored: false,
       setActiveTab: (activeTab) => set({ activeTab }),
-      openChat: (id, draft) =>
+      openChat: (id, empty) =>
         set((state) => {
           if (state.lastChatId === id) return {};
           const keepRemembered = state.lastChatId === null && state.restored;
           return {
             lastChatId: id,
-            activeTab: keepRemembered ? state.activeTab : draft ? "documents" : "context",
+            activeTab: keepRemembered ? state.activeTab : empty ? "documents" : "context",
           };
         }),
     }),

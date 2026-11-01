@@ -17,7 +17,7 @@ const schema = z.object({
   }),
 });
 
-export type RuntimeConfig = z.infer<typeof schema>;
+type RuntimeConfig = z.infer<typeof schema>;
 
 // Deliberately on plain fetch, not the readiness-gated authFetch: this is the
 // pre-render OIDC bootstrap, so a missing backend must fail fast to the dev

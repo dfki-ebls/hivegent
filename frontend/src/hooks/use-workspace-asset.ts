@@ -1,8 +1,8 @@
 import { useCallback } from "react";
-import { useConversationId } from "@/hooks/chat/use-conversation-id";
+import { useConversationId } from "@/components/chat/chat-context";
 import { useInView } from "@/hooks/use-in-view";
 import { useObjectUrl } from "@/hooks/use-object-url";
-import { fetchDocumentAsset } from "@/lib/api";
+import { fetchDocumentAsset } from "@/api/documents";
 
 /**
  * A workspace asset at *path* as an object URL, fetched once the element bound to `ref` nears

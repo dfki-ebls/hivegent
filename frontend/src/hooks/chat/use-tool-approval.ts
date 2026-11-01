@@ -1,49 +1,10 @@
 import { type ChangeEvent, createContext, useContext, useMemo, useRef, useState } from "react";
-import type { ChatAddToolOutputFunction } from "ai";
 import type { z } from "zod";
-import type { ChatMessage } from "@/lib/chat/chat-utils";
-
-/** The user's answer to one approval request. */
-export interface ApprovalDecision {
-  id: string;
-  approved: boolean;
-  /** The user's note for the assistant, omitted when they wrote none. */
-  reason?: string;
-}
-
-/**
- * Who may answer the transcript's approval prompts and questions, and whether right now.
- *
- * A pending approval is not stored as a decision but re-derived on every load —
- * a tool call with no result *is* an open approval — so the prompt reappears in
- * every tab that opens the conversation, long after the tab that asked is gone.
- * Answering it really runs the tool, so whether the buttons may be pressed is a
- * property of the session rather than of the part being rendered, which is why
- * it arrives by context instead of being threaded through the message tree.
- * Questions are pending calls just the same.
- */
-export interface ToolApprovalGate {
-  /** Record the decisions and let the run continue once all are in. */
-  decide: (decisions: readonly ApprovalDecision[]) => void;
-  /** Give a call the client answers, such as a question, its output and let the run continue. */
-  addToolOutput: ChatAddToolOutputFunction<ChatMessage>;
-  /** Set when the decision cannot be taken now; shown in place of the buttons. */
-  blockedReason?: string;
-}
-
-const ToolApprovalContext = createContext<ToolApprovalGate>({
-  decide: () => {},
-  addToolOutput: () => {},
-});
-
-export const ToolApprovalProvider = ToolApprovalContext.Provider;
-
-export function useToolApproval(): ToolApprovalGate {
-  return useContext(ToolApprovalContext);
-}
+import { useTranslation } from "react-i18next";
+import { useChatContext, useMessageLive } from "@/components/chat/chat-context";
 
 /** The props binding a note field, uncontrolled so typing re-renders nothing but the field. */
-export interface NoteField {
+interface NoteField {
   key: string;
   defaultValue: string;
   onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
@@ -56,7 +17,7 @@ export interface NoteField {
  * their cards and sent together, since the run continues only once every
  * request is answered.
  */
-export interface ApprovalRound extends Pick<ToolApprovalGate, "blockedReason"> {
+export interface ApprovalRound {
   /** The request ids, in transcript order. */
   ids: readonly string[];
   /** Staged choices by request id. */
@@ -66,6 +27,13 @@ export interface ApprovalRound extends Pick<ToolApprovalGate, "blockedReason"> {
   noteField: (id?: string) => NoteField;
   /** Answer every request with *approved*, or with its staged choice when omitted. */
   send: (approved?: boolean) => void;
+}
+
+/** Why the requests of the message being rendered cannot be answered yet, which is while its turn streams. */
+export function useApprovalBlockedReason(): string | undefined {
+  const { t } = useTranslation();
+
+  return useMessageLive() === "streaming" ? t(($) => $.chat.sidebar.approvalBlocked) : undefined;
 }
 
 /** The notes that apply to a call, or none when the user wrote neither. */
@@ -91,9 +59,13 @@ function bindNote(notes: Map<string, string>, key: string): NoteField {
  * Requests that overlap belong to the same round, even when more arrive earlier.
  * The notes are handed over on sending rather than held in state,
  * and the round keeps its identity until the requests or choices change.
+ *
+ * The SDK records decisions one at a time and continues the run once the last
+ * one is in, so a batch still sends a single continuation. The reason is the
+ * user's own note, and the backend words the refusal the model reads around it.
  */
 export function useApprovalRoundState(pending: readonly string[]): ApprovalRound {
-  const { decide, blockedReason } = useToolApproval();
+  const { chat } = useChatContext();
   const key = pending.join("\n");
   // The caller derives the ids anew on every streaming render, their key stays put.
   const ids = useMemo(() => (key ? key.split("\n") : []), [key]);
@@ -113,22 +85,22 @@ export function useApprovalRoundState(pending: readonly string[]): ApprovalRound
     () => ({
       ids,
       choices,
-      blockedReason,
       stage: (id, approved) => setChoices((prev) => ({ ...prev, [id]: approved })),
       noteField: (id) => bindNote(id === undefined ? sharedNotes : notes, id ?? round.key),
-      send: (approved) =>
-        decide(
-          ids.flatMap((id) => {
-            const choice = approved ?? choices[id];
-            const reason = joinNotes(sharedNotes.get(round.key), notes.get(id));
+      send: (approved) => {
+        for (const id of ids) {
+          const choice = approved ?? choices[id];
+          const reason = joinNotes(sharedNotes.get(round.key), notes.get(id));
 
-            if (choice === undefined) return [];
+          if (choice === undefined) continue;
 
-            return [reason ? { id, approved: choice, reason } : { id, approved: choice }];
-          }),
-        ),
+          void chat.addToolApprovalResponse(
+            reason ? { id, approved: choice, reason } : { id, approved: choice },
+          );
+        }
+      },
     }),
-    [ids, round.key, choices, blockedReason, decide, notes, sharedNotes],
+    [ids, round.key, choices, chat, notes, sharedNotes],
   );
 }
 

@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { type SubmitEvent, type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -61,7 +61,7 @@ function NameInputForm({
   const trimmed = name.trim();
   const canSubmit = trimmed.length > 0 && trimmed !== initialValue;
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = (e: SubmitEvent) => {
     e.preventDefault();
 
     if (canSubmit) {

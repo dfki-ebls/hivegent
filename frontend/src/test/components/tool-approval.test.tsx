@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MessageBubble } from "@/components/chat/message-bubble";
-import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
-import type { ChatMessage } from "@/lib/chat/chat-utils";
+import type { ChatMessage } from "@/lib/chat/message";
+import { createTestChat, renderWithChat, startRun } from "@/test/chat";
+
+vi.mock("@/oidc", () => ({ useOidc: () => ({ isUserLoggedIn: false }) }));
 
 function request(id: string): ChatMessage["parts"][number] {
   return {
@@ -26,42 +28,40 @@ function approved(id: string): ChatMessage["parts"][number] {
 }
 
 interface RenderOptions {
-  blockedReason?: string;
   approvalMetadata?: Record<string, unknown>;
   part?: (id: string) => ChatMessage["parts"][number];
 }
 
-function renderMessage(
-  ids: string[],
-  { blockedReason, approvalMetadata, part = request }: RenderOptions = {},
-) {
-  const decide = vi.fn<ToolApprovalGate["decide"]>();
-  const noop = () => {};
-  const message = (requests: string[]) => (
-    <ToolApprovalProvider value={{ decide, addToolOutput: noop, blockedReason }}>
-      <MessageBubble
-        message={{
-          id: "m1",
-          role: "assistant",
-          parts: requests.map(part),
-          metadata: { approvalMetadata },
-        }}
-        isLastMessage
-        status="ready"
-        editingId={null}
-        onSetEditing={noop}
-        onCancelEdit={noop}
-        onSubmitEdit={noop}
-        onRegenerate={noop}
-      />
-    </ToolApprovalProvider>
-  );
-  const { rerender } = render(message(ids));
+/** The last message of a chat that waits for the user, with a call of *ids* each. */
+function renderMessage(ids: string[], { approvalMetadata, part = request }: RenderOptions = {}) {
+  const messageOf = (requests: string[]): ChatMessage => ({
+    id: "m1",
+    role: "assistant",
+    parts: requests.map(part),
+    metadata: { approvalMetadata },
+  });
+  const chat = createTestChat([messageOf(ids)]);
+  const decide = vi.spyOn(chat, "addToolApprovalResponse").mockResolvedValue();
+  const { rerender } = renderWithChat(<MessageBubble message={messageOf(ids)} />, chat);
 
   return {
+    chat,
     decide,
-    card: (index: number) => within(screen.getAllByRole("group", { name: "Send Mail" })[index]),
-    rerender: (requests: string[]) => rerender(message(requests)),
+    card: (index: number) => {
+      const card = screen.getAllByRole("group", { name: /^Allow the assistant/ })[index];
+
+      if (!card) throw new Error(`No card ${index}`);
+
+      return within(card);
+    },
+    rerender: (requests: string[]) => {
+      const message = messageOf(requests);
+
+      act(() => {
+        chat.messages = [message];
+      });
+      rerender(<MessageBubble message={message} />);
+    },
   };
 }
 
@@ -78,9 +78,7 @@ describe("tool approval", () => {
     );
     fireEvent.click(card(0).getByRole("button", { name: "Deny" }));
 
-    expect(decide.mock.calls).toEqual([
-      [[{ id: "call-1", approved: false, reason: "Wrong folder." }]],
-    ]);
+    expect(decide.mock.calls).toEqual([[{ id: "call-1", approved: false, reason: "Wrong folder." }]]);
   });
 
   it("stages the card choices of several requests and sends them on submit", () => {
@@ -103,12 +101,8 @@ describe("tool approval", () => {
     fireEvent.click(submit);
 
     expect(decide.mock.calls).toEqual([
-      [
-        [
-          { id: "call-1", approved: true },
-          { id: "call-2", approved: false, reason: "Not this one." },
-        ],
-      ],
+      [{ id: "call-1", approved: true }],
+      [{ id: "call-2", approved: false, reason: "Not this one." }],
     ]);
   });
 
@@ -121,12 +115,8 @@ describe("tool approval", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve all" }));
 
     expect(decide.mock.calls).toEqual([
-      [
-        [
-          { id: "call-1", approved: true, reason: "Keep backups." },
-          { id: "call-2", approved: true, reason: "Keep backups." },
-        ],
-      ],
+      [{ id: "call-1", approved: true, reason: "Keep backups." }],
+      [{ id: "call-2", approved: true, reason: "Keep backups." }],
     ]);
   });
 
@@ -140,12 +130,14 @@ describe("tool approval", () => {
     rerender(["call-0", "call-1", "call-2", "call-3"]);
     fireEvent.click(screen.getByRole("button", { name: "Approve all" }));
 
-    expect(decide).toHaveBeenLastCalledWith([
-      { id: "call-0", approved: true, reason: "Keep backups." },
-      { id: "call-1", approved: true, reason: "Keep backups." },
-      { id: "call-2", approved: true, reason: "Keep backups." },
-      { id: "call-3", approved: true, reason: "Keep backups." },
-    ]);
+    expect(decide.mock.calls.map(([decision]) => decision)).toEqual(
+      ["call-0", "call-1", "call-2", "call-3"].map((id) => ({
+        id,
+        approved: true,
+        reason: "Keep backups.",
+      })),
+    );
+    decide.mockClear();
 
     rerender(["call-4", "call-5"]);
     expect(screen.getByLabelText("Instruction for all actions (optional)")).toHaveProperty(
@@ -154,9 +146,9 @@ describe("tool approval", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Deny all" }));
 
-    expect(decide).toHaveBeenLastCalledWith([
-      { id: "call-4", approved: false },
-      { id: "call-5", approved: false },
+    expect(decide.mock.calls).toEqual([
+      [{ id: "call-4", approved: false }],
+      [{ id: "call-5", approved: false }],
     ]);
   });
 
@@ -204,10 +196,12 @@ describe("tool approval", () => {
       ["call-1", "call-2"],
       ["Approve all", "Deny all", "Submit decisions"],
     ],
-  ])("blocks sending %j while streaming, with the reason", (ids, buttons) => {
-    renderMessage(ids, { blockedReason: "Not right now." });
+  ])("blocks sending %j while streaming, with the reason", async (ids, buttons) => {
+    const { chat } = renderMessage(ids);
 
-    expect(screen.getByText("Not right now.")).toBeTruthy();
+    await startRun(chat);
+
+    expect(screen.getByText("Available once the current response finishes.")).toBeTruthy();
 
     for (const name of buttons) {
       expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);

@@ -2,7 +2,7 @@ import { Brain, Files, type LucideIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 
-import { type DocumentCanvasTab } from "@/lib/types";
+import type { DocumentCanvasTab } from "@/stores/document-canvas-store";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContextDocuments } from "@/components/documents/context-documents";

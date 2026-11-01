@@ -1,14 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { subscribeJobs as subscribeJobsFn } from "@/lib/api";
-import type { WorkspaceChanged } from "@/lib/types";
+import { type WorkspaceChanged, subscribeJobs } from "@/api/jobs";
 
-vi.mock("@/lib/api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/api")>()),
-  subscribeJobs: vi.fn<typeof subscribeJobsFn>(),
+vi.mock("@/api/jobs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/jobs")>()),
+  subscribeJobs: vi.fn<typeof subscribeJobs>(),
 }));
 
-import { subscribeJobs } from "@/lib/api";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useJobsStore } from "@/stores/jobs-store";
 

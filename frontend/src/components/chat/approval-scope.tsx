@@ -16,6 +16,7 @@ import {
   ApprovalMetadataProvider,
   type ApprovalRound,
   ApprovalRoundProvider,
+  useApprovalBlockedReason,
   useApprovalRoundState,
 } from "@/hooks/chat/use-tool-approval";
 
@@ -28,11 +29,12 @@ import {
 function ApprovalBar({ round }: { round: ApprovalRound }) {
   const { t } = useTranslation();
   const count = round.ids.length;
+  const blockedReason = useApprovalBlockedReason();
 
   if (count < 2) return null;
 
   const decided = round.ids.filter((id) => round.choices[id] !== undefined).length;
-  const blocked = round.blockedReason !== undefined;
+  const blocked = blockedReason !== undefined;
   const { key, ...note } = round.noteField();
   const title = t(($) => $.chat.tools.approval.pending, { count });
 
@@ -44,7 +46,7 @@ function ApprovalBar({ round }: { round: ApprovalRound }) {
       <ItemContent>
         <ItemTitle>{title}</ItemTitle>
         <ItemDescription aria-live="polite">
-          {round.blockedReason ?? t(($) => $.chat.tools.approval.progress, { decided, count })}
+          {blockedReason ?? t(($) => $.chat.tools.approval.progress, { decided, count })}
         </ItemDescription>
       </ItemContent>
       <Textarea

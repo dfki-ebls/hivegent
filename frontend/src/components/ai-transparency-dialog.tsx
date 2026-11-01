@@ -3,7 +3,7 @@ import { useState } from "react";
 import { DownloadIcon, ScanSearchIcon } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 
-import { ErrorAlert } from "@/components/error-alert";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { DialogBody, ScrollDialogContent } from "@/components/scroll-dialog-content";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,13 +14,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { keyPrefix } from "@/i18n";
 import { formatNumber } from "@/i18n/format";
-import { detectAiGeneratedText } from "@/lib/api";
+import { detectAiGeneratedText } from "@/api/transparency";
+import { cn } from "@/lib/utils";
 import { downloadBlob } from "@/lib/download";
-import { cn, errorMessage } from "@/lib/utils";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.transparency);
 
@@ -107,7 +107,7 @@ export function AiTransparencyDialog({
               </Field>
             )}
 
-            {error && <ErrorAlert>{errorMessage(error)}</ErrorAlert>}
+            <ErrorAlert error={error} />
 
             {contactEmail && (
               <FieldDescription>

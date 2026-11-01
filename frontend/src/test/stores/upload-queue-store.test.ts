@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { JobView } from "@/lib/types";
-import { uploadDocument } from "@/lib/api";
+import type { JobView } from "@/api/jobs";
+import { uploadDocument } from "@/api/documents";
 import { useUploadQueue } from "@/stores/upload-queue-store";
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/api/documents", () => ({
   canonicalPath: (scope: string, name: string) => `${scope}/${name}`,
   uploadDocument: vi.fn<typeof uploadDocument>(),
   uploadCollection: vi.fn<() => void>(),
@@ -59,11 +59,11 @@ describe("useUploadQueue", () => {
     // Dropping more files while the first is still uploading must not cancel it.
     useUploadQueue.getState().enqueueFiles("~", [new File(["b"], "b.pdf")], {});
     await vi.waitFor(() => expect(pending).toHaveLength(2));
-    expect(pending[0].signal?.aborted).toBe(false);
+    expect(pending[0]?.signal?.aborted).toBe(false);
 
     // Both hand off to a job and leave the queue.
-    pending[0].resolve(makeJob("j1"));
-    pending[1].resolve(makeJob("j2"));
+    pending[0]?.resolve(makeJob("j1"));
+    pending[1]?.resolve(makeJob("j2"));
     await vi.waitFor(() => expect(items()).toHaveLength(0));
     expect(uploadDocument).toHaveBeenCalledTimes(2);
   });
@@ -81,14 +81,13 @@ describe("useUploadQueue", () => {
   it("marks a failed transfer as retryable and re-queues it on retry", async () => {
     useUploadQueue.getState().enqueueFiles("~", [new File(["x"], "f.pdf")], {});
     await vi.waitFor(() => expect(pending).toHaveLength(1));
-    pending[0].reject(new Error("network down"));
+    pending[0]?.reject(new Error("network down"));
 
     let id = "";
     await vi.waitFor(() => {
       const item = items()[0];
-      expect(item.status).toBe("failed");
-      expect(item.error).toBe("network down");
-      id = item.id;
+      expect(item).toMatchObject({ status: "failed", error: "network down" });
+      id = item?.id ?? "";
     });
 
     useUploadQueue.getState().retry(id);

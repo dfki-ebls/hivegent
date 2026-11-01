@@ -19,6 +19,7 @@ export const common = {
     working: "Working …",
     error: "Error",
     unknownError: "Something went wrong.",
+    copied: "Copied",
     copyFailed: "Couldn’t copy to the clipboard.",
   },
 } as const;

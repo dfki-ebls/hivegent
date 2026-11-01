@@ -9,7 +9,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
 /** Probe the public readiness endpoint, aborting after `timeoutMs` so
  * polling callers don't stack up hung connections. */
-export async function checkHealth(timeoutMs = 3000): Promise<boolean> {
+async function checkHealth(timeoutMs = 3000): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 

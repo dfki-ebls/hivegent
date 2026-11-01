@@ -3,11 +3,11 @@ import { TriangleAlertIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { settingsQueries } from "@/api/settings";
 import { errorMessage } from "@/lib/utils";
-import { settingsQueries } from "@/queries/settings";
 
 import { ConnectingScreen } from "@/components/connecting-screen";
-import { EmptyState } from "@/components/empty-state";
+import { StatusPanel } from "@/components/common/status-panel";
 
 /**
  * Drive app startup from inside React so the connection spinner stays on screen
@@ -24,11 +24,10 @@ export function BootstrapGate({ children }: { children: ReactNode }) {
 
   if (status === "error") {
     return (
-      <EmptyState
-        icon={<TriangleAlertIcon />}
+      <StatusPanel
+        icon={TriangleAlertIcon}
         title={t(($) => $.app.startup.failed)}
         description={errorMessage(error)}
-        destructive
         className="h-dvh"
       />
     );

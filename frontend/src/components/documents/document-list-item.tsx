@@ -1,9 +1,9 @@
 import { FileText, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import type { DocumentInfo } from "@/lib/types";
+import type { DocumentInfo } from "@/api/documents";
 import { formatFileSize, formatRelativeTime } from "@/i18n/format";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Item,
@@ -13,7 +13,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 import {
   FilterToggleButtons,
   type FilterEntryState,

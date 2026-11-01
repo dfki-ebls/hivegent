@@ -1,34 +1,31 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { FolderOpen, Users } from "lucide-react";
+import { FolderOpen, Users, FolderOpenIcon, SearchXIcon } from "lucide-react";
 import { useCallback, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
   PERSONAL_SCOPE,
-  buildAuxLlmConfig,
   canonicalPath,
   downloadOriginal,
   splitScopePath,
-} from "@/lib/api";
+  collectFilePaths,
+  treeDocuments,
+  documentMutations,
+  documentQueries,
+  useMutatingPaths,
+} from "@/api/documents";
+import { buildAuxLlmConfig } from "@/api/settings";
+import type { PipelineSpec } from "@/api/pipelines";
+import { basename, commonParentDir, joinPath } from "@/lib/utils";
 import type { TreeItemDrag } from "@/lib/dnd";
 import type { DocumentActionId } from "@/lib/document-actions";
-import type { PipelineSpec } from "@/lib/types";
 import { downloadBlob } from "@/lib/download";
-import {
-  basename,
-  collectFilePaths,
-  commonParentDir,
-  errorMessage,
-  joinPath,
-  treeDocuments,
-} from "@/lib/utils";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
-import { documentMutations, documentQueries, useMutatingPaths } from "@/queries/documents";
 import { useSettingsStore } from "@/stores/settings-store";
 import { DirectoryTreeView, TreeRow, type TreeRowDnd } from "@/components/directory-tree-view";
 import { DocumentDialog } from "@/components/document-dialog";
-import { EmptyState, LoadingState } from "@/components/empty-state";
-import { ErrorAlert } from "@/components/error-alert";
+import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -261,7 +258,9 @@ export function ScopeSection({
     // Read off the rendered tree rather than the response totals, so an
     // optimistically grafted directory counts immediately.
     if (!directoryTree?.root.children?.length) {
-      return <EmptyState description={t(($) => $.documents.scope.empty)} className="p-4" />;
+      return (
+        <StatusPanel icon={FolderOpenIcon} title={t(($) => $.documents.scope.empty)} className="p-4" />
+      );
     }
 
     return (
@@ -294,7 +293,9 @@ export function ScopeSection({
 
   const flatList = () => {
     if (filtered.length === 0) {
-      return <EmptyState description={t(($) => $.documents.scope.noMatches)} className="p-4" />;
+      return (
+        <StatusPanel icon={SearchXIcon} title={t(($) => $.documents.scope.noMatches)} className="p-4" />
+      );
     }
 
     return (
@@ -357,9 +358,9 @@ export function ScopeSection({
       </TreeRow>
 
       <CollapsibleContent className="flex flex-col gap-1 py-1">
-        {error && <ErrorAlert>{errorMessage(error)}</ErrorAlert>}
+        <ErrorAlert error={error} />
         {isPending ? (
-          <LoadingState className="p-6" />
+          <LoadingPanel className="p-6" />
         ) : (
           <>
             {canWrite && selectedFiles.size > 0 ? (

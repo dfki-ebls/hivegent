@@ -3,7 +3,7 @@ import { FileCodeIcon, SquareFunctionIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
-import { HighlightedCode } from "@/components/highlighted-code";
+import { HighlightedCode } from "@/components/common/highlighted-code";
 import { TraceStepCollapsible } from "@/components/chat/trace-step";
 import {
   ChangesetSummarySchema,
@@ -12,7 +12,7 @@ import {
 } from "@/components/chat/tools/changeset";
 import { ToolCard } from "@/components/chat/tools/tool-card";
 import { ToolCode, ToolOutputResult } from "@/components/chat/tools/display";
-import { ErrorAlert } from "@/components/error-alert";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { ScrollDialogContent } from "@/components/scroll-dialog-content";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,12 +23,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Item, ItemActions, ItemContent, ItemMedia, ItemTitle } from "@/components/ui/item";
-import { Spinner } from "@/components/ui/spinner";
-import { useConversationId } from "@/hooks/chat/use-conversation-id";
+import { Spinner } from "@/components/common/spinner";
+import { useConversationId } from "@/components/chat/chat-context";
 import { keyPrefix } from "@/i18n";
-import { documentQueries } from "@/queries/documents";
-import { type ToolPart, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
-import { basename, errorMessage } from "@/lib/utils";
+import { documentQueries } from "@/api/documents";
+import { basename } from "@/lib/utils";
+import { type ToolRenderProps, toolDisplayName, toolInput } from "@/lib/chat/tool-part";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.runPython);
 
@@ -82,7 +82,7 @@ function ScriptSourceView({
   const { data: code, error } = useQuery(documentQueries.content(path, conversationId));
 
   if (error) {
-    return <ErrorAlert>{errorMessage(error)}</ErrorAlert>;
+    return <ErrorAlert error={error} />;
   }
 
   if (code === undefined) return <Spinner className="mx-auto" />;
@@ -209,12 +209,7 @@ function Output({ result }: { result: PythonResult }) {
   );
 }
 
-interface RunPythonToolProps {
-  part: ToolPart;
-  metadata: unknown;
-}
-
-export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
+export function RunPythonTool({ part, metadata, prompt }: ToolRenderProps) {
   const { t } = useTranslation();
   const input = toolInput<RunPythonInput>(part);
   const result = useMemo(() => PythonResultSchema.safeParse(metadata).data, [metadata]);
@@ -226,6 +221,7 @@ export function RunPythonTool({ part, metadata }: RunPythonToolProps) {
     <ToolCard
       toolName="run_python"
       part={part}
+      prompt={prompt}
       title={
         scriptPath
           ? t(($) => $.chat.tools.runPython.titleWithScript, { tool, script: basename(scriptPath) })

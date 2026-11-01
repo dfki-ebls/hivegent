@@ -32,7 +32,7 @@
 import { z } from "zod";
 
 /** Typed feature flag set.  All flags are booleans. */
-export interface FeatureFlags {
+interface FeatureFlags {
   /**
    * Allow users to override the LLM provider (model, API key, base URL,
    * auxiliary model) from the settings dialog.  When disabled, the Model

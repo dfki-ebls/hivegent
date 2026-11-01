@@ -3,7 +3,7 @@ import { type Ref, useImperativeHandle } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useDialogTarget } from "@/hooks/use-dialog-target";
-import { documentMutations } from "@/queries/documents";
+import { documentMutations } from "@/api/documents";
 import { basename, parentDir } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { NameInputDialog } from "@/components/documents/name-input-dialog";

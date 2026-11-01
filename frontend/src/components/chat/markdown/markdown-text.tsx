@@ -7,10 +7,10 @@ import {
   useIsCodeFenceIncomplete,
 } from "streamdown";
 import { Citation } from "@/components/citation";
-import { HighlightedCode } from "@/components/highlighted-code";
+import { HighlightedCode } from "@/components/common/highlighted-code";
 import { ImageRef } from "@/components/image-ref";
 import { STREAMDOWN_PLUGINS } from "@/components/chat/markdown/config";
-import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
+import { useMessageLive } from "@/components/chat/chat-context";
 import { normalizeDisplayMath, normalizeMath } from "@/lib/normalize-math";
 import { normalizeVoidTags } from "@/lib/normalize-void-tags";
 
@@ -88,7 +88,7 @@ export function MarkdownText({ children }: { children: string }) {
 
   return (
     <Streamdown
-      isAnimating={useMessageStreaming()}
+      isAnimating={useMessageLive() === "streaming"}
       className={CLASS_NAME}
       allowedTags={TEXT_ALLOWED_TAGS}
       components={TEXT_COMPONENTS}
@@ -105,7 +105,7 @@ export function ReasoningMarkdown({ children }: { children: string }) {
 
   return (
     <Streamdown
-      isAnimating={useMessageStreaming()}
+      isAnimating={useMessageLive() === "streaming"}
       className={CLASS_NAME}
       components={REASONING_COMPONENTS}
       plugins={STREAMDOWN_PLUGINS}

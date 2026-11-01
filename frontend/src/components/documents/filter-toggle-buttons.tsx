@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { REVEAL_ON_HOVER } from "@/components/row-buttons";
 
 const T_OPTIONS = keyPrefix(($) => $.documents.filter);

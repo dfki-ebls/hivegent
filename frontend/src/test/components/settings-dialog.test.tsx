@@ -2,16 +2,26 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
 import { SettingsDialog } from "@/components/settings-dialog";
-import { clearMemory } from "@/lib/api";
+import { clearMemory } from "@/api/account";
 import { renderWithQueries } from "@/test/render";
 
-vi.mock("@/lib/api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/api")>()),
+vi.mock("@/api/account", () => ({
   clearMemory: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   clearTmp: vi.fn<() => Promise<void>>(),
-  listTools: vi.fn<() => Promise<never[]>>(() => Promise.resolve([])),
-  testMcpServer: vi.fn<() => Promise<void>>(),
 }));
+
+vi.mock("@/api/tools", async (importOriginal) => {
+  const tools = await importOriginal<typeof import("@/api/tools")>();
+
+  return {
+    ...tools,
+    toolQueries: {
+      ...tools.toolQueries,
+      list: () => ({ ...tools.toolQueries.list(), queryFn: () => Promise.resolve([]) }),
+    },
+    testMcpServer: vi.fn<() => Promise<void>>(),
+  };
+});
 
 it("clears memory behind a confirmation that closes once confirmed", async () => {
   renderWithQueries(<SettingsDialog />);

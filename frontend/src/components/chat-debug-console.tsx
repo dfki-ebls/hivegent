@@ -7,21 +7,27 @@
  * shared or handed to a coding agent.
  */
 
-import { useChat } from "@ai-sdk/react";
+import { Chat, useChat } from "@ai-sdk/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { DefaultChatTransport } from "ai";
 import { FileTextIcon, MessageSquareTextIcon } from "lucide-react";
-import { type FormEvent, useMemo, useRef, useState } from "react";
+import { type SubmitEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
 import { formatDateTime } from "@/i18n/format";
-import { buildLlmConfig, getAuthHeaders, writeDebugReport } from "@/lib/api";
-import { type ChatMessage, isChatBusy } from "@/lib/chat/chat-utils";
-import { API_BASE_URL } from "@/lib/health";
-import type { DebugReport, DebugRequestConfig } from "@/lib/types";
-import { errorMessage } from "@/lib/utils";
-import { debugQueries } from "@/queries/debug";
+import { buildLlmConfig } from "@/api/settings";
+import { chatFetch } from "@/api/client";
+import {
+  debugChatUrl,
+  writeDebugReport,
+  type DebugReport,
+  type DebugRequestConfig,
+  debugQueries,
+} from "@/api/debug";
+import { ChatProvider, useChatInstance } from "@/components/chat/chat-context";
+import { isChatBusy } from "@/lib/chat/chat-utils";
+import type { ChatMessage } from "@/lib/chat/message";
 import { useComposerStore } from "@/stores/composer-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { ChatTextarea } from "@/components/chat/composer/chat-textarea";
@@ -29,16 +35,16 @@ import { ReasoningEffortSelector } from "@/components/chat/composer/reasoning-ef
 import { SubmitStopButton } from "@/components/chat/composer/submit-stop-button";
 import { DebugChatDialog } from "@/components/debug-chat-dialog";
 import { MessageList } from "@/components/chat/message-list";
-import { EmptyState, LoadingState } from "@/components/empty-state";
-import { ErrorAlert } from "@/components/error-alert";
-import { HighlightedCode } from "@/components/highlighted-code";
+import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
+import { ErrorAlert } from "@/components/common/error-alert";
+import { HighlightedCode } from "@/components/common/highlighted-code";
 import { PageHeader } from "@/components/page-header";
 import { DialogBody, ScrollDialogContent } from "@/components/scroll-dialog-content";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 
 const T_OPTIONS = keyPrefix(($) => $.app.chatDebugger);
 
@@ -88,20 +94,20 @@ function ReportDialog({
 function DebugChat({ conversationId }: { conversationId: string }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const summary = useQuery(debugQueries.conversation(conversationId));
-  const transport = useMemo(
+  const chat = useChatInstance(
     () =>
-      new DefaultChatTransport<ChatMessage>({
-        api: `${API_BASE_URL}/api/debug/conversations/${encodeURIComponent(conversationId)}/chat`,
-        headers: () => getAuthHeaders(),
-        body: debugRequestConfig,
+      new Chat<ChatMessage>({
+        id: `debug-${conversationId}`,
+        transport: new DefaultChatTransport<ChatMessage>({
+          api: debugChatUrl(conversationId),
+          fetch: chatFetch,
+          body: debugRequestConfig,
+        }),
       }),
-    [conversationId],
   );
-  const { messages, status, error, sendMessage, regenerate, stop, clearError } =
-    useChat<ChatMessage>({ id: `debug-${conversationId}`, transport });
+  const { messages, status, sendMessage, stop } = useChat({ chat });
   const reasoningEffort = useComposerStore((state) => state.reasoningEffort);
   const setReasoningEffort = useComposerStore((state) => state.setReasoningEffort);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const report = useMutation({
     mutationFn: () => writeDebugReport(conversationId, messages, debugRequestConfig()),
@@ -109,7 +115,7 @@ function DebugChat({ conversationId }: { conversationId: string }) {
   });
   const busy = isChatBusy(status);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = textRef.current?.value.trim();
 
@@ -121,13 +127,13 @@ function DebugChat({ conversationId }: { conversationId: string }) {
   };
 
   if (summary.isPending) {
-    return <LoadingState className="flex-1" />;
+    return <LoadingPanel className="flex-1" />;
   }
 
   if (summary.isError) {
     return (
       <div className="p-6">
-        <ErrorAlert title={t(($) => $.notFound)}>{errorMessage(summary.error)}</ErrorAlert>
+        <ErrorAlert title={t(($) => $.notFound)} error={summary.error} />
       </div>
     );
   }
@@ -155,26 +161,12 @@ function DebugChat({ conversationId }: { conversationId: string }) {
       </div>
       {report.error && (
         <div className="shrink-0 px-6 pt-4">
-          <ErrorAlert onDismiss={report.reset}>{errorMessage(report.error)}</ErrorAlert>
+          <ErrorAlert error={report.error} onDismiss={report.reset} />
         </div>
       )}
-      <MessageList
-        messages={messages}
-        messageKey={(id) => id}
-        status={status}
-        chatError={error?.message}
-        isLoadingHistory={false}
-        editingId={editingId}
-        onRetry={() => void regenerate()}
-        onDismissError={clearError}
-        onSetEditing={setEditingId}
-        onCancelEdit={() => setEditingId(null)}
-        onSubmitEdit={(messageId, text) => {
-          setEditingId(null);
-          void sendMessage({ text, messageId });
-        }}
-        onRegenerate={() => void regenerate()}
-      />
+      <ChatProvider chat={chat} conversationId={null}>
+        <MessageList />
+      </ChatProvider>
       <form onSubmit={submit} className="shrink-0 p-4">
         <InputGroup>
           {/* Prefilled, so a session can start with the general analysis. */}
@@ -189,7 +181,7 @@ function DebugChat({ conversationId }: { conversationId: string }) {
               onChange={setReasoningEffort}
               className="ml-auto"
             />
-            <SubmitStopButton status={status} streaming={busy} onStop={() => void stop()} />
+            <SubmitStopButton status={status} onStop={() => void stop()} />
           </InputGroupAddon>
         </InputGroup>
       </form>
@@ -212,14 +204,13 @@ export function ChatDebugConsole({ conversationId }: { conversationId: string | 
       {conversationId ? (
         <DebugChat key={conversationId} conversationId={conversationId} />
       ) : (
-        <EmptyState
-          icon={<MessageSquareTextIcon />}
+        <StatusPanel
+          icon={MessageSquareTextIcon}
           title={t(($) => $.emptyTitle)}
           description={t(($) => $.emptyDescription)}
           className="flex-1"
-        >
-          <Button onClick={() => setDialogOpen(true)}>{t(($) => $.open)}</Button>
-        </EmptyState>
+          action={<Button onClick={() => setDialogOpen(true)}>{t(($) => $.open)}</Button>}
+        />
       )}
       <DebugChatDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </div>

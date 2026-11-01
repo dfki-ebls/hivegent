@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type SubmitEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { ChatTextarea } from "@/components/chat/composer/chat-textarea";
@@ -35,7 +35,7 @@ function UserTextEditor({ text, onCancel, onSubmit }: UserTextEditorProps) {
   const [editText, setEditText] = useState(text);
   const blank = !editText.trim();
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!blank) onSubmit(editText);

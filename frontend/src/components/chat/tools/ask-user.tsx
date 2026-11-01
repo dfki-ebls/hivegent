@@ -1,5 +1,5 @@
 import { MessageCircleQuestionIcon } from "lucide-react";
-import type { FormEvent } from "react";
+import type { SubmitEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { TraceStepCollapsible } from "@/components/chat/trace-step";
 import { PromptItem } from "@/components/chat/tools/approval";
@@ -21,8 +21,7 @@ import {
   QuestionnaireTitle,
 } from "@/components/ui/questionnaire";
 import { Textarea } from "@/components/ui/textarea";
-import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
-import { useToolApproval } from "@/hooks/chat/use-tool-approval";
+import { useChatContext, useMessageLive } from "@/components/chat/chat-context";
 import { keyPrefix } from "@/i18n";
 import {
   ASK_USER_TOOL,
@@ -33,7 +32,7 @@ import {
   DISMISSED_ERROR,
 } from "@/lib/chat/ask-user";
 import {
-  type ToolPart,
+  type ToolRenderProps,
   parseJson,
   toolDisplayName,
   toolInputAs,
@@ -78,10 +77,10 @@ function readAnswers(form: HTMLFormElement, questions: AskQuestion[]): AskAnswer
 /** The questions as one questionnaire, a step each, answered all at once. */
 function AskForm({ toolCallId, questions }: { toolCallId: string; questions: AskQuestion[] }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const { addToolOutput, blockedReason } = useToolApproval();
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const { chat } = useChatContext();
+  const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void addToolOutput({
+    void chat.addToolOutput({
       tool: ASK_USER_TOOL,
       toolCallId,
       output: readAnswers(event.currentTarget, questions),
@@ -140,36 +139,31 @@ function AskForm({ toolCallId, questions }: { toolCallId: string; questions: Ask
       <QuestionnaireActions>
         <QuestionnairePrevious size="sm">{t(($) => $.previous)}</QuestionnairePrevious>
         <QuestionnaireNext size="sm">{t(($) => $.next)}</QuestionnaireNext>
-        <QuestionnaireSubmit size="sm" disabled={blockedReason !== undefined}>
-          {t(($) => $.submit)}
-        </QuestionnaireSubmit>
+        <QuestionnaireSubmit size="sm">{t(($) => $.submit)}</QuestionnaireSubmit>
       </QuestionnaireActions>
     </Questionnaire>
   );
 }
 
 /**
- * Questions that wait for the user's answers.
+ * Questions that wait for the user's answers, shown once the run waits for them.
  * They ask rather than report, so they stand outside the trace until they are answered.
  */
 function AskPrompt({ toolCallId, questions }: { toolCallId: string; questions: AskQuestion[] }) {
   const { t } = useTranslation();
-  const { addToolOutput, blockedReason } = useToolApproval();
+  const { chat } = useChatContext();
   const title = toolDisplayName(t, ASK_USER_TOOL);
 
   return (
     <PromptItem
       icon={<MessageCircleQuestionIcon />}
-      label={title}
       title={title}
-      description={blockedReason}
       actions={
         <Button
           variant="ghost"
           size="sm"
-          disabled={blockedReason !== undefined}
           onClick={() =>
-            void addToolOutput({
+            void chat.addToolOutput({
               tool: ASK_USER_TOOL,
               toolCallId,
               state: "output-error",
@@ -220,13 +214,13 @@ function AskSummary({ questions, answers }: { questions: AskQuestion[]; answers:
  * The questions the assistant asks with `ask_user`, answered right in the prompt.
  * The answers are the call's output, so the run continues with them once sent.
  */
-export function AskUserTool({ part }: { part: ToolPart }) {
+export function AskUserTool({ part, prompt }: ToolRenderProps) {
   const { t } = useTranslation();
-  const streaming = useMessageStreaming();
+  const live = useMessageLive();
   const questions = toolInputAs(part, AskInputSchema)?.questions;
   const title = toolDisplayName(t, ASK_USER_TOOL);
 
-  if (part.state === "input-available" && questions && part.toolCallId) {
+  if (prompt && questions && part.toolCallId) {
     return <AskPrompt toolCallId={part.toolCallId} questions={questions} />;
   }
 
@@ -235,7 +229,7 @@ export function AskUserTool({ part }: { part: ToolPart }) {
       ? AskAnswersSchema.safeParse(parseJson(part.output)).data
       : undefined;
 
-  const { status, label } = toolLineState(part, streaming);
+  const { label } = toolLineState(part, live);
   const description =
     part.state === "output-error"
       ? t(($) => $.chat.tools.ask.dismissed)
@@ -247,7 +241,7 @@ export function AskUserTool({ part }: { part: ToolPart }) {
     <TraceStepCollapsible
       icon={<MessageCircleQuestionIcon />}
       title={title}
-      status={status}
+      status={label === "running" ? "running" : undefined}
       description={description}
     >
       {questions && answers && <AskSummary questions={questions} answers={answers} />}

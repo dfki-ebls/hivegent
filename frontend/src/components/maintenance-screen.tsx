@@ -1,7 +1,7 @@
 import { WrenchIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { EmptyState } from "@/components/empty-state";
+import { StatusPanel } from "@/components/common/status-panel";
 
 /**
  * Full-screen notice shown to non-admins while the backend is in
@@ -13,8 +13,8 @@ export function MaintenanceScreen() {
   const { t } = useTranslation();
 
   return (
-    <EmptyState
-      icon={<WrenchIcon />}
+    <StatusPanel
+      icon={WrenchIcon}
       title={t(($) => $.app.maintenance.title)}
       description={t(($) => $.app.maintenance.description)}
       className="h-dvh"

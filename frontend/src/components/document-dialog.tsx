@@ -8,33 +8,28 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
+  FileQuestionIcon,
+  TextSelectIcon,
+  CircleAlertIcon,
 } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { type ReactNode, startTransition, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { useConversationId } from "@/hooks/chat/use-conversation-id";
+import { useConversationId } from "@/components/chat/chat-context";
 import { formatDateTime, formatFileSize } from "@/i18n/format";
 import { downloadBlob } from "@/lib/download";
-import { basename, centerInScroller, cn, errorMessage, isWebUrl, previewText } from "@/lib/utils";
+import { buildAuxLlmConfig } from "@/api/settings";
 import {
-  buildAuxLlmConfig,
   canonicalPath,
   formatTarget,
   isWorkspacePath,
   splitScopePath,
-} from "@/lib/api";
-import { type DocumentPreview, previewKind } from "@/lib/original-preview";
-import { documentMutations, documentQueries } from "@/queries/documents";
-import { useSettingsStore } from "@/stores/settings-store";
-import { type PreviewTab, PreviewTabs } from "@/components/documents/preview-tabs";
-import { EmptyState, LoadingState } from "@/components/empty-state";
-import { ItemButton } from "@/components/row-buttons";
-import { ScrollDialogContent } from "@/components/scroll-dialog-content";
-import { TooltipButton } from "@/components/tooltip-button";
-import { WorkspaceMarkdown } from "@/components/workspace-markdown";
-import {
+  documentMutations,
+  documentQueries,
   type ChunkedDocumentResponse,
+} from "@/api/documents";
+import {
   type FetchedChunk,
   type FetchedImage,
   chunkOriginLabel,
@@ -42,7 +37,16 @@ import {
   isLinePosition,
   lineBounds,
   sortChunks,
-} from "@/lib/types";
+} from "@/lib/chunks";
+import { basename, centerInScroller, cn, errorMessage, isWebUrl, previewText } from "@/lib/utils";
+import { type DocumentPreview, previewKind } from "@/lib/original-preview";
+import { useSettingsStore } from "@/stores/settings-store";
+import { type PreviewTab, PreviewTabs } from "@/components/documents/preview-tabs";
+import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
+import { ItemButton } from "@/components/row-buttons";
+import { ScrollDialogContent } from "@/components/scroll-dialog-content";
+import { TooltipButton } from "@/components/common/tooltip-button";
+import { WorkspaceMarkdown } from "@/components/workspace-markdown";
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,7 +64,7 @@ import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -286,14 +290,14 @@ function chunkRangeResolver(fullContent: string): RangeResolver {
     const position = chunk.position;
     const [startLine, endLine] = isLinePosition(position) ? lineBounds(position) : [0, 0];
 
-    if (startLine >= 1) {
-      if (startLine > starts.length) return null;
-      const last = Math.min(endLine, starts.length);
+    const start = starts[startLine - 1];
 
-      return {
-        start: starts[startLine - 1],
-        end: last < starts.length ? starts[last] - 1 : fullContent.length,
-      };
+    if (startLine >= 1) {
+      if (start === undefined) return null;
+
+      const next = starts[Math.min(endLine, starts.length)];
+
+      return { start, end: next === undefined ? fullContent.length : next - 1 };
     }
 
     if (!chunk.content) return null;
@@ -606,7 +610,7 @@ function DocumentDialogBody({
   };
 
   const renderText = () => {
-    if (isLoading) return <LoadingState />;
+    if (isLoading) return <LoadingPanel />;
 
     // Full-doc markdown view
     if (view.mode === "full-doc") {
@@ -643,8 +647,9 @@ function DocumentDialogBody({
         }
 
         return (
-          <EmptyState
-            description={
+          <StatusPanel
+            icon={FileQuestionIcon}
+            title={
               isWeb
                 ? t(($) => $.documents.dialog.pageNotFetched)
                 : !preview && !filename.toLowerCase().endsWith(".md")
@@ -777,14 +782,19 @@ function DocumentDialogBody({
     }
 
     if (!activeChunk) {
-      return <EmptyState description={t(($) => $.documents.dialog.selectChunk)} />;
+      return (
+        <StatusPanel icon={TextSelectIcon} title={t(($) => $.documents.dialog.selectChunk)} />
+      );
     }
 
     if (!fullContent) {
       return activeChunk.content ? (
         <TextPane>{activeChunk.content}</TextPane>
       ) : (
-        <EmptyState description={t(($) => $.documents.dialog.contentUnavailable)} />
+        <StatusPanel
+          icon={FileQuestionIcon}
+          title={t(($) => $.documents.dialog.contentUnavailable)}
+        />
       );
     }
 
@@ -826,7 +836,7 @@ function DocumentDialogBody({
     if (isManagedMode && managedLoading) {
       return (
         <aside className="flex w-56 shrink-0 border-r">
-          <LoadingState />
+          <LoadingPanel />
         </aside>
       );
     }
@@ -834,7 +844,7 @@ function DocumentDialogBody({
     if (contentModel.error) {
       return (
         <aside className="flex w-56 shrink-0 border-r">
-          <EmptyState description={contentModel.error} />
+          <StatusPanel icon={CircleAlertIcon} title={contentModel.error} />
         </aside>
       );
     }

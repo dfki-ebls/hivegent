@@ -1,8 +1,14 @@
-import type { UIMessage } from "@ai-sdk/react";
+import type { UIMessage } from "ai";
 import { describe, expect, it } from "vitest";
 
 import { i18n } from "@/i18n";
-import { getToolPartInfo, indexToolData, toolDisplayName } from "@/lib/chat/tool-part";
+import {
+  getToolPartInfo,
+  indexToolData,
+  type ToolPart,
+  toolDisplayName,
+  toolLineState,
+} from "@/lib/chat/tool-part";
 
 /**
  * The AI SDK appends ``data-tool-output`` parts to the end of
@@ -28,7 +34,8 @@ describe("getToolPartInfo", () => {
   });
 
   const contentOf = (parts: UIMessage["parts"], index: number): string | undefined => {
-    const info = getToolPartInfo(parts[index], indexToolData(parts));
+    const part = parts[index];
+    const info = part && getToolPartInfo(part, indexToolData(parts));
     return (info?.metadata as { content: string } | undefined)?.content;
   };
 
@@ -50,8 +57,8 @@ describe("getToolPartInfo", () => {
   });
 
   it("returns null metadata when the data part has not streamed yet", () => {
-    const parts = [toolPart("call-a", "a.md")];
-    expect(getToolPartInfo(parts[0], indexToolData(parts))?.metadata).toBeNull();
+    const part = toolPart("call-a", "a.md");
+    expect(getToolPartInfo(part, indexToolData([part]))?.metadata).toBeNull();
   });
 });
 
@@ -59,5 +66,21 @@ describe("toolDisplayName", () => {
   it("names built-in tools from the catalog and title-cases unknown ones", () => {
     expect(toolDisplayName(i18n.t, "list_documents")).toBe("List Documents");
     expect(toolDisplayName(i18n.t, "mcp_list_issues")).toBe("Mcp List Issues");
+  });
+});
+
+describe("toolLineState", () => {
+  const call = { type: "dynamic-tool", toolName: "search", toolCallId: "1", input: {} } as const;
+  const running: ToolPart = { ...call, state: "input-available" };
+  const asking: ToolPart = { ...call, state: "approval-requested", approval: { id: "1" } };
+
+  it("runs a call only while its message streams and stops it otherwise", () => {
+    expect(toolLineState(running, "streaming")).toEqual({ label: "running" });
+    expect(toolLineState(running, "waiting")).toEqual({ failed: true, label: "stopped" });
+  });
+
+  it("awaits an approval until a later message abandons it", () => {
+    expect(toolLineState(asking, "waiting")).toEqual({ label: "awaitingApproval" });
+    expect(toolLineState(asking, "stale")).toEqual({ failed: true, label: "stopped" });
   });
 });

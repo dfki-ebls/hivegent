@@ -4,12 +4,15 @@ import { useTranslation } from "react-i18next";
 
 import {
   PERSONAL_SCOPE,
-  buildAuxLlmConfig,
   canonicalPath,
   formatTarget,
   groupScope,
   splitScopePath,
-} from "@/lib/api";
+  documentMutations,
+} from "@/api/documents";
+import { buildAuxLlmConfig, useServerSettings } from "@/api/settings";
+import type { PipelineSpec } from "@/api/pipelines";
+import { errorMessage } from "@/lib/utils";
 import {
   buildCollectionZip,
   buildCollectionZipFromDirectoryInput,
@@ -17,10 +20,6 @@ import {
 } from "@/lib/collection-upload";
 import { registerTreeAutoScroll } from "@/lib/dnd";
 import { featureFlags } from "@/lib/feature-flags";
-import type { PipelineSpec } from "@/lib/types";
-import { errorMessage } from "@/lib/utils";
-import { documentMutations } from "@/queries/documents";
-import { useServerSettings } from "@/queries/settings";
 import { useUserName } from "@/hooks/use-user-name";
 import { useSettingsStore } from "@/stores/settings-store";
 import {
@@ -99,7 +98,6 @@ export function DocumentManager() {
     if (!hasPendingUploads) return;
     const handler = (event: BeforeUnloadEvent) => {
       event.preventDefault();
-      event.returnValue = "";
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);

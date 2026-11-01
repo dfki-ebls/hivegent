@@ -1,7 +1,7 @@
 import { BrainIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ComposerSelect } from "@/components/chat/composer/composer-select";
-import { REASONING_EFFORTS, type ReasoningEffort } from "@/lib/types";
+import { REASONING_EFFORTS, type ReasoningEffort } from "@/api/conversations";
 
 interface ReasoningEffortSelectorProps {
   value: ReasoningEffort;

@@ -35,11 +35,10 @@ export const app = {
     description: "Die gesuchte Seite existiert nicht oder wurde verschoben.",
     backHome: "Zur Startseite",
   },
-  errorBoundary: {
+  routeError: {
     title: "Etwas ist schiefgelaufen",
     description:
-      "In der App ist ein unerwarteter Fehler aufgetreten. Lade die Seite neu oder lösche alle lokalen Daten, wenn das Problem weiterhin besteht.",
-    reload: "Neu laden",
+      "In der App ist ein unerwarteter Fehler aufgetreten. Versuche es erneut oder lösche alle lokalen Daten, wenn das Problem weiterhin besteht.",
     clearData: "Lokale Daten löschen und neu laden",
   },
   impersonation: {
@@ -124,6 +123,8 @@ export const app = {
       download: "Download fehlgeschlagen",
       replaceOriginal: "Ersetzen fehlgeschlagen",
       listConversations: "Konversationen konnten nicht geladen werden",
+      fetchMessages: "Die Konversation konnte nicht geladen werden",
+      chat: "Die Chat-Anfrage ist fehlgeschlagen",
       update: "Aktualisieren fehlgeschlagen",
       generateTitle: "Titel konnte nicht erstellt werden",
       importConversation: "Import fehlgeschlagen",

@@ -1,5 +1,4 @@
 import type { FileUIPart } from "ai";
-import { nanoid } from "nanoid";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 export interface SteeringMessage {
@@ -36,7 +35,7 @@ export function useSteeringQueue(
   const enqueue = useCallback((text: string, files: FileUIPart[]) => {
     const trimmed = text.trim();
     if (!trimmed && files.length === 0) return;
-    setQueue((prev) => [...prev, { id: nanoid(), text: trimmed, files }]);
+    setQueue((prev) => [...prev, { id: crypto.randomUUID(), text: trimmed, files }]);
   }, []);
 
   return { queue, enqueue };

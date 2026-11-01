@@ -1,5 +1,4 @@
-import type { UIMessage } from "@ai-sdk/react";
-import type { DynamicToolUIPart, ToolUIPart } from "ai";
+import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "ai";
 import type { TFunction } from "i18next";
 import type { z } from "zod";
 import { isCatalogKey } from "@/i18n";
@@ -7,25 +6,46 @@ import { chat } from "@/i18n/locales/en/chat";
 import { snakeCaseToTitleCase } from "@/lib/utils";
 import type { AddChunk, AddImage, MarkFullDocument } from "@/stores/fetched-documents-store";
 
+/**
+ * Where a message stands: the last one while the chat streams, the last one
+ * while the chat is idle and waits for the user, or an earlier one.
+ */
+export type Live = "streaming" | "waiting" | "stale";
+
 export type ToolPart = ToolUIPart | DynamicToolUIPart;
 
+/** What a tool's view renders from. */
+export interface ToolRenderProps {
+  part: ToolPart;
+  metadata: unknown;
+  /** Whether the call asks the user something they can still answer, as `blocksOf` places it. */
+  prompt: boolean;
+}
+
+/** How a call's trace line reads. */
 interface LineState {
-  status?: "running";
   /** Whether the call failed or was stopped, which an agent routinely recovers from. */
   failed?: boolean;
   label?: keyof typeof chat.tools.status;
 }
 
-const RUNNING: LineState = { status: "running", label: "running" };
+const RUNNING: LineState = { label: "running" };
+const STOPPED: LineState = { failed: true, label: "stopped" };
 
-/** How a call's line reads, where a call that never finished was stopped once the chat stops streaming. */
-export function toolLineState(part: ToolPart, streaming: boolean): LineState {
+/**
+ * How a call's line reads, where a call that never finished was stopped once
+ * the chat stops streaming. An open approval or question on a stale message
+ * reads as stopped, since a later message abandoned it.
+ */
+export function toolLineState(part: ToolPart, live: Live): LineState {
+  const streaming = live === "streaming";
+
   switch (part.state) {
     case "input-streaming":
     case "input-available":
-      return streaming ? RUNNING : { failed: true, label: "stopped" };
+      return streaming ? RUNNING : STOPPED;
     case "approval-requested":
-      return { label: "awaitingApproval" };
+      return live === "stale" ? STOPPED : { label: "awaitingApproval" };
     case "approval-responded":
       if (!part.approval.approved) return { label: "denied" };
 
@@ -53,7 +73,7 @@ export interface SyncOutputContext {
 
 export type SyncOutput = (ctx: SyncOutputContext) => void;
 
-export interface ToolPartInfo {
+interface ToolPartInfo {
   toolName: string;
   toolCallId?: string;
   state: ToolPart["state"];
@@ -73,7 +93,7 @@ export interface ToolPartInfo {
   metadata: unknown;
 }
 
-export function getToolName(part: { type?: string; toolName?: string }): string | null {
+function getToolName(part: { type?: string; toolName?: string }): string | null {
   if (!part.type) return null;
   if (part.type === "dynamic-tool" && part.toolName) return part.toolName;
   if (part.type.startsWith("tool-")) return part.type.replace("tool-", "");
@@ -109,7 +129,7 @@ export function toolInputAs<T>(
 }
 
 /** Check whether a message part is a ``data-tool-output`` DataUIPart. */
-export function isToolDataPart(
+function isToolDataPart(
   part: unknown,
 ): part is { type: "data-tool-output"; id?: string; data: unknown } {
   return (

@@ -5,7 +5,7 @@ import {
   canonicalPath,
   uploadCollection,
   uploadDocument,
-} from "@/lib/api";
+} from "@/api/documents";
 import { errorMessage, fileStem, isAbortError } from "@/lib/utils";
 import { useJobsStore } from "@/stores/jobs-store";
 
@@ -14,7 +14,7 @@ import { useJobsStore } from "@/stores/jobs-store";
 // uploads only, not the processing that follows.
 const UPLOAD_CONCURRENCY = 3;
 
-export type UploadItemStatus =
+type UploadItemStatus =
   | "preparing" // building a collection archive (collections only)
   | "queued" // ready, waiting for a free upload slot
   | "uploading" // bytes transferring to the backend

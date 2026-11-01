@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { parseBatch } from "@/components/chat/tools/batch";
 import { syncLineRange } from "@/components/chat/tools/line-range";
-import { LineRangeSchema } from "@/lib/types";
+import { LineRangeSchema } from "@/lib/chat/tool-outputs";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
 /** One page of the backend ``web_fetch`` tool's payload, the window of its text the call showed. */

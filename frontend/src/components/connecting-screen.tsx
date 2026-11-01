@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { LoadingState } from "@/components/empty-state";
+import { LoadingPanel } from "@/components/common/status-panel";
 
 const STILL_WAITING_MS = 10_000;
 
@@ -21,7 +21,7 @@ export function ConnectingScreen() {
   }, []);
 
   return (
-    <LoadingState
+    <LoadingPanel
       description={
         stillWaiting
           ? t(($) => $.app.connecting.stillConnecting)

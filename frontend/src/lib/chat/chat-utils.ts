@@ -1,23 +1,31 @@
-import type { UIMessage } from "@ai-sdk/react";
 import {
   type ChatStatus,
   type DynamicToolUIPart,
   type FileUIPart,
   type ToolUIPart,
+  type UIMessage,
   isToolUIPart,
 } from "ai";
-import { ASK_USER_PART, DISMISSED_ERROR } from "@/lib/chat/ask-user";
-import type { SubagentUpdate } from "@/lib/chat/subagent";
-import { toolLineState } from "@/lib/chat/tool-part";
+import { ASK_USER_PART } from "@/lib/chat/ask-user";
+import type { ChatPart } from "@/lib/chat/layout";
+import type { ChatMessage } from "@/lib/chat/message";
+import { type Live, toolLineState } from "@/lib/chat/tool-part";
 
 /** Whether a chat request is waiting for or receiving model output. */
 export function isChatBusy(status: ChatStatus): boolean {
   return status === "submitted" || status === "streaming";
 }
 
+/** Where the message `id` stands in a chat with `messages` and `status`. */
+export function liveOf(messages: readonly ChatMessage[], status: ChatStatus, id: string): Live {
+  if (messages.at(-1)?.id !== id) return "stale";
+
+  return isChatBusy(status) ? "streaming" : "waiting";
+}
+
 /** Whether *part* visibly works on screen, as text that grows or a call whose line spins. */
-function isPartRunning(part: ChatMessage["parts"][number]): boolean {
-  if (isToolUIPart(part)) return toolLineState(part, true).status === "running";
+function isPartRunning(part: ChatPart): boolean {
+  if (isToolUIPart(part)) return toolLineState(part, "streaming").label === "running";
 
   return (part.type === "text" || part.type === "reasoning") && part.state === "streaming";
 }
@@ -37,9 +45,11 @@ export function isProcessing(messages: ChatMessage[], status: ChatStatus): boole
 /** Concatenate text from all text parts of a message (or part list). */
 export function joinTextParts(parts: UIMessage["parts"] | undefined): string | undefined {
   if (!parts) return undefined;
+
   const texts = parts
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text);
+
   return texts.length > 0 ? texts.join("\n") : undefined;
 }
 
@@ -51,122 +61,40 @@ export function precedingUserText(messages: UIMessage[], id: string): string {
   return joinTextParts(user?.parts) ?? "";
 }
 
-/**
- * Index of the message a turn sent, or -1.
- *
- * Retry addresses it by id and `adoptMessageNodeId` re-keys it, so both must
- * agree on which message that is.
- */
+/** Index of the message a turn sent, or -1. */
 export function lastUserIndex(messages: UIMessage[]): number {
   return messages.findLastIndex((message) => message.role === "user");
 }
 
 /**
- * A user turn in the form a resend needs: its node id plus every part that has
- * to travel again.
- *
- * The error banner's retry reads it, so a resend never quietly carries less
- * than the user sent. Attachments are the part that used to be dropped: they live only in client
- * state until the turn succeeds, so a resend that omits them loses them for good.
+ * *message* sent again with *text*, replacing it and everything after it, with its attachments,
+ * so a resend never quietly carries less than the user sent. The copy gets a fresh id,
+ * since the server stores every message under the id it was sent with.
  */
-export interface UserTurn {
-  id: string;
-  text: string;
-  files: FileUIPart[];
+export function resendOf(message: ChatMessage, text: string) {
+  const files = message.parts.filter((part): part is FileUIPart => part.type === "file");
+
+  return {
+    id: crypto.randomUUID(),
+    messageId: message.id,
+    role: "user" as const,
+    parts: [...files, ...(text ? [{ type: "text" as const, text }] : [])],
+  };
 }
-
-/**
- * The last user message as a re-sendable turn, or undefined if there is
- * nothing to resend.
- *
- * A message carrying only attachments is a turn like any other — the chat
- * accepts an image with no prose — so emptiness is judged on text *and* files.
- */
-export function getLastUserMessage(messages: UIMessage[]): UserTurn | undefined {
-  const last = messages[lastUserIndex(messages)];
-  if (!last) return undefined;
-  const text = joinTextParts(last.parts) ?? "";
-  const files = last.parts.filter((part): part is FileUIPart => part.type === "file");
-  return text || files.length > 0 ? { id: last.id, text, files } : undefined;
-}
-
-/**
- * Re-key the last user message to the tree-node id the backend stored it under
- * (returned in `X-Message-Id`), so edit and retry can address it.
- */
-export function adoptMessageNodeId(messages: ChatMessage[], nodeId: string): ChatMessage[] {
-  const index = lastUserIndex(messages);
-  if (index === -1) return messages;
-  return messages.with(index, { ...messages[index], id: nodeId });
-}
-
-/**
- * UI-owned metadata the backend persists on a message and the client reads back
- * on reload (see the `*_KEY` constants in `backend/src/hivegent/server/vercel.py`).
- */
-export interface ChatMessageMetadata {
-  /** How long each reasoning part streamed, keyed by run in turn order. */
-  reasoningDurationsMs?: Record<string, number[]>;
-  chatError?: string;
-  /** What each pending call's `ApprovalRequired` carried, keyed by tool call id. */
-  approvalMetadata?: Record<string, unknown>;
-}
-
-/**
- * The `data-*` parts the backend streams, keyed by name without the prefix.
- *
- * `compaction` carries the summary that replaced the history before it, live and after a reload.
- * Its data may hold more keys, but only `content` is meant for display.
- */
-export type ChatDataTypes = {
-  compaction: { content: string };
-  subagent: SubagentUpdate;
-  "tool-output": unknown;
-};
-
-/**
- * The message type used throughout the chat, carrying our metadata and data part shapes.
- *
- * `UIMessage` defaults both to `unknown`, which forces a cast at every read.
- * Binding them once here types `message.metadata` and the data parts everywhere
- * instead. Chat state is created from this type in `useChat` (see
- * `use-hivegent-chat.ts`), so the annotation flows outward rather than being
- * re-asserted per call site.
- */
-export type ChatMessage = UIMessage<ChatMessageMetadata, ChatDataTypes>;
 
 /**
  * The run error of the latest turn, live or persisted, or undefined.
  *
- * A stream error is transient SDK state that a reload or the draft-to-
- * conversation remount would lose, so the backend stores it on the last turn's
- * message metadata (see `record_turn_error` in
- * `backend/src/hivegent/server/vercel.py`) and `recordChatError` does the same
- * across the handoff. Reading the last message means a later successful turn
- * retires the error on its own. This is the single source every consumer reads,
- * so every error surface agrees on what failed.
+ * A stream error is transient SDK state that a reload would lose, so the
+ * backend stores it on the last turn's message metadata (see `record_turn_error`
+ * in `backend/src/hivegent/server/vercel.py`). Reading the last message means a
+ * later successful turn retires the error on its own.
  */
 export function activeChatError(
   messages: ChatMessage[],
   liveError: Error | undefined,
 ): string | undefined {
   return liveError?.message ?? messages.at(-1)?.metadata?.chatError;
-}
-
-/**
- * Store a live run error on the last message so it survives the draft-to-
- * conversation handoff, which seeds the destination route from memory and so
- * skips the fetch that would return the copy the backend just persisted.
- */
-export function recordChatError(messages: ChatMessage[], error: Error | undefined): ChatMessage[] {
-  if (!error || messages.length === 0) return messages;
-
-  const index = messages.length - 1;
-  const message = messages[index];
-  return messages.with(index, {
-    ...message,
-    metadata: { ...message.metadata, chatError: error.message },
-  });
 }
 
 /**
@@ -177,7 +105,7 @@ export function recordChatError(messages: ChatMessage[], error: Error | undefine
  */
 type PendingApproval = Extract<DynamicToolUIPart | ToolUIPart, { state: "approval-requested" }>;
 
-function isPendingApproval(part: ChatMessage["parts"][number]): part is PendingApproval {
+function isPendingApproval(part: ChatPart): part is PendingApproval {
   return "approval" in part && part.state === "approval-requested";
 }
 
@@ -186,63 +114,8 @@ export function pendingApprovalIds(message: ChatMessage): string[] {
   return message.parts.filter(isPendingApproval).map((part) => part.approval.id);
 }
 
-type PendingQuestion = Extract<ToolUIPart, { state: "input-available" }>;
-
-/** Whether a part is a question call nobody has answered yet. */
-function isPendingQuestion(part: ChatMessage["parts"][number]): part is PendingQuestion {
-  return part.type === ASK_USER_PART && "state" in part && part.state === "input-available";
-}
-
-/** Whether a part asks the user something, an approval or a question, that nobody has answered yet. */
-export function isOpenPrompt(part: ChatMessage["parts"][number]): boolean {
-  return isPendingApproval(part) || isPendingQuestion(part);
-}
-
-/** The same part as the denial or dismissal it has become, matching a reloaded one. */
-function closeCall(part: ChatMessage["parts"][number]): ChatMessage["parts"][number] {
-  if (isPendingApproval(part)) {
-    return { ...part, state: "output-denied", approval: { ...part.approval, approved: false } };
-  }
-
-  if (isPendingQuestion(part)) {
-    const { state: _, ...call } = part;
-
-    return { ...call, state: "output-error", errorText: DISMISSED_ERROR };
-  }
-
-  return part;
-}
-
-/**
- * Close the approval requests and questions the user walked away from by
- * sending another message, so they read as the denials and dismissals they
- * have become.
- *
- * The backend does the same to the stored history on the next request
- * (`abandon_pending_calls` in `backend/src/hivegent/server/vercel.py`): a
- * dangling call that a new prompt has overtaken can never be answered, so it is
- * closed. Deriving that here rather than recording a second decision keeps the
- * live tab showing what a reload already shows, and stops the card offering
- * buttons for a decision the server has made. Only the last message can hold a
- * live request — the run that asked is the end of the transcript until the
- * next turn appends to it — so anything before it is abandoned by construction.
- *
- * Returns *messages* itself when nothing dangles, allocating nothing, so the
- * common case re-renders nothing on a transcript that grows with every chunk.
- */
-export function closeAbandonedCalls(messages: ChatMessage[]): ChatMessage[] {
-  const isAbandoned = (message: ChatMessage, index: number) =>
-    index < messages.length - 1 && message.parts.some(isOpenPrompt);
-
-  if (!messages.some(isAbandoned)) return messages;
-
-  return messages.map((message, index) =>
-    isAbandoned(message, index) ? { ...message, parts: message.parts.map(closeCall) } : message,
-  );
-}
-
 /** Whether a part carries content, unlike the `step-start` marker between steps. */
-function isContentPart(part: ChatMessage["parts"][number]): boolean {
+function isContentPart(part: ChatPart): boolean {
   return part.type !== "step-start";
 }
 
@@ -254,7 +127,8 @@ function isContentPart(part: ChatMessage["parts"][number]): boolean {
  * previous reply. Live, it streams into the reply after the prompt instead. A
  * reply that held nothing else goes, as it does on reload.
  *
- * Returns *messages* itself when nothing moves, like `closeAbandonedCalls`.
+ * Returns *messages* itself when nothing moves, allocating nothing, so the
+ * common case re-renders nothing on a transcript that grows with every chunk.
  */
 export function placeCompactions(messages: ChatMessage[]): ChatMessage[] {
   let placed: ChatMessage[] | undefined;

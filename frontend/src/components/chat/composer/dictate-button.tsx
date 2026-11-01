@@ -3,8 +3,8 @@ import { MicIcon, SquareIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { InputGroupButton } from "@/components/ui/input-group";
-import { Spinner } from "@/components/ui/spinner";
-import { WithTooltip } from "@/components/tooltip-button";
+import { Spinner } from "@/components/common/spinner";
+import { WithTooltip } from "@/components/common/tooltip-button";
 import { LANGUAGE } from "@/i18n";
 
 /** The part of the Web Speech API the DOM library does not declare yet. */

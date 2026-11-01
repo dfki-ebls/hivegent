@@ -1,8 +1,8 @@
-import type { ChatStatus, FileUIPart } from "ai";
+import type { FileUIPart } from "ai";
 import { ImagePlusIcon } from "lucide-react";
-import { type FormEvent, useLayoutEffect, useRef } from "react";
+import { type SubmitEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AttachedFiles } from "@/components/chat/composer/attached-files";
+import { AttachedFiles, type ComposerFile } from "@/components/chat/composer/attached-files";
 import { ChatTextarea } from "@/components/chat/composer/chat-textarea";
 import { DictateButton } from "@/components/chat/composer/dictate-button";
 import { DocumentFilterBadges } from "@/components/chat/composer/document-filter-badges";
@@ -10,13 +10,16 @@ import { SubmitStopButton } from "@/components/chat/composer/submit-stop-button"
 import { ModeSelector } from "@/components/chat/composer/mode-selector";
 import { ReasoningEffortSelector } from "@/components/chat/composer/reasoning-effort-selector";
 import { SettingsDialog } from "@/components/settings-dialog";
-import { WithTooltip } from "@/components/tooltip-button";
+import { WithTooltip } from "@/components/common/tooltip-button";
 import { InputGroup, InputGroupAddon, InputGroupButton } from "@/components/ui/input-group";
 import { toast } from "@/components/ui/toast";
 import { keyPrefix } from "@/i18n";
 import { formatFileSize } from "@/i18n/format";
-import { selectAttachmentLimits, useServerSettings } from "@/queries/settings";
-import { type ComposerFile, useComposerStore } from "@/stores/composer-store";
+import { selectAttachmentLimits, useServerSettings } from "@/api/settings";
+import { transcribeAudio } from "@/api/transcription";
+import { useChatContext, useChatSelector } from "@/components/chat/chat-context";
+import { isChatBusy } from "@/lib/chat/chat-utils";
+import { useComposerStore } from "@/stores/composer-store";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.composer);
 
@@ -31,49 +34,29 @@ function readDataUrl(file: File): Promise<string> {
   });
 }
 
-interface ComposerProps {
-  onSubmit: (text: string, files: FileUIPart[]) => void;
-  status: ChatStatus;
-  onStop: () => void;
-  isStreaming: boolean;
-  onAudioRecorded?: (audio: Blob) => Promise<string>;
-}
-
 /**
- * The message field with its attachments and settings.
- * The draft lives in the uncontrolled textarea, mirrored to the composer store so it outlives
- * the remount when a draft becomes a conversation, and the composer subscribes only to whether
+ * The message field of the chat being rendered, with its attachments and settings.
+ * The draft lives in the uncontrolled textarea, and the composer tracks only whether
  * it is blank, so typing re-renders neither the message list nor the composer's own controls.
  */
-export function Composer({
-  onSubmit,
-  status,
-  onStop,
-  isStreaming,
-  onAudioRecorded,
-}: ComposerProps) {
+export function Composer({ onSubmit }: { onSubmit: (text: string, files: FileUIPart[]) => void }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   // Served by the backend so the picker, the paste handler, and the chat
   // route all gate on one table: a file the model could not read is refused
   // here rather than after a round trip.
   const limits = useServerSettings(selectAttachmentLimits);
-  const files = useComposerStore((state) => state.files);
+  const transcribe = useServerSettings((settings) => settings.stt_model) ? transcribeAudio : undefined;
+  const { chat } = useChatContext();
+  const status = useChatSelector((chat) => chat.status);
+  const streaming = isChatBusy(status);
   const agentMode = useComposerStore((state) => state.agentMode);
   const reasoningEffort = useComposerStore((state) => state.reasoningEffort);
-  const hasText = useComposerStore((state) => state.text.trim() !== "");
-  const { text, setText, setFiles, setFocused, setAgentMode, setReasoningEffort, clearDraft } =
-    useComposerStore.getState();
+  const { setAgentMode, setReasoningEffort } = useComposerStore.getState();
+  const [files, setFiles] = useState<ComposerFile[]>([]);
+  const [hasText, setHasText] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canSend = hasText || files.length > 0;
-
-  // Runs before the field leaves the DOM, while it can still tell whether it has focus.
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (useComposerStore.getState().focused) textarea?.focus();
-
-    return () => setFocused(document.activeElement === textarea);
-  }, [setFocused]);
 
   /** Attach the images among *incoming* that the limits allow, saying why any other is refused. */
   const attach = async (incoming: File[]) => {
@@ -115,7 +98,7 @@ export function Composer({
     setFiles((prev) => [...prev, ...added]);
   };
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!canSend) return;
@@ -125,7 +108,8 @@ export function Composer({
       files.map((file) => file.part),
     );
     event.currentTarget.reset();
-    clearDraft();
+    setHasText(false);
+    setFiles([]);
   };
 
   const dictate = (spoken: string) => {
@@ -133,7 +117,7 @@ export function Composer({
     if (!textarea) return;
 
     textarea.value = textarea.value ? `${textarea.value} ${spoken}` : spoken;
-    setText(textarea.value);
+    setHasText(textarea.value.trim() !== "");
   };
 
   return (
@@ -158,9 +142,8 @@ export function Composer({
         />
         <ChatTextarea
           ref={textareaRef}
-          defaultValue={text}
-          onChange={(event) => setText(event.target.value)}
-          placeholder={isStreaming ? t(($) => $.steerPlaceholder) : t(($) => $.placeholder)}
+          onChange={(event) => setHasText(event.target.value.trim() !== "")}
+          placeholder={streaming ? t(($) => $.steerPlaceholder) : t(($) => $.placeholder)}
           onKeyDown={(event) => {
             if (event.key === "Backspace" && event.currentTarget.value === "" && files.length > 0) {
               event.preventDefault();
@@ -181,7 +164,7 @@ export function Composer({
               <ImagePlusIcon />
             </InputGroupButton>
           </WithTooltip>
-          <DictateButton transcribe={onAudioRecorded} onText={dictate} />
+          <DictateButton transcribe={transcribe} onText={dictate} />
           <SettingsDialog />
           <ReasoningEffortSelector
             value={reasoningEffort}
@@ -192,9 +175,8 @@ export function Composer({
           {/* Enter still submits while streaming, which steers the running turn. */}
           <SubmitStopButton
             status={status}
-            streaming={isStreaming}
             empty={!canSend}
-            onStop={onStop}
+            onStop={() => void chat.stop()}
           />
         </InputGroupAddon>
       </InputGroup>

@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
-import { ConversationIdProvider } from "@/hooks/chat/use-conversation-id";
+import { ChatProvider } from "@/components/chat/chat-context";
+import { useHivegentChat } from "@/hooks/chat/use-hivegent-chat";
+import type { ChatMessage } from "@/lib/chat/message";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { ChatSidebar } from "@/components/chat/chat-sidebar";
 import { DocumentCanvas } from "@/components/documents/document-canvas";
@@ -20,24 +22,27 @@ const T_OPTIONS = keyPrefix(($) => $.chat.layout);
 
 interface ChatLayoutProps {
   id: string;
-  draft?: boolean;
-  onNewDraft?: () => void;
+  /** The stored messages the chat starts from, none for a new conversation. */
+  messages: ChatMessage[];
 }
 
-export function ChatLayout({ id, draft = false, onNewDraft }: ChatLayoutProps) {
+/** The documents beside the chat of one conversation, mounted once per conversation. */
+export function ChatLayout({ id, messages }: ChatLayoutProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
   const openChat = useDocumentCanvasStore((state) => state.openChat);
+  const { chat, subagents } = useHivegentChat(id, messages);
+  const empty = messages.length === 0;
 
-  // Single entry point for every navigation path (sidebar, links, draft
-  // adoption): surfaces the chat's primary view, while a reload keeps the
-  // remembered tab and a manual switch within one conversation is left alone.
+  // Single entry point for every navigation path (sidebar, links, a new chat):
+  // surfaces the chat's primary view, while a reload keeps the remembered tab
+  // and a manual switch within one conversation is left alone.
   useEffect(() => {
-    openChat(id, draft);
-  }, [id, draft, openChat]);
+    openChat(id, empty);
+  }, [id, empty, openChat]);
 
   return (
-    <ConversationIdProvider value={draft ? null : id}>
+    <ChatProvider chat={chat} conversationId={id} subagents={subagents}>
       <div className="flex h-full overflow-hidden">
         <div className="hidden h-full w-1/2 overflow-hidden border-r md:block">
           <DocumentCanvas />
@@ -68,10 +73,10 @@ export function ChatLayout({ id, draft = false, onNewDraft }: ChatLayoutProps) {
             </Button>
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
-            <ChatSidebar id={id} draft={draft} onNewDraft={onNewDraft} />
+            <ChatSidebar />
           </div>
         </div>
       </div>
-    </ConversationIdProvider>
+    </ChatProvider>
   );
 }

@@ -2,7 +2,7 @@ import { Globe } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { type FetchedChunk, type FetchedDocument, sortChunks } from "@/lib/types";
+import { type FetchedChunk, type FetchedDocument, sortChunks } from "@/lib/chunks";
 import { basename, formatWebUrl, isWebUrl } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";

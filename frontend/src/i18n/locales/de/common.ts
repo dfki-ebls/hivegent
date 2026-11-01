@@ -21,6 +21,7 @@ export const common = {
     working: "Wird ausgeführt …",
     error: "Fehler",
     unknownError: "Etwas ist schiefgelaufen.",
+    copied: "Kopiert",
     copyFailed: "Kopieren in die Zwischenablage fehlgeschlagen.",
   },
 } as const satisfies Translation<typeof en>;

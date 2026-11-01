@@ -1,6 +1,6 @@
 import { type Dispatch, type SetStateAction, useEffect, useState } from "react";
 
-import { canonicalPath, splitScopePath } from "@/lib/api";
+import { canonicalPath, splitScopePath } from "@/api/documents";
 import { followEach, followPath } from "@/lib/utils";
 import { onWorkspaceChanged } from "@/stores/jobs-store";
 

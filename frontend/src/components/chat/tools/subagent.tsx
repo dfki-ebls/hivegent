@@ -9,7 +9,7 @@ import { ToolValue } from "@/components/chat/tools/display";
 import { ToolIcon } from "@/components/chat/tools/icons";
 import { Badge } from "@/components/ui/badge";
 import { Trace } from "@/components/ui/trace";
-import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
+import { useMessageLive } from "@/components/chat/chat-context";
 import type { SubagentStep } from "@/lib/chat/subagent";
 import { type ToolPart, toolDisplayName, toolInput, toolLineState } from "@/lib/chat/tool-part";
 
@@ -53,6 +53,7 @@ function SubagentTask({ task, ...args }: SubagentInput) {
 interface SubagentToolProps {
   toolName: string;
   part: ToolPart;
+  prompt: boolean;
   /** Resolved transcript: the persisted one if available, else the live one. */
   steps: SubagentStep[];
 }
@@ -62,15 +63,16 @@ interface SubagentToolProps {
  * messages, and tool calls, and the run's report below it.
  * The line opens while the subagent works and closes once it returns, unless the user toggled it.
  */
-export function SubagentTool({ toolName, part, steps }: SubagentToolProps) {
+export function SubagentTool({ toolName, part, prompt, steps }: SubagentToolProps) {
   const { t } = useTranslation();
-  const running = toolLineState(part, useMessageStreaming()).status === "running";
+  const running = toolLineState(part, useMessageLive()).label === "running";
   const input = toolInput<SubagentInput>(part);
 
   return (
     <ToolCard
       toolName={toolName}
       part={part}
+      prompt={prompt}
       parameters={input && <SubagentTask {...input} />}
       autoOpen={running}
     >

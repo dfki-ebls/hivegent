@@ -1,4 +1,4 @@
-import { type FetchedChunk, isLinePosition, lineBounds } from "@/lib/types";
+import { type FetchedChunk, isLinePosition, lineBounds } from "@/lib/chunks";
 
 /** A normalized read span (fractions in 0..1) within a document. */
 interface MapSegment {
@@ -7,7 +7,7 @@ interface MapSegment {
 }
 
 /** The inclusive line spans a document's chunks cover, or `"whole"` once it was read in full. */
-export type ReadSpans = Array<[number, number]> | "whole";
+type ReadSpans = Array<[number, number]> | "whole";
 
 export function readSpans(chunks: FetchedChunk[]): ReadSpans {
   const spans: Array<[number, number]> = [];

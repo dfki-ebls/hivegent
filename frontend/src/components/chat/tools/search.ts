@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { listArgument, parseBatch } from "@/components/chat/tools/batch";
-import { type ChunkPosition, RetrievedChunkSchema } from "@/lib/types";
+import type { ChunkPosition } from "@/lib/chunks";
+import { RetrievedChunkSchema } from "@/lib/chat/tool-outputs";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
 /** Mirrors the `queries` argument of `VectorSearchTool` in `backend/src/hivegent/tools/retrieval.py`. */

@@ -5,14 +5,19 @@ import { DocumentDialog } from "@/components/document-dialog";
 import { ImageRef } from "@/components/image-ref";
 import { WorkspaceImage } from "@/components/workspace-image";
 import { AssetMedia } from "@/components/documents/asset-media";
-import { ConversationIdProvider } from "@/hooks/chat/use-conversation-id";
-import { fetchDocumentAsset, getDocumentContent } from "@/lib/api";
+import { fetchDocumentAsset } from "@/api/documents";
 import type { ToolPart } from "@/lib/chat/tool-part";
-import { renderWithQueries } from "@/test/render";
+import { createTestChat, renderWithChat } from "@/test/chat";
 
-vi.mock("@/lib/api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/api")>()),
-  getDocumentContent: vi.fn<typeof getDocumentContent>(),
+const { requestText } = vi.hoisted(() => ({ requestText: vi.fn<(url: string) => Promise<string>>() }));
+
+vi.mock("@/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/client")>()),
+  requestText,
+}));
+
+vi.mock("@/api/documents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/documents")>()),
   fetchDocumentAsset: vi.fn<typeof fetchDocumentAsset>(),
 }));
 
@@ -30,7 +35,7 @@ const finished: ToolPart = {
 
 function renderResult(changeset: unknown, calls: unknown[] = []) {
   const result = { result: null, stdout: "", script_path: null, changeset, calls };
-  render(<RunPythonTool part={finished} metadata={result} />);
+  render(<RunPythonTool part={finished} metadata={result} prompt={false} />);
   fireEvent.click(screen.getByText(/Run Python/));
 }
 
@@ -42,17 +47,16 @@ describe("RunPythonTool", () => {
   });
 
   it("loads temporary source with the conversation that owns it", async () => {
-    vi.mocked(getDocumentContent).mockResolvedValue("print(1)");
-    renderWithQueries(
-      <ConversationIdProvider value="c1">
-        <RunPythonTool part={finished} metadata={null} />
-      </ConversationIdProvider>,
-    );
+    requestText.mockResolvedValue("print(1)");
+    renderWithChat(<RunPythonTool part={finished} metadata={null} prompt={false} />);
     fireEvent.click(screen.getByText(/Run Python/));
     fireEvent.click(screen.getByRole("button", { name: "View source" }));
 
     expect(await screen.findByText("print(1)")).toBeTruthy();
-    expect(getDocumentContent).toHaveBeenCalledWith("/tmp/report.py", "c1");
+    expect(requestText).toHaveBeenCalledWith(
+      expect.stringContaining("/api/documents/%2Ftmp/report.py?conversation_id=c1"),
+      "fetchDocumentContent",
+    );
   });
 
   it("lists the changes a program staged and offers its stored source", () => {
@@ -101,13 +105,12 @@ describe("RunPythonTool", () => {
         type: "tool-run_python",
         toolCallId: "call-1",
         state: "output-error",
-        input: undefined,
-        rawInput: JSON.stringify({ code: " ", script_path: null }),
+        input: { code: " ", script_path: null },
         errorText: "The program is empty.",
         approval: approved ? { id: "call-1", approved: true } : undefined,
       };
 
-      render(<RunPythonTool part={part} metadata={null} />);
+      render(<RunPythonTool part={part} metadata={null} prompt={false} />);
       fireEvent.click(screen.getByText("Run Python"));
 
       expect(screen.getByText("No Python code or script path was provided.")).toBeTruthy();
@@ -127,13 +130,13 @@ describe("temporary document previews", () => {
     vi.stubGlobal(
       "URL",
       class extends URL {
-        static revokeObjectURL = vi.fn<typeof URL.revokeObjectURL>();
+        static override revokeObjectURL = vi.fn<typeof URL.revokeObjectURL>();
       },
     );
     vi.mocked(fetchDocumentAsset).mockResolvedValue("blob:preview");
     vi.mocked(fetchDocumentAsset).mockClear();
 
-    render(<ConversationIdProvider value="c1">{preview}</ConversationIdProvider>);
+    renderWithChat(preview, createTestChat());
 
     await waitFor(() =>
       expect(fetchDocumentAsset).toHaveBeenLastCalledWith(
@@ -148,15 +151,16 @@ describe("temporary document previews", () => {
   });
 
   it("loads complete temporary text with its owning conversation", async () => {
-    vi.mocked(getDocumentContent).mockResolvedValue("Temporary document contents");
+    requestText.mockResolvedValue("Temporary document contents");
 
-    renderWithQueries(
-      <ConversationIdProvider value="c1">
-        <DocumentDialog open onOpenChange={() => {}} filename="/tmp/notes.md" initialFullDoc />
-      </ConversationIdProvider>,
+    renderWithChat(
+      <DocumentDialog open onOpenChange={() => {}} filename="/tmp/notes.md" initialFullDoc />,
     );
 
     expect(await screen.findByText("Temporary document contents")).toBeTruthy();
-    expect(getDocumentContent).toHaveBeenLastCalledWith("/tmp/notes.md", "c1");
+    expect(requestText).toHaveBeenLastCalledWith(
+      expect.stringContaining("/api/documents/%2Ftmp/notes.md?conversation_id=c1"),
+      "fetchDocumentContent",
+    );
   });
 });

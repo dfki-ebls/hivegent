@@ -1,15 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { type QueryClient, useQuery } from "@tanstack/react-query";
+import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 
-import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { Header } from "@/components/header";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { MaintenanceScreen } from "@/components/maintenance-screen";
-import { NotFound } from "@/components/not-found";
 import { Toaster } from "@/components/ui/toast";
-import { MaintenanceError } from "@/lib/api";
+import { MaintenanceError } from "@/api/client";
+import { settingsQueries } from "@/api/settings";
 import { useOidc } from "@/oidc";
-import { settingsQueries } from "@/queries/settings";
 
 function RootComponent() {
   const { isUserLoggedIn } = useOidc();
@@ -22,7 +20,7 @@ function RootComponent() {
   }
 
   return (
-    <AppErrorBoundary>
+    <>
       <Toaster />
       <div className="flex h-dvh flex-col">
         <ImpersonationBanner />
@@ -31,11 +29,15 @@ function RootComponent() {
           <Outlet />
         </main>
       </div>
-    </AppErrorBoundary>
+    </>
   );
 }
 
-export const Route = createRootRoute({
+/** What every route's `beforeLoad` and `loader` receive. */
+interface RouterContext {
+  queryClient: QueryClient;
+}
+
+export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootComponent,
-  notFoundComponent: NotFound,
 });

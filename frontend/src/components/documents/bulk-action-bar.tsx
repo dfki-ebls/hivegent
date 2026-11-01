@@ -2,7 +2,7 @@ import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { DOCUMENT_ACTIONS, type DocumentActionId } from "@/lib/document-actions";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Button } from "@/components/ui/button";
 
 interface BulkActionBarProps {

@@ -1,19 +1,12 @@
-import type { UIMessage } from "@ai-sdk/react";
+import type { ReasoningUIPart } from "ai";
 import { BrainIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ReasoningMarkdown } from "@/components/chat/markdown/markdown-text";
 import { TraceStepCollapsible } from "@/components/chat/trace-step";
-import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
+import { useMessageLive } from "@/components/chat/chat-context";
 import { keyPrefix } from "@/i18n";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.reasoning);
-
-type ReasoningUIPart = Extract<UIMessage["parts"][number], { type: "reasoning" }>;
-
-/** Whether the model is still writing *part*, which only the message the chat streams into can be. */
-export function isReasoningRunning(part: ReasoningUIPart, streaming: boolean): boolean {
-  return streaming && part.state === "streaming";
-}
 
 interface ReasoningPartProps {
   part: ReasoningUIPart;
@@ -27,7 +20,8 @@ interface ReasoningPartProps {
  */
 export function ReasoningPart({ part, duration }: ReasoningPartProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const running = isReasoningRunning(part, useMessageStreaming());
+  // Only the message the chat streams into can still be written.
+  const running = useMessageLive() === "streaming" && part.state === "streaming";
 
   return (
     <TraceStepCollapsible

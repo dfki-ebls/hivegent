@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
-import type { FetchedChunk } from "@/lib/types";
-import { documentQueries } from "@/queries/documents";
+import type { FetchedChunk } from "@/lib/chunks";
+import { documentQueries } from "@/api/documents";
 import { cn } from "@/lib/utils";
 import { documentReadMap, readSpans } from "@/components/documents/utils";
 

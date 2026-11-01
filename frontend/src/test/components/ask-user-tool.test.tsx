@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { MessageLiveProvider } from "@/components/chat/chat-context";
 import { AskUserTool } from "@/components/chat/tools/ask-user";
-import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
 import { DISMISSED_ERROR } from "@/lib/chat/ask-user";
+import { createTestChat, renderWithChat } from "@/test/chat";
 
 const questions = [
   {
@@ -18,12 +19,16 @@ const questions = [
   },
 ];
 
+/** The questions of the last message while the chat waits for their answers. */
 function renderQuestions() {
-  const addToolOutput = vi.fn<ToolApprovalGate["addToolOutput"]>();
+  const chat = createTestChat();
+  const addToolOutput = vi.spyOn(chat, "addToolOutput").mockResolvedValue();
 
-  render(
-    <ToolApprovalProvider value={{ decide: () => {}, addToolOutput }}>
+  renderWithChat(
+    <MessageLiveProvider value="waiting">
       <AskUserTool
+        metadata={null}
+        prompt
         part={{
           type: "tool-ask_user",
           toolCallId: "ask-1",
@@ -31,7 +36,8 @@ function renderQuestions() {
           input: { questions },
         }}
       />
-    </ToolApprovalProvider>,
+    </MessageLiveProvider>,
+    chat,
   );
 
   return addToolOutput;

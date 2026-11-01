@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { documentReadMap, readSpans } from "@/components/documents/utils";
-import type { FetchedChunk } from "@/lib/types";
+import type { FetchedChunk } from "@/lib/chunks";
 
 const readChunk = (startLine: number, endLine: number): FetchedChunk => ({
   id: `r:${startLine}-${endLine}`,

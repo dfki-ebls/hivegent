@@ -10,9 +10,9 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { PERSONAL_SCOPE, formatTarget } from "@/lib/api";
+import { PERSONAL_SCOPE, formatTarget } from "@/api/documents";
 import { cn } from "@/lib/utils";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group";
 import {

@@ -5,13 +5,15 @@ import { ApprovalDecision, ApprovalPrompt } from "@/components/chat/tools/approv
 import { ChangesetSummarySchema, ChangesetView } from "@/components/chat/tools/changeset";
 import { ToolError, ToolParameters } from "@/components/chat/tools/display";
 import { ToolIcon } from "@/components/chat/tools/icons";
-import { useMessageStreaming } from "@/hooks/chat/use-message-streaming";
+import { useMessageLive } from "@/components/chat/chat-context";
 import { useApprovalMetadata } from "@/hooks/chat/use-tool-approval";
 import { type ToolPart, toolDisplayName, toolInput, toolLineState } from "@/lib/chat/tool-part";
 
 interface ToolCardProps {
   toolName: string;
   part: ToolPart;
+  /** Whether the call waits for the user's approval, which it asks for instead of a trace line. */
+  prompt: boolean;
   /** Override the title, which defaults to the tool's display name. */
   title?: string;
   /** Present the call's input, defaulting to raw arguments. Use null to hide it. */
@@ -30,13 +32,14 @@ interface ToolCardProps {
 export function ToolCard({
   toolName,
   part,
+  prompt,
   title,
   parameters,
   children,
   autoOpen = false,
 }: ToolCardProps) {
   const { t } = useTranslation();
-  const streaming = useMessageStreaming();
+  const live = useMessageLive();
   const summary = useApprovalMetadata(part, ChangesetSummarySchema);
   const input = toolInput<Record<string, unknown>>(part);
   const name = title ?? toolDisplayName(t, toolName);
@@ -44,7 +47,7 @@ export function ToolCard({
   const details =
     parameters === undefined ? input && <ToolParameters params={input} /> : parameters;
 
-  if (part.state === "approval-requested") {
+  if (prompt && part.state === "approval-requested") {
     return (
       <ApprovalPrompt
         icon={icon}
@@ -58,13 +61,13 @@ export function ToolCard({
     );
   }
 
-  const { status, label } = toolLineState(part, streaming);
+  const { label } = toolLineState(part, live);
 
   return (
     <TraceStepCollapsible
       icon={icon}
       title={name}
-      status={status}
+      status={label === "running" ? "running" : undefined}
       description={label && t(($) => $.chat.tools.status[label])}
       autoOpen={autoOpen}
       contentClassName="flex flex-col gap-3"

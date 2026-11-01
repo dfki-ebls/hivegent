@@ -3,17 +3,27 @@
 Client-side decisions that are not obvious from the code.
 The stack and transport are in [`../ARCHITECTURE.md`](../ARCHITECTURE.md), history, approval, and branch storage in [`../backend/README.md`](../backend/README.md).
 
-## The client is not the source of chat history
+## The client names conversations and messages
+
+The client mints every conversation id and user message id as a UUID, and the server stores them under those ids.
+A new chat is `/conversations/<fresh uuid>`, `/` redirects there, and its first turn to `POST /conversations/{id}/chat` creates the conversation.
+`GET /conversations/{id}/messages` answers `[]` for an id no conversation holds, so a new chat loads like any other.
+Another user's id answers 404, which the route loader turns into the not-found screen (`orNotFound`).
+
+The route loader reads the stored messages afresh on every visit, validated by `validateUIMessages` with the metadata and data part schemas of `lib/chat/message.ts` (tool parts stay untyped).
+`ChatLayout` is keyed by the conversation id and creates one `Chat` from them (`useHivegentChat`), which owns the messages from then on and stops when the conversation is left.
 
 The backend owns history as a message tree.
-`prepareSendMessagesRequest` (`hooks/chat/use-hivegent-chat.ts`) sends only the new message (none for a regenerate) plus `trigger` and `messageId`.
-History loads from `GET /conversations/{id}/messages`, where each `UIMessage.id` is a tree-node id.
-
-A message sent in the current session starts with a local SDK id.
-Every turn returns the stored node id in `X-Message-Id`, and `onFinish` swaps it in (`adoptMessageNodeId`).
-It is read from the headers, so a stopped or failed turn still leaves an editable message.
-
+The transport sends only the new message (none for a regenerate or a compaction) plus `trigger` and `messageId`.
+An edit or a retry sends the replacement under a fresh id with `messageId` naming the replaced message (`resendOf`), since a reused id answers 409.
 Editing or regenerating forks a sibling branch server-side, but there is no UI to navigate branches yet.
+
+## The chat is read from its context
+
+`ChatProvider` (`components/chat/chat-context.tsx`) provides the `Chat` and the conversation id, so components read what they need instead of receiving status, messages, and callbacks as props.
+`MessageList` and the debug console subscribe to every chunk with `useChat`, everything else derives a value with `useChatSelector`, which renders again only once that value changes.
+`useLive(message)` tells where a message stands, `streaming` while the chat streams into it, `waiting` while it is last and the chat is idle, and `stale` otherwise, and `MessageLiveProvider` hands it to the parts below.
+The pure logic lives in `lib/chat`: `toolLineState` and `Live` in `tool-part.ts`, `partLayout` and `blocksOf` in `layout.ts`, and `liveOf`, `placeCompactions`, and `shouldContinueRun` in `chat-utils.ts`.
 
 ## AI Elements are composed, not vendored
 
@@ -22,11 +32,11 @@ The components use Base UI, so triggers take a `render` element instead of `asCh
 `npm run shadcnup` refreshes the installed components only, so remove a file from `components/ui` to keep it and its dependencies out.
 The CLI's Base UI variants and animations are vendored unchanged as `src/shadcn.css`, so refresh it alongside from the URL in its header.
 
-`partLayout` (`chat/message-part.tsx`) sorts a reply's parts into steps and blocks.
+`blocksOf` (`lib/chat/layout.ts`) sorts a reply's parts into steps and blocks.
 Each run of steps between two blocks is one Chain of Thought that opens to its `Trace`.
 Every step is a trace line that expands to its detail, including subagents, changesets, and the steering queue.
-An approval or `ask_user` question is a block, an `Item` outside the trace, until it is answered.
-`useMessageStreaming` decides whether a line still runs, so a stopped call reads as stopped.
+An approval or `ask_user` question is a block, an `Item` outside the trace, until it is answered or a later message abandons it.
+The live state decides whether a line still runs, so a stopped call and an abandoned prompt read as stopped.
 A failed or stopped step is routine for an agent, so its line stays muted and only says so, with the error in its detail, while red is left to errors that end the run.
 While nothing on screen shows the model working, a "Processing" line closes the running trace or stands where the next one starts (`isProcessing`).
 Only the last user message is a scroll anchor, since the scroller jumps to the first anchor it never scrolled to whenever one item swaps for another.
@@ -41,10 +51,12 @@ Replies keep Streamdown's own styles, since it has no unstyled mode.
 
 ## Server state lives in TanStack Query, client state in Zustand
 
-Every fetched resource is a `queryOptions` factory in `src/queries`, keyed under a scope that `Register` restricts, and every mutation that changes one names the keys it affects in `meta.invalidates`.
+Each resource is a module in `src/api` with its fetchers, its zod schemas, and its `<resource>Queries` and `<resource>Mutations`, built on the HTTP core in `api/client.ts`.
+Every query is keyed under a scope that `Register` restricts (`lib/query-client.ts`), and every mutation that changes one names the keys it affects in `meta.invalidates`.
+Routes load their data in `loader` through the `queryClient` of the router context, after `enforceLogin`, and components read it with `useSuspenseQuery`.
 The mutation cache refetches those before the mutation settles and raises a toast on failure unless the mutation renders it (`meta.inlineError`) or has its own `onError`, so components neither refetch by hand nor copy server data into state.
 Zustand keeps what the browser owns: settings, overrides, chunks the model read, and dialog state.
-The composer store holds the draft, its attachments, mode, and effort, so they survive the remount when a draft becomes the conversation it minted.
+The composer store holds the agent mode and reasoning effort, which carry over from one conversation to the next, while the draft lives in the composer.
 
 Two stores still hold server data, since neither fits a query: the jobs store is fed by the event stream, and the upload queue tracks progress of requests in flight.
 Every workspace change the feed reports refetches the workspace queries (`syncWorkspaceQueries`).
@@ -53,7 +65,7 @@ Tree mutations publish their change rather than invalidating, and stay pending u
 
 ## Chat settings ride on every request
 
-`prepareSendMessagesRequest` stamps the chat settings (document scope, model, tools, personality, mode) onto every request.
+`prepareSendMessagesRequest` stamps the chat settings (`chatSettings`: document scope, model, tools, personality, mode) onto every request.
 The SDK issues the post-approval continuation itself, so per-call settings would resume that turn with server defaults.
 
 ## Compaction is a part of the reply
@@ -64,7 +76,7 @@ The backend compacts and retries on its own when a turn overflows the context wi
 
 A compaction made for a prompt is stored ahead of it, so `placeCompactions` moves one that opens a reply to the end of the reply before that prompt, live and in the SDK state once the stream finishes.
 
-The compact button sends a request without a message, whose per-call body adds `compact: true` (`compact` in `hooks/chat/use-hivegent-chat.ts`).
+The compact button sends a request without a message, whose per-call body adds `compact: true` (`compact` in `hooks/chat/use-chat-actions.ts`).
 It is disabled while an approval or question is open, which a compaction would leave unanswerable.
 The SDK streams the response into the last reply, or into a new one after a failed prompt, which `placeCompactions` moves ahead of that prompt, just as a reload shows it.
 The chat status shows the wait, so compaction needs no progress indicator of its own.
@@ -72,15 +84,15 @@ The chat status shows the wait, so compaction needs no progress indicator of its
 ## Tool approvals
 
 The SDK dispatches a continuation only if the chat is idle when the decision is recorded.
-The buttons therefore stay disabled until the turn settles (`blockedReason` in `hooks/chat/use-tool-approval.ts`).
+The buttons therefore stay disabled while the message streams and only answer while it waits (`useApprovalBlockedReason`).
 
 The prompt is derived from stored history, since a tool call without a result is an open approval.
-An approval overtaken by a new message is declined on both sides: `chat-utils.closeAbandonedCalls` on the client, the backend on the next request.
+An approval overtaken by a new message reads as stopped, since its message is stale, and the backend declines it on the next request.
 
 The changeset summary arrives as message metadata keyed by tool call id, live and after a reload.
 `ApprovalScope` provides it, and `ToolCard` reads it with `useApprovalMetadata(part, schema)`.
 `ChangesetView` (`components/chat/tools/changeset.tsx`) lists each change as a line that opens to its diff, and `run-python.tsx` reuses it for staged programs.
-A `/tmp` file is read through the document route with the conversation id from `useConversationId`.
+A `/tmp` file is read through the document route with the conversation id from `useConversationId`, none outside a conversation.
 
 Every gated call asks with `ApprovalPrompt` (`components/chat/tools/approval.tsx`): input, changeset, an optional note, approve and deny.
 A lone request is sent on click.
@@ -93,8 +105,9 @@ A note travels as the decision's `reason` for both approvals and denials, and th
 
 `ask_user` has no server-side body, so its prompt (`components/chat/tools/ask-user.tsx`) answers with `addToolOutput` through the same gate as approvals.
 It composes the shadcn/ui `Questionnaire`, one step per question, and sends all answers from the last step.
-`chat-utils.shouldContinueRun` resumes the run, instead of `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
-A dismissal is an `output-error`, and an overtaken question is dismissed like an approval.
+`shouldContinueRun` (`lib/chat/chat-utils.ts`) resumes the run, instead of `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
+The prompt shows once the run waits for its answers.
+A dismissal is an `output-error`, and an overtaken question reads as stopped like an approval.
 
 ## Replies transfer to RAGold through its tab
 
@@ -113,7 +126,7 @@ Each German section is declared `satisfies Translation<typeof en>`, so a missing
 Both catalogs are bundled statically.
 
 The language is the first supported entry of `navigator.languages`, fixed at page load, with no picker.
-`getAuthHeaders()` sends it as `Accept-Language` on every request.
+`authFetch()` sends it as `Accept-Language` on every request.
 Dates, numbers, and sizes go through `@/i18n/format`, and `npm run i18n:lint` lists hardcoded JSX text.
 
 ## Licenses ship with the bundle
@@ -161,7 +174,7 @@ Backend, read-only and without schema changes:
 
 Frontend:
 
-- Add `loadBranch(conversationId, messageId)` to `src/lib/api.ts` and a typed guard for `message.metadata.branch`.
+- Add a branch query to `src/api/conversations.ts` and `branch` to the metadata schema in `lib/chat/message.ts`.
 - Render a prev and next selector in `MessageFooter` when `branchCount > 1`, on user and assistant bubbles.
 - On selection, load the branch and `setMessages`, disabled while streaming.
 - Send the continuation anchor when the user continues, edits, or regenerates on a viewed branch.

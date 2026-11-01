@@ -3,10 +3,10 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useDialogTarget } from "@/hooks/use-dialog-target";
-import type { FetchedChunk, FetchedDocument } from "@/lib/types";
+import type { FetchedChunk, FetchedDocument } from "@/lib/chunks";
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 import { DocumentDialog } from "@/components/document-dialog";
-import { EmptyState } from "@/components/empty-state";
+import { StatusPanel } from "@/components/common/status-panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DocumentGroup } from "@/components/documents/document-group";
 
@@ -54,7 +54,8 @@ export function ContextDocuments() {
   // Opens on the first chunk so the sidebar has an anchor, or on the whole document without one.
   const handleFilenameClick = (filename: string) => {
     const doc = documents.get(filename);
-    const chunk = (doc && chunks.get(doc.chunkIds[0])) ?? null;
+    const chunkId = doc?.chunkIds[0];
+    const chunk = (chunkId && chunks.get(chunkId)) || null;
 
     dialog.show({ filename, chunk, initialFullDoc: true });
   };
@@ -64,8 +65,8 @@ export function ContextDocuments() {
 
   if (sortedDocs.length === 0) {
     return (
-      <EmptyState
-        icon={<Search />}
+      <StatusPanel
+        icon={Search}
         title={t(($) => $.documents.context.emptyTitle)}
         description={t(($) => $.documents.context.emptyDescription)}
         className="h-full"

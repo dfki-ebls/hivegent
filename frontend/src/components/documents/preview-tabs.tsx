@@ -4,14 +4,19 @@ import { useTranslation } from "react-i18next";
 
 import { useObjectUrl } from "@/hooks/use-object-url";
 import { formatDateTime } from "@/i18n/format";
-import { type DocumentKind, type DocumentPreview, type OriginalContent } from "@/lib/original-preview";
-import { documentQueries } from "@/queries/documents";
+import {
+  type DocumentKind,
+  type DocumentPreview,
+  type OriginalContent,
+} from "@/lib/original-preview";
+import { documentQueries } from "@/api/documents";
 import { AssetMedia } from "@/components/documents/asset-media";
-import { EmptyState, LoadingState } from "@/components/empty-state";
+import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
 import { OptionSelect } from "@/components/option-select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { FileXIcon } from "lucide-react";
 
 export type PreviewTab = "preview" | "text";
 
@@ -108,9 +113,11 @@ function ParsedOriginal<K extends DocumentKind>({
   const { t } = useTranslation();
   const { data, error } = useQuery(documentQueries.original(path, kind));
 
-  if (error) return <EmptyState description={t(($) => $.documents.preview.unavailable)} />;
+  if (error) {
+    return <StatusPanel icon={FileXIcon} title={t(($) => $.documents.preview.unavailable)} />;
+  }
 
-  return data === undefined ? <LoadingState /> : children(data);
+  return data === undefined ? <LoadingPanel /> : children(data);
 }
 
 /** The browser's own PDF viewer, unsandboxed since Chromium refuses PDFs in sandboxed frames. */
@@ -118,7 +125,7 @@ function PdfFrame({ blob, title }: { blob: Blob; title: string }) {
   const fetch = useCallback(async () => URL.createObjectURL(blob), [blob]);
   const { url } = useObjectUrl(fetch);
 
-  return url ? <iframe src={url} title={title} className="min-h-0 flex-1" /> : <LoadingState />;
+  return url ? <iframe src={url} title={title} className="min-h-0 flex-1" /> : <LoadingPanel />;
 }
 
 const MAX_ROWS = 500;

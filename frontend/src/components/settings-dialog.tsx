@@ -15,22 +15,18 @@ import { useTranslation } from "react-i18next";
 
 import { i18n, isCatalogKey, keyPrefix } from "@/i18n";
 import { settings } from "@/i18n/locales/en/settings";
-import { clearMemory, clearTmp, testMcpServer } from "@/lib/api";
-import { featureFlags } from "@/lib/feature-flags";
-import {
-  type McpOAuth2Config,
-  type McpServerEntry,
-  PersonalitySchema,
-  type UserOverrides,
-} from "@/lib/types";
+import { clearMemory, clearTmp } from "@/api/account";
+import { testMcpServer, type McpOAuth2Config, type McpServerEntry, toolQueries } from "@/api/tools";
+import { PersonalitySchema } from "@/api/conversations";
+import type { UserOverrides } from "@/stores/settings-store";
+import { useServerSettings } from "@/api/settings";
 import { cn, errorMessage } from "@/lib/utils";
-import { toolQueries } from "@/queries/tools";
-import { useServerSettings } from "@/queries/settings";
+import { featureFlags } from "@/lib/feature-flags";
 import { useSettingsStore } from "@/stores/settings-store";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { OptionSelect } from "@/components/option-select";
 import { DialogBody, ScrollDialogContent } from "@/components/scroll-dialog-content";
-import { TooltipButton, WithTooltip } from "@/components/tooltip-button";
+import { TooltipButton, WithTooltip } from "@/components/common/tooltip-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,7 +56,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
@@ -453,7 +449,6 @@ function McpServerForm() {
 /** One configured MCP server with its connection test, whose outcome it shows inline. */
 function McpServerItem({ server, onRemove }: { server: McpServerEntry; onRemove: () => void }) {
   const { t } = useTranslation(undefined, DIALOG_T);
-  const { t: tRoot } = useTranslation();
   const test = useMutation({
     mutationFn: () => testMcpServer(server),
     meta: { inlineError: true },
@@ -479,7 +474,7 @@ function McpServerItem({ server, onRemove }: { server: McpServerEntry; onRemove:
         {failure && <ItemDescription className="text-destructive">{failure}</ItemDescription>}
       </ItemContent>
       <ItemActions>
-        {test.isPending && <Spinner aria-label={tRoot(($) => $.common.states.loading)} />}
+        {test.isPending && <Spinner />}
         {test.data?.ok && (
           <Badge variant="secondary">
             <CheckIcon data-icon="inline-start" />

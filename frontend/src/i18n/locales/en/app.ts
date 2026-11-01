@@ -33,11 +33,10 @@ export const app = {
     description: "The page you are looking for does not exist or may have been moved.",
     backHome: "Back to home",
   },
-  errorBoundary: {
+  routeError: {
     title: "Something went wrong",
     description:
-      "The application encountered an unexpected error. You can try reloading the page, or clear all local data if the problem persists.",
-    reload: "Reload",
+      "The application encountered an unexpected error. Try again, or clear all local data if the problem persists.",
     clearData: "Clear local data and reload",
   },
   impersonation: {
@@ -120,6 +119,8 @@ export const app = {
       download: "Download failed",
       replaceOriginal: "Replace failed",
       listConversations: "Failed to list conversations",
+      fetchMessages: "Failed to load the conversation",
+      chat: "Chat request failed",
       update: "Update failed",
       generateTitle: "Title generation failed",
       importConversation: "Import failed",

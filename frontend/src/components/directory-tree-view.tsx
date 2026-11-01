@@ -3,13 +3,13 @@ import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } 
 import { useTranslation } from "react-i18next";
 
 import { DROP_CLASSES, registerTreeRow, type TreeDropState, type TreeItemDrag } from "@/lib/dnd";
-import type { DirectoryEntry } from "@/lib/types";
-import { cn, collectFileEntries, collectFilePaths } from "@/lib/utils";
+import { type DirectoryEntry, collectFileEntries, collectFilePaths } from "@/api/documents";
+import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 import {
   FilterToggleButtons,
   type FilterEntryState,

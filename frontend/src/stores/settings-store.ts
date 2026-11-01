@@ -13,6 +13,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { featureFlags } from "@/lib/feature-flags";
+import { type Personality, PersonalitySchema } from "@/api/conversations";
 import {
   AssetProcessingMode,
   AssetProcessingModeSchema,
@@ -20,19 +21,32 @@ import {
   ChunkingPipelineSchema,
   ConversionPipeline,
   ConversionPipelineSchema,
-  ExpandedDirsSchema,
+  type PipelineKind,
+} from "@/api/pipelines";
+import {
   type McpServerEntry,
-  type Personality,
-  PersonalitySchema,
-  type PersistedOverrides,
-  PersistedOverridesSchema,
   type PersistedToolsSpec,
   PersistedToolsSpecSchema,
-  PipelineConfigsSchema,
-  type PipelineKind,
   type ToolsSpec,
-  type UserOverrides,
-} from "@/lib/types";
+} from "@/api/tools";
+
+const ExpandedDirsSchema = z.array(z.string());
+
+/** Per-pipeline configuration overrides, keyed by pipeline value. */
+const PipelineConfigsSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
+
+/** User-provided overrides. Sensitive values are not persisted. */
+const UserOverridesSchema = z.object({
+  model: z.string(),
+  apiKey: z.string(),
+  baseUrl: z.string(),
+  auxModel: z.string(),
+});
+export type UserOverrides = z.infer<typeof UserOverridesSchema>;
+
+/** Persisted subset of {@link UserOverrides}: the API key never reaches disk. */
+const PersistedOverridesSchema = UserOverridesSchema.omit({ apiKey: true });
+type PersistedOverrides = z.infer<typeof PersistedOverridesSchema>;
 
 const EMPTY_OVERRIDES: UserOverrides = {
   model: "",
@@ -42,7 +56,7 @@ const EMPTY_OVERRIDES: UserOverrides = {
 };
 
 /** Per-pipeline configuration overrides, keyed by pipeline value. */
-export type PipelineConfigs = Record<string, Record<string, unknown>>;
+type PipelineConfigs = Record<string, Record<string, unknown>>;
 
 /** The state field holding each pipeline kind's per-pipeline configs. */
 export const PIPELINE_CONFIG_FIELDS = {

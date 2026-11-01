@@ -16,7 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { keyPrefix } from "@/i18n";
 import { type ResolvedPosition, resolveCitation } from "@/lib/citations";
-import { chunkOriginLabel, chunkPositionLabel } from "@/lib/types";
+import { chunkOriginLabel, chunkPositionLabel } from "@/lib/chunks";
 import { basename } from "@/lib/utils";
 import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
@@ -88,6 +88,7 @@ export function Citation({ src, line }: CitationProps) {
     [document, chunks],
   );
   const positions = useMemo(() => resolveCitation(documentChunks, line), [documentChunks, line]);
+  const resolved = typeof target === "number" ? positions[target] : undefined;
 
   if (!src) return null;
 
@@ -117,13 +118,8 @@ export function Citation({ src, line }: CitationProps) {
         );
       })}
       <DocumentDialog open={open && target === "document"} onOpenChange={setOpen} filename={src} />
-      {typeof target === "number" && (
-        <EvidenceDialog
-          open={open}
-          onOpenChange={setOpen}
-          filename={src}
-          resolved={positions[target]}
-        />
+      {resolved && (
+        <EvidenceDialog open={open} onOpenChange={setOpen} filename={src} resolved={resolved} />
       )}
     </span>
   );

@@ -1,16 +1,15 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { LogInIcon } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DocsLink } from "@/components/docs-link";
 import { LicensesLink } from "@/components/licenses-link";
 import { Logo } from "@/components/logo";
 import { VersionBadge } from "@/components/version-badge";
-import { ChatLayout } from "@/components/chat-layout";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { useOidc } from "@/oidc";
+import { Spinner } from "@/components/common/spinner";
+import { getOidc, useOidc } from "@/oidc";
 import { PRODUCT_NAME } from "@/lib/utils";
 
 const LINK_BUTTON_PROPS = {
@@ -21,17 +20,28 @@ const LINK_BUTTON_PROPS = {
 } as const;
 
 export const Route = createFileRoute("/")({
+  // A new chat is a conversation the client names, which its first turn stores.
+  beforeLoad: async () => {
+    if ((await getOidc()).isUserLoggedIn) {
+      throw redirect({
+        to: "/conversations/$id",
+        params: { id: crypto.randomUUID() },
+        replace: true,
+      });
+    }
+  },
   component: IndexPage,
 });
 
 function IndexPage() {
   const { t } = useTranslation();
-  const { isUserLoggedIn, login } = useOidc();
+  const oidc = useOidc();
   const [isSigningIn, setIsSigningIn] = useState(false);
 
-  if (isUserLoggedIn) {
-    return <DraftConversation />;
-  }
+  // The route sends a signed-in user on to a new chat.
+  if (oidc.isUserLoggedIn) return null;
+
+  const { login } = oidc;
 
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -64,17 +74,4 @@ function IndexPage() {
       </div>
     </div>
   );
-}
-
-function DraftConversation() {
-  // A new chat has no server ID until its first message; key the chat on a
-  // throwaway client ID purely so the SDK state survives until the server
-  // mints the real one. It is never sent to or stored by the backend.
-  // Minting a fresh ID remounts the chat (via the `key`) with clean SDK state,
-  // which is how "New chat" starts over while already on this route: a plain
-  // navigate to "/" is a no-op here and would leave a stuck error in place.
-  const [draftId, setDraftId] = useState(() => crypto.randomUUID());
-  const newDraft = useCallback(() => setDraftId(crypto.randomUUID()), []);
-
-  return <ChatLayout key={draftId} id={draftId} draft onNewDraft={newDraft} />;
 }

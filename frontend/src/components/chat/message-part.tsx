@@ -1,46 +1,25 @@
 import { MarkdownText } from "@/components/chat/markdown/markdown-text";
 import { CompactionPart } from "@/components/chat/parts/compaction-part";
 import { ImagePart } from "@/components/chat/parts/image-part";
-import { isReasoningRunning, ReasoningPart } from "@/components/chat/parts/reasoning-part";
+import { ReasoningPart } from "@/components/chat/parts/reasoning-part";
 import { getToolHandler } from "@/components/chat/tools/registry";
 import { SubagentTool } from "@/components/chat/tools/subagent";
 import { ToolFallback } from "@/components/chat/tools/tool-fallback";
 import { useSubagentLive } from "@/hooks/chat/use-subagent-live";
-import { type ChatMessage, isOpenPrompt } from "@/lib/chat/chat-utils";
+import type { ChatPart } from "@/lib/chat/layout";
 import { isSubagentTranscript } from "@/lib/chat/subagent";
-import { getToolName, getToolPartInfo, type ToolPart } from "@/lib/chat/tool-part";
-
-export type ChatPart = ChatMessage["parts"][number];
-
-/**
- * Where a part of a reply goes: a step the agent took sits in a trace with its neighbors,
- * content and anything asking the user stands on its own, and the rest renders nothing.
- */
-export function partLayout(part: ChatPart, streaming: boolean): "step" | "block" | null {
-  switch (part.type) {
-    case "text":
-      return part.text.trim() ? "block" : null;
-    case "reasoning":
-      return part.text || isReasoningRunning(part, streaming) ? "step" : null;
-    case "file":
-      return part.mediaType.startsWith("image/") ? "block" : null;
-    case "data-compaction":
-      return "block";
-  }
-
-  if (!getToolName(part)) return null;
-
-  return isOpenPrompt(part) ? "block" : "step";
-}
+import { getToolPartInfo, type ToolPart } from "@/lib/chat/tool-part";
 
 interface MessagePartProps {
   part: ChatPart;
   toolData: ReadonlyMap<string, unknown>;
+  /** Whether a tool part asks the user something they can still answer. */
+  prompt: boolean;
   reasoningDuration?: number;
 }
 
-/** One part of a reply that `partLayout` places. */
-export function MessagePart({ part, toolData, reasoningDuration }: MessagePartProps) {
+/** One part of a reply that `blocksOf` places. */
+export function MessagePart({ part, toolData, prompt, reasoningDuration }: MessagePartProps) {
   switch (part.type) {
     case "text":
       return <MarkdownText>{part.text}</MarkdownText>;
@@ -52,12 +31,12 @@ export function MessagePart({ part, toolData, reasoningDuration }: MessagePartPr
     case "data-compaction":
       return <CompactionPart content={part.data.content} />;
     default:
-      return <ToolMessagePart part={part} toolData={toolData} />;
+      return <ToolMessagePart part={part} toolData={toolData} prompt={prompt} />;
   }
 }
 
 // The live-subagent subscription lives here, so only tool parts depend on the live map.
-function ToolMessagePart({ part, toolData }: Omit<MessagePartProps, "reasoningDuration">) {
+function ToolMessagePart({ part, toolData, prompt }: Omit<MessagePartProps, "reasoningDuration">) {
   const toolCallId = "toolCallId" in part ? part.toolCallId : undefined;
   const liveSubagent = useSubagentLive(toolCallId);
   const info = getToolPartInfo(part, toolData);
@@ -69,11 +48,13 @@ function ToolMessagePart({ part, toolData }: Omit<MessagePartProps, "reasoningDu
   const subagentSteps = isSubagentTranscript(info.metadata) ? info.metadata.steps : liveSubagent;
 
   if (subagentSteps)
-    return <SubagentTool toolName={info.toolName} part={tool} steps={subagentSteps} />;
+    return (
+      <SubagentTool toolName={info.toolName} part={tool} prompt={prompt} steps={subagentSteps} />
+    );
 
   const handler = getToolHandler(info.toolName);
 
-  if (handler?.render) return handler.render({ part: tool, metadata: info.metadata });
+  if (handler?.render) return handler.render({ part: tool, metadata: info.metadata, prompt });
 
-  return <ToolFallback toolName={info.toolName} part={tool} />;
+  return <ToolFallback toolName={info.toolName} part={tool} prompt={prompt} />;
 }

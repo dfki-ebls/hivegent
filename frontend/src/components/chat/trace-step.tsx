@@ -9,7 +9,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace";
 
-export type TraceStepStatus = ComponentProps<typeof TraceLine>["status"];
+type TraceStepStatus = ComponentProps<typeof TraceLine>["status"];
 
 interface TraceStepProps {
   icon: ReactNode;

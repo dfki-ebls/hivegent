@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import { useWorkspaceAsset } from "@/hooks/use-workspace-asset";
 import { parentDir } from "@/lib/utils";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 
 interface WorkspaceImageProps {
   /** Image src from markdown (relative path or external URL). */

@@ -1,295 +1,137 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { type FileUIPart } from "ai";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FileUIPart, isToolUIPart } from "ai";
+import { type ChangeEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  type ConversationArchive,
+  conversationMutations,
+  conversationQueries,
+  getServerConversation,
+} from "@/api/conversations";
 import { AiDisclosure } from "@/components/chat/ai-disclosure";
+import { useChatBusy, useChatContext, useChatSelector } from "@/components/chat/chat-context";
 import { ChatHeader, type ChatTab } from "@/components/chat/chat-header";
 import { Composer } from "@/components/chat/composer/composer";
+import { ConversationsList } from "@/components/chat/conversations-list";
 import { MessageList } from "@/components/chat/message-list";
 import { SteeringQueue } from "@/components/chat/steering-queue";
-import { ChatSuggestions } from "@/components/chat/suggestions";
-import { ConversationsList } from "@/components/chat/conversations-list";
 import { StreamingNavGuard } from "@/components/chat/streaming-nav-guard";
+import { ChatSuggestions } from "@/components/chat/suggestions";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/toast";
-import { i18n } from "@/i18n";
-import { useBuildRequestBody } from "@/hooks/chat/use-build-request-body";
+import { useChatActions } from "@/hooks/chat/use-chat-actions";
 import { useChatErrorLogger } from "@/hooks/chat/use-chat-error-logger";
-import { useConversationHistory } from "@/hooks/chat/use-conversation-history";
-import { ConversationIdProvider } from "@/hooks/chat/use-conversation-id";
-import { useHivegentChat } from "@/hooks/chat/use-hivegent-chat";
-import { SubagentLiveProvider } from "@/hooks/chat/use-subagent-live";
-import { useMessageEditing } from "@/hooks/chat/use-message-editing";
 import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
-import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
-import { ToolApprovalProvider, type ToolApprovalGate } from "@/hooks/chat/use-tool-approval";
-import { getServerConversation, transcribeAudio } from "@/lib/api";
+import { isOpenPrompt } from "@/lib/chat/layout";
 import { downloadJson } from "@/lib/download";
-import {
-  activeChatError,
-  getLastUserMessage,
-  isChatBusy,
-  isOpenPrompt,
-  recordChatError,
-} from "@/lib/chat/chat-utils";
-import type { ConversationArchive } from "@/lib/types";
-import { conversationMutations, conversationQueries } from "@/queries/conversations";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
-import { useDraftHandoffStore } from "@/stores/draft-handoff-store";
-import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
-import { useServerSettings } from "@/queries/settings";
 
-interface ChatSidebarProps {
-  id: string;
-  draft?: boolean;
-  onNewDraft?: () => void;
-}
-
-export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps) {
+/** The chat of one conversation with its composer, and the list of every conversation in a tab beside it. */
+export function ChatSidebar() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const addChunk = useFetchedDocumentsStore((state) => state.addChunk);
-  const markFullDocument = useFetchedDocumentsStore((state) => state.markFullDocument);
-  const addImage = useFetchedDocumentsStore((state) => state.addImage);
-  const claimOutput = useFetchedDocumentsStore((state) => state.claimOutput);
-  const clearAll = useFetchedDocumentsStore((state) => state.clearAll);
-  const clearFilter = useDocumentFilterStore((state) => state.clear);
-  const queryClient = useQueryClient();
-  const { data: conversationTitle } = useQuery({
-    ...conversationQueries.list(),
-    select: (list) => list.find((c) => c.id === id)?.title,
-  });
-  const setDocumentTab = useDocumentCanvasStore((state) => state.setActiveTab);
-  const stashHandoff = useDraftHandoffStore((state) => state.stash);
-  // Server-issued ID of a draft whose first turn finished cleanly; state
-  // (not a ref) so the adoption effect below runs once it is reported.
-  const [createdId, setCreatedId] = useState<string | null>(null);
-  // Adoption navigates away, so it must run once even if the effect re-fires
-  // before this draft unmounts.
-  const adoptedRef = useRef(false);
-
-  // Id of the message whose error banner the user dismissed. A persisted error
-  // rides on the last message, so keying on that id both hides it for this view
-  // only (`messages` stays a faithful projection of the stored conversation)
-  // and re-arms the banner for the next turn, which appends a new last message.
-  const [dismissedErrorId, setDismissedErrorId] = useState<string | null>(null);
-
-  const [activeTab, setActiveTab] = useState<ChatTab>("chat");
-
-  const buildRequestBody = useBuildRequestBody();
-
-  const {
-    messages,
-    status,
-    error,
-    clearError,
-    messageKey,
-    setMessages,
-    addToolApprovalResponse,
-    addToolOutput,
-    stop,
-    sendUserMessage,
-    regenerateTurn,
-    compact,
-    isStreaming,
-    subagentSteps,
-  } = useHivegentChat(id, {
-    draft,
-    onConversationCreated: setCreatedId,
-    requestBody: buildRequestBody,
-  });
-
-  const lastMessage = messages.at(-1);
-  const chatError = activeChatError(messages, error);
-  const visibleChatError = lastMessage?.id === dismissedErrorId ? undefined : chatError;
-
-  const { isLoadingHistory } = useConversationHistory(id, setMessages, draft);
-  const { editingId, setEditing, clear: clearEditing } = useMessageEditing(status);
-
-  // Deliberately leaves the input untouched: it is also invoked while the
-  // user may already be typing the next message (steering-queue drain),
-  // so clearing happens at the submit site instead.
-  const handleSendMessage = useCallback(
-    async (text: string, files?: FileUIPart[]) => {
-      if (!text.trim() && (!files || files.length === 0)) return;
-      // A draft streams its whole first turn before adoption navigates, and
-      // ChatLayout's openChat only re-surfaces on a route change, so this is
-      // the sole trigger that reveals the Context panel as documents are
-      // pulled. Later turns leave the user's chosen tab alone.
-      if (messages.length === 0) setDocumentTab("context");
-      await sendUserMessage({ text, files });
-    },
-    [sendUserMessage, messages.length, setDocumentTab],
-  );
-
-  const { queue: steeringQueue, enqueue: enqueueSteering } = useSteeringQueue(
-    isStreaming,
-    handleSendMessage,
-  );
-
-  // Once the first turn of a draft settles, adopt the server-issued ID on both
-  // success and failure. The backend persists a turn on every finish — clean,
-  // errored, or stopped — so a minted ID always names a real row; adopting only
-  // on success left a failed first turn stranded on the draft URL with its row
-  // invisible until a retry succeeded.
-  //
-  // Live SDK errors do not survive the route remount, so carry their text on the
-  // last handed-off message, matching the metadata the backend stores.
-  // `activeChatError` reads that back, so the recovery banner survives both the
-  // handoff and a later reload.
-  useEffect(() => {
-    if (!draft || !createdId || messages.length === 0) return;
-    if (isStreaming) return;
-    if (steeringQueue.length > 0) return;
-    if (adoptedRef.current) return;
-    adoptedRef.current = true;
-    stashHandoff(createdId, recordChatError(messages, error));
-    void queryClient.invalidateQueries({ queryKey: conversationQueries.all() });
-    // Replace, not push: the transient draft URL ("/") shouldn't be a
-    // back-button target once it has become a real conversation.
-    void navigate({ to: "/conversations/$id", params: { id: createdId }, replace: true });
-  }, [
-    draft,
-    createdId,
-    isStreaming,
-    error,
-    messages,
-    steeringQueue,
-    stashHandoff,
-    queryClient,
-    navigate,
-  ]);
-
-  // Compaction summarizes a stored conversation, so a draft has nothing to compact yet.
+  const { chat, conversationId } = useChatContext();
+  const { compact } = useChatActions();
+  const busy = useChatBusy();
+  const hasMessages = useChatSelector((chat) => chat.messages.length > 0);
+  // Compaction summarizes a stored conversation, so an empty one has nothing to compact.
   // Gated on busy rather than ready, so a failed turn can still be compacted,
   // and on an open approval or question, which a compaction would leave unanswerable.
-  const compactDisabled =
-    draft || isChatBusy(status) || (lastMessage?.parts.some(isOpenPrompt) ?? false);
-
-  // Reset the fetched-documents panel whenever the chat identity changes —
-  // this covers every navigation path, including plain links like the header
-  // logo; the tool-output sync repopulates it from the loaded messages.
-  // Handlers that rewrite the current conversation (edit/retry/regenerate)
-  // still clear explicitly since the id stays the same there.
-  useEffect(() => {
-    clearAll();
-  }, [id, clearAll]);
-
-  // Runs here rather than in the context panel: a citation renders in the
-  // transcript whether or not the panel is open, and it must not be shown
-  // before we know the document it points at still exists.
-  useToolOutputSync(messages, addChunk, markFullDocument, addImage, claimOutput);
-  useChatErrorLogger(error, id, messages, buildRequestBody);
-
-  const handleEditMessage = useCallback(
-    async (messageId: string, newText: string) => {
-      clearEditing();
-      clearAll();
-      await sendUserMessage({ text: newText, messageId });
-    },
-    [sendUserMessage, clearAll, clearEditing],
+  const promptOpen = useChatSelector(
+    (chat) =>
+      chat.lastMessage?.parts.some(
+        (part) => isToolUIPart(part) && isOpenPrompt(part, "waiting"),
+      ) ?? false,
   );
+  const compactDisabled = !hasMessages || busy || promptOpen;
+  const clearFilter = useDocumentFilterStore((state) => state.clear);
+  const setDocumentTab = useDocumentCanvasStore((state) => state.setActiveTab);
+  const { data: conversationTitle } = useQuery({
+    ...conversationQueries.list(),
+    select: (list) => list.find((c) => c.id === conversationId)?.title,
+  });
+  const [activeTab, setActiveTab] = useState<ChatTab>("chat");
+  const importInputRef = useRef<HTMLInputElement>(null);
 
-  const approvalGate = useMemo<ToolApprovalGate>(
-    () => ({
-      // The SDK records decisions one at a time and continues the run once the
-      // last one is in, so a batch still sends a single continuation. The
-      // reason is the user's own note, and the backend words the refusal the model
-      // reads around it.
-      decide: (decisions) => {
-        for (const decision of decisions) void addToolApprovalResponse(decision);
-      },
-      addToolOutput,
-      // The SDK records but does not dispatch a decision made while the
-      // previous turn's final chunks are still draining, so the buttons wait
-      // for it to settle.
-      blockedReason: isStreaming ? t(($) => $.chat.sidebar.approvalBlocked) : undefined,
-    }),
-    [addToolApprovalResponse, addToolOutput, isStreaming, t],
-  );
+  useChatErrorLogger();
 
-  const handleRegenerate = useCallback(async () => {
-    clearAll();
-    await regenerateTurn();
-  }, [regenerateTurn, clearAll]);
+  // Leaves the input untouched: the steering queue drains while the user may
+  // already type the next message, so the composer clears itself on submit.
+  const send = (text: string, files: FileUIPart[]) => {
+    if (!text.trim() && files.length === 0) return;
 
-  const handleRetry = useCallback(async () => {
-    const last = getLastUserMessage(messages);
-    if (!last) return;
-    clearAll();
-    await sendUserMessage({ text: last.text, files: last.files, messageId: last.id });
-  }, [messages, sendUserMessage, clearAll]);
+    // The first turn reveals the Context panel as documents are pulled, later turns leave the tab alone.
+    if (chat.messages.length === 0) setDocumentTab("context");
 
-  const handleNewChat = useCallback(async () => {
+    void chat.sendMessage({ text, files });
+  };
+
+  const { queue: steeringQueue, enqueue: enqueueSteering } = useSteeringQueue(busy, send);
+
+  const resetView = () => {
     clearFilter();
     setActiveTab("chat");
-    // On a draft we are already at "/", so navigating there is a no-op that
-    // would leave a dirty chat (e.g. one stuck on an error) untouched. Mint a
-    // fresh draft id instead: that remounts the chat with clean SDK state and
-    // adoption refs. An empty, error-free draft is already new, so leave it
-    // (and any text the user is typing) alone.
-    if (draft && onNewDraft && (messages.length > 0 || error)) {
-      onNewDraft();
+  };
+
+  const openConversation = async (id: string) => {
+    resetView();
+    await navigate({ to: "/conversations/$id", params: { id } });
+  };
+
+  // The index route names a new chat.
+  const openNewChat = async () => {
+    resetView();
+    await navigate({ to: "/" });
+  };
+
+  // An empty, error-free chat is already new, so it and any text the user is typing stay.
+  const newChat = () => {
+    if (chat.messages.length === 0 && !chat.error) {
+      resetView();
       return;
     }
-    // The new chat is a draft until its first message mints a server ID.
-    await navigate({ to: "/" });
-  }, [draft, onNewDraft, messages.length, error, clearFilter, navigate]);
 
-  // Export both halves of the conversation. `frontend` is what the sidebar
-  // holds in memory — the visible active path, including a turn that errored
-  // and was never persisted — so a failing conversation can be sent for
-  // debugging; `backend` is the persisted copy, and the only place the system
-  // prompts each turn ran under can be read (the stream never carries them to
-  // the browser). A draft has no server copy yet, so that half stays null. The
-  // archive round-trips through the import route.
-  const serverId = draft ? createdId : id;
-  const handleExport = useCallback(async () => {
+    void openNewChat();
+  };
+
+  // Export both halves of the conversation. `frontend` is what this tab holds,
+  // including a turn that errored and was never stored, so a failing
+  // conversation can be sent for debugging, and `backend` is the stored copy
+  // with the system prompts each turn ran under, which the stream never
+  // carries to the browser. The archive round-trips through the import route.
+  const exportArchive = async () => {
+    if (!conversationId) return;
+
     const archive: ConversationArchive = {
-      backend: serverId ? await getServerConversation(serverId) : null,
+      backend: await getServerConversation(conversationId),
       frontend: {
-        id,
+        id: conversationId,
         title: conversationTitle ?? null,
         exported_at: new Date().toISOString(),
-        error: error?.message ?? null,
-        messages,
+        error: chat.error?.message ?? null,
+        messages: chat.messages,
       },
     };
-    downloadJson(archive, `conversation-${id}.json`);
-  }, [id, serverId, conversationTitle, error, messages]);
-
-  const handleConversationSelect = useCallback(
-    async (conversationId: string) => {
-      clearFilter();
-      setActiveTab("chat");
-      await navigate({ to: "/conversations/$id", params: { id: conversationId } });
-    },
-    [clearFilter, navigate],
-  );
-
-  const importInputRef = useRef<HTMLInputElement>(null);
+    downloadJson(archive, `conversation-${conversationId}.json`);
+  };
 
   const importArchive = useMutation({
     ...conversationMutations.import(),
     onSuccess: async (summary) => {
-      await handleConversationSelect(summary.id);
-      toast.add({ type: "success", title: i18n.t(($) => $.chat.sidebar.imported) });
+      await openConversation(summary.id);
+      toast.add({ type: "success", title: t(($) => $.chat.sidebar.imported) });
     },
   });
 
-  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const importFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     // Reset so re-picking the same file fires onChange again.
     event.target.value = "";
+
     if (file) importArchive.mutate(file);
   };
-
-  // Server-side transcription backs the recording fallback for browsers
-  // without a working Web Speech API; only offered when an STT model is
-  // configured on the backend.
-  const sttModel = useServerSettings((s) => s.stt_model);
 
   return (
     <Tabs
@@ -297,15 +139,15 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
       onValueChange={(value) => setActiveTab(value as ChatTab)}
       className="flex h-full flex-col"
     >
-      <StreamingNavGuard isStreaming={isStreaming} onStop={stop} />
+      <StreamingNavGuard isStreaming={busy} onStop={() => void chat.stop()} />
       <ChatHeader
         activeTab={activeTab}
-        hasMessages={messages.length > 0}
+        hasMessages={hasMessages}
         compactDisabled={compactDisabled}
-        onCompact={() => void compact()}
-        onNewChat={handleNewChat}
+        onCompact={compact}
+        onNewChat={newChat}
         onImport={() => importInputRef.current?.click()}
-        onExport={messages.length > 0 ? handleExport : undefined}
+        onExport={hasMessages ? () => void exportArchive() : undefined}
       />
       <input
         ref={importInputRef}
@@ -313,46 +155,20 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
         accept="application/json,.json"
         className="hidden"
         aria-label={t(($) => $.chat.header.importFile)}
-        onChange={handleImportFile}
+        onChange={importFile}
       />
 
       <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
-        <ConversationIdProvider value={serverId}>
-          <SubagentLiveProvider value={subagentSteps}>
-            <ToolApprovalProvider value={approvalGate}>
-              <MessageList
-                messages={messages}
-                messageKey={messageKey}
-                status={status}
-                chatError={visibleChatError}
-                isLoadingHistory={isLoadingHistory}
-                editingId={editingId}
-                onRetry={handleRetry}
-                onDismissError={() => {
-                  clearError();
-                  setDismissedErrorId(lastMessage?.id ?? null);
-                }}
-                onSetEditing={setEditing}
-                onCancelEdit={clearEditing}
-                onSubmitEdit={handleEditMessage}
-                onRegenerate={handleRegenerate}
-              />
-            </ToolApprovalProvider>
-          </SubagentLiveProvider>
-        </ConversationIdProvider>
+        <MessageList />
 
         <div className="flex flex-col gap-3 border-t p-4">
-          {messages.length === 0 && <ChatSuggestions onSelect={handleSendMessage} />}
+          {!hasMessages && <ChatSuggestions onSelect={(prompt) => send(prompt, [])} />}
           <SteeringQueue queue={steeringQueue} />
           <Composer
             onSubmit={(text, files) => {
-              if (isStreaming) enqueueSteering(text, files);
-              else void handleSendMessage(text, files);
+              if (busy) enqueueSteering(text, files);
+              else send(text, files);
             }}
-            status={status}
-            onStop={stop}
-            isStreaming={isStreaming}
-            onAudioRecorded={sttModel ? transcribeAudio : undefined}
           />
           <AiDisclosure />
         </div>
@@ -360,9 +176,9 @@ export function ChatSidebar({ id, draft = false, onNewDraft }: ChatSidebarProps)
 
       <TabsContent value="history" className="min-h-0 flex-1">
         <ConversationsList
-          currentConversationId={id}
-          onConversationSelect={handleConversationSelect}
-          onActiveConversationDeleted={handleNewChat}
+          currentConversationId={conversationId ?? undefined}
+          onConversationSelect={(id) => void openConversation(id)}
+          onActiveConversationDeleted={() => void openNewChat()}
         />
       </TabsContent>
     </Tabs>

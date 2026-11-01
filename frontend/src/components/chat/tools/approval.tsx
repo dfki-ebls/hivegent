@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import { type ComponentProps, type ReactNode, useId } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import {
   type ChangesetSummary,
@@ -16,7 +16,11 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { type ApprovalRound, useApprovalRound } from "@/hooks/chat/use-tool-approval";
+import {
+  type ApprovalRound,
+  useApprovalBlockedReason,
+  useApprovalRound,
+} from "@/hooks/chat/use-tool-approval";
 import { type ToolPart, toolDisplayName } from "@/lib/chat/tool-part";
 
 interface ApprovalControlsProps {
@@ -35,12 +39,13 @@ function ApprovalControls({ id, title, round }: ApprovalControlsProps) {
   const staging = round.ids.length > 1;
   const choice = round.choices[id];
   const { key, ...note } = round.noteField(id);
+  const blocked = useApprovalBlockedReason() !== undefined;
 
   const action = (approved: boolean): ComponentProps<typeof Button> => ({
     size: "sm",
     variant: (staging ? choice === approved : approved) ? "default" : "outline",
     "aria-pressed": staging ? choice === approved : undefined,
-    disabled: !staging && round.blockedReason !== undefined,
+    disabled: !staging && blocked,
     onClick: () => (staging ? round.stage(id, approved) : round.send(approved)),
   });
 
@@ -74,8 +79,7 @@ interface ApprovalPromptProps {
 
 interface PromptItemProps {
   icon: ReactNode;
-  /** Names the prompt for screen readers. */
-  label: string;
+  /** Also names the prompt for screen readers. */
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
@@ -89,17 +93,18 @@ interface PromptItemProps {
  */
 export function PromptItem({
   icon,
-  label,
   title,
   description,
   actions,
   children,
 }: PromptItemProps) {
+  const titleId = useId();
+
   return (
-    <Item variant="outline" render={<fieldset />} aria-label={label} className="min-w-0">
+    <Item variant="outline" render={<fieldset />} aria-labelledby={titleId} className="min-w-0">
       <ItemMedia variant="icon">{icon}</ItemMedia>
       <ItemContent>
-        <ItemTitle>{title}</ItemTitle>
+        <ItemTitle id={titleId}>{title}</ItemTitle>
         {description && <ItemDescription>{description}</ItemDescription>}
       </ItemContent>
       {actions && <ItemActions>{actions}</ItemActions>}
@@ -122,11 +127,11 @@ export function ApprovalPrompt({
   const { t } = useTranslation();
   const round = useApprovalRound();
   const answerable = round?.ids.includes(approvalId) ?? false;
+  const blockedReason = useApprovalBlockedReason();
 
   return (
     <PromptItem
       icon={icon}
-      label={title}
       title={
         summary ? (
           t(($) => $.chat.tools.changeset.question, { count: changeCount(summary) })
@@ -138,7 +143,7 @@ export function ApprovalPrompt({
           />
         )
       }
-      description={answerable && round?.ids.length === 1 ? round.blockedReason : undefined}
+      description={answerable && round?.ids.length === 1 ? blockedReason : undefined}
     >
       <div className="flex min-w-0 basis-full flex-col gap-3">
         {children}

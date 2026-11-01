@@ -60,7 +60,7 @@ it("completes a draft once everything is picked and every key fact is in the res
 
   expect(completeEntry(draft)).toEqual(draft);
   expect(completeEntry({ ...draft, response: "Bees swim." })).toBeNull();
-  expect(completeEntry({ ...draft, passages: [{ ...draft.passages[0], grade: null }] })).toBeNull();
+  expect(completeEntry({ ...draft, passages: [{ path: "~/a.md", text: "Bees fly.", grade: null }] })).toBeNull();
 });
 
 it("offers the question types, answerabilities, grades and importances RAGold accepts", () => {

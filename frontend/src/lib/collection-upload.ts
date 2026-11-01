@@ -2,7 +2,7 @@ import type JSZip from "jszip";
 
 import { joinPath } from "@/lib/utils";
 
-export type DropClassification = {
+type DropClassification = {
   looseFiles: File[];
   directories: FileSystemDirectoryEntry[];
   zipFiles: File[];

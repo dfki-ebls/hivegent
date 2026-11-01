@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  type ChatMessage,
   activeChatError,
-  adoptMessageNodeId,
-  closeAbandonedCalls,
-  getLastUserMessage,
-  placeCompactions,
-  recordChatError,
-  shouldContinueRun,
   isProcessing,
+  liveOf,
+  placeCompactions,
+  resendOf,
+  shouldContinueRun,
 } from "@/lib/chat/chat-utils";
+import type { ChatMessage } from "@/lib/chat/message";
 
 const image: ChatMessage["parts"][number] = {
   type: "file",
@@ -55,22 +53,6 @@ describe("isProcessing", () => {
   });
 });
 
-describe("adoptMessageNodeId", () => {
-  it("re-keys the message the finished turn sent, not the answer to it", () => {
-    const messages = [msg("user", "first"), msg("assistant", "reply"), msg("user", "second")];
-    const adopted = adoptMessageNodeId(messages, "node-9");
-
-    expect(adopted.map((m) => m.id)).toEqual(["user-first", "assistant-reply", "node-9"]);
-    expect(adopted[2].parts).toBe(messages[2].parts);
-  });
-
-  it("leaves a turn without a user message alone", () => {
-    const messages = [msg("assistant", "summary")];
-
-    expect(adoptMessageNodeId(messages, "node-9")).toBe(messages);
-  });
-});
-
 describe("activeChatError", () => {
   const stored: ChatMessage[] = [
     {
@@ -96,85 +78,31 @@ describe("activeChatError", () => {
   });
 });
 
-describe("recordChatError", () => {
-  it("carries a live error through the route handoff", () => {
-    const messages = [msg("user", "q")];
-    const recorded = recordChatError(messages, new Error("provider exploded"));
+describe("liveOf", () => {
+  const messages = [msg("user", "q"), msg("assistant", "a")];
 
-    expect(activeChatError(recorded, undefined)).toBe("provider exploded");
-    expect(recordChatError(messages, undefined)).toBe(messages);
+  it("tells the last message while it streams or waits from any earlier one", () => {
+    expect(liveOf(messages, "streaming", "assistant-a")).toBe("streaming");
+    expect(liveOf(messages, "error", "assistant-a")).toBe("waiting");
+    expect(liveOf(messages, "streaming", "user-q")).toBe("stale");
   });
 });
 
-describe("getLastUserMessage", () => {
-  it("carries the attachments a resend has to send again", () => {
-    const messages: ChatMessage[] = [
-      {
-        id: "u1",
-        role: "user",
-        parts: [{ type: "text", text: "look" }, image],
-      },
-    ];
-    expect(getLastUserMessage(messages)).toEqual({
+describe("resendOf", () => {
+  it("replaces the message under a fresh id and keeps its attachments", () => {
+    const sent: ChatMessage = {
       id: "u1",
-      text: "look",
-      files: [image],
+      role: "user",
+      parts: [{ type: "text", text: "look" }, image],
+    };
+    const resend = resendOf(sent, "look again");
+
+    expect(resend).toMatchObject({
+      messageId: "u1",
+      role: "user",
+      parts: [image, { type: "text", text: "look again" }],
     });
-  });
-
-  it("treats an attachment-only message as a turn", () => {
-    // It never reaches the server on a failed turn, so a resend that skipped
-    // it (as an empty `text` once did) would drop the user's request entirely.
-    const messages: ChatMessage[] = [{ id: "u1", role: "user", parts: [image] }];
-    expect(getLastUserMessage(messages)).toEqual({
-      id: "u1",
-      text: "",
-      files: [image],
-    });
-  });
-
-  it("has nothing to resend for an empty message", () => {
-    expect(getLastUserMessage([{ id: "u1", role: "user", parts: [] }])).toBeUndefined();
-    expect(getLastUserMessage([])).toBeUndefined();
-  });
-});
-
-describe("closeAbandonedCalls", () => {
-  const pending = (): ChatMessage => ({
-    id: "a1",
-    role: "assistant",
-    parts: [
-      {
-        type: "dynamic-tool",
-        toolName: "write_document",
-        toolCallId: "call-1",
-        state: "approval-requested",
-        input: {},
-        approval: { id: "call-1" },
-      },
-    ],
-  });
-
-  it("leaves a request the user can still answer alone", () => {
-    const messages = [msg("user", "q"), pending()];
-
-    expect(closeAbandonedCalls(messages)).toBe(messages);
-  });
-
-  it("closes a request the next message overtook, as the backend does", () => {
-    const messages = [msg("user", "q"), pending(), msg("user", "never mind, do this instead")];
-    const declined = closeAbandonedCalls(messages);
-    const part = declined[1].parts[0];
-
-    expect(part).toMatchObject({ state: "output-denied", approval: { approved: false } });
-    // Untouched messages keep their identity, so nothing else re-renders.
-    expect(declined[0]).toBe(messages[0]);
-  });
-
-  it("dismisses a question the next message overtook, as the backend does", () => {
-    const messages = [msg("user", "q"), asked(), msg("user", "skip that")];
-
-    expect(closeAbandonedCalls(messages)[1].parts[1]).toMatchObject({ state: "output-error" });
+    expect(resend.id).not.toBe("u1");
   });
 });
 
@@ -197,8 +125,8 @@ describe("placeCompactions", () => {
     ];
     const placed = placeCompactions(answered);
 
-    expect(placed[0].parts.at(-1)).toBe(compaction);
-    expect(placed[2].parts).not.toContain(compaction);
+    expect(placed[0]?.parts.at(-1)).toBe(compaction);
+    expect(placed[2]?.parts).not.toContain(compaction);
     // A reply that held only the compaction goes, as it never reloads.
     expect(placeCompactions([...answered.slice(0, 2), reply("r", [compaction])])).toHaveLength(2);
   });

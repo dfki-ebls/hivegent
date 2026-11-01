@@ -10,10 +10,10 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
-import { LoadingState } from "@/components/empty-state";
+import { LoadingPanel } from "@/components/common/status-panel";
 import { type Option, OptionSelect } from "@/components/option-select";
 import { DialogBody, ScrollDialogContent } from "@/components/scroll-dialog-content";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,19 +50,23 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from "@/components/common/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
-import { useChatMessages } from "@/hooks/chat/use-chat-messages";
-import { useConversationId } from "@/hooks/chat/use-conversation-id";
+import { useChatContext, useConversationId } from "@/components/chat/chat-context";
 import { i18n, keyPrefix } from "@/i18n";
 import {
   canonicalPath,
-  exportRagold,
   groupScope,
   isWorkspacePath,
   PERSONAL_SCOPE,
-} from "@/lib/api";
+  type DirectoryTreeResponse,
+  collectFilePaths,
+  documentQueries,
+} from "@/api/documents";
+import { exportRagold } from "@/api/conversations";
+import { useServerSettings } from "@/api/settings";
+import { basename, cn, errorMessage } from "@/lib/utils";
 import { precedingUserText } from "@/lib/chat/chat-utils";
 import {
   ANSWERABILITIES,
@@ -81,10 +85,6 @@ import {
   withKeyFact,
   withPassage,
 } from "@/lib/ragold";
-import type { DirectoryTreeResponse } from "@/lib/types";
-import { basename, cn, collectFilePaths, errorMessage } from "@/lib/utils";
-import { documentQueries } from "@/queries/documents";
-import { useServerSettings } from "@/queries/settings";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.ragold);
@@ -213,11 +213,11 @@ function usePickerDocuments(): { paths: string[]; used: Set<string> } {
   // Stable, so a render leaves the flattened paths alone until a tree changes.
   const combine = useCallback(
     (results: QueryObserverResult<DirectoryTreeResponse>[]) =>
-      results.flatMap((result, index) =>
-        result.data
-          ? collectFilePaths(result.data.root).map((path) => canonicalPath(scopes[index], path))
-          : [],
-      ),
+      scopes.flatMap((scope, index) => {
+        const tree = results[index]?.data;
+
+        return tree ? collectFilePaths(tree.root).map((path) => canonicalPath(scope, path)) : [];
+      }),
     [scopes],
   );
 
@@ -305,7 +305,7 @@ function PassageDialog({
           </DialogDescription>
         </DialogHeader>
         {content.isPending ? (
-          <LoadingState />
+          <LoadingPanel />
         ) : (
           <Textarea
             ref={textarea}
@@ -478,11 +478,11 @@ function KeyFactsField({
 function RagoldForm({ messageId, reply, ragoldUrl, conversationId, onClose }: RagoldFormProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const options = useOptions();
-  const messages = useChatMessages();
+  const { chat } = useChatContext();
   const [draft, setDraft] = useState(() => {
     const { documents, chunks } = useFetchedDocumentsStore.getState();
 
-    return draftFromTurn(precedingUserText(messages, messageId), reply, documents, chunks);
+    return draftFromTurn(precedingUserText(chat.messages, messageId), reply, documents, chunks);
   });
   const [passageFor, setPassageFor] = useState<string | null>(null);
   const passagesByPath = Map.groupBy(draft.passages, (passage) => passage.path);

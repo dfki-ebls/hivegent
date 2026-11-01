@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ToolCard } from "@/components/chat/tools/tool-card";
 import { ToolCode, ToolOutputResult } from "@/components/chat/tools/display";
 import { Badge } from "@/components/ui/badge";
-import { type ToolPart, toolDisplayName, toolInputAs } from "@/lib/chat/tool-part";
+import { type ToolRenderProps, toolDisplayName, toolInputAs } from "@/lib/chat/tool-part";
 import { basename } from "@/lib/utils";
 
 /** Mirrors `WriteDocumentTool` in `backend/src/hivegent/tools/mutations.py`. */
@@ -14,7 +14,7 @@ const WriteInputSchema = z.object({
 });
 
 /** The content a write sets, highlighted by the file's extension, which the approval's diff only shows up to its cap. */
-export function WriteDocumentTool({ part }: { part: ToolPart }) {
+export function WriteDocumentTool({ part, prompt }: ToolRenderProps) {
   const { t } = useTranslation();
   const input = toolInputAs(part, WriteInputSchema);
   const tool = toolDisplayName(t, "write_document");
@@ -24,6 +24,7 @@ export function WriteDocumentTool({ part }: { part: ToolPart }) {
     <ToolCard
       toolName="write_document"
       part={part}
+      prompt={prompt}
       title={name ? t(($) => $.chat.tools.mutations.titleWithPath, { tool, name }) : tool}
       parameters={
         input && (

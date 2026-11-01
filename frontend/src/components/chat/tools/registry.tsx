@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { isCatalogKey } from "@/i18n";
-import type { SyncOutput, ToolName, ToolPart } from "@/lib/chat/tool-part";
+import type { SyncOutput, ToolName, ToolRenderProps } from "@/lib/chat/tool-part";
 import { AskUserTool } from "@/components/chat/tools/ask-user";
 import { syncGrepOutput } from "@/components/chat/tools/grep";
 import {
@@ -15,12 +15,7 @@ import { syncWebFetchOutput } from "@/components/chat/tools/web-fetch";
 import { syncWebSearchOutput } from "@/components/chat/tools/web-search";
 import { WriteDocumentTool } from "@/components/chat/tools/write-document";
 
-export interface ToolRenderProps {
-  part: ToolPart;
-  metadata: unknown;
-}
-
-export interface ToolHandler {
+interface ToolHandler {
   render?: (props: ToolRenderProps) => ReactNode;
   syncOutput?: SyncOutput;
 }
@@ -29,22 +24,24 @@ export interface ToolHandler {
 const TOOL_HANDLERS: Partial<Record<ToolName, ToolHandler>> = {
   apply_changes: {
     // The changeset id is internal.
-    render: ({ part }) => <ToolFallback toolName="apply_changes" part={part} parameters={null} />,
+    render: ({ part, prompt }) => (
+      <ToolFallback toolName="apply_changes" part={part} prompt={prompt} parameters={null} />
+    ),
   },
   search: { syncOutput: syncSearchOutput },
   read_document: { syncOutput: syncReadDocumentOutput },
   read_binary_document: {
-    render: ({ part, metadata }) => <ReadBinaryDocumentTool part={part} metadata={metadata} />,
+    render: (props) => <ReadBinaryDocumentTool {...props} />,
     syncOutput: syncReadBinaryDocumentOutput,
   },
   grep: { syncOutput: syncGrepOutput },
   web_search: { syncOutput: syncWebSearchOutput },
   web_fetch: { syncOutput: syncWebFetchOutput },
   run_python: {
-    render: ({ part, metadata }) => <RunPythonTool part={part} metadata={metadata} />,
+    render: (props) => <RunPythonTool {...props} />,
   },
-  write_document: { render: ({ part }) => <WriteDocumentTool part={part} /> },
-  ask_user: { render: ({ part }) => <AskUserTool part={part} /> },
+  write_document: { render: (props) => <WriteDocumentTool {...props} /> },
+  ask_user: { render: (props) => <AskUserTool {...props} /> },
 };
 
 export function getToolHandler(name: string): ToolHandler | undefined {

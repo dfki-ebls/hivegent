@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { MessageLiveProvider } from "@/components/chat/chat-context";
 import { ToolFallback } from "@/components/chat/tools/tool-fallback";
 import { getToolHandler } from "@/components/chat/tools/registry";
 import type { ToolPart } from "@/lib/chat/tool-part";
@@ -23,7 +24,7 @@ describe("ToolFallback", () => {
       input: { changeset_id: "internal-id" },
       output: "Applied changes.",
     };
-    render(getToolHandler("apply_changes")?.render?.({ part: call, metadata: null }));
+    render(getToolHandler("apply_changes")?.render?.({ part: call, metadata: null, prompt: false }));
     fireEvent.click(screen.getByText("Apply Changes"));
 
     expect(screen.getByText("Applied changes.")).toBeTruthy();
@@ -32,19 +33,24 @@ describe("ToolFallback", () => {
 
   it("expands when the running call turns into an approval request", () => {
     const { rerender } = render(
-      <ToolFallback toolName="write_document" part={part("input-available")} />,
+      <MessageLiveProvider value="streaming">
+        <ToolFallback toolName="write_document" part={part("input-available")} prompt={false} />
+      </MessageLiveProvider>,
     );
 
-    expect(screen.queryByRole("group", { name: "Write Document" })).toBeNull();
+    expect(screen.queryByRole("group", { name: /Write Document/ })).toBeNull();
 
     rerender(
-      <ToolFallback
-        toolName="write_document"
-        part={part("approval-requested", { id: "call-1" })}
-      />,
+      <MessageLiveProvider value="waiting">
+        <ToolFallback
+          toolName="write_document"
+          part={part("approval-requested", { id: "call-1" })}
+          prompt
+        />
+      </MessageLiveProvider>,
     );
 
-    expect(screen.getByRole("group", { name: "Write Document" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: /Write Document/ })).toBeTruthy();
   });
 
   it("shows the note the user sent with the decision", () => {
@@ -52,6 +58,7 @@ describe("ToolFallback", () => {
       <ToolFallback
         toolName="write_document"
         part={part("output-denied", { id: "call-1", approved: false, reason: "Wrong folder." })}
+        prompt={false}
       />,
     );
     fireEvent.click(screen.getByText("Write Document"));
@@ -67,6 +74,7 @@ describe("ToolFallback", () => {
       <ToolFallback
         toolName="write_document"
         part={{ ...part("output-available"), output: ["Wrote '~/notes.md'.", note] } as ToolPart}
+        prompt={false}
       />,
     );
     fireEvent.click(screen.getByText("Write Document"));

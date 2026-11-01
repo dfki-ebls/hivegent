@@ -21,7 +21,7 @@ import { useTranslation } from "react-i18next";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { TooltipButton } from "@/components/tooltip-button";
+import { TooltipButton } from "@/components/common/tooltip-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -50,17 +50,18 @@ import {
   adminDeleteUserData,
   adminReindex,
   adminReset,
-  deleteAllConversations,
-  deleteAllDocuments,
-  deleteAllUserData,
-  PERSONAL_SCOPE,
-} from "@/lib/api";
-import { startImpersonation } from "@/lib/impersonation";
-import type { AdminGroupInfo, AdminUserInfo } from "@/lib/types";
+  type AdminGroupInfo,
+  type AdminUserInfo,
+  adminMutations,
+  adminQueries,
+} from "@/api/admin";
+import { deleteAllConversations } from "@/api/conversations";
+import { deleteAllDocuments, PERSONAL_SCOPE } from "@/api/documents";
+import { deleteAllUserData } from "@/api/account";
+import { selectUserId, useIsAdmin, useServerSettings } from "@/api/settings";
 import { cn, errorMessage } from "@/lib/utils";
+import { startImpersonation } from "@/lib/impersonation";
 import { enforceLogin } from "@/oidc";
-import { adminMutations, adminQueries } from "@/queries/admin";
-import { selectUserId, useIsAdmin, useServerSettings } from "@/queries/settings";
 import { useSettingsStore } from "@/stores/settings-store";
 import { clearAllStorage } from "@/stores/storage";
 

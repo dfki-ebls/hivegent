@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import type { WorkspaceChanged } from "@/lib/types";
+import type { WorkspaceChanged } from "@/api/jobs";
 import { followEach, followPath } from "@/lib/utils";
 import { onWorkspaceChanged } from "@/stores/jobs-store";
 
