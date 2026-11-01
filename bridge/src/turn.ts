@@ -1,15 +1,11 @@
 /** Platform-agnostic turn handler: map thread → conversation, stream the reply. */
 
+
 import type { Message, MessageContext, Thread } from "chat";
 
 import type { BridgeConfig } from "./config.js";
 import type { ServiceTokenProvider } from "./hivegent/auth.js";
-import {
-  ConversationNotFoundError,
-  continueConversation,
-  startConversation,
-  type ChatResult,
-} from "./hivegent/client.js";
+import { ConversationNotFoundError, chat } from "./hivegent/client.js";
 import { parseHivegentStream } from "./hivegent/stream.js";
 
 // EU AI Act Article 50(1) and (5): the first reply of every conversation tells
@@ -35,16 +31,15 @@ export function createTurnHandler(
     existing: string | undefined,
     text: string,
     accessToken: string | undefined,
-  ): Promise<ChatResult> {
-    if (!existing) {
-      return startConversation(text, accessToken, cfg);
-    }
+  ): Promise<{ response: Response; conversationId: string }> {
+    const conversationId = existing ?? crypto.randomUUID();
 
     try {
-      return await continueConversation(existing, text, accessToken, cfg);
+      return { response: await chat(conversationId, text, accessToken, cfg), conversationId };
     } catch (err) {
-      if (err instanceof ConversationNotFoundError) {
-        return startConversation(text, accessToken, cfg);
+      // An id another identity holds, e.g. after the service identity changed.
+      if (existing && err instanceof ConversationNotFoundError) {
+        return runChat(undefined, text, accessToken);
       }
 
       throw err;

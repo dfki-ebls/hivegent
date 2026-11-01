@@ -1,12 +1,11 @@
 /** HTTP client for hivegent's chat endpoints (Vercel AI SDK request contract). */
 
-import { randomUUID } from "node:crypto";
 
 import type { UIMessage } from "ai";
 
 import type { BridgeConfig } from "../config.js";
 
-/** Raised when a mapped conversation id no longer exists server-side (HTTP 404). */
+/** Raised when a conversation id belongs to another identity (HTTP 404). */
 export class ConversationNotFoundError extends Error {}
 
 interface ChatRequestOptions {
@@ -25,25 +24,21 @@ interface ChatRequestBody {
 
 /**
  * Build the minimal schema-valid request body for one new user turn. History is
- * server-authoritative, so only the newest message is sent; the top-level `id` is
- * required by the schema but ignored by hivegent (it uses the URL path id).
+ * server-authoritative, so only the newest message is sent, under a fresh UUID
+ * that hivegent stores it as. The top-level `id` is required by the schema but
+ * ignored by hivegent, which uses the URL path id.
  * The bot only answers questions, so it always runs in read mode, which keeps
  * every workspace out of reach of the write tools whatever its grants allow.
  */
 export function buildRequestBody(text: string, opts: ChatRequestOptions): ChatRequestBody {
   return {
     trigger: "submit-message",
-    id: randomUUID(),
-    messages: [{ id: randomUUID(), role: "user", parts: [{ type: "text", text }] }],
+    id: crypto.randomUUID(),
+    messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text }] }],
     mode: "read",
     reasoning_effort: opts.reasoningEffort,
     tools: { disabled_tools: opts.disabledTools },
   };
-}
-
-export interface ChatResult {
-  response: Response;
-  conversationId: string;
 }
 
 function authHeaders(token: string | undefined): Record<string, string> {
@@ -102,31 +97,16 @@ async function ensureOk(response: Response): Promise<void> {
   }
 }
 
-/** Start a new conversation; the server mints the id and returns it in a header. */
-export async function startConversation(
-  text: string,
-  token: string | undefined,
-  cfg: BridgeConfig,
-): Promise<ChatResult> {
-  const response = await postChat("/api/conversations/chat", text, token, cfg);
-  await ensureOk(response);
-
-  const conversationId = response.headers.get("X-Conversation-Id");
-
-  if (!conversationId) {
-    throw new Error("hivegent did not return an X-Conversation-Id header");
-  }
-
-  return { response, conversationId };
-}
-
-/** Continue an existing conversation; a 404 signals a stale mapping. */
-export async function continueConversation(
+/**
+ * Run a turn in a conversation, which hivegent starts when it holds no
+ * conversation with that id yet, so a new one is a fresh `crypto.randomUUID()`.
+ */
+export async function chat(
   conversationId: string,
   text: string,
   token: string | undefined,
   cfg: BridgeConfig,
-): Promise<ChatResult> {
+): Promise<Response> {
   const response = await postChat(
     `/api/conversations/${encodeURIComponent(conversationId)}/chat`,
     text,
@@ -140,5 +120,5 @@ export async function continueConversation(
 
   await ensureOk(response);
 
-  return { response, conversationId };
+  return response;
 }

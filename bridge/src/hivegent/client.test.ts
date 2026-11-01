@@ -20,7 +20,8 @@ describe("buildRequestBody", () => {
     const messages = body.messages as Array<{ id: string; role: string; parts: unknown[] }>;
     expect(messages).toHaveLength(1);
     expect(messages[0]?.role).toBe("user");
-    expect(typeof messages[0]?.id).toBe("string");
+    // hivegent stores the message under its id, which must be a canonical UUID.
+    expect(messages[0]?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(messages[0]?.parts).toEqual([{ type: "text", text: "Hello" }]);
   });
 });

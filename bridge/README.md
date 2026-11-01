@@ -10,8 +10,8 @@ Its only contract with hivegent is the HTTP chat call.
 
 ```
 Platform ──webhook──▶ srvx ──chat.webhooks[name]──▶ handler
-    handler: thread.state → hivegent conversationId
-             POST /api/conversations[/{id}]/chat  (Bearer service token)
+    handler: thread.state → hivegent conversationId (a fresh UUID for a new thread)
+             POST /api/conversations/{id}/chat  (Bearer service token)
              parse the UI Message Stream: text-delta → text, tool-input-start → typing status
              thread.post(async generator of text)
 ```
