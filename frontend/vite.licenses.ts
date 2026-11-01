@@ -9,7 +9,27 @@ const PACKAGE_DIR = /^.*\/node_modules\/(?:@[^/]+\/)?[^/.][^/]*/;
 
 const STYLESHEET_IMPORTS = /@(?:import|plugin)\s+["']([^"']+)["']/g;
 
-const LICENSE_FILE = /^(licen[cs]e|copying)/i;
+const LICENSE_FILE = /^(licen[cs]e|copying|notice)/i;
+
+/** The license and notice files at the root of a package. */
+const licenseFiles = (dir: string): string[] =>
+  readdirSync(dir)
+    .filter((entry) => LICENSE_FILE.test(entry))
+    .toSorted();
+
+/**
+ * Adds the license and notice files at the root of each package Nitro
+ * traces, since its tracer copies only the files a module loads.
+ */
+export function traceLicenseFiles(
+  packages: Record<string, { versions: Record<string, { path: string; files: string[] }> }>,
+): void {
+  for (const pkg of Object.values(packages)) {
+    for (const { path, files } of Object.values(pkg.versions)) {
+      files.push(...licenseFiles(path).map((name) => join(path, name)));
+    }
+  }
+}
 
 /**
  * The packages a stylesheet pulls in through `@import` and `@plugin`, following
@@ -40,13 +60,10 @@ function packageNotice(dir: string): [string, string] {
     version?: string;
     license?: string;
   };
-  const file = readdirSync(dir).find((entry) => LICENSE_FILE.test(entry));
   const heading = `## ${name} - ${version}${license ? ` (${license.trim()})` : ""}`;
+  const texts = licenseFiles(dir).map((file) => readFileSync(join(dir, file), "utf8").trim());
 
-  return [
-    `${name}@${version}`,
-    file ? `${heading}\n\n${readFileSync(join(dir, file), "utf8").trim()}` : heading,
-  ];
+  return [`${name}@${version}`, [heading, ...texts].join("\n\n")];
 }
 
 /**
@@ -73,8 +90,7 @@ export function thirdPartyLicenses(fileName: string, preamble?: string): Plugin 
       order: "post",
       handler(_, bundle) {
         const { name, config } = this.environment;
-        const dirs = packages.get(name) ?? new Set<string>();
-        packages.set(name, dirs);
+        const dirs = packages.getOrInsertComputed(name, () => new Set());
         outDirs.set(name, resolve(config.root, config.build.outDir));
 
         const ids = Object.values(bundle).flatMap((output) =>
