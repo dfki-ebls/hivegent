@@ -81,7 +81,7 @@ class DocumentSummary:
 
     filename: str
     size: int
-    modified_at: datetime | None = None
+    modified_at: datetime
     is_directory: bool = False
 
 
@@ -424,9 +424,11 @@ class ListDocumentsTool(AsyncPathTool[list[DocumentSummary]]):
         lines: list[str] = []
 
         for d in entries:
-            date = d.modified_at.strftime("%Y-%m-%d %H:%M") if d.modified_at else "-"
             kind = "d" if d.is_directory else "-"
-            lines.append(f"{kind} {date}  {_humanize_size(d.size):>6}  {d.filename}")
+            lines.append(
+                f"{kind} {d.modified_at:%Y-%m-%d %H:%M}Z  "
+                f"{_humanize_size(d.size):>6}  {d.filename}"
+            )
 
         return ToolOutput(data=entries, formatted="\n".join(lines) + note)
 

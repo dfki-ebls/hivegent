@@ -9,6 +9,7 @@ tool-call accuracy without steering the answer language.
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 
 from .humanize import pluralize
@@ -35,6 +36,7 @@ __all__ = [
     "WRITE_MODE_NOTE",
     "Personality",
     "compose_instructions",
+    "date_note",
     "format_document_scope",
     "join_instructions",
     "request_limit_note",
@@ -59,7 +61,7 @@ def join_instructions(parts: Iterable[str]) -> str:
 
 
 def compose_instructions(
-    personality: Personality, system_message: str, language: Language
+    personality: Personality, system_message: str, language: Language, today: date
 ) -> str:
     """The agent-level system prompt a run's configuration composes.
 
@@ -78,7 +80,20 @@ def compose_instructions(
     )
 
     return join_instructions(
-        [base, MATH_INSTRUCTIONS[language], LANGUAGE_INSTRUCTIONS[language]]
+        [
+            base,
+            date_note(today)[language],
+            MATH_INSTRUCTIONS[language],
+            LANGUAGE_INSTRUCTIONS[language],
+        ]
+    )
+
+
+def date_note(today: date) -> Localized[str]:
+    """The note naming *today*, which dates in documents and tool results relate to."""
+    return Localized(
+        en=f"Today is {today.isoformat()}.",
+        de=f"Heute ist der {today.isoformat()}.",
     )
 
 

@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Header, HTTPException
@@ -207,7 +208,10 @@ def build_run_prefix(
             language=language,
         ),
         instructions=compose_instructions(
-            config.personality, config.system_message, language
+            config.personality,
+            config.system_message,
+            language,
+            datetime.now(UTC).date(),
         ),
         llm=llm,
         model=model_from_config(llm),

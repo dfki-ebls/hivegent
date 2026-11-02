@@ -1,10 +1,14 @@
 """Parity: every instruction block the main agent reads exists in German."""
 
+from datetime import date
+
 import pytest
 
 from hivegent import prompts
 from hivegent.l10n import Localized
 from hivegent.prompts import Personality, compose_instructions
+
+_TODAY = date(2026, 1, 1)
 
 _BLOCKS = {
     **{
@@ -15,6 +19,7 @@ _BLOCKS = {
     "request_limit_note": prompts.request_limit_note(4),
     "retry_limit_note": prompts.retry_limit_note("x", 3, 4),
     "sandbox_api_instructions": prompts.sandbox_api_instructions("x"),
+    "date_note": prompts.date_note(_TODAY),
 }
 
 
@@ -30,9 +35,9 @@ def test_every_block_is_translated(name: str) -> None:
 def test_the_composed_instructions_end_on_the_german_pin(
     personality: Personality,
 ) -> None:
-    german = compose_instructions(personality, "", "de")
+    german = compose_instructions(personality, "", "de", _TODAY)
 
-    assert german != compose_instructions(personality, "", "en")
+    assert german != compose_instructions(personality, "", "en", _TODAY)
     assert german.endswith(
         "Antworte immer auf Deutsch, außer die Benutzer:in schreibt in einer "
         "anderen Sprache."
