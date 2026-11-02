@@ -186,7 +186,7 @@ For the same reason `ChatAdapter` keeps only the client's user messages, since a
 
 The client mints a conversation's id and the id of every new user message as canonical lowercase UUIDs (`config.new_id`, the form every id the server mints takes too), so it never waits for the server to name what it addresses next, and no response header carries an id.
 `POST /api/conversations/{id}/chat` is the only chat route, and `open_conversation` resolves its id: every conversation id is a canonical UUID (`OwnedConversation` checks it), an owned conversation is used, an absent id opens a new one, and an invalid id or another user's answers 404.
-Migration `e3f4a5b6c7d8` rewrote every earlier id into one (UUIDv5 of the old id) and moved each folder below its user's, so links to an old id answer 404.
+Migration `e3f4a5b6c7d8` rewrote every earlier conversation and message id into a random UUIDv4 and deleted every conversation folder, so links to an old id answer 404.
 `open_conversation` also reports whether the row exists, and only for an absent one does `claim_conversation` create it right before the run, behind every check that can refuse the request, so a refused request leaves no row.
 Its `INSERT ... ON CONFLICT DO NOTHING` lets the database decide between racing claims: the second waits for the first to commit and answers 404 unless the caller owns the row.
 `append_branch` never creates a row, and titles an untitled one from its first user message.
