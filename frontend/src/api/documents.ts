@@ -18,7 +18,12 @@ import {
   requestText,
   requestVoid,
 } from "@/api/client";
-import { type JobView, JobViewSchema, type WorkspaceChanged, WorkspaceChangedSchema } from "@/api/jobs";
+import {
+  type JobView,
+  JobViewSchema,
+  type WorkspaceChanged,
+  WorkspaceChangedSchema,
+} from "@/api/jobs";
 import type { PipelineSpec } from "@/api/pipelines";
 import type { LlmConfig } from "@/api/settings";
 import { type DocumentKind, parseOriginal } from "@/lib/original-preview";
@@ -235,12 +240,11 @@ export async function uploadDocument(
 
   if (options?.overwrite) body.append("overwrite", "true");
 
-  return requestJson(
-    apiUrl(`/documents/${encodeFilePath(filename)}`),
-    "upload",
-    JobViewSchema,
-    { method: "PUT", body, signal: options?.signal },
-  );
+  return requestJson(apiUrl(`/documents/${encodeFilePath(filename)}`), "upload", JobViewSchema, {
+    method: "PUT",
+    body,
+    signal: options?.signal,
+  });
 }
 
 /**
@@ -283,7 +287,11 @@ export async function uploadCollection(
     apiUrl(`/documents/collections/${encodeFilePath(target)}`),
     "uploadCollection",
     JobViewSchema,
-    { method: "POST", body: uploadForm(file, options?.spec, options?.llm), signal: options?.signal },
+    {
+      method: "POST",
+      body: uploadForm(file, options?.spec, options?.llm),
+      signal: options?.signal,
+    },
   );
 }
 
@@ -315,11 +323,9 @@ export async function fetchDocumentAsset(
 
 /** Download the original binary file for a document. */
 export async function downloadOriginal(filepath: string, signal?: AbortSignal): Promise<Blob> {
-  return requestBlob(
-    apiUrl(`/documents/original/${encodeFilePath(filepath)}`),
-    "download",
-    { signal },
-  );
+  return requestBlob(apiUrl(`/documents/original/${encodeFilePath(filepath)}`), "download", {
+    signal,
+  });
 }
 
 /**
@@ -402,12 +408,11 @@ async function generateAssetDescription(
 }
 
 /** Delete an asset's companion .md description, keeping the asset itself. */
-async function deleteAssetDescription(
-  filename: string,
-  assetName: string,
-): Promise<AssetEntry> {
+async function deleteAssetDescription(filename: string, assetName: string): Promise<AssetEntry> {
   return requestJson(
-    apiUrl(`/documents/assets/${encodeFilePath(filename)}?asset_name=${encodeURIComponent(assetName)}`),
+    apiUrl(
+      `/documents/assets/${encodeFilePath(filename)}?asset_name=${encodeURIComponent(assetName)}`,
+    ),
     "deleteDescription",
     AssetEntrySchema,
     { method: "DELETE" },
@@ -825,7 +830,12 @@ export const documentMutations = {
         },
         client,
       ) => {
-        await writeDocument(canonicalPath(change.scope, change.paths[0] ?? ""), change.content, change.chunking, change.mode);
+        await writeDocument(
+          canonicalPath(change.scope, change.paths[0] ?? ""),
+          change.content,
+          change.chunking,
+          change.mode,
+        );
         await refreshTrees(client, [change.scope]);
       },
     ),
