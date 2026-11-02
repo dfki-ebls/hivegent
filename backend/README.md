@@ -360,6 +360,7 @@ Indexing runs after the locks are released, and the commit is announced once.
 An upload is a `workspace.Upload` item only the host builds, so a stored `Changeset[str]` never carries bytes.
 An `overwrite` replaces the entry at its stem under the gateway's locks and keeps its origin, in place when the upload consists of the entry's files and by deleting the entry first otherwise.
 `replace_original` and `reconvert` are uploads over the entry, and a change made while converting refuses the commit with a 409.
+An upload's `modified_at` (the browser's `File.lastModified`, a ZIP member's date read as UTC, or the original's own mtime on reconvert) dates every file the entry lands, so the mtime `list_documents` reports is the content's date, not the last conversion's.
 An index failure leaves the files with a null digest for reconciliation.
 
 An asset description `<stem>.assets/<name>.md` is a unit of its own that only the host writes or deletes, refused unless its asset stays, and `workspace.generate_asset_description` runs the vision model before the commit takes the lock.

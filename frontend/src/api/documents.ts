@@ -213,6 +213,7 @@ interface UploadDocumentOptions {
 function uploadForm(file: File, spec?: PipelineSpec, llm?: LlmConfig): FormData {
   const form = new FormData();
   form.append("file", file);
+  form.append("modified_at", new Date(file.lastModified).toISOString());
 
   if (spec) form.append("pipeline_spec", JSON.stringify(spec));
 

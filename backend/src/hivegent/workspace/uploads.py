@@ -8,6 +8,7 @@ the entry, of new bytes or of its own.
 """
 
 import asyncio
+from datetime import datetime
 from pathlib import PurePosixPath
 
 from ..changes import Basis
@@ -32,6 +33,7 @@ async def upload(
     filepath: str,
     content: bytes,
     *,
+    modified_at: datetime | None = None,
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
     origin: EntryOrigin = "upload",
@@ -46,6 +48,7 @@ async def upload(
         store: The workspace to upload to.
         filepath: The file, local to *store*.
         content: Its bytes.
+        modified_at: When the content last changed, now when unknown.
         spec: The conversion and chunking pipelines.
         llm: The model that describes images and videos.
         origin: How a new entry came to be.
@@ -58,6 +61,7 @@ async def upload(
     item = Upload(
         Location(store, filepath),
         content,
+        modified_at=modified_at,
         spec=spec or PipelineSpec(),
         llm=llm or LlmConfig(),
         origin=origin,
@@ -75,6 +79,7 @@ async def replace_original(
     content: bytes,
     *,
     new_filename: str | None,
+    modified_at: datetime | None = None,
     spec: PipelineSpec | None = None,
     llm: LlmConfig | None = None,
     ctx: ProgressReporter | None = None,
@@ -88,7 +93,16 @@ async def replace_original(
     current = (await resolve_entry(store, safe)).original_path
     suffix = PurePosixPath(new_filename or current or "").suffix
     target = f"{stem_path_from_reference(safe)}{suffix.lower()}"
-    await upload(store, target, content, spec=spec, llm=llm, overwrite=True, ctx=ctx)
+    await upload(
+        store,
+        target,
+        content,
+        modified_at=modified_at,
+        spec=spec,
+        llm=llm,
+        overwrite=True,
+        ctx=ctx,
+    )
 
 
 async def reconvert(
@@ -116,6 +130,7 @@ async def reconvert(
         store,
         original,
         content,
+        modified_at=None if basis is None else basis.modified_at,
         spec=spec,
         llm=llm,
         overwrite=True,

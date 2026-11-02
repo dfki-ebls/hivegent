@@ -16,6 +16,7 @@ import os
 from collections.abc import Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -237,6 +238,8 @@ class Upload:
         target: The file, a markdown description or an original whose
             projection the conversion derives.
         content: Its bytes.
+        modified_at: When the content last changed, which dates every file
+            the entry lands, now when unknown.
         spec: The conversion and chunking pipelines.
         llm: The model that describes images and videos.
         origin: How a new entry came to be.
@@ -250,6 +253,7 @@ class Upload:
 
     target: Location
     content: bytes
+    modified_at: datetime | None = None
     spec: PipelineSpec = field(default_factory=PipelineSpec)
     llm: LlmConfig = field(default_factory=LlmConfig)
     origin: EntryOrigin = "upload"

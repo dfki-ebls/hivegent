@@ -14,6 +14,7 @@ import logging
 import shutil
 import tempfile
 from collections.abc import Awaitable, Callable, Iterable
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Annotated
@@ -264,6 +265,7 @@ async def replace_original(
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: Annotated[str, Form()] = "{}",
     llm_config: Annotated[str, Form()] = "{}",
+    modified_at: Annotated[datetime | None, Form()] = None,
 ) -> JobView:
     """Replace the original binary file and reconvert the document as a job.
 
@@ -281,7 +283,14 @@ async def replace_original(
     async def work(ctx: JobContext) -> None:
         content = await asyncio.to_thread(spool.read_bytes)
         await workspace.replace_original(
-            store, safe, content, new_filename=new_filename, spec=spec, llm=llm, ctx=ctx
+            store,
+            safe,
+            content,
+            new_filename=new_filename,
+            modified_at=modified_at,
+            spec=spec,
+            llm=llm,
+            ctx=ctx,
         )
 
     return _submit_document_job(
@@ -302,6 +311,7 @@ async def upload_document(
     pipeline_spec: Annotated[str, Form()] = "{}",
     llm_config: Annotated[str, Form()] = "{}",
     overwrite: Annotated[bool, Form()] = False,
+    modified_at: Annotated[datetime | None, Form()] = None,
 ) -> JobView:
     """Accept a document upload and process it as a background job.
 
@@ -320,7 +330,14 @@ async def upload_document(
     async def work(ctx: JobContext) -> None:
         content = await asyncio.to_thread(spool.read_bytes)
         await workspace.upload(
-            store, safe, content, spec=spec, llm=llm, overwrite=overwrite, ctx=ctx
+            store,
+            safe,
+            content,
+            modified_at=modified_at,
+            spec=spec,
+            llm=llm,
+            overwrite=overwrite,
+            ctx=ctx,
         )
 
     return _submit_document_job(

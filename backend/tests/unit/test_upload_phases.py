@@ -7,6 +7,7 @@ upload replaces while it converts refuses the commit.
 
 from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -205,6 +206,19 @@ async def test_reconvert_refuses_an_original_changed_meanwhile(
     assert exc.value.status_code == 409
     assert (workspace_dir / "photo.png").read_bytes() == b"edited meanwhile"
     assert (workspace_dir / "photo.md").read_text() == "caption\n"
+
+
+async def test_upload_dates_the_entry_and_reconvert_keeps_it(
+    user_store: Casebase, workspace_dir: Path
+) -> None:
+    modified_at = datetime(2020, 5, 17, 12, 30, tzinfo=UTC)
+    await workspace.upload(
+        user_store, "photo.png", png_bytes(), modified_at=modified_at
+    )
+    await workspace.reconvert(user_store, "photo.md")
+
+    for name in ("photo.png", "photo.md"):
+        assert (workspace_dir / name).stat().st_mtime == modified_at.timestamp()
 
 
 async def test_upload_rejects_stem_already_in_flight(

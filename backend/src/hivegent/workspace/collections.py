@@ -10,12 +10,14 @@ interleave between files and strip entries the collection already committed.
 
 import asyncio
 import logging
+import os
 import stat
 import tempfile
 import zipfile
 import zlib
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from itertools import groupby
 from pathlib import Path
 from typing import Self
@@ -303,9 +305,18 @@ class _PlannedUpload:
     original: _PlannedFile | None = None
 
     @property
-    def member_count(self) -> int:
-        """Return how many archive members this upload accounts for."""
-        return 1 + (self.original is not None)
+    def members(self) -> tuple[_PlannedFile, ...]:
+        """The archive members this upload accounts for."""
+        return (self.entry,) if self.original is None else (self.entry, self.original)
+
+    def modified_at(self, extract_root: Path) -> datetime:
+        """When the newest of its members, extracted under *extract_root*, changed."""
+        newest = max(
+            (extract_root / member.relative_path).stat().st_mtime
+            for member in self.members
+        )
+
+        return datetime.fromtimestamp(newest, UTC)
 
 
 @dataclass(slots=True, frozen=True)
@@ -324,7 +335,7 @@ class _CollectionPlan:
     @property
     def total(self) -> int:
         """The number of archive members the plan accounts for."""
-        return sum(upload.member_count for upload in self.uploads) + len(self.dropped)
+        return sum(len(upload.members) for upload in self.uploads) + len(self.dropped)
 
 
 async def _plan_collection(
@@ -399,6 +410,24 @@ async def _plan_collection(
     return _CollectionPlan(uploads=tuple(uploads), dropped=tuple(dropped))
 
 
+def _extract(archive_path: Path, root: Path) -> None:
+    """Extract the archive at *archive_path* into *root*, keeping each member's date.
+
+    A member's date names no zone and is read as UTC.  An unset or malformed
+    one, such as the all-zero date some tools write, keeps the extraction time.
+    """
+    with zipfile.ZipFile(archive_path) as archive:
+        for info in archive.infolist():
+            path = archive.extract(info, root)
+
+            try:
+                timestamp = datetime(*info.date_time, tzinfo=UTC).timestamp()
+            except ValueError:
+                continue
+
+            os.utime(path, (timestamp, timestamp))
+
+
 async def process_collection(
     store: Casebase,
     archive_path: Path,
@@ -433,8 +462,7 @@ async def process_collection(
         extract_root = Path(tmp_dir)
 
         try:
-            with zipfile.ZipFile(archive_path) as archive:
-                archive.extractall(extract_root)
+            await asyncio.to_thread(_extract, archive_path, extract_root)
         except (zipfile.BadZipFile, zlib.error) as exc:
             raise HTTPException(
                 status_code=400, detail=_extract_failed(str(exc)).current
@@ -491,6 +519,7 @@ async def process_collection(
                     llm=llm,
                     origin="collection",
                     companion=companion,
+                    modified_at=planned.modified_at(extract_root),
                 )
             except Exception as exc:  # noqa: BLE001
                 return planned, exc
@@ -526,7 +555,7 @@ async def process_collection(
                             planned.original.relative_path, _REASON_OWNER_FAILED
                         )
                     )
-            completed += planned.member_count
+            completed += len(planned.members)
             yield _progress(completed)
 
     yield CollectionCompleteEvent(

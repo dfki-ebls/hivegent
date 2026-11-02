@@ -3,6 +3,7 @@
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path, PurePosixPath
 from typing import Self
@@ -63,6 +64,11 @@ class ContentStat:
     mtime_ns: int
     size: int
     inode: int
+
+    @property
+    def modified_at(self) -> datetime:
+        """When the file's content last changed."""
+        return datetime.fromtimestamp(self.mtime_ns / 1e9, UTC)
 
     @classmethod
     def of(cls, st: os.stat_result) -> Self:

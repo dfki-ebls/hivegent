@@ -105,10 +105,12 @@ the last step leaves the new files in place without their chunks, which a null
 import asyncio
 import logging
 import os
+import shutil
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from functools import cache, partial
 from itertools import chain
 from pathlib import Path, PurePath, PurePosixPath
@@ -1405,6 +1407,8 @@ class _Converted:
     replacing: bool
     """Whether it replaces an entry, whose stale asset rows then go."""
     chunking: ChunkingSpec | None
+    modified_at: datetime | None = None
+    """When the content last changed, now when unknown."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -1443,7 +1447,13 @@ async def _convert(item: tuple[Casebase, _Converting]) -> _Converted:
         )
 
         return _Converted(
-            store, effect, prepared, original, effect.replacing, upload.spec.chunking
+            store,
+            effect,
+            prepared,
+            original,
+            effect.replacing,
+            upload.spec.chunking,
+            upload.modified_at,
         )
 
     path, data = effect.target.path, effect.data
@@ -1508,7 +1518,20 @@ def _stage_converted(staging: Path, converted: _Converted) -> list[_WorkspaceCha
             _WorkspaceChange(path, _write_workspace_file(staging, path, data))
         )
 
+    if (modified_at := converted.modified_at) is not None:
+        for change in changes:
+            if change.staged_path is not None:
+                _date_tree(change.staged_path, modified_at)
+
     return changes
+
+
+def _date_tree(path: Path, modified_at: datetime) -> None:
+    """Date *path* and everything below it at *modified_at*."""
+    timestamp = modified_at.timestamp()
+
+    for entry in (path, *path.rglob("*")):
+        os.utime(entry, (timestamp, timestamp))
 
 
 def _install_converted(
@@ -1687,6 +1710,8 @@ def _land(
             staged = _write_workspace_file(
                 staging, new, repoint_asset_refs(text, *names).encode("utf-8")
             )
+            # Repointed references leave the content as it was, so its date stays.
+            shutil.copystat(held, staged)
             journal.install(staged, workspace / new)
         else:
             journal.rename(held, workspace / new)

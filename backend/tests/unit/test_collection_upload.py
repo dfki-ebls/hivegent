@@ -4,7 +4,9 @@ Stateless: the DB-touching upload is stubbed with ``monkeypatch``.
 This exercises the importer's file and stem bookkeeping without a live database.
 """
 
+import stat
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -229,3 +231,25 @@ async def test_os_junk_files_are_skipped_entirely(
     assert uploaded == ["doc.md"]
     assert complete.failed_files == []
     assert complete.markdown_files == 1
+
+
+async def test_member_date_reaches_the_upload(
+    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dates: list[object] = []
+
+    async def record_upload(*_args: object, **kwargs: object) -> None:
+        dates.append(kwargs["modified_at"])
+
+    monkeypatch.setattr(collections, "upload", record_upload)
+
+    archive = tmp_path / "collection.zip"
+    info = zipfile.ZipInfo("doc.md", date_time=(2020, 5, 17, 12, 30, 0))
+    info.external_attr = (stat.S_IFREG | 0o644) << 16
+
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(info, b"# body")
+
+    await _run(user_store, archive)
+
+    assert dates == [datetime(2020, 5, 17, 12, 30, tzinfo=UTC)]
