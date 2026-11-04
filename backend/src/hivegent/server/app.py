@@ -52,8 +52,7 @@ async def _verify_fts_config() -> None:
     """
     from ..db.engine import get_engine
 
-    cfg = settings.embedding.text_search_config
-    expected = (cfg,) if isinstance(cfg, str) else tuple(cfg)
+    expected = settings.embedding.text_search_configs
     async with get_engine().connect() as conn:
         result = await conn.execute(
             sa.text(

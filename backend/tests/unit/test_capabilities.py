@@ -168,7 +168,7 @@ def test_the_shape_specific_readers_are_never_merely_hinted_at(
 def test_the_default_exclusions_never_reach_the_model() -> None:
     """What deferral used to decide silently is now an operator's list."""
     excluded = set(capabilities.settings.tools.disabled)
-    assert excluded == {"list_conversations", "get_conversation"}
+    assert excluded == {"list_conversations", "get_conversation", "search_conversation"}
 
     assert not excluded & _tool_names()
 

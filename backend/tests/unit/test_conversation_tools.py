@@ -1,8 +1,12 @@
 """Tests for the text the conversation tools hand the model."""
 
+from collections.abc import Callable, Iterable
+from dataclasses import replace
 from datetime import UTC, datetime
 
+import pytest
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -11,8 +15,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from hivegent.agents.common import UserDeps
+from hivegent.agents.tools import conversation as tools
 from hivegent.agents.tools.conversation import format_conversation
-from hivegent.db.conversations import ConversationData
+from hivegent.db.conversations import ConversationData, OwnedConversation
+from hivegent.store import User
+from tests.helpers import owned, run_context
 
 
 def test_format_conversation_renders_the_header_and_the_dialogue() -> None:
@@ -40,3 +48,35 @@ def test_format_conversation_renders_the_header_and_the_dialogue() -> None:
         "tool call: grep(pattern='total')\n---\n"
         "assistant:\nIt is 42."
     )
+
+
+async def test_search_conversation_searches_the_current_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without an id it searches the run's own conversation, passages ranked by the store."""
+    current = owned("current")
+
+    async def found(user: User, conversation_id: str) -> OwnedConversation | None:
+        return current if conversation_id == current.id else None
+
+    async def search(
+        conversation: OwnedConversation,
+        query: str,
+        render: Callable[[ModelMessage], Iterable[str]],
+        *,
+        limit: int,
+    ) -> list[tuple[int, str]]:
+        assert (conversation, query, limit) == (current, "total", 5)
+        prompt = ModelRequest(parts=[UserPromptPart(content="What is the total?")])
+        return [(0, text) for text in render(prompt)]
+
+    monkeypatch.setattr(tools, "owned_conversation", found)
+    monkeypatch.setattr(tools, "_search_conversation", search)
+    ctx = replace(
+        run_context(UserDeps(user=current.user, mode="interactive")),
+        conversation_id=current.id,
+    )
+
+    result = await tools.search_conversation(ctx, "total")
+
+    assert result.return_value == "[0] user:\nWhat is the total?"

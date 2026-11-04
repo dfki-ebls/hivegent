@@ -59,7 +59,7 @@ audience = ["hivegent-*"]
 Common extras are `HIVEGENT_TOOLS__SEARCH_URL` for web search, `HIVEGENT_SECURITY__WEB_URLS__ALLOW_HOSTS='["*"]'` for web fetch, `HIVEGENT_EMBEDDING__MODEL` for the embedding model, and `HIVEGENT_MCP__ENABLE=true` for the MCP endpoint.
 
 `tools.disabled` withholds tools from the model by the names `GET /api/debug/tools` lists.
-It defaults to `["list_conversations", "get_conversation"]`, since sub-agents already reach past conversations.
+It defaults to `["list_conversations", "get_conversation", "search_conversation"]`, since sub-agents already reach past conversations.
 An unknown name stops the server at startup.
 
 `HIVEGENT_RAGOLD__URL` names where a RAGold instance is served, which lets users transfer a reply with its documents as a gold benchmark entry.

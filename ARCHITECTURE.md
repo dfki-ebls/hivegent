@@ -88,7 +88,7 @@ A feature is withheld by its chat mode, by a request's `disabled_tools`, or by `
 | `write`        | Approved workspace mutation, `/tmp` in every mode.          | `write_document`, `edit_document`, `move_documents`, `delete_documents`, `apply_changes`         |
 | `memory`       | Cross-conversation memory, mutating modes only.             | `read_memory`, `write_memory`                                                                    |
 | `web`          | Search with `search_url`, fetch with `web_urls`.            | `web_search`, `web_fetch`                                                                        |
-| `conversation` | Conversation history, disabled by default.                  | `list_conversations`, `get_conversation`                                                         |
+| `conversation` | Conversation history, disabled by default.                  | `list_conversations`, `get_conversation`, `search_conversation`                                  |
 | `ask`          | Multiple-choice questions for the user.                     | `ask_user`                                                                                       |
 
 ## Asset processing

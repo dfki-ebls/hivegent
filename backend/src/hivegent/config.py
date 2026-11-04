@@ -583,6 +583,13 @@ class EmbeddingSettings(BaseModel):
         """
         return {"provider": self.provider, "model": self.model}
 
+    @property
+    def text_search_configs(self) -> tuple[str, ...]:
+        """``text_search_config`` as the sequence of configurations it names."""
+        config = self.text_search_config
+
+        return (config,) if isinstance(config, str) else tuple(config)
+
 
 class RerankSettings(BaseModel):
     """Cross-encoder re-ranking applied after hybrid retrieval.
@@ -772,7 +779,7 @@ class ToolsSettings(BaseModel):
     every request or it should not be registered, and which of the two a given
     deployment thinks it is, is an operator's call.
 
-    The default withholds the two conversation tools, since past conversations
+    The default withholds the conversation tools, since past conversations
     are already reachable through the ``explore`` tool's ``conversations``
     scope.  Naming a tool the agent does not have is a startup error
     (:func:`~hivegent.agents.check_tool_settings`), so a typo fails loudly
@@ -804,7 +811,11 @@ class ToolsSettings(BaseModel):
 
     search_backend: Literal["searxng", "openserp"] = "searxng"
     search_url: str | None = None
-    disabled: list[str] = ["list_conversations", "get_conversation"]
+    disabled: list[str] = [
+        "list_conversations",
+        "get_conversation",
+        "search_conversation",
+    ]
     sandbox_only: list[str] = []
 
 

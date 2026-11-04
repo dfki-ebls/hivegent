@@ -59,7 +59,7 @@ audience = ["hivegent-*"]
 Häufige Ergänzungen sind `HIVEGENT_TOOLS__SEARCH_URL` für die Websuche, `HIVEGENT_SECURITY__WEB_URLS__ALLOW_HOSTS='["*"]'` für den Web-Abruf, `HIVEGENT_EMBEDDING__MODEL` für das Embedding-Modell und `HIVEGENT_MCP__ENABLE=true` für den MCP-Endpunkt.
 
 `tools.disabled` hält Werkzeuge vom Modell fern, benannt wie in `GET /api/debug/tools`.
-Voreingestellt ist `["list_conversations", "get_conversation"]`, da Unteragenten frühere Unterhaltungen bereits erreichen.
+Voreingestellt ist `["list_conversations", "get_conversation", "search_conversation"]`, da Unteragenten frühere Unterhaltungen bereits erreichen.
 Ein unbekannter Name verhindert den Serverstart.
 
 `HIVEGENT_RAGOLD__URL` gibt an, wo eine RAGold-Instanz läuft, wodurch Nutzer eine Antwort mit ihren Dokumenten als Goldstandard-Eintrag übertragen können.

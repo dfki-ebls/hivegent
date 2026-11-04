@@ -227,6 +227,7 @@ export const chat = {
       read_memory: "Gedächtnis lesen",
       run_python: "Python ausführen",
       search: "Semantische Suche",
+      search_conversation: "Konversation durchsuchen",
       web_fetch: "Webseiten abrufen",
       web_search: "Websuche",
       write_document: "Dokument schreiben",

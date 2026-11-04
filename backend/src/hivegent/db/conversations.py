@@ -16,9 +16,10 @@ stored JSON on the way back out.
 """
 
 import contextlib
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import reduce
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,9 @@ from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from sqlalchemy import (
     CTE,
     ColumnElement,
+    Text,
     and_,
+    bindparam,
     delete,
     func,
     literal,
@@ -50,6 +53,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -57,6 +61,7 @@ from ..config import (
     new_id,
     sanitize_conversation_id,
     sanitize_user_id,
+    settings,
 )
 from ..l10n import Localized
 from ..store import User
@@ -92,6 +97,7 @@ __all__ = [
     "remove_conversations",
     "render_prompt",
     "resolve_fork",
+    "search_conversation",
     "set_conversation_title",
 ]
 
@@ -162,6 +168,9 @@ type MessagePair = tuple[str, ModelMessage]
 CHAT_ERROR_KEY = "chatError"
 
 UNTITLED = Localized(en="Untitled", de="Ohne Titel")
+
+_MAX_RANKED_CHARS = 100_000
+"""How much of one passage a search ranks, well below the 1 MB a ``tsvector`` holds."""
 """The title shown for a conversation that has none."""
 
 _NO_MESSAGES = Localized(
@@ -591,6 +600,76 @@ async def load_conversation_summary(
     async with session() as s:
         conv = await _get_owned(s, conversation)
     return None if conv is None else _to_summary(conv)
+
+
+def _fts[T](
+    build: Callable[[str, T], ColumnElement[Any]], value: T
+) -> ColumnElement[Any]:
+    """*build* once per configured FTS language, combined with ``||``.
+
+    The same union the sparse channel indexes chunks with, so a conversation
+    is stemmed like the documents it discusses.
+    """
+    return reduce(
+        lambda acc, term: acc.op("||")(term),
+        (build(cfg, value) for cfg in settings.embedding.text_search_configs),
+    )
+
+
+def _ranked(text: str) -> str:
+    """The part of *text* a search ranks, without the NUL a PostgreSQL text refuses."""
+    return text[:_MAX_RANKED_CHARS].replace("\x00", "")
+
+
+async def search_conversation(
+    conversation: OwnedConversation,
+    query: str,
+    render: Callable[[ModelMessage], Iterable[str]],
+    *,
+    limit: int,
+) -> list[tuple[int, str]]:
+    """The active path's passages that match *query*, best first.
+
+    *render* splits a message into its searchable passages, and each match is
+    the position of its message on the path paired with the passage.  Ranked by
+    PostgreSQL full-text search at query time rather than from an index, since
+    a conversation is searched one at a time and its path is loaded anyway.
+    """
+    async with session() as s:
+        if await _get_owned(s, conversation) is None:
+            return []
+
+        path = await _load_active_path(s, conversation.id)
+        passages = [
+            (position, passage)
+            for position, node in enumerate(path)
+            for passage in render(node.message)
+        ]
+
+        if not passages:
+            return []
+
+        texts = (
+            func.unnest(
+                bindparam(
+                    "texts",
+                    [_ranked(text) for _, text in passages],
+                    type_=ARRAY(Text),
+                )
+            )
+            .table_valued("text", with_ordinality="ordinal")
+            .render_derived()
+        )
+        document = _fts(func.to_tsvector, texts.c.text)
+        tsquery = _fts(func.plainto_tsquery, query)
+        ordinals = await s.scalars(
+            select(texts.c.ordinal)
+            .where(document.op("@@")(tsquery))
+            .order_by(func.ts_rank(document, tsquery).desc(), texts.c.ordinal)
+            .limit(limit)
+        )
+
+    return [passages[ordinal - 1] for ordinal in ordinals]
 
 
 async def owned_conversations(user: User) -> list[OwnedConversation]:

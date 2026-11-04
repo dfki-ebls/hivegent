@@ -43,6 +43,7 @@ const TOOL_ICONS: Record<ToolName, LucideIcon> = {
   read_memory: BookmarkIcon,
   run_python: SquareTerminalIcon,
   search: SearchIcon,
+  search_conversation: MessagesSquareIcon,
   web_fetch: GlobeIcon,
   web_search: GlobeIcon,
   write_document: FilePlusIcon,
