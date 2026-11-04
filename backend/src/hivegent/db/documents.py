@@ -460,6 +460,41 @@ async def resolve_accessible_document_ids(
     return admitted
 
 
+# TODO(cbrkit): the owner-scoped search filter, waiting for cbrkit to accept a
+# SQLAlchemy expression as a filter (see `retrieval.build_search_tool`).  It
+# replaces `resolve_accessible_document_ids`, naming only the hidden documents.
+#
+# def chunk_scope(
+#     stores: Sequence[Casebase], excluded: Sequence[str] = ()
+# ) -> sa.ColumnElement[bool]:
+#     """Match the chunks of the documents *stores* own, but those *excluded*."""
+#     conditions = [
+#         Document.owner_user_id.in_([s.id for s in stores if s.kind == "user"]),
+#         Document.owner_group_id.in_([s.id for s in stores if s.kind == "group"]),
+#     ]
+#     within = Chunk.document_id.in_(select(Document.id).where(sa.or_(*conditions)))
+#
+#     return sa.and_(within, Chunk.document_id.not_in(excluded)) if excluded else within
+#
+#
+# async def accessible_chunks(
+#     stores: Sequence[Casebase],
+#     *,
+#     filters: Mapping[Casebase, DocumentFilter | None] = {},
+# ) -> sa.ColumnElement[bool]:
+#     """Match the chunks of the documents *stores* own that *filters* admit."""
+#     scoped = {store: f for store, f in filters.items() if f is not None}
+#
+#     if not scoped:
+#         return chunk_scope(stores)
+#
+#     hidden = set(await resolve_accessible_document_ids(list(scoped))) - set(
+#         await resolve_accessible_document_ids(list(scoped), filters=scoped)
+#     )
+#
+#     return chunk_scope(stores, sorted(hidden))
+
+
 # ─── Writes ────────────────────────────────────────────────────────────
 
 

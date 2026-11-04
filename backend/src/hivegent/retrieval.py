@@ -478,6 +478,20 @@ def build_search_tool(
             return cbrkit_filter.Eq("document_id", "")  # match nothing
         return cbrkit_filter.In("document_id", doc_ids)
 
+    # TODO(cbrkit): scope by a subquery on the owners instead of the ids, so a
+    # search no longer carries one parameter per accessible document, which
+    # also fails beyond PostgreSQL's 65535 parameters.  It needs cbrkit's
+    # `compile_filter` (`cbrkit/indexable/sqlalchemy.py`) to take a SQLAlchemy
+    # expression as is, as a new filter node such as `Sql(clause:
+    # sa.ColumnElement[bool])`, since `Raw` only takes a string it parses with
+    # `sa.text`, which binds nothing.  The scope is prepared in
+    # `db.documents.chunk_scope` and `db.documents.accessible_chunks`.
+    #
+    # async def resolve_filter() -> cbrkit_filter.Filter | None:
+    #     return cbrkit_filter.Sql(
+    #         await db_documents.accessible_chunks(stores, filters=document_filters)
+    #     )
+
     async def enrich(results: Sequence[SearchResult]) -> list[RetrievedChunk]:
         if not results:
             return []
