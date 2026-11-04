@@ -229,6 +229,7 @@ A dismissal or an abandoned question is a failed return worded by the server (`D
 
 A compaction is a node of the conversation it compacts, a `ModelResponse` holding one provider-less `CompactionPart` whose `content` is the summary.
 The tree keeps every message, so branches, exports, and the transcript stay whole, while pydantic-ai treats the part as the boundary of the instruction window and of the tools it derives from history, and the Vercel adapter round-trips it as a `data-compaction` part.
+It is stored as a response rather than the request pydantic-ai gives a summary the application wrote, since a run merges consecutive requests, which would merge the compaction with the prompt after it and the returns before it.
 
 `summarize_conversation` appends `COMPACT_PROMPT` to the conversation's own message list under the same `RunPrefix` as its chat turns, so the provider's KV prefix cache covers everything but the prompt.
 That is why a compaction runs inside the chat route, `build_run_prefix` composes the prefix for both, and the history is loaded from the database rather than the browser.
@@ -250,9 +251,9 @@ A response cut short mid tool call has already streamed, so it fails the turn in
 A chat request flagged `compact` carries no message and compacts the active path at the same cut, which is the header's button.
 A path ending on a failed prompt is compacted ahead of it, and one ending on an open approval or question is not compacted, so the request leaves it pending.
 
-`CompactionWindow` (`agents/window.py`) sends every request the window from the latest compaction onward, with the summary as user text in `<conversation_summary>` tags.
+`CompactionWindow` (`agents/window.py`) sends every request the window from the latest compaction onward, with the compaction as a request, which pydantic-ai renders for every model as user text in `<conversation_summary>` tags behind a provenance line (#10573).
 It renders from the stored node alone, so every later turn sends the window byte for byte and the provider caches it like any other prefix.
-It stands in for upstream #10573, which sends provider-less `CompactionPart`s to Chat Completions models, and goes once a release includes it (#7289).
+The window stays ours, since only an adapter that honors compaction boundaries drops the history before one, which `OpenAIChatModel` does not (#7289).
 
 ### Run state appends its changes
 

@@ -93,23 +93,16 @@ def test_boundaries(
     assert compaction_cut(messages) == cut
 
 
-def test_window_renders_the_summary_and_drops_what_it_replaced() -> None:
+def test_window_sends_the_summary_and_drops_what_it_replaced() -> None:
     prompt = _prompt("go on")
 
     window = compaction_window([*_TURN, _COMPACTION, prompt])
 
-    assert len(window) == 2
-    assert window[1] is prompt
-    summary = window[0].parts[0]
-    assert isinstance(summary, UserPromptPart)
-    assert (
-        summary.content == "<conversation_summary>\nthe gist\n</conversation_summary>"
-    )
+    assert window == [ModelRequest(parts=[CompactionPart(content="the gist")]), prompt]
     assert compaction_window(_TURN) == _TURN
 
 
 _HISTORY = [_TURN[0], *MEMORY_READ, *_TURN[1:]]
-_SUMMARY = "<conversation_summary>\n{}\n</conversation_summary>"
 
 
 class _Overflowing:
@@ -167,7 +160,12 @@ class _Overflowing:
 
 
 def _prompts(message: ModelMessage) -> list[object]:
-    return [part.content for part in message.parts if isinstance(part, UserPromptPart)]
+    """The prompts and summaries of *message*, as the model reads them."""
+    return [
+        part.content
+        for part in message.parts
+        if isinstance(part, UserPromptPart | CompactionPart)
+    ]
 
 
 def _compaction_index(messages: list[ModelMessage]) -> int:
@@ -184,7 +182,7 @@ async def test_an_overflowing_prompt_is_compacted_ahead_of_it_and_retried(
     # The refused turn, the summary asked as its next turn, then the retry.
     assert model.seen[1][: len(_HISTORY)] == _HISTORY
     # Summary and prompt merged into the one request the retry sends.
-    assert _prompts(model.seen[2][0]) == [_SUMMARY.format("reply 2"), "next question"]
+    assert _prompts(model.seen[2][0]) == ["reply 2", "next question"]
     assert [event.part for event in compacted] == [CompactionPart(content="reply 2")]
     # Stored ahead of the prompt it was made for, past the persisted prefix.
     assert captured[: len(_HISTORY)] == _HISTORY
@@ -211,7 +209,7 @@ async def test_a_refused_tool_return_is_summarized_and_the_run_continues(
     assert isinstance(round_call, ModelResponse) and round_call.tool_calls
     assert isinstance(refused, ModelRequest)
     assert _prompts(model.seen[2][-1]) == [COMPACT_PROMPT["en"]]
-    assert _prompts(model.seen[3][0]) == [_SUMMARY.format("reply 3")]
+    assert _prompts(model.seen[3][0]) == ["reply 3"]
 
 
 async def test_a_regenerated_prompt_is_compacted_ahead_of_it(

@@ -1,10 +1,11 @@
 """The window a model is sent once its history holds a compaction.
 
-pydantic-ai does not yet send a provider-less ``CompactionPart`` to a Chat
-Completions model, which replays the full history instead (upstream #7289).
-:class:`CompactionWindow` does it in the meantime, and goes once a release
-includes #10573 (see "Compaction is a turn of the conversation" in
-``backend/README.md``).
+A compaction is stored as a response, where a run never merges it with the
+prompt around it, and sent as the request pydantic-ai renders for every model
+as the framed summary (#10573).  Only an adapter that honors compaction
+boundaries drops the history before it, which ``OpenAIChatModel`` does not
+(upstream #7289), so :class:`CompactionWindow` does (see "Compaction is a turn
+of the conversation" in ``backend/README.md``).
 """
 
 from collections.abc import Sequence
@@ -18,7 +19,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    UserPromptPart,
     post_compaction_window,
 )
 from pydantic_ai.models import ModelRequestContext
@@ -27,23 +27,21 @@ __all__ = ["CompactionWindow", "compaction_window"]
 
 
 def compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
-    """The messages a model is sent for *messages*, the summary as user text.
+    """The messages a model is sent for *messages*, the summary as a request.
 
-    Tags rather than prose frame the summary, so the rendering depends on the
-    stored node alone and not on settings that may change between turns.  A
-    provider's own compaction is left to its adapter.
+    pydantic-ai renders it from the stored node alone, so every later turn
+    sends it byte for byte.  A provider's own compaction is left to its adapter.
     """
     match window := post_compaction_window(messages):
         case [
             ModelResponse(
-                parts=[CompactionPart(content=str(summary), provider_name=None), *rest]
+                parts=[CompactionPart(provider_name=None) as summary, *rest]
             ) as head,
             *tail,
         ]:
-            text = f"<conversation_summary>\n{summary}\n</conversation_summary>"
             kept = [replace(head, parts=rest)] if rest else []
 
-            return [ModelRequest(parts=[UserPromptPart(text)]), *kept, *tail]
+            return [ModelRequest(parts=[summary]), *kept, *tail]
 
         case _:
             return window
