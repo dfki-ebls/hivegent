@@ -6,7 +6,8 @@ its event stream records UI-owned metadata and shows compactions live.
 It also owns :func:`run_and_persist`, which streams a turn and mirrors the
 run's message list to storage on every finish, and :func:`dump_messages_with_ids`,
 which projects stored tree nodes to ``UIMessage``s whose ids are the node ids
-the client addresses for edit / regenerate / branch-select.
+the client addresses for edit / regenerate / branch-select.  What a turn stores
+and resumes lives in :mod:`.turns`.
 """
 
 import asyncio
@@ -22,25 +23,27 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any, TypedDict, override
 
-from pydantic import TypeAdapter, ValidationError
-from pydantic_ai import AgentRunResultEvent, capture_run_messages
+from pydantic_ai import AgentRunEvents, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
     CapabilityEvent,
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryFeedbackPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
-    ToolCallPart,
-    ToolReturnPart,
+    UserContent,
+    UserPromptPart,
 )
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai.ui import NativeEvent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRespondedPart,
@@ -54,7 +57,12 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     ToolUIPart,
     UIMessage,
 )
-from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk, ErrorChunk
+from pydantic_ai.ui.vercel_ai.response_types import (
+    BaseChunk,
+    DataChunk,
+    ErrorChunk,
+    MessageMetadataChunk,
+)
 from starlette.responses import Response
 
 from ..agents.approval import APPROVAL_NOTE_KEY
@@ -62,8 +70,18 @@ from ..agents.compaction import Compacted
 from ..agents.subagent_events import SubagentUpdate
 from ..agents.tools.ask import ANSWERS, ASK_USER_TOOL, DISMISSED_QUESTIONS
 from ..config import new_id
-from ..db.conversations import CHAT_ERROR_KEY, is_user_request
+from ..db.conversations import prompt_items
 from ..l10n import Localized
+from .turns import (
+    DEFERRED_KEY,
+    DEFERRED_REQUESTS,
+    INTERRUPTED_TOOL_ERROR,
+    close_orphan_tool_calls,
+    pending_requests,
+    record_approvals,
+    record_turn_error,
+    recorded_decisions,
+)
 
 __all__ = [
     "APPROVAL_METADATA_KEY",
@@ -71,12 +89,9 @@ __all__ = [
     "SUBAGENT_CHUNK_TYPE",
     "BranchInfo",
     "ChatAdapter",
-    "abandon_pending_calls",
-    "close_orphan_tool_calls",
+    "agent_events",
     "denial_message",
     "dump_messages_with_ids",
-    "record_approvals",
-    "record_turn_error",
     "run_and_persist",
 ]
 
@@ -97,17 +112,8 @@ SUBAGENT_CHUNK_TYPE = "data-subagent"
 # so the runs of one turn merge into one object like any other metadata.
 REASONING_DURATIONS_KEY = "reasoningDurationsMs"
 
-# Content for the synthetic failed return that closes a tool call left dangling
-# by an interrupted run (client disconnect) when no stream error text is known.
-INTERRUPTED_TOOL_ERROR = "The tool call did not complete because the run ended early."
 
-# Content for the denial that closes an approval request the user walked away
-# from by sending another message instead of answering it.
-ABANDONED_APPROVAL_DENIAL = (
-    "The user did not answer this approval request and moved on to another "
-    "message, so the call was never executed. Do not reissue it unless they "
-    "ask for it again."
-)
+
 
 _SAVE_FAILED = Localized(
     en="Failed to save the conversation.",
@@ -119,19 +125,27 @@ _RUN_FAILED = Localized(
     de="Die Antwort ist fehlgeschlagen. Bitte versuchen Sie es erneut.",
 )
 
-# Message metadata key mapping each tool call a user decision resolved to that
-# decision, set on the request that carries their returns (see `record_approvals`).
-_APPROVAL_DECISIONS_KEY = "approvalDecisions"
 
-_DECISIONS = TypeAdapter(dict[str, ToolApprovalResponded])
 
 # Message metadata key mapping each approval-pending tool call id to the
 # metadata its `ApprovalRequired` carried, set on the response that asked.
 APPROVAL_METADATA_KEY = "approvalMetadata"
 
+
+
 _ASK_USER_PART = f"tool-{ASK_USER_TOOL}"
 
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
+
+
+
+async def agent_events[OutputT](
+    run: AbstractAsyncContextManager[AgentRunEvents[OutputT]],
+) -> AsyncIterator[NativeEvent]:
+    """The events of *run*, an agent's ``run_stream_events``, for ``transform_stream``."""
+    async with run as events:
+        async for event in events:
+            yield event
 
 
 class BranchInfo(TypedDict):
@@ -184,11 +198,13 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     metadata, so it stays UI-owned and is not sent back to providers as part
     metadata on follow-up turns.
 
-    The metadata of every ``ApprovalRequired`` the run ended on rides the same
-    channel under :data:`APPROVAL_METADATA_KEY`, since the protocol's approval
-    request chunk carries ids only.  It reaches the client in the run's one
-    metadata chunk and is stored on the response that holds the pending calls,
-    so a reload shows the same server-resolved details the live prompt did.
+    The ``DeferredToolRequests`` a run ended on are stored on the response that
+    holds the pending calls, which is what the next request resumes against
+    (:func:`pending_requests`), and never sent to the client.  What each
+    ``ApprovalRequired`` carried is stored beside them under
+    :data:`APPROVAL_METADATA_KEY` for the client, live in the run's one metadata
+    chunk and on reload alike, since the protocol's approval request chunk
+    carries ids only.
     """
 
     _thinking_started_at: float | None = None
@@ -248,22 +264,37 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
                 event.result.run_id: self._thinking_durations_ms
             }
 
-        output = event.result.output
+        if isinstance(output := event.result.output, DeferredToolRequests):
+            ui_metadata[DEFERRED_KEY] = DEFERRED_REQUESTS.dump_python(output, mode="json")
 
-        if isinstance(output, DeferredToolRequests) and (
-            approvals := {
+            if approvals := {
                 call.tool_call_id: output.metadata[call.tool_call_id]
                 for call in output.approvals
                 if call.tool_call_id in output.metadata
-            }
-        ):
-            ui_metadata[APPROVAL_METADATA_KEY] = approvals
+            }:
+                ui_metadata[APPROVAL_METADATA_KEY] = approvals
 
         if ui_metadata:
             response.metadata = {**(response.metadata or {}), **ui_metadata}
 
         async for chunk in super().handle_run_result(event):
+            if isinstance(chunk, MessageMetadataChunk) and isinstance(
+                chunk.message_metadata, dict
+            ):
+                chunk = chunk.model_copy(
+                    update={"message_metadata": _client_metadata(chunk.message_metadata)}
+                )
+
             yield chunk
+
+
+def _client_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """*metadata* as the client sees it, without the stored requests."""
+    return {key: value for key, value in metadata.items() if key != DEFERRED_KEY}
+
+
+
+
 
 
 class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
@@ -294,6 +325,31 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
         return self.load_messages(
             [message for message in self.run_input.messages if message.role == "user"]
         )
+
+    @cached_property
+    def prompt(self) -> str | list[UserContent] | None:
+        """The client's new prompt, as its one part holds it, ``None`` without one.
+
+        A run takes it as its user prompt rather than appended to the history,
+        since a run merges consecutive requests, which would merge the prompt
+        into a stored request it follows: the returns closing an abandoned or
+        errored turn, or a prompt whose run failed (see :class:`Replay`).
+        """
+        parts = [
+            part
+            for message in self.messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
+
+        if not parts:
+            return None
+
+        if len(parts) == 1:
+            content = parts[0].content
+            return content if isinstance(content, str) else list(content)
+
+        return [item for part in parts for item in prompt_items(part)]
 
     @cached_property
     def approval_decisions(self) -> dict[str, ToolApprovalResponded]:
@@ -343,24 +399,45 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
     @cached_property
     @override
     def deferred_tool_results(self) -> DeferredToolResults | None:
-        """Resume the run with the user's decisions, notes, and answers.
+        """Never derived from the request alone, :meth:`resume` builds them."""
+        return None
 
-        The client's ``reason`` is the user's own note on either decision.  A
-        denial wraps it into the refusal the model reads (:func:`denial_message`)
-        and an approval hands it to the call as metadata, which
+    def resume(self, pending: DeferredToolRequests | None) -> DeferredToolResults | None:
+        """Resume the run with the user's decisions, notes, and answers to *pending*.
+
+        *pending* are the stored requests (:func:`pending_requests`), so a
+        decision or answer for a call that is no longer pending is dropped, as
+        the client re-sends every settled card of the message.  The client's
+        ``reason`` is the user's own note on either decision.  A denial wraps it
+        into the refusal the model reads (:func:`denial_message`) and an
+        approval hands it to the call as metadata, which
         :class:`~hivegent.agents.approval.ApprovalNotes` appends to its result.
         Answers to questions are the results of their calls as they stand.
 
         Raises:
-            pydantic.ValidationError: If an answer does not fit its schema.
+            ValueError: If an answer does not fit its schema (a
+                ``pydantic.ValidationError``), or a call is answered with the
+                other kind of result, such as an approval answered like a question.
         """
-        decisions = self.approval_decisions
-        answers = self.question_answers
+        if pending is None:
+            return None
+
+        open_ids = {call.tool_call_id for call in (*pending.calls, *pending.approvals)}
+        decisions = {
+            call_id: decision
+            for call_id, decision in self.approval_decisions.items()
+            if call_id in open_ids
+        }
+        answers = {
+            call_id: answer
+            for call_id, answer in self.question_answers.items()
+            if call_id in open_ids
+        }
 
         if not decisions and not answers:
             return None
 
-        return DeferredToolResults(
+        return pending.build_results(
             calls=answers,
             approvals={
                 call_id: True
@@ -391,71 +468,10 @@ async def _persist_safely(
         logger.exception("Failed to persist conversation turn")
 
 
-def record_approvals(
-    messages: Sequence[ModelMessage], decisions: Mapping[str, ToolApprovalResponded]
-) -> None:
-    """Store this turn's approval decisions and the user's notes, for reload.
-
-    An approved call simply runs and stores an ordinary successful return, so
-    nothing in the message list says it was ever gated, and a denial stores the
-    refusal the model reads rather than the note the user typed.  Either way
-    the decision on screen live would not survive a reload.
-
-    Each decision is recorded on the request carrying its call's return, which
-    is UI-owned metadata that never reaches the provider, like the reasoning
-    durations and the turn error beside it.  The return part's own ``metadata``
-    would be the closer home but is already the tool-output chunk channel (see
-    ``tools.pydantic_ai.wrap_tool_output``).
-    :func:`dump_messages_with_ids` reads it back.  Mutates in place.
-    """
-    if not decisions:
-        return
-
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            continue
-
-        _stamp(
-            message,
-            {
-                part.tool_call_id: decisions[part.tool_call_id]
-                for part in message.parts
-                if isinstance(part, ToolReturnPart) and part.tool_call_id in decisions
-            },
-        )
 
 
-def _stamp(
-    message: ModelRequest, decisions: Mapping[str, ToolApprovalResponded]
-) -> None:
-    """Store *decisions* on the request carrying their calls' returns, the one form every decision takes."""
-    if decisions:
-        message.metadata = {
-            **(message.metadata or {}),
-            _APPROVAL_DECISIONS_KEY: _DECISIONS.dump_python(
-                dict(decisions), mode="json", by_alias=True, exclude_none=True
-            ),
-        }
 
 
-def _recorded_decisions(
-    messages: Iterable[ModelMessage],
-) -> dict[str, ToolApprovalResponded]:
-    """The decisions :func:`record_approvals` stored on *messages*."""
-    decisions: dict[str, ToolApprovalResponded] = {}
-
-    for message in messages:
-        recorded = (message.metadata or {}).get(_APPROVAL_DECISIONS_KEY)
-
-        if recorded is None:
-            continue
-
-        try:
-            decisions.update(_DECISIONS.validate_python(recorded))
-        except ValidationError:
-            logger.warning("Ignoring malformed approval decisions %r", recorded)
-
-    return decisions
 
 
 def _attach_approvals(
@@ -477,20 +493,27 @@ def _attach_approvals(
                 part.approval = decision
 
 
-def _reopen_questions(messages: Sequence[UIMessage]) -> None:
-    """Show the pending questions as awaiting their answers, not an approval.
+def _reopen_questions(
+    messages: Sequence[UIMessage], pending: DeferredToolRequests | None
+) -> None:
+    """Show the *pending* questions as awaiting their answers, not an approval.
 
     The projection reads any dangling call as an approval request, since a call
-    the run deferred looks the same in the history as one it gated.  Only the
-    last message can hold one (see :func:`abandon_pending_calls`).
+    the run deferred looks the same in the history as one it gated, so the
+    stored requests tell them apart.  Only the last message can hold one, as
+    the turn folds into it (see :func:`_fold_turns`).
     """
-    if not messages:
+    if not messages or pending is None:
         return
 
+    questions = {call.tool_call_id for call in pending.calls}
     parts = messages[-1].parts
 
     for index, part in enumerate(parts):
-        if isinstance(part, ToolApprovalRequestedPart) and part.type == _ASK_USER_PART:
+        if (
+            isinstance(part, ToolApprovalRequestedPart)
+            and part.tool_call_id in questions
+        ):
             parts[index] = ToolInputAvailablePart(
                 type=part.type,
                 tool_call_id=part.tool_call_id,
@@ -545,14 +568,19 @@ _HARNESS_PARTS = (RetryFeedbackPart, ToolAvailabilityDeltaPart)
 
 
 def _shown(message: ModelMessage) -> ModelMessage:
-    """*message* without the harness parts a transcript leaves out.
+    """*message* without what a transcript leaves out.
 
     Retry feedback and tool availability are addressed to the model, and the
     adapter would dump each as a message of its own between two responses of
-    one turn, which then no longer folds into the message it streamed as.
+    one turn, which then no longer folds into the message it streamed as.  The
+    stored requests a response carries stay server side (:func:`_client_metadata`).
     """
-    if not isinstance(message, ModelRequest):
-        return message
+    if isinstance(message, ModelResponse):
+        return (
+            replace(message, metadata=_client_metadata(message.metadata))
+            if message.metadata and DEFERRED_KEY in message.metadata
+            else message
+        )
 
     parts = [part for part in message.parts if not isinstance(part, _HARNESS_PARTS)]
 
@@ -584,6 +612,7 @@ def dump_messages_with_ids(
     pending questions are reopened rather than shown as approval requests, and
     each assistant turn is one message, as it streamed (see :func:`_fold_turns`).
     """
+    pending = pending_requests([msg for _, msg in pairs])
     pairs = [(node_id, _shown(msg)) for node_id, msg in pairs]
     node_by_obj = {id(msg): node_id for node_id, msg in pairs}
 
@@ -609,8 +638,8 @@ def dump_messages_with_ids(
             sdk_version=SDK_VERSION,
         )
     )
-    _attach_approvals(ui_messages, _recorded_decisions(msg for _, msg in pairs))
-    _reopen_questions(ui_messages)
+    _attach_approvals(ui_messages, recorded_decisions(msg for _, msg in pairs))
+    _reopen_questions(ui_messages, pending)
 
     return ui_messages
 
@@ -672,134 +701,12 @@ async def _merge_subagent_events(
             await driver
 
 
-def close_orphan_tool_calls(
-    messages: list[ModelMessage], content: str
-) -> list[ModelMessage]:
-    """Append synthetic failed returns for any tool call left without a result.
-
-    A tool that raises (or a run cut short) leaves a ``ToolCallPart`` with no
-    matching return in ``capture_run_messages``.  Persisted verbatim, the reload
-    projection reads that dangling call as an approval request and the history
-    becomes invalid to replay to the provider (a ``tool_use`` with no
-    ``tool_result``).  Closing each orphan with a ``ToolReturnPart``
-    (``outcome='failed'``) carrying *content* keeps the stored turn a faithful,
-    replayable mirror of the streamed one: the tool card reloads as an error and
-    the next turn sees a well-formed tool result.
-
-    Call this only when the run did not finish cleanly — a clean finish may leave
-    a genuine approval-pending call dangling, which must reload as an approval
-    request, not an error.  Returns *messages* unchanged when nothing dangles.
-    """
-    resolved = {
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    }
-    orphans = {
-        part.tool_call_id: part.tool_name
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolCallPart) and part.tool_call_id not in resolved
-    }
-
-    if not orphans:
-        return messages
-
-    returns = [
-        ToolReturnPart(
-            tool_name=tool_name,
-            content=content,
-            tool_call_id=tool_call_id,
-            outcome="failed",
-        )
-        for tool_call_id, tool_name in orphans.items()
-    ]
-
-    return [*messages, ModelRequest(parts=returns)]
 
 
-def abandon_pending_calls(prefix: Sequence[ModelMessage]) -> ModelRequest | None:
-    """Close the calls *prefix* ends on, or return ``None`` if it ends on none.
-
-    A run that finishes awaiting approval or answers leaves its calls dangling
-    on purpose, so the next request can carry the decisions and resume it.  A
-    next request that carries a new prompt instead ends that run for good: the
-    call can never
-    be answered now, yet it stays in the stored history, where pydantic-ai
-    repairs it on the way to the provider with a generic ``interrupted``
-    result.  The model reads that as a transient failure and reissues the
-    identical call, which is left dangling in turn — so a single abandoned
-    approval has every later turn repeat the same call with the same arguments.
-
-    Answering it as a denial instead says what actually happened, and once the
-    refusal is stored the history holds a resolved call rather than one that is
-    repaired again on every future turn.  The denial is recorded like a user's
-    (:func:`record_approvals`), with no note, since nobody typed one.  A
-    question is closed as dismissed, just as if the user had dismissed it.
-
-    Only a trailing response is considered, and then every call it holds is
-    unanswered by construction: a result is a ``ModelRequest`` part, so it can
-    only sit *after* the response that called for it, and nothing sits after
-    the last message.  An earlier dangling call needs no handling here — it was
-    already closed when its own turn ended.
-    """
-    if not prefix or not isinstance(last := prefix[-1], ModelResponse):
-        return None
-
-    calls = [part for part in last.parts if isinstance(part, ToolCallPart)]
-
-    if not calls:
-        return None
-
-    approvals = {part.tool_call_id for part in calls if part.tool_name != ASK_USER_TOOL}
-    declined = ModelRequest(
-        parts=[
-            ToolReturnPart(
-                tool_name=part.tool_name,
-                content=ABANDONED_APPROVAL_DENIAL
-                if part.tool_call_id in approvals
-                else DISMISSED_QUESTIONS,
-                tool_call_id=part.tool_call_id,
-                outcome="denied" if part.tool_call_id in approvals else "failed",
-            )
-            for part in calls
-        ]
-    )
-    _stamp(
-        declined,
-        {
-            call_id: ToolApprovalResponded(id=call_id, approved=False)
-            for call_id in approvals
-        },
-    )
-
-    return declined
 
 
-def record_turn_error(messages: list[ModelMessage], error_text: str) -> None:
-    """Store *error_text* on the turn's last visible message for reload.
 
-    A run error is shown live as a chat-level banner but is a stream event, not
-    a message part, so it is lost on reload.  Recording it under
-    :data:`CHAT_ERROR_KEY` on the metadata of the last message that projects to a
-    ``UIMessage`` (the assistant response, or the user prompt when the run failed
-    before responding) lets the frontend re-render the banner from stored
-    history.  The key is UI-owned metadata, never sent back to the provider (like
-    the reasoning durations alongside it).  Mutates the target message in place.
-    """
-    target = next(
-        (
-            message
-            for message in reversed(messages)
-            if (isinstance(message, ModelResponse) and message.parts)
-            or is_user_request(message)
-        ),
-        None,
-    )
 
-    if target is not None:
-        target.metadata = {**(target.metadata or {}), CHAT_ERROR_KEY: error_text}
 
 
 async def run_and_persist[DepsT, OutputT](

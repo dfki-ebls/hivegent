@@ -33,6 +33,7 @@ from hivegent.agents.compaction import (
 from hivegent.agents.summarize import COMPACT_PROMPT
 from hivegent.agents.window import compaction_window
 from hivegent.db.conversations import is_user_request
+from hivegent.server.turns import Replay
 from tests.helpers import MEMORY_READ, OVERFLOW
 
 
@@ -217,7 +218,13 @@ async def test_a_regenerated_prompt_is_compacted_ahead_of_it(
 ) -> None:
     """The prompt is persisted already, so the compaction takes its place."""
     model = _Overflowing(run_prefix)
-    captured, _ = await model.run_turn(None, [*_HISTORY, _prompt("next question")])
+    prefix = [*_HISTORY, _prompt("next question")]
+    captured, _ = await model.run_turn(None, prefix)
+    above, delta = Replay.of(prefix).turn(captured)
 
     assert _compaction_index(captured) == len(_HISTORY)
     assert is_user_request(captured[len(_HISTORY) + 1])
+    # Stored above the persisted prompt, and only the reply below it.
+    assert above is not None and is_compaction(above)
+    assert not any(is_user_request(message) for message in delta)
+    assert isinstance(delta[-1], ModelResponse) and delta[-1].text

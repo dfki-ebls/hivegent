@@ -181,6 +181,11 @@ The client sends only the new message plus `trigger` and `messageId`.
 `dump_messages_with_ids` anchors each `UIMessage.id` to its node id and annotates forks for branch navigation.
 `resolve_fork` treats `messageId` as an edit only when it names a user turn on the active path, since the SDK also sends it when continuing after an approval.
 For the same reason `ChatAdapter` keeps only the client's user messages, since appending the approval resend would duplicate a `tool_call_id` and make the model reissue the call.
+The route runs the agent with that prompt as its user prompt (`ChatAdapter.prompt`, `agent_events`) rather than through `adapter.run_stream`, which appends it to the history.
+A run merges consecutive requests, which would merge it into a stored request it follows: the returns closing an abandoned or errored turn, or a prompt whose run failed.
+
+A stored `head_id` on the conversation row, as pydantic-ai's `ConversationStore` keeps one, would make the active branch explicit, so selecting a branch would persist and the newest-leaf query with its timestamp tie-break would go.
+It is left for later, since the newest leaf already is the active branch for every write path.
 
 ### Clients choose conversation and message ids
 
@@ -198,10 +203,21 @@ Every node is inserted, never upserted, so a chosen id can neither replace nor r
 An edit sends the edited node as `messageId` and the edited message under a fresh id, which becomes a sibling of the edited node.
 A regenerate, a compaction, and a post-approval continuation carry no new user message, so their nodes take server ids.
 
+### A paused run stores what it awaits
+
+A run that ends on `DeferredToolRequests` stores them on its last response under the server-only `deferredToolRequests` metadata key, as pydantic-ai's `Conversation.deferred_tool_requests` carries them, since the messages show which calls are unanswered but not whether each awaits an approval or an answer, nor what it was deferred with.
+That response is not always the last message, since the calls it ran beside the deferred ones answer in a request after it, so `pending_requests` finds the last response and drops the calls a later return answered.
+The next request resumes against them: `ChatAdapter.resume` keeps only the decisions and answers for calls still pending, as the client re-sends every settled card, and builds the results with `DeferredToolRequests.build_results`, which refuses a call answered with the other kind of result with a 422.
+`ChatAdapter.deferred_tool_results` is therefore always `None`, so the base adapter never resumes from the client's claims alone.
+The client never receives the stored requests (`_client_metadata`), only what each `ApprovalRequired` carried, stored beside them as `approvalMetadata`.
+Migration `f4a5b6c7d8e9` stored them for the turns paused before, from their unanswered calls.
+
 An approval or question the user never answers is closed by the next turn (`abandon_pending_calls`), stored as its own node before the run, since pydantic-ai would otherwise repair the dangling call as "interrupted" and the model would reissue it on every turn.
+The stored requests say which pending call is denied and which dismissed, and the changesets of every approval that is not approved are discarded (`discard_unapproved_changes`).
 
 Persistence is hard-fail: a failed write surfaces as a trailing error chunk, and is only logged on a client disconnect.
 `run_and_persist` persists exactly what `capture_run_messages()` holds.
+A run starts from the history with consecutive requests merged, as an approval resumed beside calls that already ran leaves them, so `turns.Replay` measures the replayed prefix as the run normalizes it (`repair_messages`), where the turn's messages start.
 A turn that never finished first gets `close_orphan_tool_calls` and `record_turn_error`, while a clean finish is stored untouched, so a pending approval reloads as one.
 
 ### Client-posted messages are validated strictly
@@ -215,7 +231,7 @@ Such drift is fixed upstream, never by relaxing `extra='forbid'`, which is what 
 A decision's `reason` is the user's optional note, and the model-facing text is worded in the backend, in English.
 A denial becomes `ToolDenied(denial_message(note))`, and an approval's note reaches the call as `RunContext.tool_call_metadata`, which `agents.approval.ApprovalNotes` appends as one more item of the return's content list, after `ToolOutputSpill` bounded it (`wraps=[ToolOutputSpill]`).
 It is not `ToolReturn.content`, which would be stored as a user turn nobody typed.
-`vercel.record_approvals` stamps each decision on the request carrying the returns, and `dump_messages_with_ids` restores it, so `approval.reason` always means the user's note.
+`turns.record_approvals` stamps each decision on the request carrying the returns, and `dump_messages_with_ids` restores it, so `approval.reason` always means the user's note.
 That metadata is UI-owned, never sent to the provider, and rides on the request node, since `ToolReturnPart.metadata` is the tool-output chunk channel.
 `ChatEventStream.handle_run_result` stores what each `ApprovalRequired` carried under `approvalMetadata`, so the prompt shows the same server-resolved paths live and on reload.
 An approval overtaken by a new message is a denial on both sides, recorded by `abandon_pending_calls` and derived by the frontend over the live transcript.
@@ -223,7 +239,7 @@ An approval overtaken by a new message is a denial on both sides, recorded by `a
 ### Questions are deferred calls answered by the client
 
 `ask_user` raises `CallDeferred`, so the run ends with the questions pending and the client sends the answers as the call's output, validated against `AskAnswer` by `ChatAdapter.question_answers`.
-A dismissal or an abandoned question is a failed return worded by the server (`DISMISSED_QUESTIONS`), and `dump_messages_with_ids` reopens a pending question as `input-available`.
+A dismissal or an abandoned question is a failed return worded by the server (`DISMISSED_QUESTIONS`), and `dump_messages_with_ids` reopens a pending question, one of the stored requests' `calls`, as `input-available`.
 
 ### Compaction is a turn of the conversation
 

@@ -16,7 +16,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -576,15 +576,13 @@ async def test_unapproved_changesets_are_discarded(data_dir: Path) -> None:
     approved = await staging.stage(mine, _STAGED)
     denied = await staging.stage(mine, _STAGED)
     foreign = await staging.stage(other, _STAGED)
-    response = ModelResponse(
-        parts=[
-            ToolCallPart("apply_changes", {"changeset_id": approved}, "call-1"),
-            ToolCallPart("apply_changes", {"changeset_id": denied}, "call-2"),
-            ToolCallPart("apply_changes", {"changeset_id": foreign}, "call-3"),
-        ]
-    )
+    pending = [
+        ToolCallPart("apply_changes", {"changeset_id": approved}, "call-1"),
+        ToolCallPart("apply_changes", {"changeset_id": denied}, "call-2"),
+        ToolCallPart("apply_changes", {"changeset_id": foreign}, "call-3"),
+    ]
 
-    await discard_unapproved_changes(mine, response, {"call-1"})
+    await discard_unapproved_changes(mine, pending, {"call-1"})
 
     assert await staging.load_staged(mine, approved) == _STAGED
     assert await staging.load_staged(mine, denied) is None

@@ -19,12 +19,12 @@ is never asked to approve a batch the gateway would refuse, and the approval
 shows the planner's summary of the workspace half.
 """
 
-from collections.abc import Callable, Container, Sequence
+from collections.abc import Callable, Container, Iterable, Sequence
 from typing import Any, NoReturn
 
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolDefinition
 from pydantic_core import to_jsonable_python
 
@@ -345,17 +345,18 @@ def _apply_changes(deps: UserDeps) -> ApplyChangesTool:
 
 
 async def discard_unapproved_changes(
-    conversation: OwnedConversation, response: ModelResponse, approved: Container[str]
+    conversation: OwnedConversation,
+    pending: Iterable[ToolCallPart],
+    approved: Container[str],
 ) -> None:
-    """Drop the changesets the ``apply_changes`` calls in *response* name, unless approved.
+    """Drop the changesets the pending ``apply_changes`` calls name, unless approved.
 
-    *response* ends a turn that awaited approval, so a call *approved* does not
-    name was denied or abandoned and can never apply its changeset.
+    *pending* are the calls a turn left awaiting approval, so a call *approved*
+    does not name was denied or abandoned and can never apply its changeset.
     """
-    for part in response.parts:
+    for part in pending:
         if (
-            isinstance(part, ToolCallPart)
-            and part.tool_name == factory_tool_name(_apply_changes)
+            part.tool_name == factory_tool_name(_apply_changes)
             and part.tool_call_id not in approved
             and isinstance(changeset_id := part.args_as_dict().get("changeset_id"), str)
         ):

@@ -38,7 +38,6 @@ from ...agents.compaction import (
     CompactOnOverflow,
     compact,
     compaction_cut,
-    is_compaction,
 )
 from ...agents.subagent_events import SubagentUpdate
 from ...auth import get_current_user
@@ -96,10 +95,11 @@ from ..common import (
     resolve_workspace_path,
 )
 from ..operations import attachment_disposition
+from ..turns import Replay, abandon_pending_calls, pending_requests
 from ..vercel import (
     SDK_VERSION,
     ChatAdapter,
-    abandon_pending_calls,
+    agent_events,
     dump_messages_with_ids,
     run_and_persist,
 )
@@ -551,8 +551,6 @@ async def _run_chat(
                 request, agent=user_agent, sdk_version=SDK_VERSION
             ),
         )
-        # Validates the client's answers to pending questions as well.
-        resumed = adapter.deferred_tool_results is not None
     except ValidationError as exc:
         raise HTTPException(
             status_code=422, detail=_INVALID_CHAT_REQUEST.current
@@ -589,6 +587,16 @@ async def _run_chat(
     if config.compact:
         return _compact_active_path(conversation, adapter, run_prefix, prefix, fork_id)
 
+    # The client's decisions and answers count only for the calls the stored
+    # history still awaits, each with the kind of result it was deferred for.
+    pending = pending_requests(prefix)
+    try:
+        deferred = adapter.resume(pending)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=_INVALID_CHAT_REQUEST.current
+        ) from exc
+
     # Every check that can refuse the request is behind, so a refused one
     # leaves no row.  An id taken since it was opened is no longer the caller's.
     if not exists and not await claim_conversation(conversation):
@@ -596,13 +604,13 @@ async def _run_chat(
 
     # Changes a program staged for an approval this request denies or abandons
     # can never be applied, so they go now rather than at the next boot sweep.
-    if prefix and isinstance(prefix[-1], ModelResponse):
+    if pending is not None:
         approved = {
             call
             for call, decision in adapter.approval_decisions.items()
             if decision.approved
         }
-        await discard_unapproved_changes(conversation, prefix[-1], approved)
+        await discard_unapproved_changes(conversation, pending.approvals, approved)
 
     # A turn that ended awaiting approval or answers left its calls dangling so
     # this request could answer them.  One that carries anything else abandons
@@ -610,50 +618,50 @@ async def _run_chat(
     # replays them as a generic "interrupted" result and the model reissues the
     # same calls again and again.  Stored as its own node, since the run
     # replays it as part of the prefix.
-    if not resumed:
-        declined = abandon_pending_calls(prefix)
+    if deferred is None:
+        declined = abandon_pending_calls(pending)
         if declined is not None:
             fork_id = await append_branch(conversation, fork_id, [declined])
             prefix = [*prefix, declined]
 
     record_known_urls(deps.known_urls, chain(prefix, adapter.messages))
 
-    stream = adapter.run_stream(
-        deps=deps,
-        output_type=[str, DeferredToolRequests],
-        model=run_prefix.model,
-        # Adds no instructions or tools, so the prefix stays the cached one.
-        capabilities=[
-            *run_prefix.capabilities,
-            CompactOnOverflow(run_prefix),
-        ],
-        instructions=run_prefix.instructions,
-        model_settings=model_settings,
-        message_history=prefix,
-        usage_limits=turn_usage_limits,
-        # The server's id rather than the client's, so the run knows the one
-        # conversation its `/tmp` and persisted turns belong to.
-        conversation_id=conversation.id,
+    stream = adapter.transform_stream(
+        agent_events(
+            user_agent.run_stream_events(
+                adapter.prompt,
+                deps=deps,
+                output_type=[str, DeferredToolRequests],
+                model=run_prefix.model,
+                # Adds no instructions or tools, so the prefix stays the cached one.
+                capabilities=[
+                    *run_prefix.capabilities,
+                    CompactOnOverflow(run_prefix),
+                ],
+                instructions=run_prefix.instructions,
+                model_settings=model_settings,
+                message_history=prefix,
+                deferred_tool_results=deferred,
+                usage_limits=turn_usage_limits,
+                # The server's id rather than the client's, so the run knows the
+                # one conversation its `/tmp` and persisted turns belong to.
+                conversation_id=conversation.id,
+            )
+        )
     )
 
-    # Capture only the prefix length and whether it ends compacted, not the
-    # prefix list, so the closure (held for the whole stream) does not pin the
-    # full replayed history.
-    prefix_len = len(prefix)
-    ends_compacted = bool(prefix) and is_compaction(prefix[-1])
+    replay = Replay.of(prefix)
 
     async def persist(messages: Sequence[ModelMessage]) -> None:
         # Append only the turn's new messages (past the replayed prefix) as a
         # branch under the fork point.  The delta's user message is the
-        # client's, so it lands under the id the client gave it.
-        delta = messages[prefix_len:]
+        # client's, so it lands under the id the client gave it.  A compaction
+        # that took the place of the regenerated prompt, the fork node, goes
+        # ahead of it.
+        above, delta = replay.turn(messages)
 
-        # A compaction that took the place of the regenerated prompt, the fork
-        # node, goes ahead of it.
-        ahead = messages[prefix_len - 1] if prefix_len else None
-        if fork_id and ahead and is_compaction(ahead) and not ends_compacted:
-            await insert_above(conversation, fork_id, ahead)
-            delta = messages[prefix_len + 1 :]
+        if above is not None and fork_id:
+            await insert_above(conversation, fork_id, above)
 
         await append_branch(conversation, fork_id, delta, prompt_id=user_node_id)
 

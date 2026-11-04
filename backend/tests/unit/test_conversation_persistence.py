@@ -56,22 +56,24 @@ from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
 from hivegent.agents.approval import ApprovalNotes, approval_note_text
-from hivegent.agents.compaction import Compacted
+from hivegent.agents.compaction import Compacted, is_compaction
 from hivegent.agents.tools.ask import DISMISSED_QUESTIONS, ask_user
 from hivegent.db.conversations import (
     CHAT_ERROR_KEY,
     ActiveNode,
     _fork_for_path,
     import_conversation,
+    is_user_request,
 )
 from hivegent.server.routes.conversations import _instruction_snapshots
+from hivegent.server.turns import Replay, abandon_pending_calls, pending_requests
 from hivegent.server.vercel import (
     APPROVAL_METADATA_KEY,
     REASONING_DURATIONS_KEY,
     SDK_VERSION,
     ChatAdapter,
     PersistTurn,
-    abandon_pending_calls,
+    agent_events,
     denial_message,
     dump_messages_with_ids,
     run_and_persist,
@@ -135,6 +137,7 @@ def _adapter(
     model: Model | None = None,
     tool_raises: bool = False,
     tool_needs_approval: bool = False,
+    tool_runs: bool = False,
     asks_user: bool = False,
 ) -> ChatAdapter[None, str | DeferredToolRequests]:
     output_type: OutputSpec[str | DeferredToolRequests] = (
@@ -155,6 +158,12 @@ def _adapter(
         @agent.tool_plain
         def boom() -> str:
             raise RuntimeError("simulated tool failure mid-run")
+
+    if tool_runs:
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return "found"
 
     if tool_needs_approval:
 
@@ -181,6 +190,7 @@ async def _run_turn(
     message_history: Sequence[ModelMessage] | None = None,
     tool_raises: bool = False,
     tool_needs_approval: bool = False,
+    tool_runs: bool = False,
     asks_user: bool = False,
     persist: PersistTurn | None = None,
 ) -> tuple[list[list[ModelMessage]], str]:
@@ -190,8 +200,10 @@ async def _run_turn(
         model=model,
         tool_raises=tool_raises,
         tool_needs_approval=tool_needs_approval,
+        tool_runs=tool_runs,
         asks_user=asks_user,
     )
+    history = list(message_history or [])
     recorded: list[list[ModelMessage]] = []
 
     async def _record(messages: Sequence[ModelMessage]) -> None:
@@ -199,7 +211,15 @@ async def _run_turn(
 
     response = await run_and_persist(
         adapter,
-        adapter.run_stream(message_history=list(message_history or [])),
+        adapter.transform_stream(
+            agent_events(
+                adapter.agent.run_stream_events(
+                    adapter.prompt,
+                    message_history=history,
+                    deferred_tool_results=adapter.resume(pending_requests(history)),
+                )
+            )
+        ),
         persist=persist or _record,
     )
     assert isinstance(response, StreamingResponse)
@@ -227,6 +247,46 @@ async def test_clean_turn_persists_only_the_new_tail() -> None:
     assert "q2" in texts
     assert "ANSWER" in texts
     assert "q1" not in texts  # the prefix is replayed, not re-persisted
+
+
+_ANSWERED = [
+    ModelRequest(parts=[UserPromptPart(content="q1")]),
+    ModelResponse(parts=[TextPart(content="a1")], model_name="m"),
+]
+_COMPACTION = ModelResponse(parts=[CompactionPart(content="the gist")])
+_CLOSED = ModelRequest(
+    parts=[ToolReturnPart(tool_name="write", content="denied", tool_call_id="c")]
+)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        [*_ANSWERED, _COMPACTION],
+        [*_ANSWERED, _COMPACTION, *_ANSWERED],
+        [
+            _ANSWERED[0],
+            ModelResponse(parts=[ToolCallPart(tool_name="write", tool_call_id="c")]),
+            _CLOSED,
+        ],
+        _ANSWERED[:1],
+    ],
+    ids=["after-compaction", "past-compaction", "after-closed-call", "after-failed-prompt"],
+)
+async def test_a_prompt_merged_into_the_replay_is_its_own_node(
+    prefix: list[ModelMessage],
+) -> None:
+    """The run merges consecutive requests, so the prompt can sit in a replayed one."""
+    recorded, _ = await _run_turn(
+        [UIMessage(id="m2", role="user", parts=[TextUIPart(text="q2")])],
+        message_history=prefix,
+    )
+    above, delta = Replay.of(prefix).turn(recorded[0])
+
+    assert above is None
+    assert _texts(delta) == ["q2", "ANSWER"]
+    assert not _parts(delta, CompactionPart)
+    assert not _parts(delta, ToolReturnPart)
 
 
 async def test_regenerate_reruns_from_history_without_a_new_message() -> None:
@@ -440,7 +500,7 @@ async def test_abandoned_approval_is_declined_for_the_next_turn() -> None:
         [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
         tool_needs_approval=True,
     )
-    declined = abandon_pending_calls(pending[0])
+    declined = abandon_pending_calls(pending_requests(pending[0]))
     assert declined is not None
 
     returns = _parts([declined], ToolReturnPart)
@@ -458,8 +518,8 @@ async def test_a_settled_turn_has_no_approval_to_decline() -> None:
         [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])]
     )
 
-    assert abandon_pending_calls(settled[0]) is None
-    assert abandon_pending_calls([]) is None
+    assert abandon_pending_calls(pending_requests(settled[0])) is None
+    assert abandon_pending_calls(pending_requests([])) is None
 
 
 _QUESTIONS = {
@@ -564,13 +624,62 @@ async def test_an_invalid_answer_is_rejected() -> None:
     adapter = _adapter([_reply(pending, [{"selected": []}])], asks_user=True)
 
     with pytest.raises(ValidationError):
-        _ = adapter.deferred_tool_results
+        adapter.resume(pending_requests(pending))
+
+
+async def test_an_approval_answered_like_a_question_is_rejected() -> None:
+    """Each pending call takes only the kind of result it was deferred for."""
+    pending, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    message = _ui_messages(pending[0])[-1]
+    message.parts = [
+        ToolOutputAvailablePart(
+            type="tool-ask_user",
+            tool_call_id=part.tool_call_id,
+            input=part.input,
+            output=[{"selected": ["All"]}],
+        )
+        for part in message.parts
+        if isinstance(part, ToolApprovalRequestedPart)
+    ]
+    adapter = _adapter([message], tool_needs_approval=True, asks_user=True)
+
+    with pytest.raises(ValueError, match="DeferredToolRequests.calls"):
+        adapter.resume(pending_requests(pending[0]))
+
+
+async def test_a_call_run_beside_an_approval_leaves_it_to_abandon() -> None:
+    """The turn ends on the result of the call that ran, the gated one still pending."""
+
+    async def respond(
+        _messages: Sequence[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name="lookup", json_args="{}"),
+            1: DeltaToolCall(name="write", json_args=json.dumps({"value": "v"})),
+        }
+
+    recorded, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        model=FunctionModel(stream_function=respond),
+        tool_needs_approval=True,
+        tool_runs=True,
+    )
+    declined = abandon_pending_calls(pending_requests(recorded[0]))
+
+    assert isinstance(recorded[0][-1], ModelRequest)
+    assert declined is not None
+    assert [(r.tool_name, r.outcome) for r in _parts([declined], ToolReturnPart)] == [
+        ("write", "denied")
+    ]
 
 
 async def test_an_abandoned_question_is_dismissed() -> None:
     """A prompt sent instead of answers closes the question as dismissed, not denied."""
     pending = await _pending_question()
-    closed = abandon_pending_calls(pending)
+    closed = abandon_pending_calls(pending_requests(pending))
     assert closed is not None
 
     assert [part.content for part in _parts([closed], ToolReturnPart)] == [
@@ -665,7 +774,9 @@ async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
 
     response = await run_and_persist(
         adapter,
-        adapter.run_stream(),
+        adapter.transform_stream(
+            agent_events(adapter.agent.run_stream_events(adapter.prompt))
+        ),
         persist=persist,
     )
     assert isinstance(response, StreamingResponse)
