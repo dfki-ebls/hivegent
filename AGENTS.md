@@ -1,7 +1,6 @@
 # RAG System
 
 - Integration through Vercel AI Data Stream Protocol implemented by Vercel AI SDK UI in frontend and Pydantic AI in backend
-- Project has not yet been deployed, don't care about breaking changes and migrations, prefer clean solutions
 - `ARCHITECTURE.md` holds the system shape, `backend/README.md` and `frontend/README.md` the design decisions behind each half
 - Every test must be stateless and reach no live database or other stateful service, so stub the paths that would hit PostgreSQL with `monkeypatch`
 - Run `uv run pytest` for the backend and `npm test` for the frontend, both without external services
