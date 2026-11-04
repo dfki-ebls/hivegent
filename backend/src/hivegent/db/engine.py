@@ -11,12 +11,15 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from functools import cache
 
+from sqlalchemy import event
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import ConnectionPoolEntry
 
 from ..config import settings
 
@@ -53,13 +56,34 @@ def get_engine() -> AsyncEngine:
     ``services-flake`` PostgreSQL is restarted freely underneath a running dev
     server, and without it the pool hands out connections the server has
     already closed, which surface as sporadic 500s rather than a reconnect.
+
+    Every connection scans HNSW iteratively (pgvector 0.8), since a search is
+    filtered to the caller's documents: a plain scan filters only the
+    ``hnsw.ef_search`` nearest chunks and returns fewer than asked for once
+    the caller sees a small share of them.  ``strict_order`` keeps the
+    distance order the rank fusion reads.  It is set once connected rather
+    than as a startup option, which a pooler such as PgBouncer refuses and
+    which would replace the ``options`` of the configured URL.
     """
-    return create_async_engine(
+    engine = create_async_engine(
         resolve_database_url(),
         echo=settings.db.echo,
         future=True,
         pool_pre_ping=True,
     )
+    event.listen(engine.sync_engine, "connect", _scan_iteratively)
+
+    return engine
+
+
+def _scan_iteratively(
+    dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
+) -> None:
+    """Make *dbapi_connection* scan HNSW iteratively, committed so a rollback keeps it."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("SET hnsw.iterative_scan = strict_order")
+    cursor.close()
+    dbapi_connection.commit()
 
 
 @cache

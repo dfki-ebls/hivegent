@@ -340,6 +340,8 @@ The adapters accept a bare item where a list is declared (`accept_scalar`).
 Only `excluded_documents` becomes a `DocumentFilter`, enforced by the path tools through `SearchPath.filter_func` and by retrieval in `resolve_accessible_document_ids`.
 The planner refuses a directory move that would carry an excluded entry (`PathFilter.hides_within`), with the run's filters for an agent change and the approver's current ones for a staged changeset, while the HTTP routes pass none.
 
+Every connection sets `hnsw.iterative_scan=strict_order` (`db.engine`), since an HNSW scan otherwise filters only its `ef_search` nearest chunks and returns fewer than asked once the caller sees a small share of them.
+
 A filter argument naming a directory no accessible root holds is refused (`tools.base.resolve_directory`, `missing_directory_retry`) rather than answered empty, which would read as an empty workspace.
 The refusal names the caller's own spelling and the roots, without demanding a prefix.
 
