@@ -33,6 +33,7 @@ __all__ = [
     "ABANDONED_APPROVAL_DENIAL",
     "DEFERRED_KEY",
     "DEFERRED_REQUESTS",
+    "IMPORTED_CALL_CLOSED",
     "INTERRUPTED_TOOL_ERROR",
     "Replay",
     "abandon_pending_calls",
@@ -49,6 +50,14 @@ logger = logging.getLogger(__name__)
 # Content for the synthetic failed return that closes a tool call left dangling
 # by an interrupted run (client disconnect) when no stream error text is known.
 INTERRUPTED_TOOL_ERROR = "The tool call did not complete because the run ended early."
+
+
+# Content for the return that closes a call an imported conversation still
+# awaited, since its turn can no longer be resumed.
+IMPORTED_CALL_CLOSED = (
+    "The conversation was imported while this call still awaited an answer, "
+    "so it was never executed."
+)
 
 
 # Content for the denial that closes an approval request the user walked away

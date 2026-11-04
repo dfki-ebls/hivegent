@@ -101,6 +101,7 @@ from ..vercel import (
     ChatAdapter,
     agent_events,
     dump_messages_with_ids,
+    load_archived,
     run_and_persist,
 )
 
@@ -459,8 +460,7 @@ async def import_conversation_route(
     """
     ui_messages, title = archive.active_path()
     try:
-        messages = ChatAdapter.load_messages(ui_messages)
-        return await import_conversation(user, messages, title=title)
+        return await import_conversation(user, load_archived(ui_messages), title=title)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

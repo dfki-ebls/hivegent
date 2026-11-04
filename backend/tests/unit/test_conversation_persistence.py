@@ -76,6 +76,7 @@ from hivegent.server.vercel import (
     agent_events,
     denial_message,
     dump_messages_with_ids,
+    load_archived,
     run_and_persist,
 )
 from hivegent.store import User
@@ -845,6 +846,32 @@ async def test_persist_failure_hard_fails_with_an_error_chunk() -> None:
     )
 
     assert "Failed to save the conversation" in body
+
+
+def test_an_export_imports_as_the_messages_it_stores() -> None:
+    """A compaction loads back as a request, and a call left awaiting is closed."""
+    call = ToolCallPart(tool_name="write", args={}, tool_call_id="c")
+    stored = [
+        *_ANSWERED,
+        _COMPACTION,
+        ModelRequest(parts=[UserPromptPart(content="q2")]),
+        ModelResponse(parts=[call], model_name="m"),
+    ]
+    shown = dump_messages_with_ids([(f"n{i}", m) for i, m in enumerate(stored)])
+
+    loaded = load_archived(shown)
+
+    assert [type(message) for message in loaded] == [
+        ModelRequest,
+        ModelResponse,
+        ModelResponse,
+        ModelRequest,
+        ModelResponse,
+        ModelRequest,
+    ]
+    assert is_compaction(loaded[2])
+    assert is_user_request(loaded[3])
+    assert [part.tool_call_id for part in _parts(loaded[-1:], ToolReturnPart)] == ["c"]
 
 
 async def test_import_conversation_rejects_empty_export() -> None:

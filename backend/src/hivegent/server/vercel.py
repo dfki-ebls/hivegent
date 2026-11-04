@@ -75,6 +75,7 @@ from ..l10n import Localized
 from .turns import (
     DEFERRED_KEY,
     DEFERRED_REQUESTS,
+    IMPORTED_CALL_CLOSED,
     INTERRUPTED_TOOL_ERROR,
     close_orphan_tool_calls,
     pending_requests,
@@ -92,6 +93,7 @@ __all__ = [
     "agent_events",
     "denial_message",
     "dump_messages_with_ids",
+    "load_archived",
     "run_and_persist",
 ]
 
@@ -642,6 +644,34 @@ def dump_messages_with_ids(
     _reopen_questions(ui_messages, pending)
 
     return ui_messages
+
+
+def load_archived(messages: Sequence[UIMessage]) -> list[ModelMessage]:
+    """Load an exported transcript as the messages it stores, the inverse of :func:`dump_messages_with_ids`.
+
+    A summary loads into the request after it, so it is split off as the
+    response a compaction is stored as.  A call the transcript still awaited
+    has no stored requests to resume, so it is closed.
+    """
+    loaded: list[ModelMessage] = []
+
+    for message in ChatAdapter.load_messages(messages):
+        summaries = (
+            [part for part in message.parts if isinstance(part, CompactionPart)]
+            if isinstance(message, ModelRequest)
+            else []
+        )
+
+        if not summaries:
+            loaded.append(message)
+            continue
+
+        loaded.append(ModelResponse(parts=summaries))
+
+        if rest := [p for p in message.parts if not isinstance(p, CompactionPart)]:
+            loaded.append(replace(message, parts=rest))
+
+    return close_orphan_tool_calls(loaded, IMPORTED_CALL_CLOSED)
 
 
 async def _merge_subagent_events(

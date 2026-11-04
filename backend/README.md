@@ -246,6 +246,7 @@ A dismissal or an abandoned question is a failed return worded by the server (`D
 A compaction is a node of the conversation it compacts, a `ModelResponse` holding one provider-less `CompactionPart` whose `content` is the summary.
 The tree keeps every message, so branches, exports, and the transcript stay whole, while pydantic-ai treats the part as the boundary of the instruction window and of the tools it derives from history, and the Vercel adapter round-trips it as a `data-compaction` part.
 It is stored as a response rather than the request pydantic-ai gives a summary the application wrote, since a run merges consecutive requests, which would merge the compaction with the prompt after it and the returns before it.
+An import loads a summary into the request after it, so `load_archived` splits it off as a response again.
 
 `summarize_conversation` appends `COMPACT_PROMPT` to the conversation's own message list under the same `RunPrefix` as its chat turns, so the provider's KV prefix cache covers everything but the prompt.
 That is why a compaction runs inside the chat route, `build_run_prefix` composes the prefix for both, and the history is loaded from the database rather than the browser.
@@ -315,6 +316,7 @@ A report that leaks gets one more turn to fix it, and what it still leaks is mas
 
 A `ConversationArchive` has two halves: `backend`, the persisted active path plus the instructions each turn actually ran under (read off `ModelRequest.instructions`), and `frontend`, what the tab held, including a turn that errored before it was persisted.
 Import restores `backend` when it has messages and falls back to `frontend`, and archived prompts are never replayed.
+`load_archived` closes a call the archive still awaited, since no stored requests remain to resume it.
 
 Citation line chips only show evidence captured in persisted read, grep, or search outputs, kept apart by tool call id, and a chip without supporting output is hidden.
 Opening the document never applies a historical line anchor to current content.
