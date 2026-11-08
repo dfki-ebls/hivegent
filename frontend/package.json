@@ -55,7 +55,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
-    "jsdom": "^30",
+    "jsdom": "^31.0.0",
     "typescript": "^7",
     "vite": "^8",
     "vitest": "^5"
