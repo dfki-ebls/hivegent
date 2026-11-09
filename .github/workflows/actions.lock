@@ -7,14 +7,14 @@ workflows:
         - 'actions/checkout@v7'
         - 'cachix/cachix-action@v17'
         - 'determinatesystems/nix-installer-action@v23'
-        - 'wimpysworld/nothing-but-nix@v10'
+        - 'wimpysworld/nothing-but-nix@v12'
     '.github/workflows/release.yml':
         - 'actions/checkout@v7'
         - 'cachix/cachix-action@v17'
         - 'cycjimmy/semantic-release-action@v8'
         - 'determinatesystems/nix-installer-action@v23'
         - 'docker/setup-qemu-action@v4'
-        - 'wimpysworld/nothing-but-nix@v10'
+        - 'wimpysworld/nothing-but-nix@v12'
 dependencies:
     'actions/checkout@v7':
         ref: 'v7'
@@ -41,15 +41,15 @@ dependencies:
         commit: 'sha1-99012661954931238ded8c8b007157a8430204e1'
         owner_id: 5429470
         repo_id: 288487894
-    'srz-zumix/post-run-action@v3':
-        ref: 'v3'
+    'srz-zumix/post-run-action@42756f7452b9439d0365b7e087b2c364f54209c6':
+        ref: 'v3.0.2'
         commit: 'sha1-42756f7452b9439d0365b7e087b2c364f54209c6'
         owner_id: 1439172
         repo_id: 757239631
-    'wimpysworld/nothing-but-nix@v10':
-        ref: 'v10'
-        commit: 'sha1-687c797a730352432950c707ab493fcc951818d7'
+    'wimpysworld/nothing-but-nix@v12':
+        ref: 'v12'
+        commit: 'sha1-b2574ec1cf1462bee0a34de0fb6ff11ad3c43cb2'
         owner_id: 39407681
         repo_id: 982902962
         uses:
-            - 'srz-zumix/post-run-action@v3'
+            - 'srz-zumix/post-run-action@42756f7452b9439d0365b7e087b2c364f54209c6'
