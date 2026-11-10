@@ -75,6 +75,7 @@ from ...llm import (
 )
 from ...ragold import RagoldRequest, build_archive, iter_archive
 from ...store import User
+from ...tmp import open_tmp
 from ...tools.formatting import BLOCK_SEP
 from ...transparency import sign_provenance
 from ...types import (
@@ -608,6 +609,8 @@ async def _run_chat(
     if not exists and not await claim_conversation(conversation):
         raise HTTPException(status_code=404, detail=CONVERSATION_NOT_FOUND.current)
 
+    open_tmp(conversation)
+
     # Changes a program staged for an approval this request denies or abandons
     # can never be applied, so they go now rather than at the next boot sweep.
     if pending is not None:
@@ -720,6 +723,8 @@ def _compact_active_path(
 
     if cut is None:
         raise HTTPException(status_code=400, detail=_NOTHING_TO_COMPACT.current)
+
+    open_tmp(conversation)
 
     async def events() -> AsyncIterator[NativeEvent]:
         try:

@@ -26,7 +26,6 @@ from ..mcp import build_mcp_server, validate_mcp_servers
 from ..prompts import compose_instructions
 from ..security import require_safe_external_url
 from ..store import AccessDenied, Casebase, User, WorkspaceScope
-from ..tmp import tmp_dir
 from ..types import ChatRequestConfig, DocumentFilter
 from ..workspace_events import announce_workspace_changed
 from .models import PipelineSpec
@@ -174,10 +173,6 @@ def build_run_prefix(
         validate_mcp_servers(config.tools.mcp_servers)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    # The conversation's `/tmp` exists for as long as it runs, as in a
-    # container session.
-    tmp_dir(settings.data_dir, conversation).mkdir(parents=True, exist_ok=True)
 
     llm = prepare_llm_config(config.llm, tier="main")
     relevant_documents, document_filter, group_filters = parse_document_scope(

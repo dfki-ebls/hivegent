@@ -28,6 +28,7 @@ from hivegent.db.conversations import OwnedConversation
 from hivegent.db.models import Conversation, Message
 from hivegent.server.routes import conversations as routes
 from hivegent.store import User
+from hivegent.tmp import tmp_dir
 from tests.helpers import label_id, owned
 
 _ID = UUID("0b6c4c9e-4f9a-4f0e-9d7a-3f6e2b1c8a90")
@@ -211,6 +212,7 @@ class _Reached(Exception):
 )
 async def test_a_turn_claims_its_id_only_once_every_check_passed(
     monkeypatch: pytest.MonkeyPatch,
+    data_dir: Path,
     run_prefix: RunPrefix,
     message_id: str,
     taken: bool,
@@ -218,7 +220,10 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
     claimable: bool,
     status: int | None,
 ) -> None:
-    """A taken message id would lose the turn at its write, so it is refused up front."""
+    """A taken message id would lose the turn at its write, so it is refused up front.
+
+    A refused request also leaves no `/tmp` for a conversation without a row.
+    """
     claims: list[OwnedConversation] = []
 
     async def history(*_args: object, **_kwargs: object) -> tuple[list[Any], None]:
@@ -248,6 +253,7 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
 
     claimed = not exists and status in {404, None}
     assert claims == ([owned(str(_ID))] if claimed else [])
+    assert tmp_dir(data_dir, owned(str(_ID))).exists() is (status is None)
 
 
 async def test_a_turn_appends_under_the_clients_message_id_and_titles_the_row(

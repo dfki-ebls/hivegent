@@ -39,6 +39,7 @@ __all__ = [
     "TMP_FOLDER",
     "TMP_SCOPE",
     "clear_tmp",
+    "open_tmp",
     "save_result",
     "tmp_dir",
     "tmp_root",
@@ -65,6 +66,15 @@ def tmp_dir(data_dir: Path, conversation: OwnedConversation) -> Path:
     folder of a conversation its user does not own.
     """
     return conversation.folder(data_dir) / TMP_FOLDER
+
+
+def open_tmp(conversation: OwnedConversation) -> None:
+    """Create *conversation*'s ``/tmp``, which exists while it runs, as in a container session.
+
+    Only a run of a conversation whose row exists opens it, so a refused
+    request leaves no folder behind.
+    """
+    tmp_dir(settings.data_dir, conversation).mkdir(parents=True, exist_ok=True)
 
 
 def tmp_search_path(data_dir: Path, conversation: OwnedConversation) -> SearchPath:
