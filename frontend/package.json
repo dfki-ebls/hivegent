@@ -39,7 +39,7 @@
     "oidc-spa": "^10",
     "react": "^19",
     "react-dom": "^19",
-    "react-i18next": "^17",
+    "react-i18next": "^18.0.0",
     "read-excel-file": "^9",
     "shiki": "^4",
     "streamdown": "^2",
