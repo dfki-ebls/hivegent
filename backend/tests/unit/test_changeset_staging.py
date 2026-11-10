@@ -36,9 +36,7 @@ def mount(tmp_path: Path) -> WorkspaceOS:
     root = SearchPath(path=workspace, scope=WorkspaceScope())
     roots = (root, SearchPath(path=tmp, scope=TMP_SCOPE, policy=Direct()))
 
-    return WorkspaceOS(
-        paths=roots, environ={}, limits=LIMITS, writable=roots
-    )
+    return WorkspaceOS(paths=roots, environ={}, limits=LIMITS, writable=roots)
 
 
 def _virtual(local: str) -> PurePosixPath:

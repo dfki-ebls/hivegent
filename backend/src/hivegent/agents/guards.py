@@ -719,7 +719,9 @@ def _fenced(part: ModelRequestPart) -> ModelRequestPart:
     if output.text is not None:
         text = fence(output.text)
 
-        return replace(part, content=text if output.rest is None else [text, *output.rest])
+        return replace(
+            part, content=text if output.rest is None else [text, *output.rest]
+        )
 
     if part.content is None or part.files:
         return part
@@ -787,4 +789,6 @@ class ToolOutputFence(AbstractCapability[Any]):
         Not ``wrap_model_request``, whose handler still adds what a capability
         enqueued, such as the memory read a conversation opens with.
         """
-        return replace(request_context, messages=fence_messages(request_context.messages))
+        return replace(
+            request_context, messages=fence_messages(request_context.messages)
+        )

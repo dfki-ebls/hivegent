@@ -207,7 +207,10 @@ _CHAT_RESPONSES: dict[int | str, dict[str, Any]] = {
         "content": {
             **_STREAM,
             _JSON: {
-                "schema": {"type": "array", "items": {"$ref": "#/components/schemas/UIMessage"}}
+                "schema": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/UIMessage"},
+                }
             },
         },
     },
@@ -723,7 +726,9 @@ async def _prepare_turn(
 
         await append_branch(conversation, fork_id, delta, prompt_id=prompt_id)
 
-    return run_and_persist(adapter, stream, persist=persist, subagent_sink=subagent_sink)
+    return run_and_persist(
+        adapter, stream, persist=persist, subagent_sink=subagent_sink
+    )
 
 
 async def _answer(

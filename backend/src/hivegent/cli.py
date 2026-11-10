@@ -242,7 +242,9 @@ def upload(
         )
 
     if response.status_code == 200:
-        typer.echo(f"Uploaded: {target_name}, converting and indexing in the background")
+        typer.echo(
+            f"Uploaded: {target_name}, converting and indexing in the background"
+        )
     else:
         typer.echo(f"Upload failed: {_error(response)}", err=True)
         raise typer.Exit(1)
@@ -298,7 +300,9 @@ def list_docs() -> None:
     typer.echo("-" * 72)
     for doc in documents:
         size = doc.get("size_bytes")
-        typer.echo(f"{doc['path']:<60} {'' if size is None else format_bytes(size):>10}")
+        typer.echo(
+            f"{doc['path']:<60} {'' if size is None else format_bytes(size):>10}"
+        )
 
 
 @app.command()

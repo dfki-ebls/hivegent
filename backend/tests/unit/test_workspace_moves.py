@@ -752,9 +752,7 @@ class TestChangesets:
         change: Literal["add", "edit", "replace"],
     ) -> None:
         root = SearchPath(path=layout, scope=user_store.scope)
-        mount = WorkspaceOS(
-            paths=(root,), writable=(root,), environ={}, limits=LIMITS
-        )
+        mount = WorkspaceOS(paths=(root,), writable=(root,), environ={}, limits=LIMITS)
         directory = WORKSPACE_MOUNT / "~/dir"
 
         if operation == "delete":

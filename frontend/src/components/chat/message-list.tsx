@@ -35,7 +35,12 @@ export function MessageList() {
   const { t: tRoot } = useTranslation();
   const { chat, conversationId } = useChatContext();
   // A stored conversation follows the turn still running at the server after a reload.
-  const { messages: streamed, status, error, clearError } = useChat({
+  const {
+    messages: streamed,
+    status,
+    error,
+    clearError,
+  } = useChat({
     chat,
     throttle: 50,
     resume: conversationId !== null,
