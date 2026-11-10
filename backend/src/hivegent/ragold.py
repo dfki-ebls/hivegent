@@ -242,7 +242,7 @@ class _Envelope(_Stamped):
 
 def _write_document(archive: ZipFile, file: Path, arcname: str) -> tuple[int, str]:
     """Copy *file* into *archive*, returning its size and SHA-256 digest."""
-    info = ZipInfo.from_file(file, arcname)
+    info = ZipInfo.from_file(file, arcname, strict_timestamps=False)
     digest = hashlib.sha256()
 
     with file.open("rb") as source, archive.open(info, "w") as target:
