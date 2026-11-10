@@ -2,6 +2,7 @@
 /** Standalone srvx bootstrap: route every adapter webhook and start the server. */
 
 import { serve, type ServerRequest } from "srvx";
+import { BodyTooLargeError } from "srvx/body-limit";
 
 import { createBot } from "./bot.js";
 import { loadConfig } from "./config.js";
@@ -40,7 +41,7 @@ const server = serve({
     new Response(null, { status: 404 }),
   // Without this handler, a rejected webhook would be an unhandled rejection.
   error: (err) => {
-    if (err instanceof Error && "code" in err && err.code === "ERR_BODY_TOO_LARGE") {
+    if (err instanceof BodyTooLargeError) {
       return new Response(null, { status: 413 });
     }
 
