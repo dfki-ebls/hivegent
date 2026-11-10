@@ -147,19 +147,31 @@ async def reconcile_store(store: Casebase) -> ReconcileReport:
     return ReconcileReport(files_renamed=renamed, entries_synced=synced)
 
 
-def _disk_known_stores() -> set[Casebase]:
-    """Return casebases with an existing workspace directory."""
+def _disk_store_keys() -> set[str]:
+    """Return the store keys of every existing workspace directory."""
     root = Casebase.workspace_root(settings.data_dir)
+
     if not root.is_dir():
         return set()
-    stores: set[Casebase] = set()
-    for child in root.iterdir():
-        if not child.is_dir():
-            continue
+
+    return {child.name for child in root.iterdir() if child.is_dir()}
+
+
+async def _known_stores() -> list[Casebase]:
+    """Every casebase known to SQL or present on disk, granted for writing.
+
+    Reconciliation is the system code that states this grant, so it is
+    stated here and nowhere else.
+    """
+    sql_keys = {store.store_key for store in await db_documents.list_known_stores()}
+    stores: list[Casebase] = []
+
+    for key in sorted(sql_keys | _disk_store_keys()):
         try:
-            stores.add(Casebase.from_store_key(child.name, writable=True))
+            stores.append(Casebase.from_store_key(key, writable=True))
         except ValueError:
-            logger.warning("Ignoring unrecognised workspace directory: %s", child.name)
+            logger.warning("Ignoring unrecognised workspace directory: %s", key)
+
     return stores
 
 
@@ -173,8 +185,7 @@ async def reconcile_all() -> Mapping[str, ReconcileReport]:
     aborting the rest: one unreadable workspace must not stop the others from
     being repaired.
     """
-    sql_stores = await db_documents.list_known_stores()
-    stores = sorted(sql_stores | _disk_known_stores(), key=lambda s: s.store_key)
+    stores = await _known_stores()
 
     async def _reconcile_safe(store: Casebase) -> ReconcileReport | None:
         try:

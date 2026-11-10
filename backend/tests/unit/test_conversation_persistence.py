@@ -759,10 +759,12 @@ async def test_interrupted_stream_persists_the_partial_answer() -> None:
 
 
 async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
-    """A client disconnect cancels provider streaming and saves partial output."""
+    """A cancel stops provider streaming and ends only once the partial output is saved."""
     started = asyncio.Event()
     cancelled = asyncio.Event()
     never = asyncio.Event()
+    writing = asyncio.Event()
+    release = asyncio.Event()
 
     async def stream_until_cancelled(
         messages: Sequence[ModelMessage], info: AgentInfo
@@ -781,6 +783,8 @@ async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
     recorded: list[list[ModelMessage]] = []
 
     async def persist(messages: Sequence[ModelMessage]) -> None:
+        writing.set()
+        _ = await release.wait()
         recorded.append(list(messages))
 
     response = stream_response(
@@ -800,6 +804,12 @@ async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
     consumer = asyncio.create_task(consume())
     await started.wait()
     consumer.cancel()
+    _ = await writing.wait()
+    # A second cancel, as a stop during the write sends, still waits for it.
+    consumer.cancel()
+    await asyncio.sleep(0)
+    assert not consumer.done()
+    release.set()
 
     with pytest.raises(asyncio.CancelledError):
         await consumer

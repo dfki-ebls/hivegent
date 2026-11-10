@@ -1,9 +1,10 @@
 """Shared helpers for server routes and operations."""
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Header, HTTPException
 from pydantic import ValidationError
@@ -13,6 +14,7 @@ from ..agents import RunPrefix, UserDeps, build_capabilities
 from ..changes import WorkspaceChanged
 from ..config import (
     normalize_unicode,
+    parse_uuid,
     sanitize_document_path,
     settings,
 )
@@ -62,6 +64,15 @@ def found[T](value: T | None) -> T:
         raise HTTPException(status_code=404, detail=CONVERSATION_NOT_FOUND.current)
 
     return value
+
+
+async def found_by_id[T](
+    conversation_id: str, load: Callable[[UUID], Awaitable[T | None]]
+) -> T:
+    """What *load* finds for a path's id, ``404`` for an id that is no UUID or finds none."""
+    parsed = parse_uuid(conversation_id)
+
+    return found(None if parsed is None else await load(parsed))
 
 
 def _invalid_pipeline_spec(error: str) -> Localized[str]:
@@ -152,9 +163,9 @@ def parse_document_scope(
 
 
 def build_run_prefix(
-    config: ChatRequestConfig, conversation: OwnedConversation
+    config: ChatRequestConfig, user: User, conversation: OwnedConversation
 ) -> RunPrefix:
-    """Compose the prompt prefix *config* describes, for a turn or a compaction.
+    """Compose the prompt prefix *config* describes for *user*, for a turn or a compaction.
 
     A compaction asks for its summary as one more turn of the conversation,
     which only pays off while its instructions and tool schemas match the turn
@@ -167,7 +178,6 @@ def build_run_prefix(
     language is read once and handed to every part of the prefix explicitly.
     """
     language = current_language()
-    user = conversation.user
 
     try:
         validate_mcp_servers(config.tools.mcp_servers)
@@ -266,9 +276,9 @@ async def delete_user_data(user: User, *, exclude_client: str | None = None) -> 
     """Delete everything *user* owns and announce their emptied workspace.
 
     The workspace (documents, cascading to chunks, and the directory) and the
-    conversations (rows and folders) go independently, and deleting the
-    ``User`` row then cascades to memory.  The user re-materialises lazily on
-    the next request.
+    conversations (turns, rows, and folders) go independently, and deleting
+    the ``User`` row then cascades to memory.  The user re-materialises lazily
+    on the next request.
     """
     store = user.store
     await asyncio.gather(workspace.delete_all(store), delete_conversations(user))

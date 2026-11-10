@@ -16,7 +16,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from ...config import parse_uuid
 from ...db.conversations import (
     ConversationData,
     ConversationSummary,
@@ -207,17 +206,18 @@ async def search_conversation(
     prompt, assistant text, or tool call, prefixed by the `[position]` of
     its message, and the turn in progress is not stored yet.
     """
-    target = conversation_id or (
-        None if ctx.conversation_id is None else parse_uuid(ctx.conversation_id)
+    owned = (
+        ctx.deps.conversation
+        if conversation_id is None
+        else await owned_conversation(ctx.deps.user, conversation_id)
     )
 
-    if target is None:
-        raise ModelRetry("no current conversation, pass a `conversation_id`.")
-
-    owned = await owned_conversation(ctx.deps.user, target)
-
     if owned is None:
-        raise ModelRetry(f"conversation '{target}' not found.")
+        raise ModelRetry(
+            "no current conversation, pass a `conversation_id`."
+            if conversation_id is None
+            else f"conversation '{conversation_id}' not found."
+        )
 
     found = await _search_conversation(owned, query, _render_parts, limit=limit)
     matches = [ConversationMatch(position, text) for position, text in found]

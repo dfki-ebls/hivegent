@@ -21,14 +21,11 @@ Admins are exempt so they can keep working and switch the mode back
 off.
 """
 
-from typing import Annotated
+from fastapi import FastAPI, Request, status
 
-from fastapi import Depends, FastAPI, Request, status
-
-from ..auth import get_current_user
+from ..auth import CurrentUser
 from ..db.application_settings import read_maintenance_enabled
 from ..l10n import Localized
-from ..store import User
 from .problems import ProblemException
 
 __all__ = [
@@ -73,7 +70,7 @@ async def load_persisted_state(app: FastAPI) -> None:
 
 async def enforce_maintenance(
     request: Request,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> None:
     """FastAPI dependency that rejects non-admin requests during maintenance.
 

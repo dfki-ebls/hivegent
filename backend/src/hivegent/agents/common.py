@@ -179,7 +179,7 @@ class UserDeps:
     subagent_sink: asyncio.Queue[SubagentUpdate] | None = None
 
     def __post_init__(self) -> None:
-        if self.conversation is not None and self.conversation.user != self.user:
+        if self.conversation is not None and self.conversation.owner != self.user.id:
             raise ValueError("a run's conversation must belong to its user")
 
     @property

@@ -20,11 +20,11 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Form, Header, HTTPException, UploadFile, status
 from starlette.responses import Response
 
 from ... import workspace
-from ...auth import get_current_user
+from ...auth import CurrentUser
 from ...changes import WorkspaceChanged, Write
 from ...chunkers.base import DocumentMetadata
 from ...config import settings
@@ -253,7 +253,7 @@ def _submit_bulk_job(
 @router.get("/documents/original/{filepath:path}")
 async def download_original(
     filepath: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> Response:
     """Download the original binary file for a document."""
     store, safe = resolve_workspace_path(user, filepath)
@@ -265,7 +265,7 @@ async def download_original(
 async def replace_original(
     filepath: str,
     file: UploadFile,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     pipeline_spec: Annotated[str, Form()] = "{}",
     llm_config: Annotated[str, Form()] = "{}",
     modified_at: Annotated[datetime | None, Form()] = None,
@@ -310,7 +310,7 @@ async def replace_original(
 async def upload_document(
     filepath: str,
     file: UploadFile,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     pipeline_spec: Annotated[str, Form()] = "{}",
     llm_config: Annotated[str, Form()] = "{}",
     modified_at: Annotated[datetime | None, Form()] = None,
@@ -369,7 +369,7 @@ async def upload_document(
 async def upload_collection(
     target: str,
     file: UploadFile,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     pipeline_spec: Annotated[str, Form()] = "{}",
     llm_config: Annotated[str, Form()] = "{}",
 ) -> JobView:
@@ -434,7 +434,7 @@ async def upload_collection(
 @router.delete("/documents/{scope}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_all_documents(
     scope: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> None:
     """Delete all documents, chunks, and originals in a workspace."""
@@ -448,7 +448,7 @@ async def delete_all_documents(
 @router.post("/documents/rechunk")
 async def rechunk_documents(
     request: RechunkRequest,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> JobView:
     """Rechunk documents with new settings as a single background job."""
     spec = request.pipeline
@@ -471,7 +471,7 @@ async def rechunk_documents(
 @router.post("/documents/reconvert")
 async def reconvert_documents(
     request: ReconvertRequest,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> JobView:
     """Reconvert documents from their originals as a single background job."""
     spec = request.pipeline
@@ -494,7 +494,7 @@ async def reconvert_documents(
 @router.post("/documents/line-counts")
 async def get_document_line_counts(
     request: DocumentLineCountsRequest,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> DocumentLineCountsResponse:
     """Batch-resolve document line counts for the context-panel coverage map.
 
@@ -524,7 +524,7 @@ async def get_document_line_counts(
 @router.get("/documents/chunks/{filepath:path}")
 async def get_document_chunks(
     filepath: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> DocumentMetadata:
     """Get chunks for a document."""
     store, safe = resolve_workspace_path(user, filepath)
@@ -537,7 +537,7 @@ async def get_document_chunks(
 @router.get("/documents/assets/{filepath:path}")
 async def list_document_assets(
     filepath: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> AssetListResponse:
     """List assets for a document."""
     store, safe = resolve_workspace_path(user, filepath)
@@ -548,7 +548,7 @@ async def list_document_assets(
 async def patch_asset_description(
     filepath: str,
     request: UpdateAssetDescriptionRequest,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> AssetEntry:
     """Update an asset's companion .md description."""
@@ -568,7 +568,7 @@ async def patch_asset_description(
 async def generate_asset_description(
     filepath: str,
     request: GenerateAssetDescriptionRequest,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> AssetEntry:
     """Generate an asset's companion .md description with the vision model."""
@@ -584,7 +584,7 @@ async def generate_asset_description(
 async def delete_asset_description(
     filepath: str,
     asset_name: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> AssetEntry:
     """Delete an asset's companion .md description, keeping the asset itself."""
@@ -601,7 +601,7 @@ async def delete_asset_description(
 async def write_document(
     filepath: str,
     request: WriteDocumentRequest,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> None:
     """Replace a text document's content in place.
@@ -630,7 +630,7 @@ def _tmp_file(conversation: OwnedConversation, filepath: str) -> Path | None:
 @router.get("/documents/{filepath:path}")
 async def get_document_content(
     filepath: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     conversation_id: UUID | None = None,
 ) -> Response:
     """Get the content of a document or asset.
@@ -656,7 +656,7 @@ async def get_document_content(
 @router.get("/directories/{scope}")
 async def get_directories(
     scope: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> DirectoryTreeResponse:
     """Build a recursive directory tree for a workspace (``~`` or ``@<group>``)."""
     store, _ = resolve_workspace_path(user, scope)
@@ -690,7 +690,7 @@ async def _apply(
 @router.post("/changes")
 async def apply_changes(
     request: ChangesRequest,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> WorkspaceChanged:
     """Move, delete, and create documents and directories as one changeset.
@@ -708,7 +708,7 @@ async def apply_changes(
 async def move_document(
     filepath: str,
     request: MoveDestination,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> WorkspaceChanged:
     """Move or rename one document, a shortcut for one move in ``POST /changes``."""
@@ -719,7 +719,7 @@ async def move_document(
 @router.delete("/documents/{filepath:path}")
 async def delete_document(
     filepath: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> WorkspaceChanged:
     """Delete one document, a shortcut for one entry delete in ``POST /changes``."""
@@ -730,7 +730,7 @@ async def delete_document(
 @router.put("/directories/{path:path}")
 async def create_directory(
     path: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> WorkspaceChanged:
     """Create one directory, a shortcut for one mkdir in ``POST /changes``.
@@ -748,7 +748,7 @@ async def create_directory(
 @router.post("/directories/move")
 async def move_directory(
     request: MovePaths,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> WorkspaceChanged:
     """Move or rename one directory, a shortcut for one move in ``POST /changes``."""
@@ -761,7 +761,7 @@ async def move_directory(
 @router.delete("/directories/{path:path}")
 async def delete_directory(
     path: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> WorkspaceChanged:
     """Delete one directory with everything in it.

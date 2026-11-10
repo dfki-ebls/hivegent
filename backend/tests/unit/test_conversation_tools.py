@@ -1,7 +1,6 @@
 """Tests for the text the conversation tools hand the model."""
 
 from collections.abc import Callable, Iterable
-from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -55,7 +54,8 @@ async def test_search_conversation_searches_the_current_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Without an id it searches the run's own conversation, passages ranked by the store."""
-    current = owned("current")
+    user = User("u")
+    current = owned("current", user)
 
     async def found(user: User, conversation_id: UUID) -> OwnedConversation | None:
         return current if conversation_id == current.id else None
@@ -73,10 +73,7 @@ async def test_search_conversation_searches_the_current_conversation(
 
     monkeypatch.setattr(tools, "owned_conversation", found)
     monkeypatch.setattr(tools, "_search_conversation", search)
-    ctx = replace(
-        run_context(UserDeps(user=current.user, mode="interactive")),
-        conversation_id=str(current.id),
-    )
+    ctx = run_context(UserDeps(user=user, mode="interactive", conversation=current))
 
     result = await tools.search_conversation(ctx, "total")
 

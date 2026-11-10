@@ -14,6 +14,7 @@ import asyncio
 import logging
 import time
 import traceback
+from functools import partial
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -34,7 +35,6 @@ from ...agents import (
 from ...agents.debugger import DebugDeps, Step, conversation_steps, write_report
 from ...agents.tools.conversation import format_messages
 from ...auth import require_admin
-from ...config import parse_uuid
 from ...db.conversations import (
     ConversationSummary,
     OwnedConversation,
@@ -53,7 +53,7 @@ from ...types import (
     ToolRunResult,
     ToolSchema,
 )
-from ..common import found, prepare_llm_config
+from ..common import found, found_by_id, prepare_llm_config
 from ..vercel import SDK_VERSION
 
 __all__ = ["router"]
@@ -116,12 +116,10 @@ async def run_tool(
 
 async def _any_conversation(
     conversation_id: str,
-    _admin: Annotated[User, Depends(require_admin)],
+    admin: Annotated[User, Depends(require_admin)],
 ) -> OwnedConversation:
     """The path's conversation as its owner's, whoever that is, for an admin."""
-    parsed = parse_uuid(conversation_id)
-
-    return found(None if parsed is None else await any_conversation(parsed))
+    return await found_by_id(conversation_id, partial(any_conversation, admin))
 
 
 type AnyConversation = Annotated[OwnedConversation, Depends(_any_conversation)]

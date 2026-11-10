@@ -243,6 +243,7 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
     with pytest.raises(HTTPException if status else _Reached) as raised:
         await routes.create_conversation_chat(
             (owned(str(_ID)), exists),
+            User("u"),
             _chat_request(message_id),
             Request({"type": "http", "headers": []}),
         )

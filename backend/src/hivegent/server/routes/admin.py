@@ -17,12 +17,12 @@ leaves the deployment in the same state as a clean checkout.
 """
 
 import asyncio
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ... import workspace
-from ...auth import require_admin
+from ...auth import act_as, require_admin
 from ...conversation_files import reset_conversation_files
 from ...db.application_settings import write_maintenance_enabled
 from ...db.documents import delete_all_documents
@@ -135,8 +135,8 @@ async def admin_reset(target: Literal["workspace", "database", "factory"]) -> No
             await workspace.delete_workspace_root()
             await delete_all_documents()
         case "database":
-            await delete_all_identities()
             await reset_conversation_files()
+            await delete_all_identities()
         case "factory":
             await asyncio.gather(
                 workspace.delete_workspace_root(), reset_conversation_files()
@@ -163,30 +163,15 @@ async def admin_reindex() -> AdminReindexResponse:
 # ─── Targeted wipes ───────────────────────────────────────────────────
 
 
-def _casebase_or_400(kind: str, identifier: str) -> Casebase:
-    """Construct a casebase from a URL identifier, mapping invalid IDs to 400.
-
-    ``Casebase.__post_init__`` already sanitizes; this just maps its
-    ``ValueError`` to ``HTTPException(400)`` so callers don't need to.
-    """
-    try:
-        return (
-            Casebase.for_user(identifier)
-            if kind == "user"
-            else Casebase.for_group(identifier, writable=True)
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @router.delete("/users/{user_id}/data", status_code=status.HTTP_204_NO_CONTENT)
-async def admin_delete_user_data(user_id: str) -> None:
+async def admin_delete_user_data(
+    user_id: str, admin: Annotated[User, Depends(require_admin)]
+) -> None:
     """Wipe all data owned by a single user (:func:`delete_user_data`).
 
     The wiped user is never the caller here, so every one of their tabs is told.
     """
-    store = _casebase_or_400("user", user_id)
-    await delete_user_data(User(id=store.id))
+    await delete_user_data(await act_as(admin, user_id))
 
 
 @router.delete("/groups/{group_id}/data", status_code=status.HTTP_204_NO_CONTENT)
@@ -198,5 +183,9 @@ async def admin_delete_group_data(group_id: str) -> None:
     re-creating the group is a no-op for the IdP-side group
     assignment.
     """
-    store = _casebase_or_400("group", group_id)
+    try:
+        store = Casebase.for_group(group_id, writable=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     await workspace.delete_all(store)

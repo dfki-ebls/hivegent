@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import replace
 from functools import partial
 from itertools import chain
@@ -43,7 +43,8 @@ from ...agents.compaction import (
     compaction_cut,
 )
 from ...agents.subagent_events import SubagentUpdate
-from ...auth import get_current_user
+from ...auth import CurrentUser
+from ...concurrency import shield_to_completion
 from ...config import RagoldSettings, parse_uuid, settings
 from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
 from ...converters.images import sanitize_image_bytes
@@ -70,12 +71,13 @@ from ...db.conversations import (
     set_conversation_title,
 )
 from ...humanize import format_bytes, pluralize
-from ...l10n import Localized, current_language
+from ...l10n import Localized, current_language, weighted_ranges
 from ...llm import (
     model_from_config,
     thinking_model_settings,
 )
 from ...ragold import RagoldRequest, build_archive, iter_archive
+from ...runs import Prepared, Run, runs
 from ...store import User
 from ...tmp import open_tmp
 from ...tools.formatting import BLOCK_SEP
@@ -95,12 +97,12 @@ from ..common import (
     CONVERSATION_NOT_FOUND,
     build_run_prefix,
     found,
+    found_by_id,
     prepare_llm_config,
     resolve_workspace_path,
 )
 from ..operations import attachment_disposition
 from ..problems import problem_response
-from ..runs import Run, runs
 from ..turns import Replay, abandon_pending_calls, pending_requests
 from ..vercel import (
     SDK_VERSION,
@@ -234,18 +236,9 @@ _RAGOLD_DISABLED = Localized(
 )
 
 
-async def _found[T](
-    conversation_id: str, load: Callable[[UUID], Awaitable[T | None]]
-) -> T:
-    """What *load* finds for the path's id, ``404`` for an id that is no UUID or finds none."""
-    parsed = parse_uuid(conversation_id)
-
-    return found(None if parsed is None else await load(parsed))
-
-
 async def _owned_conversation(
     conversation_id: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> OwnedConversation:
     """The path's conversation, once the database names the caller its owner.
 
@@ -253,7 +246,7 @@ async def _owned_conversation(
     message tree and ``/tmp`` need from here, and an id that is no UUID names
     no conversation.
     """
-    return await _found(conversation_id, partial(owned_conversation, user))
+    return await found_by_id(conversation_id, partial(owned_conversation, user))
 
 
 type Owned = Annotated[OwnedConversation, Depends(_owned_conversation)]
@@ -261,10 +254,10 @@ type Owned = Annotated[OwnedConversation, Depends(_owned_conversation)]
 
 async def _opened_conversation(
     conversation_id: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> tuple[OwnedConversation, bool]:
     """The path's conversation and whether its row exists (:func:`open_conversation`)."""
-    return await _found(conversation_id, partial(open_conversation, user))
+    return await found_by_id(conversation_id, partial(open_conversation, user))
 
 
 type Opened = Annotated[tuple[OwnedConversation, bool], Depends(_opened_conversation)]
@@ -283,7 +276,7 @@ type RagoldConfigured = Annotated[RagoldSettings, Depends(_require_ragold)]
 
 @router.get("/conversations")
 async def get_conversations(
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> ConversationListResponse:
     """List all conversations with summary information."""
     return ConversationListResponse(conversations=await list_conversations(user))
@@ -368,28 +361,44 @@ async def generate_conversation_title(
     "/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT
 )
 async def delete_conversation(conversation: Owned) -> None:
-    """Delete a conversation and its files on disk."""
+    """Delete a conversation and its files on disk, once its turn stopped."""
     if not await conversation_files.delete_conversation(conversation):
         raise HTTPException(status_code=404, detail=CONVERSATION_NOT_FOUND.current)
 
 
 @router.delete("/conversations", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_all_conversations_route(
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> None:
     """Delete all conversations for the authenticated user, and their files on disk."""
     await conversation_files.delete_conversations(user)
 
 
-async def _active_messages(conversation: OwnedConversation) -> list[UIMessage]:
-    """The active path of *conversation* as the client addresses it."""
-    result = await load_active_for_display(conversation)
+async def _active_messages(
+    conversation: OwnedConversation, run: Run | None = None
+) -> list[UIMessage]:
+    """The active path of *conversation* as the client addresses it.
 
-    if result is None:
-        return []
+    While *run* streams, the path ends where its branch forks and the client
+    message it answers or continues takes its place there, so a client
+    following the run again sees what it answers, and a continuation's replay
+    lands in the assistant message it continues, its decisions included.
+    """
+    if run is not None and not await run.prepared():
+        run = None
 
-    pairs, siblings = result
-    return dump_messages_with_ids(pairs, siblings=siblings)
+    pairs, siblings = await load_active_for_display(conversation)
+
+    if run is not None:
+        fork = (i for i, (node_id, _) in enumerate(pairs) if node_id == run.fork_id)
+        pairs = pairs[: next(fork, -1) + 1]
+
+    messages = dump_messages_with_ids(pairs, siblings=siblings)
+
+    if run is None or run.message is None:
+        return messages
+
+    return [*(m for m in messages if m.id != run.message.id), run.message]
 
 
 @router.get("/conversations/{conversation_id}/messages")
@@ -398,12 +407,14 @@ async def get_conversation_messages(opened: Opened) -> list[UIMessage]:
 
     Each ``UIMessage.id`` is the tree-node id the client addresses for edit /
     regenerate, and forking nodes carry branch metadata.  An absent id has no
-    messages yet, so a client opens a new chat at the id it chose.
+    messages yet, so a client opens a new chat at the id it chose.  A running
+    turn shows as it is followed (:func:`_active_messages`).
     """
     conversation, exists = opened
+    run = runs.get(conversation)
 
     return (
-        await _active_messages(conversation) if exists else []
+        await _active_messages(conversation, run) if exists or run is not None else []
     )
 
 
@@ -445,8 +456,7 @@ async def get_conversation_archive(conversation: Owned) -> Response:
     """
     summary = found(await load_conversation_summary(conversation))
 
-    result = await load_active_for_display(conversation)
-    pairs, siblings = result if result else ([], {})
+    pairs, siblings = await load_active_for_display(conversation)
     server = ServerConversation(
         id=str(summary.id),
         title=summary.title,
@@ -473,7 +483,10 @@ async def get_conversation_archive(conversation: Owned) -> Response:
 
 @router.post("/conversations/{conversation_id}/ragold")
 async def export_ragold_route(
-    conversation: Owned, request: RagoldRequest, ragold: RagoldConfigured
+    conversation: Owned,
+    user: CurrentUser,
+    request: RagoldRequest,
+    ragold: RagoldConfigured,
 ) -> StreamingResponse:
     """Build one RAGold gold entry with its original documents as a zip.
 
@@ -481,7 +494,6 @@ async def export_ragold_route(
     before the first byte is sent, so a failure is an HTTP error, never a
     truncated archive.
     """
-    user = conversation.user
     paths = list(dict.fromkeys(request.documents))
     # Every scope is checked before any document is read.
     located = [resolve_workspace_path(user, path) for path in paths]
@@ -525,6 +537,10 @@ async def put_conversation_archive(
     """
     conversation, exists = opened
     ui_messages, title = archive.active_path()
+
+    # Its turn still writes to the history this would replace.
+    if runs.get(conversation) is not None:
+        raise HTTPException(status_code=409, detail=_TURN_RUNNING.current)
 
     try:
         messages = load_archived(ui_messages)
@@ -599,21 +615,23 @@ def _accept_attachments(messages: Sequence[ModelMessage]) -> None:
 
 
 async def _prepare_turn(
+    user: User,
     conversation: OwnedConversation,
     config: ChatRequest,
     adapter: ChatAdapter[UserDeps, str],
-    prompt_id: UUID | None,
+    prompt: UIMessage | None,
     *,
     exists: bool,
-) -> AsyncIterator[BaseChunk]:
+) -> Prepared:
     """The turn *config* asks for, every check that can refuse it passed.
 
-    A turn that carries a new user message stores it under the id the client
-    gave it (:func:`_prompt_id`).  A request flagged ``compact`` compacts the
+    A turn that carries a new user *prompt* stores it under the id the client
+    gave it (:func:`_prompt`).  A request flagged ``compact`` compacts the
     active path instead of running a turn.  A conversation whose row does not
     *exist* yet is claimed right before the run.
     """
-    run_prefix = build_run_prefix(config, conversation)
+    prompt_id = None if prompt is None else UUID(prompt.id)
+    run_prefix = build_run_prefix(config, user, conversation)
 
     # Gate the new user message's attachments before the run. Sanitisation
     # lands in place, and the adapter caches `messages`, so `run_stream` and
@@ -642,7 +660,10 @@ async def _prepare_turn(
 
     # Ahead of the approvals and answers below, which a compaction leaves pending.
     if config.compact:
-        return _compact_active_path(conversation, adapter, run_prefix, prefix, fork_id)
+        return (
+            _compact_active_path(conversation, adapter, run_prefix, prefix, fork_id),
+            fork_id,
+        )
 
     # The client's decisions and answers count only for the calls the stored
     # history still awaits, each with the kind of result it was deferred for.
@@ -726,15 +747,22 @@ async def _prepare_turn(
 
         await append_branch(conversation, fork_id, delta, prompt_id=prompt_id)
 
-    return run_and_persist(
-        adapter, stream, persist=persist, subagent_sink=subagent_sink
+    return (
+        run_and_persist(adapter, stream, persist=persist, subagent_sink=subagent_sink),
+        fork_id,
     )
 
 
 async def _answer(
     conversation: OwnedConversation, run: Run, accept: str | None
 ) -> Response:
-    """The turn as it streams, or the stored conversation once it ended for a JSON client."""
+    """The turn as it streams, or the stored conversation once it ended for a JSON client.
+
+    A turn its preparation refused answers with the refusal instead.
+    """
+    if not await run.prepared() and run.refusal is not None:
+        raise run.refusal
+
     if _quality(accept, _JSON) <= _quality(accept, SSE_CONTENT_TYPE):
         return stream_response(run.follow())
 
@@ -761,25 +789,22 @@ def _quality(accept: str | None, media_type: str) -> float:
         0.0
     """
     kind = media_type.split("/")[0]
-    ranges: dict[str, float] = {}
-
-    for item in (accept or "").split(","):
-        media, *params = (part.strip() for part in item.split(";"))
-        weights = [p.partition("=")[2] for p in params if p.partition("=")[0] == "q"]
-
-        # A malformed weight states no preference.
-        try:
-            ranges[media.lower()] = float(weights[0]) if weights else 1.0
-        except ValueError:
-            continue
+    ranges = weighted_ranges(accept)
 
     return next(
         (ranges[r] for r in (media_type, f"{kind}/*", "*/*") if r in ranges), 0.0
     )
 
 
-def _prompt_id(adapter: ChatAdapter[UserDeps, str]) -> UUID | None:
-    """The id the client gave the turn's new user message, ``None`` without one.
+def _continued(adapter: ChatAdapter[UserDeps, str]) -> UIMessage | None:
+    """The assistant message a post-approval continuation sends, with its decisions."""
+    sent = adapter.run_input.messages[-1:]
+
+    return sent[0] if sent and sent[0].role == "assistant" else None
+
+
+def _prompt(adapter: ChatAdapter[UserDeps, str]) -> UIMessage | None:
+    """The turn's new user message under its id in canonical form, ``None`` without one.
 
     A regenerate, a compaction, and a post-approval continuation carry no new
     user message, so the client addresses none of their nodes.
@@ -790,18 +815,17 @@ def _prompt_id(adapter: ChatAdapter[UserDeps, str]) -> UUID | None:
     if not adapter.messages or not is_user_request(adapter.messages[-1]):
         return None
 
-    message_id = next(
-        message.id
+    message = next(
+        message
         for message in reversed(adapter.run_input.messages)
         if message.role == "user"
     )
-
-    parsed = parse_uuid(message_id)
+    parsed = parse_uuid(message.id)
 
     if parsed is None:
         raise HTTPException(status_code=422, detail=_INVALID_MESSAGE_ID.current)
 
-    return parsed
+    return message.model_copy(update={"id": str(parsed)})
 
 
 def _compact_active_path(
@@ -829,9 +853,9 @@ def _compact_active_path(
         try:
             part = await compact(prefix[:cut], run_prefix)
             compaction = ModelResponse(parts=[part])
-            # Shielded like a turn's write, so a cancel during it does not
-            # lose a summary already paid for.
-            await asyncio.shield(
+            # Run to completion like a turn's write, so a cancel during it
+            # neither loses a summary already paid for nor outlives the turn.
+            await shield_to_completion(
                 insert_above(conversation, fork_id, compaction)
                 if fork_id and cut < len(prefix)
                 else append_branch(conversation, fork_id, [compaction])
@@ -852,11 +876,11 @@ def _compact_active_path(
     responses=_CHAT_RESPONSES,
 )
 async def create_conversation_chat(
-    opened: Opened, config: ChatRequest, request: Request
+    opened: Opened, user: CurrentUser, config: ChatRequest, request: Request
 ) -> Response:
     """Run a turn in a conversation, starting it at a fresh id the client chose.
 
-    The turn runs on its own (:mod:`~hivegent.server.runs`), so a client that
+    The turn runs on its own (:mod:`~hivegent.runs`), so a client that
     leaves only stops following it, a retry with the same user message follows
     the running turn, any other request is refused untouched while it runs,
     and ``GET .../stream`` follows it again after a reload.
@@ -869,20 +893,17 @@ async def create_conversation_chat(
         accept=accept,
         sdk_version=SDK_VERSION,
     )
-    prompt_id = _prompt_id(adapter)
+    prompt = _prompt(adapter)
 
     # A retry of the running turn's request follows it, any other is refused.
-    if (run := runs.get(conversation.id)) is not None:
-        if prompt_id is None or run.prompt_id != prompt_id:
-            raise HTTPException(status_code=409, detail=_TURN_RUNNING.current)
-
-        return await _answer(conversation, run, accept)
-
-    run = await runs.start(
-        conversation.id,
-        prompt_id,
-        _prepare_turn(conversation, config, adapter, prompt_id, exists=exists),
-    )
+    if (run := runs.get(conversation)) is None:
+        run = runs.start(
+            conversation,
+            prompt or _continued(adapter),
+            _prepare_turn(user, conversation, config, adapter, prompt, exists=exists),
+        )
+    elif prompt is None or run.message is None or run.message.id != prompt.id:
+        raise HTTPException(status_code=409, detail=_TURN_RUNNING.current)
 
     return await _answer(conversation, run, accept)
 
@@ -898,7 +919,7 @@ async def follow_conversation_turn(opened: Opened) -> Response:
     The AI SDK's resumable stream: ``204`` while no turn runs, so a client
     reloading after the turn ended reads it from ``.../messages`` instead.
     """
-    run = runs.get(opened[0].id)
+    run = runs.get(opened[0])
 
     if run is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -912,4 +933,4 @@ async def follow_conversation_turn(opened: Opened) -> Response:
 )
 async def stop_conversation_turn(opened: Opened) -> None:
     """Stop the running turn of a conversation, once it stored what it got to."""
-    await runs.cancel(opened[0].id)
+    await runs.cancel(opened[0])

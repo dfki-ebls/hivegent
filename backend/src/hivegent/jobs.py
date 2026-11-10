@@ -211,7 +211,9 @@ class JobManager:
     max_concurrency: int = 2
     retain_seconds: float = 3600.0
     queue_maxsize: int = 1024
-    _jobs: dict[str, _Job] = field(default_factory=dict, init=False)
+    # Per owner, its jobs by id in the order they came, so a lookup by id
+    # never reaches another owner's job.
+    _jobs: dict[str, dict[str, _Job]] = field(default_factory=dict, init=False)
     # Per owner, each live subscription and the client id it was opened with
     # (``None`` when the client did not name itself).
     _subscribers: dict[str, dict[asyncio.Queue[FeedEvent], str | None]] = field(
@@ -252,7 +254,7 @@ class JobManager:
             created_at=now,
             updated_at=now,
         )
-        self._jobs[job.id] = job
+        self._jobs.setdefault(owner, {})[job.id] = job
         job.task = asyncio.create_task(self._run(job, work, on_settled))
         self._publish(job)
         return job.view()
@@ -303,8 +305,8 @@ class JobManager:
 
     def cancel(self, owner: str, job_id: str) -> bool:
         """Request cancellation of *owner*'s job; return whether it was live."""
-        job = self._jobs.get(job_id)
-        if job is None or job.owner != owner or job.task is None:
+        job = self._jobs.get(owner, {}).get(job_id)
+        if job is None or job.task is None:
             return False
         if job.status in _TERMINAL:
             return False
@@ -350,10 +352,7 @@ class JobManager:
             self._unsubscribe(owner, queue)
 
     def _owner_jobs(self, owner: str) -> list[_Job]:
-        return sorted(
-            (job for job in self._jobs.values() if job.owner == owner),
-            key=lambda job: job.created_at,
-        )
+        return list(self._jobs.get(owner, {}).values())
 
     def _touch(self, job: _Job) -> None:
         job.updated_at = time.monotonic()
@@ -380,13 +379,14 @@ class JobManager:
 
     def _prune(self) -> None:
         cutoff = time.monotonic() - self.retain_seconds
-        stale = [
-            job_id
-            for job_id, job in self._jobs.items()
-            if job.status in _TERMINAL and job.updated_at < cutoff
-        ]
-        for job_id in stale:
-            del self._jobs[job_id]
+
+        for owner, jobs in list(self._jobs.items()):
+            for job_id, job in list(jobs.items()):
+                if job.status in _TERMINAL and job.updated_at < cutoff:
+                    del jobs[job_id]
+
+            if not jobs:
+                del self._jobs[owner]
 
 
 manager = JobManager(

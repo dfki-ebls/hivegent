@@ -315,7 +315,7 @@ async def test_the_sweep_removes_a_folder_only_once_all_of_it_is_idle(
     data_dir: Path,
 ) -> None:
     """A stale `/tmp` beside a fresh changeset stays, and the other way round."""
-    root = OwnedConversation.user_root(data_dir, owned("idle").user)
+    root = OwnedConversation.user_root(data_dir, owned("idle").owner)
 
     for name in ("idle", "fresh-tmp", "fresh-changeset"):
         folder = tmp_dir(data_dir, owned(name))
@@ -347,7 +347,7 @@ async def test_each_user_has_their_own_folder_and_the_sweep_drops_an_empty_one(
     _age(folder, folder.parent, touched=_stale())
 
     assert await sweep_conversations() == 1
-    assert not OwnedConversation.user_root(data_dir, alice.user).exists()
+    assert not OwnedConversation.user_root(data_dir, alice.owner).exists()
 
 
 async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:

@@ -16,6 +16,7 @@ from hivegent.auth import (
     parse_group_claims,
 )
 from hivegent.config import settings
+from hivegent.store import AccessDenied
 
 
 async def test_get_jwks_uses_jwks_uri_from_discovery_doc(
@@ -316,10 +317,8 @@ async def test_impersonation_requires_admin() -> None:
     """A non-admin sending the impersonation header must get 403."""
     actor = auth.User(id="u", roles=frozenset({"editor"}))
 
-    with pytest.raises(HTTPException) as exc_info:
-        await auth._impersonate(actor, "victim")
-
-    assert exc_info.value.status_code == 403
+    with pytest.raises(AccessDenied):
+        await auth.act_as(actor, "victim")
 
 
 async def test_impersonation_rejects_malformed_target() -> None:
@@ -327,7 +326,7 @@ async def test_impersonation_rejects_malformed_target() -> None:
     admin = auth.User(id="root", roles=frozenset({"admin"}))
 
     with pytest.raises(HTTPException) as exc_info:
-        await auth._impersonate(admin, "../etc/passwd")
+        await auth.act_as(admin, "../etc/passwd")
 
     assert exc_info.value.status_code == 400
 
@@ -343,14 +342,14 @@ async def test_impersonation_yields_personal_scope_without_roles(
     monkeypatch.setattr(auth, "user_exists", fake_exists)
     admin = auth.User(id="root", roles=frozenset({"admin"}))
 
-    user = await auth._impersonate(admin, "victim")
+    user = await auth.act_as(admin, "victim")
     assert user == auth.User(id="victim")
     # Groups live only in the target's OIDC token, never reconstructed here.
     assert not user.all_groups
     assert not user.is_admin
 
     with pytest.raises(HTTPException) as exc_info:
-        await auth._impersonate(admin, "ghost")
+        await auth.act_as(admin, "ghost")
     assert exc_info.value.status_code == 404
 
 

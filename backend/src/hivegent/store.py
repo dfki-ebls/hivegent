@@ -50,6 +50,9 @@ _WRITE_ACCESS_REQUIRED = Localized(
     en="Write access required for this group",
     de="Für diese Gruppe ist Schreibzugriff erforderlich",
 )
+_ADMIN_REQUIRED = Localized(
+    en="Administrator privileges required", de="Adminrechte erforderlich"
+)
 _READ_ONLY = Localized(
     en="This workspace is read-only for you",
     de="Dieser Arbeitsbereich ist für dich schreibgeschützt",
@@ -151,10 +154,10 @@ class Casebase:
     It is a :class:`~hivegent.workspace.operations.Root` of the changeset
     gateway, the one whose changes carry rows, an index, and announcements.
 
-    *writable* is the grant the casebase was built with, and a personal one is
-    always writable.  It takes no part in equality, so the same group read
-    and written is one store, and it defaults to read, so a casebase built
-    without a stated grant can never be changed.
+    *writable* is the grant the casebase was built with, and a personal one
+    its owner holds is always writable.  It takes no part in equality, so the
+    same store read and written is one store, and it defaults to read, so a
+    casebase built without a stated grant can never be changed.
     """
 
     kind: CasebaseKind
@@ -182,10 +185,10 @@ class Casebase:
         The ``documents`` table carries exactly one of the pair (its
         ``single_owner`` check constraint), so this is total for any row that
         is actually in the database.  It names the row's owner for a read and
-        grants no write to a group.
+        grants no write, not even to a personal store.
         """
         if user_id is not None:
-            return cls.for_user(user_id)
+            return cls(kind="user", id=user_id)
         if group_id is not None:
             return cls.for_group(group_id)
         raise ValueError("document row has neither owner set")
@@ -328,6 +331,15 @@ class User:
     def is_admin(self) -> bool:
         """Whether the user holds the fixed admin role."""
         return ADMIN_ROLE in self.roles
+
+    def require_admin(self) -> None:
+        """Refuse a user who holds no admin role.
+
+        Raises:
+            AccessDenied: When the user is no :attr:`is_admin`.
+        """
+        if not self.is_admin:
+            raise AccessDenied(_ADMIN_REQUIRED.current)
 
     @property
     def store(self) -> Casebase:

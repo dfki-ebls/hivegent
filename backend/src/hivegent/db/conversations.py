@@ -16,7 +16,7 @@ stored JSON on the way back out.
 """
 
 import contextlib
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import reduce
@@ -90,7 +90,8 @@ __all__ = [
     "owned_conversations",
     "prompt_items",
     "prompt_text",
-    "remove_conversations",
+    "remove_conversation",
+    "remove_owned_conversations",
     "render_prompt",
     "resolve_fork",
     "search_conversation",
@@ -100,19 +101,25 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class OwnedConversation:
-    """A conversation id together with the user it belongs to.
+    """A conversation id together with the id of the user it belongs to.
 
     Built only by :func:`owned_conversation` and its siblings, which read the
     owner from the database, or by :func:`open_conversation` for an id no
     conversation holds, so holding one is the proof of ownership the message
     tree and the conversation's :meth:`folder` require.  An absent id proves no
     more than that it was free, so it is claimed (:func:`claim_conversation`)
-    before anything is written, and every statement still matches the owner
-    too.  The id is a UUID, so its canonical string is a safe path
-    segment.
+    before anything is written.
+
+    A conversation is the pair, never its id alone: every statement matches
+    the owner too, its folder lies below the owner's, and the pair is what
+    equality and hashing compare, so state kept per conversation is kept per
+    owner by keying it by this value.  It names the owner without acting for
+    them, since authority comes only from an authenticated :class:`User`, and
+    a run checks that its conversation is its user's.  The id is a UUID, so
+    its canonical string is a safe path segment.
     """
 
-    user: User
+    owner: str
     id: UUID
 
     @staticmethod
@@ -121,9 +128,9 @@ class OwnedConversation:
         return data_dir / "conversations"
 
     @staticmethod
-    def user_root(data_dir: Path, user: User) -> Path:
-        """Where the :meth:`folder` of every conversation *user* owns lives."""
-        return OwnedConversation.root(data_dir) / sanitize_user_id(user.id)
+    def user_root(data_dir: Path, owner: str) -> Path:
+        """Where the :meth:`folder` of every conversation *owner* owns lives."""
+        return OwnedConversation.root(data_dir) / sanitize_user_id(owner)
 
     def folder(self, data_dir: Path) -> Path:
         """The one folder holding what this conversation keeps on disk, without creating it.
@@ -133,7 +140,7 @@ class OwnedConversation:
         :meth:`user_root`, so a run still writing after its conversation was
         deleted never reaches another user who claims the freed id.
         """
-        return self.user_root(data_dir, self.user) / str(self.id)
+        return self.user_root(data_dir, self.owner) / str(self.id)
 
 
 class MessageIdTaken(Exception):
@@ -446,19 +453,19 @@ def _to_summary(conv: Conversation) -> ConversationSummary:
 # ─── Reads ─────────────────────────────────────────────────────────────
 
 
-def _owned(user: User) -> ColumnElement[bool]:
-    """Match the conversations *user* owns.
+def _owned(owner: str) -> ColumnElement[bool]:
+    """Match the conversations *owner* owns.
 
     Every statement selecting, changing, or deleting conversations names them
-    through this or :func:`_row`, and the messages of one are reached only
-    through a conversation it matched.
+    through this or :func:`_row`, and the messages of one are
+    reached only through a conversation it matched.
     """
-    return Conversation.user_id == user.id
+    return Conversation.user_id == owner
 
 
 def _row(conversation: OwnedConversation) -> ColumnElement[bool]:
     """Match *conversation*'s row, still only while its user owns it."""
-    return and_(Conversation.id == conversation.id, _owned(conversation.user))
+    return and_(Conversation.id == conversation.id, _owned(conversation.owner))
 
 
 async def _get_owned(
@@ -472,7 +479,7 @@ async def owned_conversation(
     user: User, conversation_id: UUID
 ) -> OwnedConversation | None:
     """The one ownership check: *conversation_id* as *user*'s, or ``None``."""
-    conversation = OwnedConversation(user, conversation_id)
+    conversation = OwnedConversation(user.id, conversation_id)
 
     async with session() as s:
         found = await s.scalar(select(Conversation.id).where(_row(conversation)))
@@ -480,30 +487,42 @@ async def owned_conversation(
     return None if found is None else conversation
 
 
-async def any_conversation(conversation_id: UUID) -> OwnedConversation | None:
-    """*conversation_id* as its owner's, whoever that is, or ``None``.
-
-    The ownership check for an admin reading across users, which reads the
-    owner from the row rather than checking it against the caller.
-    """
+async def _owner_of(conversation_id: UUID) -> str | None:
+    """The id of the user owning *conversation_id*, ``None`` while no row holds it."""
     async with session() as s:
-        owner = await s.scalar(
+        return await s.scalar(
             select(Conversation.user_id).where(Conversation.id == conversation_id)
         )
 
-    return None if owner is None else OwnedConversation(User(owner), conversation_id)
+
+async def any_conversation(
+    admin: User, conversation_id: UUID
+) -> OwnedConversation | None:
+    """*conversation_id* as its owner's, whoever that is, or ``None``.
+
+    The ownership check for *admin* reading across users, which reads the
+    owner from the row rather than checking it against the caller.
+
+    Raises:
+        AccessDenied: When *admin* holds no admin role.
+    """
+    admin.require_admin()
+
+    owner = await _owner_of(conversation_id)
+
+    return None if owner is None else OwnedConversation(owner, conversation_id)
 
 
 async def open_conversation(
     user: User, conversation_id: UUID
 ) -> tuple[OwnedConversation, bool] | None:
     """*conversation_id* as *user*'s and whether its row exists, or ``None`` for another user's."""
-    found = await any_conversation(conversation_id)
+    owner = await _owner_of(conversation_id)
 
-    if found is not None and found.user.id != user.id:
+    if owner is not None and owner != user.id:
         return None
 
-    return OwnedConversation(user, conversation_id), found is not None
+    return OwnedConversation(user.id, conversation_id), owner is not None
 
 
 async def claim_conversation(conversation: OwnedConversation) -> bool:
@@ -514,9 +533,9 @@ async def claim_conversation(conversation: OwnedConversation) -> bool:
     the caller's only when they own it.
     """
     async with session() as s:
-        await ensure_user(s, conversation.user.id)
+        await ensure_user(s, conversation.owner)
         await ensure_row(
-            s, Conversation, id=conversation.id, user_id=conversation.user.id
+            s, Conversation, id=conversation.id, user_id=conversation.owner
         )
         owned = await s.scalar(select(Conversation.id).where(_row(conversation)))
 
@@ -541,17 +560,17 @@ async def load_conversation(conversation: OwnedConversation) -> ConversationData
 
 async def load_active_for_display(
     conversation: OwnedConversation,
-) -> tuple[list[MessagePair], dict[UUID, list[UUID]]] | None:
+) -> tuple[list[MessagePair], dict[UUID, list[UUID]]]:
     """Return the active path as ``(node_id, message)`` pairs plus sibling map.
 
     The node ids anchor each ``UIMessage.id`` so the client can address a
     message for edit / regenerate; the sibling map lists each forking node's
-    siblings.  ``None`` before the conversation is claimed.
+    siblings.  Both are empty before the conversation is claimed.
     """
     async with session() as s:
         conv = await _get_owned(s, conversation)
         if conv is None:
-            return None
+            return [], {}
         return await _display(s, conv.id)
 
 
@@ -561,7 +580,7 @@ async def list_conversations(user: User) -> list[ConversationSummary]:
         convs = (
             await s.scalars(
                 select(Conversation)
-                .where(_owned(user), _has_messages())
+                .where(_owned(user.id), _has_messages())
                 .order_by(Conversation.updated_at.desc())
             )
         ).all()
@@ -650,9 +669,9 @@ async def search_conversation(
 async def owned_conversations(user: User) -> list[OwnedConversation]:
     """Return every conversation *user* owns."""
     async with session() as s:
-        ids = (await s.scalars(select(Conversation.id).where(_owned(user)))).all()
+        ids = (await s.scalars(select(Conversation.id).where(_owned(user.id)))).all()
 
-    return [OwnedConversation(user, cid) for cid in ids]
+    return [OwnedConversation(user.id, cid) for cid in ids]
 
 
 # ─── Writes ────────────────────────────────────────────────────────────
@@ -865,20 +884,18 @@ async def set_conversation_title(
     return None if conv is None else _to_summary(conv)
 
 
-async def remove_conversations(user: User, ids: Collection[UUID]) -> int:
-    """Delete *user*'s conversations among *ids* (cascades to their messages).
-
-    Returns how many were deleted.
-    """
-    if not ids:
-        return 0
-
+async def remove_conversation(conversation: OwnedConversation) -> bool:
+    """Delete *conversation* (cascades to its messages), returning whether it had a row."""
     async with session() as s:
-        result = await s.execute(
-            delete(Conversation).where(_owned(user), Conversation.id.in_(ids))
-        )
+        result = await s.execute(delete(Conversation).where(_row(conversation)))
 
-    return affected_rows(result)
+    return affected_rows(result) > 0
+
+
+async def remove_owned_conversations(user: User) -> None:
+    """Delete every conversation *user* owns (cascades to their messages)."""
+    async with session() as s:
+        _ = await s.execute(delete(Conversation).where(_owned(user.id)))
 
 
 async def import_conversation(

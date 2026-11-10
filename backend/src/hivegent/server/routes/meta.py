@@ -5,12 +5,12 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from ...agents import collect_tool_schemas, unlisted_tool_names
-from ...auth import get_current_user
+from ...auth import CurrentUser
 from ...chunkers import (
     ChunkingPipeline,
     get_chunking_pipeline_config,
@@ -25,7 +25,6 @@ from ...converters import (
 )
 from ...mcp import build_mcp_toolset, validate_mcp_servers
 from ...pipeline_registry import PipelineConfigInfo
-from ...store import User
 from ...transparency import get_transparency_config
 from ...types import (
     AttachmentLimits,
@@ -70,7 +69,7 @@ _STAGES: dict[PipelineStage, _Stage[ConversionPipeline] | _Stage[ChunkingPipelin
 
 @router.get("/settings")
 async def get_settings(
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> SettingsResponse:
     """Get server-side LLM settings and authenticated user metadata."""
     return SettingsResponse(
@@ -92,7 +91,7 @@ async def get_settings(
 
 @router.get("/tools")
 async def list_tools(
-    _user: Annotated[User, Depends(get_current_user)],
+    _user: CurrentUser,
 ) -> Sequence[ToolInfo]:
     """Return metadata for the agent tools a user may switch on and off.
 
@@ -115,7 +114,7 @@ async def list_tools(
 @router.post("/mcp/test")
 async def test_mcp_server(
     config: McpServerConfig,
-    _user: Annotated[User, Depends(get_current_user)],
+    _user: CurrentUser,
 ) -> McpTestResponse:
     """Test connectivity to an MCP server and return the discovered tool count."""
     try:

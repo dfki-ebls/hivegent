@@ -109,8 +109,21 @@ Access derives from the request's `User` alone (`User.store`, `User.group_stores
 HTTP and MCP build the `User` through the same `auth.user_from_claims`.
 Writes span the personal workspace plus the writable groups, reads every readable one.
 A group `Casebase` defaults to a read grant (`Casebase.writable`), and the casebase lock (`workspace.locks._lock_of`) and every document row write (`db.documents._writable_filter`) refuse a read grant with `AccessDenied` (403).
-Only the admin routes and reconciliation state a grant of their own.
+Only the admin routes and reconciliation (`reconcile._known_stores`) state a grant of their own.
 Owned rows are named through one predicate per table (`_owner_filter`, `_owned`), and the conversation and memory repositories take a `User` or an `OwnedConversation` rather than an id string.
+
+### Access is scoped by construction
+
+Access is never a check a caller has to remember, it is a value the caller can only obtain through the check.
+A `User` is the one principal, built only by `auth` (`auth.CurrentUser` in every route), and every grant derives from it.
+Every function acting on a user's data takes their `User`, never an id string.
+An `OwnedConversation` is the proof of a conversation, built only by the checks in `db.conversations`, and it names its owner by id without acting for them, so code that needs authority takes the `User` beside it, and `UserDeps` refuses a conversation that is not its user's.
+A conversation is its owner and id together, which equality and hashing compare, so state kept per conversation, such as the running turns, is keyed by that value and is per owner without a check, while an id alone addresses nothing.
+State kept per user in the process is partitioned by owner, as the job registry is, so a lookup by id cannot reach another owner's entry.
+An admin acting on another user, by impersonation or the admin wipe, gets that user from `auth.act_as`, without groups or roles.
+Deleting conversations stops their turns first (`conversation_files`), so no caller can forget it.
+A `Casebase` carries its grant, a request derives it from its `User` alone, and `Casebase.for_owner` names a row's owner with no grant at all, so only the system code that states a grant of its own builds one.
+`tests/unit/test_access_scope.py` keeps these builders, and the modules allowed to build a `Casebase`, the only ones.
 Disk reads resolve through `Casebase.locate`, so neither `..` nor a symlink escapes a workspace, `query_table` refuses Polars' `read_*` table functions, and `jq` refuses module directives and runs without the server's environment.
 
 A group is identified only by its OIDC groups-claim ID, in the `groups` row, `documents.owner_group_id`, the `group:<id>` directory, and the `@<id>` prefix.
@@ -144,7 +157,7 @@ Edits are not checked, since they change a file they did not build.
 
 `/tmp` holds a conversation's working state that is never a document: intermediates, state for a later `run_python` call, scripts, and spilled tool results.
 Each conversation owns `<data_dir>/conversations/<user_id>/<id>/` (`OwnedConversation.folder`), outside every workspace, holding its `tmp/` and the `changesets/` its programs staged.
-Ownership comes from the `conversations` row, never the path, and an `OwnedConversation` is obtained only from the database or by `open_conversation` for an absent id, with a `UUID` id whose canonical string names the folder, so no caller can name another user's folder.
+Ownership comes from the `conversations` row, never the path, and an `OwnedConversation` is obtained only from the database or by `open_conversation` for an absent id (see "Access is scoped by construction"), with a `UUID` id whose canonical string names the folder, so no caller can name another user's folder.
 The user level keeps what a run writes after its conversation was deleted with its user, so another user who claims the freed id never reaches it, and the sweep removes it once idle.
 `tmp.tmp_dir` is the one place an id becomes a path, and every `{conversation_id}` route resolves through one dependency.
 
@@ -228,11 +241,18 @@ A regenerate, a compaction, and a post-approval continuation carry no new user m
 
 ### A turn runs apart from its request
 
-A turn runs as a task of `server.runs.runs`, at most one per conversation, which keeps every chunk it streamed until it ends.
+A turn runs as a task of `runs.runs`, at most one per conversation, from its preparation to its last chunk, and keeps every chunk it streamed until it ends.
+The registry keys a turn by its `OwnedConversation`, the owner and the id together, so another user addressing the same id finds nothing to follow or stop, even before the turn claimed the conversation's row.
 The request that started it follows it, and a client that leaves only stops following, so a closed tab or a sleeping phone loses no answer.
 `GET /conversations/{id}/stream` follows the running turn again from its first chunk, the AI SDK's resumable stream, and answers 204 while none runs, so a client reloading after the turn ended reads it from `.../messages`.
+While a turn runs, `.../messages` ends the active path where the turn's branch forks with the client message the turn answers or continues, its new user message or the assistant message carrying a continuation's decisions, since the turn is stored only once it ends.
+A reload so shows the prompt the followed answer belongs to, and the client replays a continuation into the message it continues (`resumeStreamIsReplay: false`) rather than into a second one.
+A client that finds no turn to follow reads the history again, since the turn may have ended after the history was read.
 A request takes the conversation's slot before it prepares or writes anything and gives it up when it is refused, so a retry of the running turn's request, the same user message id, follows that turn, and any other request is refused with 409 untouched.
-`DELETE /conversations/{id}/stream` is the only way to stop a turn, and returns once the turn stored what it got to, as the shutdown does for every running turn before the database closes.
+`DELETE /conversations/{id}/stream` is the only way to stop a turn, preparing or running, and returns once the turn stored what it got to and left its slot, as the shutdown does for every running turn before the database closes.
+The followed stream ends by itself once the turn is stored, so a steering message the client queued is sent to a free slot, and the client stops reading on its own only when the stop failed.
+Every write of a turn runs to completion through `shield_to_completion`, so a cancel during it ends the turn only once it is stored.
+Deleting a conversation stops its turn first, and replacing it with an archive is refused with 409 while a turn runs, since the turn still writes to the history it would replace.
 `Accept: application/json` waits for the turn and answers the active path, its last message being the answer, or a 502 problem when the turn failed, so a client without a stream parser drives the same loop.
 The registry lives in the process like the maintenance flag, so it holds for the single-process deployment, and a turn ends with the process.
 
@@ -335,7 +355,7 @@ Each purpose runs its own named agent (`chat`, `explore`, `summarize`, `title`, 
 
 ### The chat debugger reads any conversation
 
-`/api/v1/debug/conversations/{id}/chat` lets an admin ask the `debug` agent about any user's conversation, found by `any_conversation` without the ownership check, and every access is logged.
+`/api/v1/debug/conversations/{id}/chat` lets an admin ask the `debug` agent about any user's conversation, found by `any_conversation`, which reads the owner from the row and refuses a caller without the admin role, and every access is logged.
 The route is stateless, the client sends the whole debugging session with every request, so nothing about it is stored.
 `agents/debugger.py` flattens the conversation into numbered steps, one per message part, model response, changed instructions, and stored run error, which the agent reads overview first, then failures, single steps, and searches.
 Neither pydantic-ai nor the Vercel AI protocol records durations, so a step's time is derived from the stored timestamps: a model response from its request being sent to its stream starting, a tool return from its call's response starting to the return, generation included.

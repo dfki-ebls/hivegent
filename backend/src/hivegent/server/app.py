@@ -20,6 +20,7 @@ from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state, warm_index
+from ..runs import runs
 from ..sandbox import monty_pool_lifespan
 from ..workers.pool import pipeline_pool
 from .access_log import install_probe_access_filter
@@ -29,7 +30,6 @@ from .operations import cleanup_spool_dir
 from .problems import install_problem_handlers
 from .routes import api_router
 from .routes.public import router as public_router
-from .runs import runs
 
 __all__ = ["create_app", "mcp_http_app"]
 

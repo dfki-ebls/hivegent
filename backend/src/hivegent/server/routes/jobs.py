@@ -9,14 +9,12 @@ from the generic :class:`~hivegent.jobs.JobView` shape.
 import logging
 from collections.abc import AsyncIterable
 from contextlib import aclosing
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, status
 from fastapi.sse import EventSourceResponse
 
-from ...auth import get_current_user
+from ...auth import CurrentUser
 from ...jobs import FeedEvent, JobView, manager
-from ...store import User
 from ..common import ClientId
 
 __all__ = ["router"]
@@ -27,7 +25,7 @@ router = APIRouter()
 
 @router.get("/jobs")
 async def list_jobs(
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> list[JobView]:
     """List the caller's known jobs, oldest first."""
     return manager.list_jobs(user.id)
@@ -35,7 +33,7 @@ async def list_jobs(
 
 @router.get("/jobs/events", response_class=EventSourceResponse)
 async def job_events(
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> AsyncIterable[FeedEvent]:
     """Stream the caller's job snapshots as Server-Sent Events.
@@ -53,7 +51,7 @@ async def job_events(
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_job(
     job_id: str,
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> None:
     """Request cancellation of one of the caller's jobs.
 

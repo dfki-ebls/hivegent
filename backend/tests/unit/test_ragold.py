@@ -64,7 +64,9 @@ async def test_archive_matches_the_ragold_schema() -> None:
     (workspace / "notes.md").write_text("Notes")
     os.utime(workspace / "notes.md", (0, 0))
 
-    response = await export_ragold_route(owned("c1", user), _request(), settings.ragold)
+    response = await export_ragold_route(
+        owned("c1", user), user, _request(), settings.ragold
+    )
     body = io.BytesIO()
 
     async for chunk in response.body_iterator:
@@ -105,6 +107,7 @@ async def test_refuses_unreachable_and_unlisted_documents() -> None:
     with pytest.raises(HTTPException) as refused:
         await export_ragold_route(
             owned("c1"),
+            User("u"),
             _request(passages=[], documents=["@secret/report.md"]),
             settings.ragold,
         )

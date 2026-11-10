@@ -8,6 +8,7 @@ cascade-delete with their owning document, so deletes only need to
 touch ``documents``.
 """
 
+import contextlib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
@@ -384,21 +385,22 @@ async def _distinct_owner_ids(s: AsyncSession, column) -> list[str]:
 
 
 async def list_known_stores() -> set[Casebase]:
-    """Return every casebase that owns at least one document row.
+    """Return every casebase that owns at least one document row, for reading.
 
-    Granted for writing, since reconciliation is their only caller.  Ids that
-    can no longer back a casebase (e.g. the admin marker) are skipped so a
-    single legacy row cannot break reconciliation.
+    Ids that can no longer back a casebase (e.g. the admin marker) are skipped
+    so a single legacy row cannot break reconciliation.
     """
     async with session() as s:
         user_ids = await _distinct_owner_ids(s, Document.owner_user_id)
         group_ids = await _distinct_owner_ids(s, Document.owner_group_id)
-    stores: set[Casebase] = {Casebase.for_user(uid) for uid in user_ids}
-    for gid in group_ids:
-        try:
-            stores.add(Casebase.for_group(gid, writable=True))
-        except ValueError:
-            continue
+
+    owners = [(uid, None) for uid in user_ids] + [(None, gid) for gid in group_ids]
+    stores: set[Casebase] = set()
+
+    for user_id, group_id in owners:
+        with contextlib.suppress(ValueError):
+            stores.add(Casebase.for_owner(user_id, group_id))
+
     return stores
 
 

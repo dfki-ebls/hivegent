@@ -1,17 +1,15 @@
 """Route for speech-to-text transcription of recorded audio."""
 
 import logging
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile
 from starlette.requests import Request
 
-from ...auth import get_current_user
+from ...auth import CurrentUser
 from ...config import settings
 from ...l10n import Localized
 from ...llm import create_openai_client
 from ...llm_config import LlmConfig, resolve_llm_config
-from ...store import User
 from ...types import TranscriptionResponse
 from ..cancellation import run_until_disconnect
 
@@ -33,7 +31,7 @@ _FAILED = Localized(
 async def create_transcription(
     audio: UploadFile,
     http_request: Request,
-    _user: Annotated[User, Depends(get_current_user)],
+    _user: CurrentUser,
 ) -> TranscriptionResponse:
     """Transcribe recorded audio with the configured STT model.
 

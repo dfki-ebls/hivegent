@@ -71,6 +71,7 @@ from ..agents.common import ASK_USER_TOOL
 from ..agents.compaction import Compacted
 from ..agents.subagent_events import SubagentUpdate
 from ..agents.tools.ask import ANSWERS, DISMISSED_QUESTIONS
+from ..concurrency import shield_to_completion
 from ..db.conversations import prompt_items
 from ..l10n import Localized
 from .turns import (
@@ -801,9 +802,10 @@ def run_and_persist[DepsT, OutputT](
                     yield chunk
             except BaseException:
                 # A cancel: close any in-flight call so it does not reload as
-                # an approval, persist what completed (shielded, since nobody
-                # waits for it, so a failure can only be logged) and propagate.
-                await asyncio.shield(
+                # an approval, persist what completed (to completion, so the
+                # turn ends only once it is stored, and a failure can only be
+                # logged) and propagate.
+                await shield_to_completion(
                     _persist_safely(
                         persist_turn,
                         close_orphan_tool_calls(list(captured), INTERRUPTED_TOOL_ERROR),
@@ -817,7 +819,7 @@ def run_and_persist[DepsT, OutputT](
                 record_turn_error(messages, error_text)
 
             try:
-                await asyncio.shield(persist_turn(messages))
+                await shield_to_completion(persist_turn(messages))
             except Exception:
                 logger.exception("Failed to persist conversation turn")
                 yield ErrorChunk(error_text=_SAVE_FAILED.current)

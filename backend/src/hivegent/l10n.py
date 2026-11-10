@@ -26,6 +26,7 @@ __all__ = [
     "current_language",
     "negotiate_language",
     "use_language",
+    "weighted_ranges",
 ]
 
 type Language = Literal["en", "de"]
@@ -109,23 +110,43 @@ def negotiate_language(accept_language: str | None) -> Language:
     """
     ranked: list[tuple[float, Language]] = []
 
-    for entry in (accept_language or "").split(","):
-        tag, _, params = entry.strip().partition(";")
-        language: Language
-
-        match tag.split("-")[0].strip().lower():
+    for tag, quality in weighted_ranges(accept_language).items():
+        match tag.split("-")[0]:
             case "en":
-                language = "en"
+                ranked.append((quality, "en"))
             case "de":
-                language = "de"
+                ranked.append((quality, "de"))
             case _:
-                continue
+                pass
 
-        quality = params.strip().removeprefix("q=")
+    return max(ranked, key=lambda item: item[0])[1] if ranked else DEFAULT_LANGUAGE
+
+
+def weighted_ranges(header: str | None) -> dict[str, float]:
+    """The quality each range of a weighted header such as ``Accept`` gives (RFC 9110).
+
+    Ranges are lowercased, and one with a malformed weight states no preference.
+
+    Examples:
+        >>> weighted_ranges("de-AT, de;q=0.9, en;q=oops")
+        {'de-at': 1.0, 'de': 0.9}
+        >>> weighted_ranges(None)
+        {}
+    """
+    ranges: dict[str, float] = {}
+
+    for item in (header or "").split(","):
+        media, *params = (part.strip() for part in item.split(";"))
+        weights = [
+            value for key, _, value in (p.partition("=") for p in params) if key == "q"
+        ]
+
+        if not media:
+            continue
 
         try:
-            ranked.append((float(quality) if quality else 1.0, language))
+            ranges[media.lower()] = float(weights[0]) if weights else 1.0
         except ValueError:
             continue
 
-    return max(ranked, key=lambda item: item[0])[1] if ranked else DEFAULT_LANGUAGE
+    return ranges

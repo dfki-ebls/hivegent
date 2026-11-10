@@ -32,7 +32,7 @@ from pydantic_core import to_json
 
 from ..agents import UserDeps, invoke_agent_tool, unlisted_tool_names
 from ..agents.capabilities import feature_tools
-from ..auth import dev_user, user_from_claims
+from ..auth import NOBODY, dev_user, user_from_claims
 from ..changes import ChangesetSummary
 from ..config import content_hash, settings
 from ..store import User
@@ -153,7 +153,7 @@ def serve_agent_tools(app: FastMCP) -> None:
     """Serve every tool of :data:`_FEATURES` the operator and its ``prepare`` hook leave."""
     unlisted = unlisted_tool_names(ToolsSpec())
     # No hook may depend on who calls, so the probe names no one.
-    probe = _deps(User(""))
+    probe = _deps(NOBODY)
 
     for feature_id, tool in feature_tools():
         if feature_id not in _FEATURES or tool.name in unlisted:

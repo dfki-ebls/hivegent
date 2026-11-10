@@ -1,13 +1,10 @@
 """Routes for memory and user-wide cleanup."""
 
-from typing import Annotated
+from fastapi import APIRouter, status
 
-from fastapi import APIRouter, Depends, status
-
-from ...auth import get_current_user
+from ...auth import CurrentUser
 from ...db.conversations import owned_conversations
 from ...db.memory import clear_memory
-from ...store import User
 from ...tmp import clear_tmp
 from ...types import TmpClearedResponse
 from ..common import ClientId, delete_user_data
@@ -19,7 +16,7 @@ router = APIRouter()
 
 @router.delete("/memory", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_memory(
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> None:
     """Clear the authenticated user's persistent memory."""
     await clear_memory(user)
@@ -27,7 +24,7 @@ async def delete_memory(
 
 @router.delete("/tmp")
 async def delete_tmp(
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
 ) -> TmpClearedResponse:
     """Drop the ``/tmp`` folder of every one of the caller's conversations.
 
@@ -41,7 +38,7 @@ async def delete_tmp(
 
 @router.delete("/user-data", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_all_user_data(
-    user: Annotated[User, Depends(get_current_user)],
+    user: CurrentUser,
     client: ClientId = None,
 ) -> None:
     """Delete all data for the authenticated user (:func:`delete_user_data`)."""

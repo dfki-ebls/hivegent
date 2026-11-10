@@ -65,7 +65,7 @@ def label_id(label: str) -> UUID:
 
 def owned(label: str, user: User | None = None) -> OwnedConversation:
     """The conversation named *label* (see :func:`label_id`) of *user*, ``u`` when none is given."""
-    return OwnedConversation(user or User("u"), label_id(label))
+    return OwnedConversation((user or User("u")).id, label_id(label))
 
 
 def png_bytes(info: PngInfo | None = None) -> bytes:
