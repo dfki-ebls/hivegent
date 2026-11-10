@@ -9,7 +9,9 @@ from typing import Annotated, Any
 import httpx2
 import typer
 
+from .config import API_PREFIX
 from .humanize import format_bytes
+from .store import WorkspaceScope
 
 __all__ = ["app"]
 
@@ -90,6 +92,24 @@ def _require_auth() -> str:
     return token
 
 
+def _document(name: str) -> str:
+    """The API path of document *name*, in the personal workspace unless it names a scope."""
+    try:
+        _ = WorkspaceScope.parse(name)
+    except ValueError:
+        name = WorkspaceScope().render(name)
+
+    return f"/documents/{name}"
+
+
+def _error(response: httpx2.Response) -> str:
+    """The explanation of a refused request, its problem detail where it has one."""
+    try:
+        return str(response.json().get("detail") or response.text)
+    except json.JSONDecodeError:
+        return response.text
+
+
 def _make_request(
     method: str,
     path: str,
@@ -97,9 +117,8 @@ def _make_request(
     json_data: Mapping[str, Any] | None = None,
     files: Mapping[str, Any] | None = None,
 ) -> httpx2.Response:
-    """Make an authenticated request to the API."""
-    api_url = _get_api_url()
-    url = f"{api_url}{path}"
+    """Make an authenticated request to the API route *path*."""
+    url = f"{_get_api_url()}{API_PREFIX}{path}"
     headers = {"Authorization": f"Bearer {token}"}
 
     try:
@@ -217,19 +236,15 @@ def upload(
     with file.open("rb") as f:
         response = _make_request(
             "PUT",
-            f"/api/documents/{target_name}",
+            _document(target_name),
             token,
             files={"file": (target_name, f, "application/octet-stream")},
         )
 
     if response.status_code == 200:
-        typer.echo(f"Uploaded: {target_name}")
+        typer.echo(f"Uploaded: {target_name}, converting and indexing in the background")
     else:
-        try:
-            error = response.json().get("detail", "Unknown error")
-        except (json.JSONDecodeError, KeyError):
-            error = response.text
-        typer.echo(f"Upload failed: {error}", err=True)
+        typer.echo(f"Upload failed: {_error(response)}", err=True)
         raise typer.Exit(1)
 
 
@@ -243,42 +258,47 @@ def download(
     """Download a document."""
     token = _require_auth()
 
-    response = _make_request("GET", f"/api/documents/{filename}", token)
+    response = _make_request("GET", _document(filename), token)
 
     if response.status_code == 200:
-        out_path = output or Path(filename)
+        out_path = output or Path(Path(filename).name)
         out_path.write_text(response.text, encoding="utf-8")
         typer.echo(f"Downloaded: {out_path}")
-    elif response.status_code == 404:
-        typer.echo(f"Document not found: {filename}", err=True)
-        raise typer.Exit(1)
     else:
-        typer.echo(f"Download failed: {response.text}", err=True)
+        typer.echo(f"Download failed: {_error(response)}", err=True)
         raise typer.Exit(1)
+
+
+def _files(entry: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Every file below the directory tree *entry*, depth first."""
+    if entry["type"] == "file":
+        return [entry]
+
+    return [file for child in entry.get("children") or () for file in _files(child)]
 
 
 @app.command("list")
 def list_docs() -> None:
-    """List all documents."""
+    """List the documents of the personal workspace."""
     token = _require_auth()
 
-    response = _make_request("GET", "/api/documents", token)
+    response = _make_request("GET", "/directories/~", token)
 
-    if response.status_code == 200:
-        data = response.json()
-        documents = data.get("documents", [])
-        if not documents:
-            typer.echo("No documents found.")
-            return
-
-        typer.echo(f"{'Filename':<40} {'Size':>10}")
-        typer.echo("-" * 52)
-        for doc in documents:
-            size_str = format_bytes(doc["size_bytes"])
-            typer.echo(f"{doc['filename']:<40} {size_str:>10}")
-    else:
-        typer.echo(f"Failed to list documents: {response.text}", err=True)
+    if response.status_code != 200:
+        typer.echo(f"Failed to list documents: {_error(response)}", err=True)
         raise typer.Exit(1)
+
+    documents = _files(response.json()["root"])
+
+    if not documents:
+        typer.echo("No documents found.")
+        return
+
+    typer.echo(f"{'Path':<60} {'Size':>10}")
+    typer.echo("-" * 72)
+    for doc in documents:
+        size = doc.get("size_bytes")
+        typer.echo(f"{doc['path']:<60} {'' if size is None else format_bytes(size):>10}")
 
 
 @app.command()
@@ -294,15 +314,12 @@ def delete(
 
     token = _require_auth()
 
-    response = _make_request("DELETE", f"/api/documents/{filename}", token)
+    response = _make_request("DELETE", _document(filename), token)
 
     if response.status_code == 200:
         typer.echo(f"Deleted: {filename}")
-    elif response.status_code == 404:
-        typer.echo(f"Document not found: {filename}", err=True)
-        raise typer.Exit(1)
     else:
-        typer.echo(f"Delete failed: {response.text}", err=True)
+        typer.echo(f"Delete failed: {_error(response)}", err=True)
         raise typer.Exit(1)
 
 
