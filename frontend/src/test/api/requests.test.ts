@@ -38,7 +38,7 @@ describe("getDocumentContent", () => {
 
     expect(await getDocumentContent("/tmp/my report.py", "c1")).toBe("print(1)");
     expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/documents/%2Ftmp/my%20report.py?conversation_id=c1"),
+      expect.stringContaining("/api/v1/documents/%2Ftmp/my%20report.py?conversation_id=c1"),
       expect.anything(),
     );
   });

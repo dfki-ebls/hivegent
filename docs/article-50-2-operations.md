@@ -68,14 +68,14 @@ Never publish watermark keys.
 Hivegent derives its Ed25519 key for reports and export provenance from `transparency.secret_key`, so the signing key itself is never stored and only its JWKS is published.
 Set it to at least 32 random characters, for example `openssl rand -base64 32`, back it up in the secret manager, and keep it stable across deployments: changing it rotates the signing key.
 Restoring a backup needs the same secret, or earlier reports and exports stop verifying.
-For a planned rotation, add the old key's public `x` value from `/api/transparency/jwks` to `transparency.retired_public_keys` before changing the secret, so earlier reports and exports keep verifying.
+For a planned rotation, add the old key's public `x` value from `/api/v1/transparency/jwks` to `transparency.retired_public_keys` before changing the secret, so earlier reports and exports keep verifying.
 After a compromise, leave the old key out, since its holder could sign backdated reports, and not listing it is how those reports are revoked.
 
 ## Detection
 
-`POST /api/transparency/detect` answers for signed-in users, which covers the persons exposed to the content.
+`POST /api/v1/transparency/detect` answers for signed-in users, which covers the persons exposed to the content.
 Each result can be downloaded as a signed report with the text hash, the detector URL, and a timestamp (Code, Sub-measure 2.1.2).
-`GET /api/transparency/jwks` publishes the verification key without authentication, since reports and exports travel to people without a sign-in.
+`GET /api/v1/transparency/jwks` publishes the verification key without authentication, since reports and exports travel to people without a sign-in.
 Access to detection is free and unlimited on request through the contact address above for competent authorities, regulators, law enforcement, media, fact-checkers, researchers, and civil society organisations.
 Granting that access means granting a sign-in.
 

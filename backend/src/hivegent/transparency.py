@@ -12,7 +12,7 @@ from joserfc import jws
 from joserfc.jwk import OKPKey
 from pydantic import BaseModel, Field
 
-from .config import TransparencySettings, content_digest, reveal, settings
+from .config import API_PREFIX, TransparencySettings, content_digest, reveal, settings
 from .http_client import get_trusted_http_client
 from .types import (
     ServerConversation,
@@ -224,7 +224,7 @@ async def detect_text(
     # whose whole point is that anyone can re-run the check.
     claims = _ReportClaims(
         content_sha256=content_digest(text),
-        detector=f"{_issuer(config)}/api/transparency/detect",
+        detector=f"{_issuer(config)}{API_PREFIX}/transparency/detect",
         status=status,
     )
 

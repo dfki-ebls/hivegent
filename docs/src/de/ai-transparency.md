@@ -10,7 +10,7 @@ Exportierte Unterhaltungen enthalten eine signierte Angabe, dass sie KI-generier
 
 Wählen Sie **KI-Text prüfen** im Benutzermenü und fügen Sie den Text ein.
 Sie können einen signierten Bericht mit dem Hash des Textes herunterladen, aber nicht mit dem Text selbst.
-Den Bericht oder das Feld `provenance` eines Exports prüfen Sie mit dem öffentlichen Schlüssel unter `/api/transparency/jwks`.
+Den Bericht oder das Feld `provenance` eines Exports prüfen Sie mit dem öffentlichen Schlüssel unter `/api/v1/transparency/jwks`.
 Der eingereichte Text wird weder gespeichert noch protokolliert.
 
 Ein positives Ergebnis bedeutet, dass das Hivegent-Wasserzeichen erkannt wurde.

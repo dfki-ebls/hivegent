@@ -53,7 +53,6 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     ToolOutputErrorPart,
     UIMessage,
 )
-from starlette.responses import StreamingResponse
 
 import hivegent.server.vercel as vercel_module
 from hivegent.agents.approval import ApprovalNotes, approval_note_text
@@ -80,14 +79,14 @@ from hivegent.server.vercel import (
     dump_messages_with_ids,
     load_archived,
     run_and_persist,
+    stream_response,
 )
-from hivegent.store import User
 from hivegent.types import (
     ClientConversation,
     ConversationArchive,
     ServerConversation,
 )
-from tests.helpers import label_id
+from tests.helpers import label_id, owned
 
 
 def _texts(messages: Sequence[ModelMessage]) -> list[str]:
@@ -215,20 +214,21 @@ async def _run_turn(
     async def _record(messages: Sequence[ModelMessage]) -> None:
         recorded.append(list(messages))
 
-    response = await run_and_persist(
-        adapter,
-        adapter.transform_stream(
-            agent_events(
-                adapter.agent.run_stream_events(
-                    adapter.prompt,
-                    message_history=history,
-                    deferred_tool_results=adapter.resume(pending_requests(history)),
+    response = stream_response(
+        run_and_persist(
+            adapter,
+            adapter.transform_stream(
+                agent_events(
+                    adapter.agent.run_stream_events(
+                        adapter.prompt,
+                        message_history=history,
+                        deferred_tool_results=adapter.resume(pending_requests(history)),
+                    )
                 )
-            )
+            ),
+            persist=persist or _record,
         ),
-        persist=persist or _record,
     )
-    assert isinstance(response, StreamingResponse)
     chunks = [chunk async for chunk in response.body_iterator]
     body = "".join(
         chunk.decode() if isinstance(chunk, bytes) else str(chunk) for chunk in chunks
@@ -783,14 +783,15 @@ async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
     async def persist(messages: Sequence[ModelMessage]) -> None:
         recorded.append(list(messages))
 
-    response = await run_and_persist(
-        adapter,
-        adapter.transform_stream(
-            agent_events(adapter.agent.run_stream_events(adapter.prompt))
+    response = stream_response(
+        run_and_persist(
+            adapter,
+            adapter.transform_stream(
+                agent_events(adapter.agent.run_stream_events(adapter.prompt))
+            ),
+            persist=persist,
         ),
-        persist=persist,
     )
-    assert isinstance(response, StreamingResponse)
 
     async def consume() -> None:
         async for _ in response.body_iterator:
@@ -893,7 +894,7 @@ async def test_import_conversation_rejects_empty_export() -> None:
     live database; the happy path is DB-backed and covered by smoke tests.
     """
     with pytest.raises(ValueError, match="no messages"):
-        await import_conversation(User("user-1"), [])
+        await import_conversation(owned("conversation"), [])
 
 
 class TestInstructionSnapshots:

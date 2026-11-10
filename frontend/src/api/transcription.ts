@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { apiUrl, requestJson } from "@/api/client";
+import { requestJson } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 
 const TranscriptionResponseSchema = z.object({ text: z.string() });
 

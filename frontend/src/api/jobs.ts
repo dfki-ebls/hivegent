@@ -1,7 +1,8 @@
 import { mutationOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiUrl, checkedResponse, requestJson, requestVoid } from "@/api/client";
+import { checkedResponse, requestJson, requestVoid } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 
 /** Lifecycle status of a background job. */
 const JobStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);

@@ -107,7 +107,7 @@ export async function chat(
   cfg: BridgeConfig,
 ): Promise<Response> {
   const response = await postChat(
-    `/api/conversations/${encodeURIComponent(conversationId)}/chat`,
+    `/api/v1/conversations/${encodeURIComponent(conversationId)}/chat`,
     text,
     token,
     cfg,

@@ -2,7 +2,7 @@
  * OIDC configuration using oidc-spa.
  *
  * The issuer and client id come from the backend at runtime via
- * {@link fetchRuntimeConfig} (`GET /api/config`) — the single source of truth,
+ * {@link fetchRuntimeConfig} (`GET /api/v1/config`) — the single source of truth,
  * in dev and prod alike. The backend serves an issuer only when auth is enabled
  * (it refuses to start enabled without one) and an empty issuer only in its
  * loopback-only auth-disabled dev mode, so the issuer alone decides real vs mock
@@ -51,7 +51,7 @@ export function initOidc(): Promise<void> {
 }
 
 async function runBootstrap(): Promise<void> {
-  // The backend (every route, including /api/config) answers 503 while it boots
+  // The backend (every route, including /api/v1/config) answers 503 while it boots
   // behind the reverse proxy, so wait for readiness before fetching the config
   // rather than letting it throw; BootstrapGate keeps the connection spinner on
   // screen for the whole wait.

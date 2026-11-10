@@ -2,7 +2,8 @@ import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { validateUIMessages } from "ai";
 import { z } from "zod";
 
-import { apiUrl, jsonRequest, requestBlob, requestJson, requestVoid } from "@/api/client";
+import { jsonRequest, requestBlob, requestJson, requestVoid } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 import type { LlmConfig } from "@/api/settings";
 import type { ToolsPayload } from "@/api/tools";
 import { type ChatMessage, messageSchemas } from "@/lib/chat/message";
@@ -83,9 +84,9 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
 /**
  * The settings of a chat request, mirroring `ChatRequestConfig` on the backend.
  *
- * Narrower than the backend class, which also holds `trigger` and `message_id`.
- * Those address a turn rather than configure it, and the transport splices them
- * into the body itself.
+ * The backend's `ChatRequest` adds the AI SDK's own fields, `id`, `messages`,
+ * `trigger`, and `messageId`, which address a turn rather than configure it, and
+ * the transport splices them into the body itself. It refuses any other field.
  */
 export interface ChatRequestConfig {
   personality: Personality;
@@ -154,14 +155,17 @@ function generateConversationTitle(
   );
 }
 
-/** Restore a previously exported conversation as a new chat owned by the user. */
+/**
+ * Restore a previously exported conversation as a new chat owned by the user,
+ * at an id minted here, so a retried request lands the same conversation.
+ */
 async function importConversation(file: File): Promise<ConversationSummary> {
   return requestJson(
-    apiUrl("/conversations/import"),
+    apiUrl(`/conversations/${crypto.randomUUID()}/archive`),
     "importConversation",
     ConversationSummarySchema,
     {
-      method: "POST",
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: await file.text(),
     },
@@ -189,7 +193,7 @@ export async function getServerConversation(
 ): Promise<ServerConversation | null> {
   try {
     const { backend } = await requestJson(
-      apiUrl(`/conversations/${conversationId}/export`),
+      apiUrl(`/conversations/${conversationId}/archive`),
       "fetchMessages",
       z.object({ backend: ServerConversationSchema.nullable() }),
     );

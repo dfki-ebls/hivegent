@@ -28,7 +28,7 @@ from ..types import PipelineSpec
 from .indexing import chunk_and_index_document
 from .locks import _locked_for
 from .metadata import current_entry_metadata
-from .paths import _shown, document_not_found, not_text
+from .paths import _shown, already_exists, document_not_found, not_text
 
 __all__ = ["TextMutation", "derive_text", "edit_mutation", "rechunk", "write_mutation"]
 
@@ -196,10 +196,6 @@ def _edit_failed(number: int, total: int, detail: str) -> Localized[str]:
         en=f"Edit {number} of {total}: {detail}",
         de=f"Änderung {number} von {total}: {detail}",
     )
-
-
-def _already_exists(path: str) -> Localized[str]:
-    return Localized(en=f"'{path}' already exists", de=f"„{path}“ existiert bereits")
 
 
 def _missing_for_mode(path: str) -> Localized[str]:
@@ -434,7 +430,7 @@ def write_mutation(shown: str, content: str, mode: WriteMode) -> TextMutation:
         if mode == "create":
             if current is not None:
                 raise HTTPException(
-                    status_code=409, detail=_already_exists(shown).current
+                    status_code=409, detail=already_exists(shown).current
                 )
             return content, _created(shown, len(content)).current
         if current is None:

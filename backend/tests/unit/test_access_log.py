@@ -38,13 +38,13 @@ def _probe_filters(logger: logging.Logger) -> list[_EndpointFilter]:
 
 
 def test_probe_filter_drops_only_health(access_logger: logging.Logger) -> None:
-    """`/api/health` is dropped; other paths (incl. `/api/healthz`) pass."""
+    """`/api/v1/health` is dropped; other paths (incl. `/api/v1/healthz`) pass."""
     install_probe_access_filter()
     (probe_filter,) = _probe_filters(access_logger)
 
-    assert probe_filter.filter(_record("/api/health")) is False
-    assert probe_filter.filter(_record("/api/documents")) is True
-    assert probe_filter.filter(_record("/api/healthz")) is True
+    assert probe_filter.filter(_record("/api/v1/health")) is False
+    assert probe_filter.filter(_record("/api/v1/documents")) is True
+    assert probe_filter.filter(_record("/api/v1/healthz")) is True
 
 
 def test_install_is_idempotent(access_logger: logging.Logger) -> None:

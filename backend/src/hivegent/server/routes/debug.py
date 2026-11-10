@@ -46,6 +46,7 @@ from ...llm import model_from_config, thinking_model_settings
 from ...store import User
 from ...tools.pydantic_ai import unwrap_tool_output
 from ...types import (
+    DebugChatRequest,
     DebugReport,
     DebugReportRequest,
     DebugRequestConfig,
@@ -155,24 +156,27 @@ async def get_debug_conversation(conversation: AnyConversation) -> ConversationS
 @router.post("/conversations/{conversation_id}/chat")
 async def debug_conversation(
     conversation: AnyConversation,
+    config: DebugChatRequest,
     request: Request,
     user: Annotated[User, Depends(require_admin)],
 ) -> Response:
     """Stream the debugger agent's answer about any user's conversation."""
-    # The body is the AI SDK's, with the run configuration spliced in beside
-    # its messages.
-    config = DebugRequestConfig.model_validate(await request.json())
     deps = await _debug_deps(user, conversation)
     model, model_settings = _main_model(config)
-
-    return await VercelAIAdapter[DebugDeps, str].dispatch_request(
-        request,
+    adapter = VercelAIAdapter[DebugDeps, str](
         agent=debug_agent,
-        deps=deps,
-        model=model,
-        model_settings=model_settings,
-        usage_limits=turn_usage_limits,
+        run_input=config.run_input(),
+        accept=request.headers.get("accept"),
         sdk_version=SDK_VERSION,
+    )
+
+    return adapter.streaming_response(
+        adapter.run_stream(
+            deps=deps,
+            model=model,
+            model_settings=model_settings,
+            usage_limits=turn_usage_limits,
+        )
     )
 
 

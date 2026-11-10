@@ -1,7 +1,8 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiUrl, jsonRequest, requestJson } from "@/api/client";
+import { jsonRequest, requestJson } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 import { featureFlags } from "@/lib/feature-flags";
 
 /** Metadata about an available agent tool. */

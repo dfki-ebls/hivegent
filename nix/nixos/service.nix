@@ -157,7 +157,7 @@ in
         description = ''
           Maximum decompressed size in bytes of an uploaded collection ZIP. Fed
           to the backend `settings.limits.max_collection_size_bytes` and used to
-          size the Caddy body cap for `/api/documents/collections/*` just above
+          size the Caddy body cap for `/api/v1/documents/collections/*` just above
           it. The default mirrors the backend's own.
         '';
       };

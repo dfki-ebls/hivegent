@@ -12,7 +12,7 @@ storage layout:
   memory, users, and groups.  Group membership is not stored — it
   lives solely in the OIDC token.
 
-A full ``POST /admin/reset/factory`` wipes workspace + database and
+A full ``DELETE /admin/data/factory`` wipes workspace + database and
 leaves the deployment in the same state as a clean checkout.
 """
 
@@ -99,7 +99,7 @@ async def set_maintenance(
 ) -> AdminMaintenanceState:
     """Set the global maintenance flag.
 
-    While enabled, every ``/api`` request from a non-admin fails with
+    While enabled, every API request from a non-admin fails with
     503 (see ``hivegent.server.maintenance``).  Persists the
     ``ApplicationSettings`` row first, then updates the in-memory cache the
     gate reads — a failed write leaves both layers unchanged.
@@ -112,7 +112,7 @@ async def set_maintenance(
 # ─── System-wide resets ───────────────────────────────────────────────
 
 
-@router.post("/reset/{target}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/data/{target}", status_code=status.HTTP_204_NO_CONTENT)
 async def admin_reset(target: Literal["workspace", "database", "factory"]) -> None:
     """Wipe the workspace, the database, or both (``factory``).
 

@@ -29,7 +29,7 @@ in
         Built SPA served as static files. Defaults to the `frontend` package
         of the hivegent flake, rebuilt with its "Documentation" link tracking
         `docsPath`. The SPA otherwise reads its OIDC config at runtime from the
-        backend's `/api/config`, so changing that needs no rebuild.
+        backend's `/api/v1/config`, so changing that needs no rebuild.
 
         Set to `null` to serve the API only, without the SPA — useful when a
         deployment consumes the REST API directly. Non-API paths then return

@@ -9,7 +9,6 @@ import { useMemo } from "react";
 import { z } from "zod";
 
 import {
-  apiUrl,
   checkedResponse,
   encodeFilePath,
   jsonRequest,
@@ -18,6 +17,7 @@ import {
   requestText,
   requestVoid,
 } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 import {
   type JobView,
   JobViewSchema,
@@ -206,6 +206,7 @@ export function requiresConversion(filename: string): boolean {
 interface UploadDocumentOptions {
   spec?: PipelineSpec;
   llm?: LlmConfig;
+  /** Replace a document at the path, which is refused with 412 otherwise. */
   overwrite?: boolean;
 }
 
@@ -239,10 +240,10 @@ export async function uploadDocument(
     requiresConversion(filename) ? options?.llm : undefined,
   );
 
-  if (options?.overwrite) body.append("overwrite", "true");
-
   return requestJson(apiUrl(`/documents/${encodeFilePath(filename)}`), "upload", JobViewSchema, {
     method: "PUT",
+    // A PUT replaces the document, unless it may only create one.
+    headers: options?.overwrite ? undefined : { "If-None-Match": "*" },
     body,
     signal: options?.signal,
   });

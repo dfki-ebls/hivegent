@@ -10,7 +10,7 @@ Conversation exports carry a signed statement that they contain AI-generated tex
 
 Select **Verify AI text** in the user menu and paste the text.
 You can download a signed report with the text hash, but not the text.
-Verify the report, or the `provenance` field of an export, with the public key at `/api/transparency/jwks`.
+Verify the report, or the `provenance` field of an export, with the public key at `/api/v1/transparency/jwks`.
 Submitted text is not stored or logged.
 
 A positive result means Hivegent's watermark was found.

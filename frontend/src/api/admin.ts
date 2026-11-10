@@ -1,7 +1,8 @@
 import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiUrl, jsonRequest, requestJson, requestVoid } from "@/api/client";
+import { jsonRequest, requestJson, requestVoid } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 
 const AdminReindexResponseSchema = z.object({ message: z.string() });
 type AdminReindexResponse = z.infer<typeof AdminReindexResponseSchema>;
@@ -33,7 +34,7 @@ const AdminMaintenanceStateSchema = z.object({ enabled: z.boolean() });
 
 /** Wipe the workspace (files and documents), the database (identities and conversations), or both. */
 export function adminReset(target: AdminResetTarget): Promise<void> {
-  return requestVoid(apiUrl(`/admin/reset/${target}`), "adminAction", { method: "POST" });
+  return requestVoid(apiUrl(`/admin/data/${target}`), "adminAction", { method: "DELETE" });
 }
 
 /** Reconcile every casebase: re-derive the document index from the files on disk. */

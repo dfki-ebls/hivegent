@@ -882,19 +882,22 @@ async def remove_conversations(user: User, ids: Collection[UUID]) -> int:
 
 
 async def import_conversation(
-    user: User,
+    conversation: OwnedConversation,
     messages: Sequence[ModelMessage],
     *,
     title: str | None = None,
-) -> ConversationSummary:
-    """Persist *messages* as a fresh single-branch conversation for *user*.
+) -> ConversationSummary | None:
+    """Persist *messages* as the single branch of *conversation*, a new one.
 
     *messages* is a conversation's active path (the Vercel AI UI messages an
     export carries, already decoded to model messages by the caller). It is
-    stored as one linear chain under fresh ids, so re-importing the same export
-    never collides. Branch structure is not part of a client-side export, so
+    stored as one linear chain under fresh ids, so importing the same export
+    twice never collides. Branch structure is not part of a client-side export, so
     only the visible path is restored. When *title* is omitted it is derived
     from the first user message.
+
+    Returns:
+        The imported conversation, ``None`` when another user holds its id.
 
     Raises:
         ValueError: if *messages* is empty.
@@ -902,8 +905,9 @@ async def import_conversation(
     if not messages:
         raise ValueError(_NO_MESSAGES.current)
 
-    conversation = OwnedConversation(user, uuid4())
-    await claim_conversation(conversation)
+    if not await claim_conversation(conversation):
+        return None
+
     await append_branch(conversation, None, messages, title=title)
 
     summary = await load_conversation_summary(conversation)

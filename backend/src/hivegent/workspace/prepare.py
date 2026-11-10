@@ -418,8 +418,9 @@ def _build_converter(
             llm_options=llm,
             detect_asset_roles=spec.process_assets is AssetProcessingMode.DESCRIBE,
         )
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    except ValidationError:
+        # A config the converter refuses is answered as the request's own error.
+        raise
     except (ImportError, ValueError) as exc:
         # AUTO reaches this point only for an available richer converter whose
         # declared extensions produced the mapping.  Only an explicit pipeline

@@ -6,6 +6,27 @@ The system shape is in [`../ARCHITECTURE.md`](../ARCHITECTURE.md), the client ha
 `uv run pytest` is the whole test suite and needs no services, since every test is stateless and stubs the paths that would hit PostgreSQL with `monkeypatch`.
 Migrations, the running server, and retrieval are covered by the dev stack and manual smoke tests.
 
+## The REST API
+
+### One versioned contract
+
+Every route lives under `config.API_PREFIX` (`/api/v1`), and a breaking change bumps the version rather than adding a compatibility layer.
+The OpenAPI document, `/api/v1/openapi.json` with `/api/v1/docs` beside it, is served while `security.expose_api_docs` is set, the one switch that decides, since the reverse proxy hands the backend every `/api/*` path.
+Every body is a typed model, the chat turn's too (`types.ChatRequest`), so the document describes what a client sends and a misspelled field is refused rather than ignored.
+
+### Every error is a problem
+
+Every error answers `application/problem+json` (RFC 9457, `server.problems`), whichever layer raised it: an `HTTPException`, a validation failure, an `AccessDenied`, or an unhandled error as a bare 500.
+`title` is the status phrase and `detail` the localized explanation a client shows, and a rejected body lists its invalid members under `errors`, each by a JSON Pointer such as `#/messages/0`.
+A refusal a client has to tell apart from its status names a problem `type` of its own, a `tag:` URI such as `server.maintenance.MAINTENANCE_PROBLEM`.
+
+### Methods say what a retry does
+
+A request a client may repeat uses a method whose repetition lands the same state, so a client retries it after a lost answer without asking what happened.
+`PUT /documents/{path}` creates or replaces, and `If-None-Match: *` asks for a new document only, refused with 412 while one exists.
+`PUT /directories/{path}` creates a directory and leaves one that exists, `DELETE /directories/{path}` and `DELETE /admin/data/{target}` remove what they name, and `PUT /conversations/{id}/archive` restores an export at an id the client minted, replacing what the caller held there.
+A move, a generation, and the batch of `POST /changes` change something different each time, so they stay `POST`, and a chat turn is keyed by the message id the client minted (see "Clients choose conversation and message ids").
+
 ## Interface language
 
 The frontend sends `Accept-Language`, and `LanguageMiddleware` makes it the ambient language of the whole request, streamed body and background tasks included.
@@ -136,9 +157,9 @@ Every `SearchPath` carries a `CommitPolicy`, `Gated` for a workspace (approval a
 A move between `/tmp` and a workspace is refused by the gateway, since no one commit spans both.
 
 `settings.tmp.max_bytes` caps a folder through its `Quota`, charged with what a changeset adds, so a refused change writes nothing and an over-cap folder may still shrink.
-`GET /api/documents/{filepath}` reads a `/tmp` path when given a `conversation_id` the user owns.
+`GET /api/v1/documents/{filepath}` reads a `/tmp` path when given a `conversation_id` the user owns.
 
-`conversation_files` ends a folder's life, since no row cascade reaches it: deleting conversations removes folders and then rows, a reset removes every folder, and `DELETE /api/tmp` empties only each `tmp/`, keeping pending approvals.
+`conversation_files` ends a folder's life, since no row cascade reaches it: deleting conversations removes folders and then rows, a reset removes every folder, and `DELETE /api/v1/tmp` empties only each `tmp/`, keeping pending approvals.
 `sweep_conversations` removes a whole folder once nothing below it changed for `settings.conversations.ttl_hours`, runs in a background task after the migrations and every `sweep_interval_hours`, needs no database, and checks each folder again under its `/tmp` lock.
 
 `TMP_INSTRUCTIONS` is shared by the `python` and `write` features, and `PYTHON_INSTRUCTIONS` names `/tmp` as the home of a rerunnable `.py`, since a `.py` in a workspace is an original that gets chunked.
@@ -192,12 +213,12 @@ It is left for later, since the newest leaf already is the active branch for eve
 The client mints a conversation's id and the id of every new user message as random UUIDs, the form every id the server mints takes too, so it never waits for the server to name what it addresses next, and no response header carries an id.
 Every id the app or a client mints is a native `uuid` column read as a `UUID`, parsed at the boundary (`config.parse_uuid`), so it has one spelling in the database, on disk, and on the wire.
 `chunks.id` alone reads as a `str`, since cbrkit keys a casebase by `int | str`, and the `TODO(cbrkit)` markers name what goes once it takes native uuid keys.
-`POST /api/conversations/{id}/chat` is the only chat route, and `open_conversation` resolves its id: an owned conversation is used, an absent id opens a new one, and an id that is no UUID or another user's answers 404.
+`POST /api/v1/conversations/{id}/chat` is the only chat route, and `open_conversation` resolves its id: an owned conversation is used, an absent id opens a new one, and an id that is no UUID or another user's answers 404.
 Migration `e3f4a5b6c7d8` retyped every such id to `uuid`, an old one becoming its md5 so each column converts on its own, and deleted every conversation folder, so links to an old id answer 404.
 `open_conversation` also reports whether the row exists, and only for an absent one does `claim_conversation` create it right before the run, behind every check that can refuse the request, so a refused request leaves no row.
 Its `INSERT ... ON CONFLICT DO NOTHING` lets the database decide between racing claims: the second waits for the first to commit and answers 404 unless the caller owns the row.
 `append_branch` never creates a row, and titles an untitled one from its first user message.
-`GET /api/conversations/{id}/messages` answers `[]` for an absent id, so a client opens a new chat at its own id, and a deleted conversation's id is absent again.
+`GET /api/v1/conversations/{id}/messages` answers `[]` for an absent id, so a client opens a new chat at its own id, and a deleted conversation's id is absent again.
 
 The new user message is stored under the client's `UIMessage.id` (`_prompt_id`), refused with 422 unless it is a UUID, and with 409 when a node of the conversation holds it (checked by `resolve_fork` in the session that loads the history), since a collision at the write after streaming would lose the turn.
 Node ids are keyed per conversation, `(conversation_id, id)`, so no id another conversation holds is ever probed, and a parent always lies in its child's conversation.
@@ -224,7 +245,7 @@ A turn that never finished first gets `close_orphan_tool_calls` and `record_turn
 
 ### Client-posted messages are validated strictly
 
-The Vercel AI request models forbid extra fields, so a part the SDK sends that pydantic-ai has not transcribed fails the chat and import routes with a 422.
+The Vercel AI request models forbid extra fields, and so does `ChatRequest` around them, so a part the SDK sends that pydantic-ai has not transcribed, or a setting the server does not know, fails the chat and import routes with a 422.
 Such drift is fixed upstream, never by relaxing `extra='forbid'`, which is what stops a malformed `approval` from matching the unanswered variant and releasing a gated call.
 `tests/unit/test_client_messages.py` pins the shape a real client posts.
 
@@ -304,7 +325,7 @@ Each purpose runs its own named agent (`chat`, `explore`, `summarize`, `title`, 
 
 ### The chat debugger reads any conversation
 
-`/api/debug/conversations/{id}/chat` lets an admin ask the `debug` agent about any user's conversation, found by `any_conversation` without the ownership check, and every access is logged.
+`/api/v1/debug/conversations/{id}/chat` lets an admin ask the `debug` agent about any user's conversation, found by `any_conversation` without the ownership check, and every access is logged.
 The route is stateless, the client sends the whole debugging session with every request, so nothing about it is stored.
 `agents/debugger.py` flattens the conversation into numbered steps, one per message part, model response, changed instructions, and stored run error, which the agent reads overview first, then failures, single steps, and searches.
 Neither pydantic-ai nor the Vercel AI protocol records durations, so a step's time is derived from the stored timestamps: a model response from its request being sent to its stream starting, a tool return from its call's response starting to the return, generation included.
@@ -395,7 +416,7 @@ A `Folder` such as `/tmp` has no store, so it skips rows, projections, in-flight
 Only the host (`Gateway.host`) may write what a root reserves or let its quota evict.
 Root locks come from one registry by `store_key` (`locks._lock_of`), and a commit stages beside every root it changes (`_staging_root`), so every step stays a rename.
 
-`POST /api/changes` applies a list of operations (`server.models.ChangesRequest`) as one changeset within the request, and the single-item routes (`POST /documents/move/{path}`, `DELETE /documents/{path}`, the `/directories` routes) build one such operation through the same `_apply`.
+`POST /api/v1/changes` applies a list of operations (`server.models.ChangesRequest`) as one changeset within the request, and the single-item routes (`POST /documents/move/{path}`, `DELETE /documents/{path}`, the `/directories` routes) build one such operation through the same `_apply`.
 A delete must name the kind it `expect`s, so a client never removes a folder by accident.
 Each route answers with the applied `WorkspaceChanged`, since a move into an existing folder lands below it.
 Uploads, writes, asset descriptions, rechunk, reconvert, and wiping a scope keep their own routes.

@@ -49,7 +49,7 @@ from hivegent.entries import (
     stem_path_from_reference,
 )
 from hivegent.jobs import FeedReady, JobManager
-from hivegent.server.models import ChangesRequest, MoveDestination, WorkspacePath
+from hivegent.server.models import ChangesRequest, MoveDestination
 from hivegent.server.routes import documents as documents_routes
 from hivegent.store import Casebase, User
 from hivegent.tools.base import SearchPath
@@ -989,8 +989,14 @@ class TestChangesRoute:
             await documents_routes.delete_document("~/dir", _USER)
 
         assert exc.value.status_code == 404
-        await documents_routes.delete_directory(WorkspacePath(path="~/dir"), _USER)
+        await documents_routes.delete_directory("~/dir", _USER)
+        await documents_routes.create_directory("~/new", _USER)
 
+        # A directory that exists is what a repeated PUT asked for.
+        assert await documents_routes.create_directory("~/new", _USER) == (
+            WorkspaceChanged(())
+        )
         assert (layout / "x.md").read_text() == "a"
         assert not (layout / "dir").exists()
+        assert (layout / "new").is_dir()
         assert repo.moved() == [("move_document", "a", "x")]

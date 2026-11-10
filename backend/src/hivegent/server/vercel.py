@@ -64,7 +64,7 @@ from pydantic_ai.ui.vercel_ai.response_types import (
     ErrorChunk,
     MessageMetadataChunk,
 )
-from starlette.responses import Response
+from starlette.responses import StreamingResponse
 
 from ..agents.approval import APPROVAL_NOTE_KEY
 from ..agents.common import ASK_USER_TOOL
@@ -96,6 +96,7 @@ __all__ = [
     "dump_messages_with_ids",
     "load_archived",
     "run_and_persist",
+    "stream_response",
 ]
 
 logger = logging.getLogger(__name__)
@@ -723,13 +724,20 @@ async def _merge_subagent_events(
             await driver
 
 
-async def run_and_persist[DepsT, OutputT](
+def stream_response(chunks: AsyncIterator[BaseChunk]) -> StreamingResponse:
+    """The UI message stream of *chunks*, encoded for the frontend's SDK version."""
+    return VercelAIEventStream[None, str](sdk_version=SDK_VERSION).streaming_response(
+        chunks
+    )
+
+
+def run_and_persist[DepsT, OutputT](
     adapter: ChatAdapter[DepsT, OutputT],
     stream: AsyncIterator[BaseChunk],
     *,
     persist: PersistTurn,
     subagent_sink: asyncio.Queue[SubagentUpdate] | None = None,
-) -> Response:
+) -> AsyncIterator[BaseChunk]:
     """Stream a chat turn and persist the run's message list on every finish.
 
     *stream* is the still-unstarted chunk stream from ``adapter.run_stream``;
@@ -753,8 +761,8 @@ async def run_and_persist[DepsT, OutputT](
 
     Persistence is server-authoritative with no browser echo to recover from, so
     a failed write hard-fails the turn: on a clean drain the failure surfaces as
-    a trailing error chunk; on a client disconnect the write is shielded and a
-    failure can only be logged.
+    a trailing error chunk; on a cancel the write is shielded and a failure can
+    only be logged.
 
     Every write goes through :func:`record_approvals` first, so each decision the
     user made is stored with its note whichever way the turn ended.
@@ -792,10 +800,9 @@ async def run_and_persist[DepsT, OutputT](
                         error_text = chunk.error_text
                     yield chunk
             except BaseException:
-                # Client disconnect / cancellation: close any in-flight call so
-                # it does not reload as an approval, persist what completed
-                # (shielded — the client is gone, so a failure can only be
-                # logged) and propagate.
+                # A cancel: close any in-flight call so it does not reload as
+                # an approval, persist what completed (shielded, since nobody
+                # waits for it, so a failure can only be logged) and propagate.
                 await asyncio.shield(
                     _persist_safely(
                         persist_turn,
@@ -815,4 +822,4 @@ async def run_and_persist[DepsT, OutputT](
                 logger.exception("Failed to persist conversation turn")
                 yield ErrorChunk(error_text=_SAVE_FAILED.current)
 
-    return adapter.streaming_response(relay())
+    return relay()

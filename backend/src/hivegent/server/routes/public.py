@@ -2,14 +2,15 @@
 
 from fastapi import APIRouter
 
-from ...config import settings
+from ...config import API_PREFIX, settings
 from ...transparency import public_jwks
 from ...types import FrontendConfigResponse, OidcPublicConfig, TransparencyJwks
+from ..problems import PROBLEM_RESPONSES
 from .transparency import TransparencyConfigured
 
 __all__ = ["router"]
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix=API_PREFIX, responses=PROBLEM_RESPONSES)
 
 
 @router.get("/health")

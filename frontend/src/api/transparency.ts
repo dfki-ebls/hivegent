@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { apiUrl, jsonRequest, requestJson } from "@/api/client";
+import { jsonRequest, requestJson } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 
 const TransparencyDetectionResponseSchema = z.object({
   status: z.enum(["detected", "not_detected", "inconclusive"]),

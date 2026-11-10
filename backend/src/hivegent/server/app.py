@@ -7,29 +7,26 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 import sqlalchemy as sa
-from fastapi import FastAPI, Request
-from pydantic import ValidationError
-from starlette.responses import JSONResponse, PlainTextResponse, Response
+from fastapi import FastAPI
 
 from ..agents import check_tool_settings
-from ..config import settings
+from ..config import API_PREFIX, API_VERSION, settings
 from ..conversation_files import sweep_conversations
 from ..db import apply_migrations, engine_lifespan
 from ..entries import folds_case
 from ..http_client import shared_http_client_lifespan
-from ..l10n import Localized
 from ..logging_config import configure_logging
 from ..mcp import mcp_app
 from ..observability import configure_observability
 from ..reconcile import reconcile_all
 from ..retrieval import reconcile_index_state, warm_index
 from ..sandbox import monty_pool_lifespan
-from ..store import AccessDenied
 from ..workers.pool import pipeline_pool
 from .access_log import install_probe_access_filter
 from .language import LanguageMiddleware
 from .maintenance import load_persisted_state
 from .operations import cleanup_spool_dir
+from .problems import install_problem_handlers
 from .routes import api_router
 from .routes.public import router as public_router
 
@@ -148,40 +145,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             await pipeline_pool.aclose()
 
 
-def _invalid_data(title: str) -> Localized[str]:
-    return Localized(en=f"Invalid data for {title}", de=f"Ungültige Daten für {title}")
-
-
-async def validation_error_handler(
-    _request: Request,
-    exc: Exception,
-) -> Response:
-    """Return 422 for request validation errors."""
-    if not isinstance(exc, ValidationError):
-        raise exc
-
-    # A validator's own ValueError is already localized, unlike pydantic's
-    # messages, so it is shown without pydantic's English "Value error" prefix.
-    errors = "\n".join(
-        f"{'.'.join(str(part) for part in error['loc'])}: "
-        + str(error.get("ctx", {}).get("error", error["msg"]))
-        for error in exc.errors()
-    )
-
-    return PlainTextResponse(
-        f"{_invalid_data(exc.title).current}\n{errors}", status_code=422
-    )
-
-
-async def access_denied_handler(_request: Request, exc: Exception) -> Response:
-    """Answer a store asked for beyond its grant with ``403``, wherever it was refused.
-
-    The body is the one an ``HTTPException`` carries, so a refusal reads the
-    same whichever layer raised it.
-    """
-    return JSONResponse({"detail": str(exc)}, status_code=403)
-
-
 def _validate_auth_settings() -> None:
     if settings.auth.enable:
         if not settings.auth.issuer:
@@ -243,16 +206,19 @@ def create_app() -> FastAPI:
     _validate_auth_settings()
     install_probe_access_filter()
 
+    # Under the API prefix, the only path the reverse proxy hands the backend.
+    docs = settings.security.expose_api_docs
     app = FastAPI(
+        title="Hivegent",
+        version=API_VERSION,
         lifespan=lifespan,
-        docs_url="/docs" if settings.security.expose_api_docs else None,
-        redoc_url="/redoc" if settings.security.expose_api_docs else None,
-        openapi_url="/openapi.json" if settings.security.expose_api_docs else None,
+        docs_url=f"{API_PREFIX}/docs" if docs else None,
+        redoc_url=f"{API_PREFIX}/redoc" if docs else None,
+        openapi_url=f"{API_PREFIX}/openapi.json" if docs else None,
     )
     configure_observability(app)
     app.add_middleware(LanguageMiddleware)
-    app.add_exception_handler(ValidationError, validation_error_handler)
-    app.add_exception_handler(AccessDenied, access_denied_handler)
+    install_problem_handlers(app)
     app.include_router(public_router)
     app.include_router(api_router)
     if mcp_http_app is not None:

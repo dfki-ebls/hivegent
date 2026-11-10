@@ -46,7 +46,7 @@ it("refetches the list a mutation invalidates before it settles", async () => {
   await act(() => result.current.remove.mutateAsync("a"));
 
   expect(requestVoid).toHaveBeenCalledWith(
-    expect.stringContaining("/api/conversations/a"),
+    expect.stringContaining("/api/v1/conversations/a"),
     "delete",
     { method: "DELETE" },
   );

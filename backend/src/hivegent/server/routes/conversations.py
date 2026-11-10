@@ -2,14 +2,14 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from dataclasses import replace
+from functools import partial
 from itertools import chain
-from typing import Annotated, cast
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import ValidationError
 from pydantic_ai import BinaryContent, DeferredToolRequests
 from pydantic_ai.messages import (
     ModelMessage,
@@ -20,8 +20,9 @@ from pydantic_ai.messages import (
     UserContent,
     UserPromptPart,
 )
-from pydantic_ai.ui import NativeEvent
+from pydantic_ai.ui import SSE_CONTENT_TYPE, NativeEvent
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
@@ -79,7 +80,7 @@ from ...tmp import open_tmp
 from ...tools.formatting import BLOCK_SEP
 from ...transparency import sign_provenance
 from ...types import (
-    ChatRequestConfig,
+    ChatRequest,
     ConversationArchive,
     ConversationListResponse,
     GenerateTitleRequest,
@@ -105,6 +106,7 @@ from ..vercel import (
     dump_messages_with_ids,
     load_archived,
     run_and_persist,
+    stream_response,
 )
 
 __all__ = ["router"]
@@ -175,6 +177,15 @@ def _too_many_images(cap: int) -> Localized[str]:
 
 
 _INVALID_CHAT_REQUEST = Localized(en="Invalid chat request", de="Ungültige Chatanfrage")
+_CHAT_STREAM: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "The turn as a Vercel AI UI message stream, "
+            "see https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol"
+        ),
+        "content": {SSE_CONTENT_TYPE: {"schema": {"type": "string"}}},
+    }
+}
 _INVALID_MESSAGE_ID = Localized(
     en="A new message needs a UUID as its id",
     de="Eine neue Nachricht braucht eine UUID als ID",
@@ -188,6 +199,15 @@ _RAGOLD_DISABLED = Localized(
 )
 
 
+async def _found[T](
+    conversation_id: str, load: Callable[[UUID], Awaitable[T | None]]
+) -> T:
+    """What *load* finds for the path's id, ``404`` for an id that is no UUID or finds none."""
+    parsed = parse_uuid(conversation_id)
+
+    return found(None if parsed is None else await load(parsed))
+
+
 async def _owned_conversation(
     conversation_id: str,
     user: Annotated[User, Depends(get_current_user)],
@@ -198,9 +218,7 @@ async def _owned_conversation(
     message tree and ``/tmp`` need from here, and an id that is no UUID names
     no conversation.
     """
-    parsed = parse_uuid(conversation_id)
-
-    return found(None if parsed is None else await owned_conversation(user, parsed))
+    return await _found(conversation_id, partial(owned_conversation, user))
 
 
 type Owned = Annotated[OwnedConversation, Depends(_owned_conversation)]
@@ -211,9 +229,7 @@ async def _opened_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> tuple[OwnedConversation, bool]:
     """The path's conversation and whether its row exists (:func:`open_conversation`)."""
-    parsed = parse_uuid(conversation_id)
-
-    return found(None if parsed is None else await open_conversation(user, parsed))
+    return await _found(conversation_id, partial(open_conversation, user))
 
 
 type Opened = Annotated[tuple[OwnedConversation, bool], Depends(_opened_conversation)]
@@ -330,6 +346,17 @@ async def delete_all_conversations_route(
     await conversation_files.delete_conversations(user)
 
 
+async def _active_messages(conversation: OwnedConversation) -> list[UIMessage]:
+    """The active path of *conversation* as the client addresses it."""
+    result = await load_active_for_display(conversation)
+
+    if result is None:
+        return []
+
+    pairs, siblings = result
+    return dump_messages_with_ids(pairs, siblings=siblings)
+
+
 @router.get("/conversations/{conversation_id}/messages")
 async def get_conversation_messages(opened: Opened) -> list[UIMessage]:
     """Get the active path of a conversation in Vercel AI format.
@@ -339,13 +366,10 @@ async def get_conversation_messages(opened: Opened) -> list[UIMessage]:
     messages yet, so a client opens a new chat at the id it chose.
     """
     conversation, exists = opened
-    result = await load_active_for_display(conversation) if exists else None
 
-    if result is None:
-        return []
-
-    pairs, siblings = result
-    return dump_messages_with_ids(pairs, siblings=siblings)
+    return (
+        await _active_messages(conversation) if exists else []
+    )
 
 
 def _instruction_snapshots(pairs: Sequence[MessagePair]) -> list[InstructionsSnapshot]:
@@ -374,15 +398,15 @@ def _instruction_snapshots(pairs: Sequence[MessagePair]) -> list[InstructionsSna
     return snapshots
 
 
-@router.get("/conversations/{conversation_id}/export")
-async def export_conversation_route(conversation: Owned) -> Response:
+@router.get("/conversations/{conversation_id}/archive")
+async def get_conversation_archive(conversation: Owned) -> Response:
     """Export a conversation's active path as a downloadable archive.
 
     The payload is a :class:`ConversationArchive` whose ``backend`` half carries
     the persisted messages and the system prompts they ran under; ``frontend``
     is left unset, since this route has no browser state to speak for.  The
     export button fills that half in and downloads the same shape, and the
-    counterpart :func:`import_conversation_route` restores either one.
+    counterpart :func:`put_conversation_archive` restores either one.
     """
     summary = found(await load_conversation_summary(conversation))
 
@@ -447,12 +471,14 @@ async def export_ragold_route(
     )
 
 
-@router.post("/conversations/import")
-async def import_conversation_route(
-    archive: ConversationArchive,
-    user: Annotated[User, Depends(get_current_user)],
+@router.put("/conversations/{conversation_id}/archive")
+async def put_conversation_archive(
+    opened: Opened, archive: ConversationArchive
 ) -> ConversationSummary:
-    """Restore an exported archive as a new conversation owned by the user.
+    """Restore an exported archive as the conversation at a fresh id the client chose.
+
+    A conversation the caller holds at the id is replaced, so the request lands
+    the same conversation however often it is sent.
 
     The persisted ``backend`` half is restored when it has messages, falling
     back to ``frontend`` so an archive taken of a draft, or of a turn that
@@ -460,14 +486,19 @@ async def import_conversation_route(
     decoded to model messages and stored under fresh ids as a single linear
     branch; the archive's system prompts are a record of the original run and
     are not replayed, since the imported conversation runs under the importing
-    user's own settings.  Documents referenced by embedded tool outputs that do
-    not exist for this user are left unresolved rather than raising, so a
-    conversation captured against a different document collection still imports
-    cleanly.
+    user's own settings.
     """
+    conversation, exists = opened
     ui_messages, title = archive.active_path()
+
     try:
-        return await import_conversation(user, load_archived(ui_messages), title=title)
+        messages = load_archived(ui_messages)
+
+        # Only once there is something to restore in its place.
+        if exists and messages:
+            await conversation_files.delete_conversation(conversation)
+
+        return found(await import_conversation(conversation, messages, title=title))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -532,43 +563,27 @@ def _accept_attachments(messages: Sequence[ModelMessage]) -> None:
         _accept_attachment(item)
 
 
-async def _run_chat(
-    conversation: OwnedConversation, request: Request, *, exists: bool
-) -> Response:
-    """Stream a chat turn for *conversation* via the Vercel AI protocol.
+async def _prepare_turn(
+    conversation: OwnedConversation,
+    config: ChatRequest,
+    adapter: ChatAdapter[UserDeps, str],
+    prompt_id: UUID | None,
+    *,
+    exists: bool,
+) -> AsyncIterator[BaseChunk]:
+    """The turn *config* asks for, every check that can refuse it passed.
 
     A turn that carries a new user message stores it under the id the client
     gave it (:func:`_prompt_id`).  A request flagged ``compact`` compacts the
     active path instead of running a turn.  A conversation whose row does not
     *exist* yet is claimed right before the run.
     """
-    # The body is the AI SDK's, with the run configuration spliced in beside
-    # its messages. Extras are ignored.
-    config = ChatRequestConfig.model_validate(await request.json())
-
     run_prefix = build_run_prefix(config, conversation)
-    model_settings = thinking_model_settings(config.reasoning_effort, run_prefix.llm)
-
-    try:
-        # `from_request` is typed to return the base adapter with erased type
-        # parameters; the runtime object is a `ChatAdapter[UserDeps, str]`.
-        adapter = cast(
-            ChatAdapter[UserDeps, str],
-            await ChatAdapter[UserDeps, str].from_request(
-                request, agent=user_agent, sdk_version=SDK_VERSION
-            ),
-        )
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=422, detail=_INVALID_CHAT_REQUEST.current
-        ) from exc
 
     # Gate the new user message's attachments before the run. Sanitisation
     # lands in place, and the adapter caches `messages`, so `run_stream` and
     # persistence both see the admitted bytes.
     _accept_attachments(adapter.messages)
-
-    user_node_id = _prompt_id(adapter)
 
     # Live subagent transcript snapshots flow through this sink; the streaming
     # response drains it concurrently with the run (see `run_and_persist`).
@@ -585,7 +600,7 @@ async def _run_chat(
             conversation,
             regenerate=config.trigger == "regenerate-message",
             message_id=config.message_id,
-            prompt_id=user_node_id,
+            prompt_id=prompt_id,
         )
     except MessageIdTaken as exc:
         raise HTTPException(status_code=409, detail=_MESSAGE_ID_TAKEN.current) from exc
@@ -648,7 +663,9 @@ async def _run_chat(
                     CompactOnOverflow(run_prefix),
                 ],
                 instructions=run_prefix.instructions,
-                model_settings=model_settings,
+                model_settings=thinking_model_settings(
+                    config.reasoning_effort, run_prefix.llm
+                ),
                 message_history=prefix,
                 deferred_tool_results=deferred,
                 usage_limits=turn_usage_limits,
@@ -672,11 +689,9 @@ async def _run_chat(
         if above is not None and fork_id:
             await insert_above(conversation, fork_id, above)
 
-        await append_branch(conversation, fork_id, delta, prompt_id=user_node_id)
+        await append_branch(conversation, fork_id, delta, prompt_id=prompt_id)
 
-    return await run_and_persist(
-        adapter, stream, persist=persist, subagent_sink=subagent_sink
-    )
+    return run_and_persist(adapter, stream, persist=persist, subagent_sink=subagent_sink)
 
 
 def _prompt_id(adapter: ChatAdapter[UserDeps, str]) -> UUID | None:
@@ -711,7 +726,7 @@ def _compact_active_path(
     run_prefix: RunPrefix,
     prefix: list[ModelMessage],
     fork_id: UUID | None,
-) -> Response:
+) -> AsyncIterator[BaseChunk]:
     """Stream the compaction of *prefix*, stored at its cut once made.
 
     Asked for under the same prefix a turn would run under, so the provider
@@ -730,8 +745,8 @@ def _compact_active_path(
         try:
             part = await compact(prefix[:cut], run_prefix)
             compaction = ModelResponse(parts=[part])
-            # Shielded like a turn's write, so a client leaving during it
-            # does not lose a summary already paid for.
+            # Shielded like a turn's write, so a cancel during it does not
+            # lose a summary already paid for.
             await asyncio.shield(
                 insert_above(conversation, fork_id, compaction)
                 if fork_id and cut < len(prefix)
@@ -744,12 +759,27 @@ def _compact_active_path(
 
         yield PartStartEvent(index=0, part=part)
 
-    return adapter.streaming_response(adapter.transform_stream(events()))
+    return adapter.transform_stream(events())
 
 
-@router.post("/conversations/{conversation_id}/chat")
-async def create_conversation_chat(opened: Opened, request: Request) -> Response:
+@router.post(
+    "/conversations/{conversation_id}/chat",
+    response_class=StreamingResponse,
+    responses=_CHAT_STREAM,
+)
+async def create_conversation_chat(
+    opened: Opened, config: ChatRequest, request: Request
+) -> Response:
     """Run a turn in a conversation, starting it at a fresh id the client chose."""
     conversation, exists = opened
+    accept = request.headers.get("accept")
+    adapter = ChatAdapter[UserDeps, str](
+        agent=user_agent,
+        run_input=config.run_input(),
+        accept=accept,
+        sdk_version=SDK_VERSION,
+    )
+    prompt_id = _prompt_id(adapter)
+    chunks = await _prepare_turn(conversation, config, adapter, prompt_id, exists=exists)
 
-    return await _run_chat(conversation, request, exists=exists)
+    return stream_response(chunks)

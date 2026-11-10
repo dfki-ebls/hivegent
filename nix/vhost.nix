@@ -71,12 +71,6 @@ in
     max_size 1MB
   }
 
-  # FastAPI's interactive API surfaces stay private regardless of the handbook.
-  @apidocs path /redoc* /openapi.json
-  handle @apidocs {
-    respond 404
-  }
-
   ${
     if docs == null then
       ''
@@ -124,18 +118,18 @@ in
     # directive cannot raise it. The backend stays the precise enforcer (exact
     # file size, and the collection's decompressed size, file count, and path
     # safety Caddy cannot see).
-    @collection path /api/documents/collections/*
+    @collection path /api/v1/documents/collections/*
     request_body @collection {
       max_size ${edgeCap maxCollectionSizeBytes}
     }
-    @small not path /api/documents/collections/*
+    @small not path /api/v1/documents/collections/*
     request_body @small {
       max_size ${edgeCap maxFileSizeBytes}
     }
     header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
     reverse_proxy ${upstream} {
       flush_interval -1
-      health_uri      /api/health
+      health_uri      /api/v1/health
       health_interval 10s
       health_timeout  3s
     }

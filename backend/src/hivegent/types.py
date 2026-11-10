@@ -6,8 +6,12 @@ from enum import Enum
 from typing import Any, Literal, Protocol, Self, get_args
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
-from pydantic_ai.ui.vercel_ai.request_types import UIMessage
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_ai.ui.vercel_ai.request_types import (
+    RegenerateMessage,
+    SubmitMessage,
+    UIMessage,
+)
 
 from .chunkers import ChunkingSpec
 from .converters import ConversionSpec
@@ -36,12 +40,14 @@ __all__ = [
     "AdminUserInfo",
     "AssetProcessingMode",
     "AttachmentLimits",
+    "ChatRequest",
     "ChatRequestConfig",
     "ClientConversation",
     "CollectionCompleteEvent",
     "CollectionProgressEvent",
     "ConversationArchive",
     "ConversationListResponse",
+    "DebugChatRequest",
     "DebugReport",
     "DebugReportRequest",
     "DebugRequestConfig",
@@ -75,6 +81,7 @@ __all__ = [
     "TransparencyDetectionResponse",
     "TransparencyJwk",
     "TransparencyJwks",
+    "UIChatRequest",
     "UpdateTitleRequest",
     "UserResponse",
     "WriteDocumentRequest",
@@ -240,11 +247,45 @@ class ToolRunResult(BaseModel):
     elapsed_ms: float
 
 
-class DebugRequestConfig(BaseModel):
-    """The run configuration a chat debugger request carries beside its messages.
+class UIChatRequest[MessageId: (str, UUID)](BaseModel):
+    """The AI SDK's chat request body, which a chat route extends by its run configuration.
 
-    Validated straight off the body like :class:`ChatRequestConfig`, extras ignored.
+    The fields are the ones the SDK's ``DefaultChatTransport`` sends, and any
+    other is refused, so a misspelled setting fails rather than going unread.
+    A route whose messages carry the client's own ids takes them as strings.
     """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(description="The AI SDK's chat id, the path names the conversation")
+    messages: list[UIMessage] = Field(
+        description="The messages the turn sends, see the route for which"
+    )
+    trigger: Literal["submit-message", "regenerate-message"] = Field(
+        default="submit-message",
+        description="Whether the turn submits a new or edited message or regenerates one",
+    )
+    message_id: MessageId | None = Field(
+        default=None,
+        alias="messageId",
+        description="The message the turn edits (submit) or regenerates",
+    )
+
+    def run_input(self) -> SubmitMessage | RegenerateMessage:
+        """The request the AI SDK adapter runs."""
+        if self.trigger == "regenerate-message":
+            return RegenerateMessage(
+                trigger=self.trigger,
+                id=self.id,
+                messages=self.messages,
+                message_id=None if self.message_id is None else str(self.message_id),
+            )
+
+        return SubmitMessage(id=self.id, messages=self.messages)
+
+
+class DebugRequestConfig(BaseModel):
+    """The run configuration of a chat debugger request."""
 
     llm: LlmConfig = Field(default_factory=LlmConfig)
     reasoning_effort: ReasoningEffort = Field(
@@ -257,6 +298,10 @@ class DebugReportRequest(DebugRequestConfig):
     """The chat debugger's session, to condense into a report."""
 
     messages: list[UIMessage]
+
+
+class DebugChatRequest(DebugRequestConfig, UIChatRequest[str]):
+    """A chat debugger turn, whose client sends the whole session."""
 
 
 class DebugReport(BaseModel):
@@ -294,12 +339,7 @@ for one and not the other.
 
 
 class ChatRequestConfig(BaseModel):
-    """The run configuration a chat request carries beside its messages.
-
-    Validated straight off the chat body, which also carries the AI SDK's own
-    ``messages`` and ``id``.  The adapter reads those, and this model ignores
-    them, since nothing on it forbids extras.
-    """
+    """The run configuration a chat request carries beside its messages."""
 
     personality: Personality = Field(default=Personality.DEFAULT)
     system_message: str = Field(
@@ -318,18 +358,18 @@ class ChatRequestConfig(BaseModel):
         default="medium",
         description="Reasoning effort level",
     )
-    trigger: Literal["submit-message", "regenerate-message"] = Field(
-        default="submit-message",
-        description="Whether this turn submits a new/edited message or regenerates one",
-    )
-    message_id: UUID | None = Field(
-        default=None,
-        # The AI SDK spells this one camelCase in the body it builds, unlike
-        # every field beside it, which the frontend adds in the wire's own
-        # snake_case.
-        validation_alias=AliasChoices("messageId", "message_id"),
-        description="Target node id: the edited message (submit) or the regenerated one",
-    )
+
+
+class ChatRequest(ChatRequestConfig, UIChatRequest[UUID]):
+    """A turn of a conversation: the AI SDK's body with the run configuration beside it.
+
+    The server owns the history, so ``messages`` holds only what is new: the
+    user message a submit sends under a fresh UUID, none for a regenerate or a
+    compaction, or, to resume a turn that paused, the assistant message
+    carrying the user's approvals and answers.  The configuration's fields are
+    snake_case, the SDK's own ``messageId`` keeps its camelCase.
+    """
+
     compact: bool = Field(
         default=False,
         description="Compact the active path instead of running a turn",
@@ -447,7 +487,7 @@ class ClientConversation(_ArchivedConversation):
 
 
 class ConversationArchive(BaseModel):
-    """The interchange shape of the ``/export`` and ``/import`` routes.
+    """The interchange shape of ``GET`` and ``PUT /conversations/{id}/archive``.
 
     Both halves are optional and describe the same conversation from the two
     places it lives: ``backend`` is what was persisted (with the system prompts),

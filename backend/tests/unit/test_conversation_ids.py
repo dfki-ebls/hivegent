@@ -6,7 +6,6 @@ once a request passed every check, another user's conversation answers exactly
 like an id that is no UUID, and a taken message id is refused before the run.
 """
 
-import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -29,6 +28,7 @@ from hivegent.db.models import Conversation, Message
 from hivegent.server.routes import conversations as routes
 from hivegent.store import User
 from hivegent.tmp import tmp_dir
+from hivegent.types import ChatRequest
 from tests.helpers import label_id, owned
 
 _ID = UUID("0b6c4c9e-4f9a-4f0e-9d7a-3f6e2b1c8a90")
@@ -175,26 +175,19 @@ async def test_another_users_id_answers_404(
     assert raised.value.status_code == 404
 
 
-def _chat_request(message_id: str) -> Request:
-    body = {
-        "trigger": "submit-message",
-        "id": str(_ID),
-        "messages": [
-            {
-                "id": message_id,
-                "role": "user",
-                "parts": [{"type": "text", "text": "hi"}],
-            }
-        ],
-    }
-    chunks = [{"type": "http.request", "body": json.dumps(body).encode()}]
-
-    async def receive() -> dict[str, Any]:
-        return chunks.pop()
-
-    headers = [(b"content-type", b"application/json")]
-
-    return Request({"type": "http", "method": "POST", "headers": headers}, receive)
+def _chat_request(message_id: str) -> ChatRequest:
+    return ChatRequest.model_validate(
+        {
+            "id": str(_ID),
+            "messages": [
+                {
+                    "id": message_id,
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "hi"}],
+                }
+            ],
+        }
+    )
 
 
 class _Reached(Exception):
@@ -239,7 +232,7 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
 
         return claimable
 
-    async def run(*_args: object, **_kwargs: object) -> None:
+    def run(*_args: object, **_kwargs: object) -> None:
         raise _Reached
 
     monkeypatch.setattr(routes, "build_run_prefix", lambda *_args: run_prefix)
@@ -248,8 +241,10 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
     monkeypatch.setattr(routes, "run_and_persist", run)
 
     with pytest.raises(HTTPException if status else _Reached) as raised:
-        await routes._run_chat(
-            owned(str(_ID)), _chat_request(message_id), exists=exists
+        await routes.create_conversation_chat(
+            (owned(str(_ID)), exists),
+            _chat_request(message_id),
+            Request({"type": "http", "headers": []}),
         )
 
     if isinstance(raised.value, HTTPException):

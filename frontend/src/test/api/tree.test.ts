@@ -23,7 +23,7 @@ const { applyChanges, getDirectories } = vi.hoisted(() => ({
 vi.mock("@/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/client")>()),
   requestJson: (url: string, _error: string, _schema: unknown, init?: RequestInit) => {
-    const [, scope] = url.split("/api/directories/");
+    const [, scope] = url.split("/api/v1/directories/");
 
     return scope === undefined
       ? applyChanges(

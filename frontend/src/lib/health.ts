@@ -5,7 +5,12 @@
  * backend readiness without forming an import cycle.
  */
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
+
+/** The URL of the API route *path*, which starts with a slash. */
+export function apiUrl(path: string): string {
+  return `${API_BASE_URL}/api/v1${path}`;
+}
 
 /** Probe the public readiness endpoint, aborting after `timeoutMs` so
  * polling callers don't stack up hung connections. */
@@ -14,7 +19,7 @@ async function checkHealth(timeoutMs = 3000): Promise<boolean> {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/health`, {
+    const res = await fetch(apiUrl("/health"), {
       signal: controller.signal,
     });
     return res.ok;
@@ -30,7 +35,7 @@ const READY_POLL_INTERVAL_MS = 1000;
 let readyProbe: Promise<void> | null = null;
 
 /**
- * Resolve once the backend reports healthy, polling `/api/health` until then.
+ * Resolve once the backend reports healthy, polling `/api/v1/health` until then.
  *
  * The probe runs once per app lifetime — the promise is cached and shared by
  * every caller — so startup fetches such as settings can gate on readiness

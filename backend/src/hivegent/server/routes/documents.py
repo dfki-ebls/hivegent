@@ -20,7 +20,7 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile, status
 from starlette.responses import Response
 
 from ... import workspace
@@ -30,6 +30,7 @@ from ...chunkers.base import DocumentMetadata
 from ...config import settings
 from ...db.conversations import OwnedConversation, owned_conversation
 from ...db.documents import get_document, get_line_counts
+from ...entries import entry_exists
 from ...humanize import format_bytes, pluralize
 from ...jobs import JobContext, JobView, JobWork, manager
 from ...l10n import Localized
@@ -50,7 +51,7 @@ from ...types import (
     WriteDocumentRequest,
 )
 from ...workspace.operations import Location
-from ...workspace.paths import document_not_found, file_too_large
+from ...workspace.paths import already_exists, document_not_found, file_too_large
 from ...workspace_events import announce_workspace_changed
 from ..common import (
     ClientId,
@@ -68,7 +69,6 @@ from ..models import (
     MovePaths,
     RechunkRequest,
     ReconvertRequest,
-    WorkspacePath,
 )
 from ..operations import (
     attachment_response,
@@ -119,6 +119,8 @@ def _reconvert_title(count: int) -> Localized[str]:
 
 
 _RECHUNKED = Localized(en="Rechunked", de="Neu gechunkt")
+
+
 _RECONVERTED = Localized(en="Reconverted", de="Neu konvertiert")
 
 
@@ -311,17 +313,29 @@ async def upload_document(
     user: Annotated[User, Depends(get_current_user)],
     pipeline_spec: Annotated[str, Form()] = "{}",
     llm_config: Annotated[str, Form()] = "{}",
-    overwrite: Annotated[bool, Form()] = False,
     modified_at: Annotated[datetime | None, Form()] = None,
+    if_none_match: Annotated[
+        str | None,
+        Header(description="`*` creates the document only, refused while one exists"),
+    ] = None,
 ) -> JobView:
-    """Accept a document upload and process it as a background job.
+    """Create or replace a document and process it as a background job.
 
     Returns the job's initial snapshot as soon as the bytes are received;
     conversion and indexing then run off the request, observable and
     cancellable through the ``/jobs`` endpoints, so the UI stays usable and
-    closing the tab no longer aborts the work.
+    closing the tab no longer aborts the work.  Sent again, it lands the same
+    document, unless ``If-None-Match: *`` asks for a new one, which a document
+    at the path refuses with ``412``.
     """
     store, safe = resolve_workspace_path(user, filepath, write=True)
+    create_only = if_none_match == "*"
+
+    if create_only and await asyncio.to_thread(entry_exists, store.path, safe):
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED, already_exists(filepath).current
+        )
+
     spec = parse_pipeline_spec(pipeline_spec)
     llm = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     spool = await _spool_payload(
@@ -337,7 +351,7 @@ async def upload_document(
             modified_at=modified_at,
             spec=spec,
             llm=llm,
-            overwrite=overwrite,
+            overwrite=not create_only,
             ctx=ctx,
         )
 
@@ -713,16 +727,22 @@ async def delete_document(
     return await _apply(user, client, [delete])
 
 
-@router.post("/directories")
+@router.put("/directories/{path:path}")
 async def create_directory(
-    request: WorkspacePath,
+    path: str,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
 ) -> WorkspaceChanged:
-    """Create one directory, a shortcut for one mkdir in ``POST /changes``."""
-    return await _apply(
-        user, client, [CreateDirOperation(kind="mkdir", path=request.path)]
-    )
+    """Create one directory, a shortcut for one mkdir in ``POST /changes``.
+
+    One that exists already is what was asked for, so nothing changes.
+    """
+    store, safe = resolve_workspace_path(user, path, write=True)
+
+    if await asyncio.to_thread(Location(store, safe).full_path.is_dir):
+        return WorkspaceChanged(())
+
+    return await _apply(user, client, [CreateDirOperation(kind="mkdir", path=path)])
 
 
 @router.post("/directories/move")
@@ -738,9 +758,9 @@ async def move_directory(
     return await _apply(user, client, [move])
 
 
-@router.delete("/directories")
+@router.delete("/directories/{path:path}")
 async def delete_directory(
-    request: WorkspacePath,
+    path: str,
     user: Annotated[User, Depends(get_current_user)],
     client: ClientId = None,
 ) -> WorkspaceChanged:
@@ -748,5 +768,5 @@ async def delete_directory(
 
     A shortcut for one directory delete in ``POST /changes``.
     """
-    delete = DeleteOperation(kind="delete", path=request.path, expect="dir")
+    delete = DeleteOperation(kind="delete", path=path, expect="dir")
     return await _apply(user, client, [delete])

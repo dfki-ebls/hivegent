@@ -3,7 +3,9 @@
 from fastapi import APIRouter, Depends
 
 from ...auth import get_current_user
+from ...config import API_PREFIX
 from ..maintenance import enforce_maintenance
+from ..problems import PROBLEM_RESPONSES
 from .account import router as account_router
 from .admin import router as admin_router
 from .conversations import router as conversations_router
@@ -17,7 +19,8 @@ from .transparency import router as transparency_router
 __all__ = ["api_router"]
 
 api_router = APIRouter(
-    prefix="/api",
+    prefix=API_PREFIX,
+    responses=PROBLEM_RESPONSES,
     dependencies=[Depends(get_current_user), Depends(enforce_maintenance)],
 )
 api_router.include_router(meta_router)

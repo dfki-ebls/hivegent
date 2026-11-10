@@ -1,50 +1,67 @@
-"""Tests for chat request configuration validation."""
+"""Tests for the chat request contract and the problems it is refused with."""
 
-import json
-from typing import Any
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
-import pytest
-from pydantic import ValidationError
-from starlette.requests import Request
-
-from hivegent.server.app import validation_error_handler
-from hivegent.server.routes.conversations import _run_chat
-from tests.helpers import owned
+from hivegent.server.problems import PROBLEM_MEDIA_TYPE, install_problem_handlers
+from hivegent.types import ChatRequest
 
 
-def _request(body: dict[str, Any]) -> Request:
-    """Build a Starlette request carrying one JSON body."""
-    chunks = [
-        {
-            "type": "http.request",
-            "body": json.dumps(body).encode(),
-            "more_body": False,
-        }
-    ]
+def _client() -> TestClient:
+    """An app with one typed chat route and one that refuses, answering as the API does."""
+    app = FastAPI()
+    install_problem_handlers(app)
 
-    async def receive() -> dict[str, Any]:
-        return chunks.pop() if chunks else {"type": "http.disconnect"}
+    @app.post("/chat")
+    async def chat(config: ChatRequest) -> str:
+        return config.run_input().trigger
 
-    return Request(
-        {"type": "http", "method": "POST", "path": "/", "headers": []},
-        receive,
+    @app.get("/missing")
+    async def missing() -> None:
+        raise HTTPException(404, "Conversation not found")
+
+    return TestClient(app)
+
+
+def test_an_invalid_chat_request_names_every_invalid_member() -> None:
+    """A wrong value and a misspelled setting are both refused, each by its pointer."""
+    response = _client().post(
+        "/chat",
+        json={"id": "c", "messages": [], "mode": "bogus", "reasoning": "high"},
     )
 
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"mode": "bogus"},
-        {"reasoning_effort": "impossible"},
-    ],
-)
-async def test_invalid_chat_configuration_returns_422(body: dict[str, Any]) -> None:
-    """The route validates the config; the app-wide handler answers 422."""
-    request = _request(body)
-
-    with pytest.raises(ValidationError) as raised:
-        await _run_chat(owned("conversation"), request, exists=True)
-
-    response = await validation_error_handler(request, raised.value)
-
     assert response.status_code == 422
+    assert response.headers["content-type"] == PROBLEM_MEDIA_TYPE
+    assert {error["pointer"] for error in response.json()["errors"]} == {
+        "#/mode",
+        "#/reasoning",
+    }
+
+
+def test_the_sdk_body_runs_as_the_adapter_reads_it() -> None:
+    """The SDK's camelCase ``messageId`` sits beside the snake_case settings."""
+    response = _client().post(
+        "/chat",
+        json={
+            "id": "c",
+            "messages": [],
+            "trigger": "regenerate-message",
+            "messageId": "6f1c2b9e-1111-4222-8333-444455556666",
+            "reasoning_effort": "low",
+        },
+    )
+
+    assert response.json() == "regenerate-message"
+
+
+def test_a_refusal_is_a_problem() -> None:
+    """An ``HTTPException`` answers with its status phrase and detail."""
+    response = _client().get("/missing")
+
+    assert response.headers["content-type"] == PROBLEM_MEDIA_TYPE
+    assert response.json() == {
+        "type": "about:blank",
+        "title": "Not Found",
+        "status": 404,
+        "detail": "Conversation not found",
+    }

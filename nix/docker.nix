@@ -248,7 +248,7 @@ dockerTools.streamLayeredImage {
         "CMD"
         (lib.getExe curlMinimal)
         "-fsS"
-        "http://localhost:${toString httpPort}/api/health"
+        "http://localhost:${toString httpPort}/api/v1/health"
       ];
       Interval = seconds 30;
       Timeout = seconds 5;

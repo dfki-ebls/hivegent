@@ -12,11 +12,13 @@ from hivegent.server.routes.public import router as public_router
 # The only endpoints reachable without authentication. The SPA fetches health
 # and config before login, and the key set verifies signed reports and exports
 # for people without a sign-in, so widening this set silently exposes the backend.
-PUBLIC_PATHS = frozenset({"/api/health", "/api/config", "/api/transparency/jwks"})
+PUBLIC_PATHS = frozenset(
+    {"/api/v1/health", "/api/v1/config", "/api/v1/transparency/jwks"}
+)
 
 
 async def test_config_reports_oidc_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`/api/config` echoes the issuer and frontend client id from settings."""
+    """`/api/v1/config` echoes the issuer and frontend client id from settings."""
     monkeypatch.setattr(settings.auth, "issuer", "https://idp.example.com/oidc")
     monkeypatch.setattr(settings.auth, "frontend_client_id", "hivegent-spa")
 

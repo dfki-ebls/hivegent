@@ -1,7 +1,8 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiUrl, MaintenanceError, requestJson } from "@/api/client";
+import { MaintenanceError, requestJson } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 import { featureFlags } from "@/lib/feature-flags";
 import { initOidc, useOidc } from "@/oidc";
 

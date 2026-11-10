@@ -9,7 +9,7 @@
 #       docker://ghcr.io/dfki-ebls/hivegent:latest
 #
 # `./result | docker load` works too. The image is provider-agnostic: the SPA
-# reads its OIDC issuer/client at runtime from the backend's `/api/config`, which
+# reads its OIDC issuer/client at runtime from the backend's `/api/v1/config`, which
 # the backend derives from HIVEGENT_AUTH__ISSUER (and HIVEGENT_AUTH__FRONTEND_CLIENT_ID,
 # default "hivegent-spa"). Point those at whichever provider you run — Rauthy,
 # Keycloak, Authentik, Auth0, ... — with no rebuild.

@@ -30,8 +30,16 @@ DEFAULT_CONFIG_FILE = Path("config.toml")
 #: groups used to share knowledge.
 ADMIN_ROLE = "admin"
 
+API_VERSION = "v1"
+"""The version of the REST API, which a breaking change bumps."""
+
+API_PREFIX = f"/api/{API_VERSION}"
+"""Where the REST API is mounted."""
+
 __all__ = [
     "ADMIN_ROLE",
+    "API_PREFIX",
+    "API_VERSION",
     "AuthSettings",
     "ClaimSettings",
     "ConversationSettings",

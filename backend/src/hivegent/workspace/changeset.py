@@ -173,7 +173,6 @@ from ..tools.base import PathFilter
 from ..types import PipelineSpec
 from ..workspace_events import announce_workspace_changed
 from .documents import (
-    _already_exists,
     _binary_write,
     _check_basis,
     _decode_existing,
@@ -202,6 +201,7 @@ from .paths import (
     _WorkspaceChange,
     _write_markdown_file,
     _write_workspace_file,
+    already_exists,
     directory_not_found,
     document_not_found,
 )
@@ -1001,7 +1001,7 @@ def _resolve_directory(
 
     if plan.occupied(root, path) is not None:
         raise HTTPException(
-            status_code=409, detail=_already_exists(target.canonical).current
+            status_code=409, detail=already_exists(target.canonical).current
         )
 
     plan.check_parents(root, path)

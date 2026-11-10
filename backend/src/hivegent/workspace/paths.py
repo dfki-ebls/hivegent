@@ -23,12 +23,17 @@ from .operations import Root
 
 __all__ = [
     "DIRECTORY_PATH_REQUIRED",
+    "already_exists",
     "directory_not_found",
     "document_not_found",
     "file_too_large",
     "no_original",
     "not_text",
 ]
+
+
+def already_exists(path: str) -> Localized[str]:
+    return Localized(en=f"'{path}' already exists", de=f"„{path}“ existiert bereits")
 
 
 def document_not_found(path: str) -> Localized[str]:

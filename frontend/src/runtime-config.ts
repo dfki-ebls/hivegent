@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 import { i18n } from "@/i18n";
-import { API_BASE_URL } from "@/lib/health";
+import { apiUrl } from "@/lib/health";
 
 /**
- * Runtime configuration the SPA fetches from the backend (`GET /api/config`) at
+ * Runtime configuration the SPA fetches from the backend (`GET /api/v1/config`) at
  * startup — the single source of truth for its OIDC client. The backend derives
  * it from its own settings, so frontend and backend always agree and the same
  * prebuilt bundle runs against any OIDC provider with no rebuild.
@@ -23,7 +23,7 @@ type RuntimeConfig = z.infer<typeof schema>;
 // pre-render OIDC bootstrap, so a missing backend must fail fast to the dev
 // mock fallback rather than block rendering on a backend that may never come.
 export async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
-  const res = await fetch(`${API_BASE_URL}/api/config`);
+  const res = await fetch(apiUrl("/config"));
   if (!res.ok) {
     throw new Error(i18n.t(($) => $.app.startup.configFailed, { status: res.status }));
   }

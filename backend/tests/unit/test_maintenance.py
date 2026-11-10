@@ -1,10 +1,11 @@
 """Tests for the in-memory global maintenance gate."""
 
 import pytest
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 
 from hivegent.config import ADMIN_ROLE
 from hivegent.server import maintenance
+from hivegent.server.problems import ProblemException
 from hivegent.store import User
 
 
@@ -19,10 +20,10 @@ async def test_maintenance_gate_blocks_non_admins_only() -> None:
     await maintenance.enforce_maintenance(request, user)
 
     maintenance.set_enabled(app, True)
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ProblemException) as exc_info:
         await maintenance.enforce_maintenance(request, user)
     assert exc_info.value.status_code == 503
-    assert exc_info.value.detail == maintenance.MAINTENANCE_DETAIL
+    assert exc_info.value.type == maintenance.MAINTENANCE_PROBLEM
     await maintenance.enforce_maintenance(request, admin)
 
     maintenance.set_enabled(app, False)

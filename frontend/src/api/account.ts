@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { apiUrl, requestJson, requestVoid } from "@/api/client";
+import { requestJson, requestVoid } from "@/api/client";
+import { apiUrl } from "@/lib/health";
 
 const TmpClearedResponseSchema = z.object({ files_removed: z.number() });
 type TmpClearedResponse = z.infer<typeof TmpClearedResponseSchema>;

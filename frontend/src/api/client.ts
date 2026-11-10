@@ -1,15 +1,10 @@
-import type { z } from "zod";
+import { z } from "zod";
 
 import { i18n, LANGUAGE } from "@/i18n";
 import type { app } from "@/i18n/locales/en/app";
-import { API_BASE_URL, waitForBackendReady } from "@/lib/health";
+import { waitForBackendReady } from "@/lib/health";
 import { getImpersonation, IMPERSONATE_HEADER } from "@/lib/impersonation";
 import { getOidc } from "@/oidc";
-
-/** The URL of the API route *path*, which starts with a slash. */
-export function apiUrl(path: string): string {
-  return `${API_BASE_URL}/api${path}`;
-}
 
 const CLIENT_ID_HEADER = "X-Client-Id";
 
@@ -65,8 +60,8 @@ export async function authFetch(
 type ApiError = keyof typeof app.api.errors;
 
 /**
- * Human explanation for the edge statuses that reach the client without a JSON
- * `detail` body, since the reverse proxy rather than the API produced them.
+ * Human explanation for the edge statuses that reach the client without a problem
+ * body, since the reverse proxy rather than the API produced them.
  * Null when a status carries no more meaning than itself.
  */
 function statusExplanation(status: number): string | null {
@@ -84,7 +79,7 @@ function statusExplanation(status: number): string | null {
   }
 }
 
-/** Message for a failure without a usable `detail` body, suffixed with its status for diagnostics. */
+/** Message for a failure without a problem `detail`, suffixed with its status for diagnostics. */
 function fallbackMessage(error: ApiError, status: number): string {
   return `${statusExplanation(status) ?? i18n.t(($) => $.app.api.errors[error])} (HTTP ${status})`;
 }
@@ -102,26 +97,21 @@ export class HttpError extends Error {
 /** Thrown when the backend rejects a request through the maintenance gate. */
 export class MaintenanceError extends HttpError {}
 
+/** Mirrors `MAINTENANCE_PROBLEM` in `backend/src/hivegent/server/maintenance.py`. */
+const MAINTENANCE_PROBLEM = "tag:dfki.de,2026:hivegent/maintenance";
+
+/** The RFC 9457 problem every API error answers with, as far as the client reads it. */
+const ProblemSchema = z.object({ type: z.string().optional(), detail: z.string().optional() });
+
 /** The error a failed *res* stands for. */
 async function responseError(res: Response, error: ApiError): Promise<HttpError> {
-  const body = (await res.json().catch(() => null)) as {
-    detail?: string | { code?: string; message?: string };
-  } | null;
+  const problem = ProblemSchema.safeParse(await res.json().catch(() => null)).data;
 
-  if (
-    res.status === 503 &&
-    typeof body?.detail === "object" &&
-    body.detail.code === "maintenance"
-  ) {
-    return new MaintenanceError(body.detail.message, res.status);
+  if (problem?.type === MAINTENANCE_PROBLEM) {
+    return new MaintenanceError(problem.detail, res.status);
   }
 
-  return new HttpError(
-    typeof body?.detail === "string" && body.detail
-      ? body.detail
-      : fallbackMessage(error, res.status),
-    res.status,
-  );
+  return new HttpError(problem?.detail || fallbackMessage(error, res.status), res.status);
 }
 
 /** An authenticated request that throws the backend's error for a failure status. */

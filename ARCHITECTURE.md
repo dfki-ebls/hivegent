@@ -45,15 +45,15 @@ flowchart LR
 - Each commit is announced once on the job feed as `workspace-changed`, which the SPA follows to refresh its views.
 - The MCP server at `/mcp` (`mcp/adapter.py`) serves the agent's `explore`, `write`, and `subagent` toolsets.
   Writes ask for confirmation through MCP elicitation.
-- Admins reset data with `POST /api/admin/reset/{target}`, and pipelines are listed at `GET /api/pipelines/{stage}`.
+- Admins reset data with `DELETE /api/v1/admin/data/{target}`, and pipelines are listed at `GET /api/v1/pipelines/{stage}`.
 
 ## Integration
 
-- REST for documents, conversations, and settings.
+- REST under `/api/v1` for documents, conversations, and settings, with typed bodies, idempotent methods wherever a retry lands the same state, and RFC 9457 problems for every error.
 - Vercel AI Data Stream Protocol for chat, Server-Sent Events for job progress and workspace changes.
 - Chat configuration (model, reasoning effort, mode, document filters, tools) travels with each chat request.
-- The client mints conversation and user message ids as UUIDs and chats at `POST /api/conversations/{id}/chat`, which claims an id no conversation holds, while the server stays authoritative for history and authorizes every access.
-- RAGold receives a reply as a gold benchmark entry: the backend builds the zip (`POST /api/conversations/{id}/ragold`) and the SPA hands it to a RAGold tab by `postMessage`, enabled by `settings.ragold.url` (env `HIVEGENT_RAGOLD__URL`).
+- The client mints conversation and user message ids as UUIDs and chats at `POST /api/v1/conversations/{id}/chat`, which claims an id no conversation holds, while the server stays authoritative for history and authorizes every access.
+- RAGold receives a reply as a gold benchmark entry: the backend builds the zip (`POST /api/v1/conversations/{id}/ragold`) and the SPA hands it to a RAGold tab by `postMessage`, enabled by `settings.ragold.url` (env `HIVEGENT_RAGOLD__URL`).
 - The browser language (English or German) is sent as `Accept-Language` on every request.
   It selects the language of backend errors, job titles, and the agent's instructions.
 
@@ -67,7 +67,7 @@ sequenceDiagram
 
     spa->>oidc: Get or refresh access token
     oidc-->>spa: Bearer token
-    spa->>api: POST /api/conversations/{id}/chat
+    spa->>api: POST /api/v1/conversations/{id}/chat
     api->>agent: Start run with user deps and toolsets
     agent->>llm: Request with context and tool results
     llm-->>agent: Response and tool calls

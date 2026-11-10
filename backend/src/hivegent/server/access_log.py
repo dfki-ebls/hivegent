@@ -2,10 +2,12 @@
 
 import logging
 
+from ..config import API_PREFIX
+
 __all__ = ["install_probe_access_filter"]
 
-# Full path of the readiness endpoint (the router carries a ``/api`` prefix).
-_PROBE_PATH = "/api/health"
+# Full path of the readiness endpoint, which the router mounts under the API prefix.
+_PROBE_PATH = f"{API_PREFIX}/health"
 
 
 class _EndpointFilter(logging.Filter):
@@ -14,7 +16,7 @@ class _EndpointFilter(logging.Filter):
     uvicorn logs each request via
     ``access_logger.info('%s - "%s %s HTTP/%s" %d', client, method, path, ...)``,
     so the request path is the third positional argument. Readiness probes
-    (process-compose in dev, Caddy in prod) poll ``/api/health`` on a short
+    (process-compose in dev, Caddy in prod) poll ``/api/v1/health`` on a short
     interval, and those lines are pure noise.
     """
 
@@ -32,7 +34,7 @@ class _EndpointFilter(logging.Filter):
 
 
 def install_probe_access_filter() -> None:
-    """Silence ``/api/health`` in uvicorn's access log, idempotently.
+    """Silence ``/api/v1/health`` in uvicorn's access log, idempotently.
 
     Called from :func:`hivegent.server.create_app`, which uvicorn imports and
     runs in every worker (including ``--reload`` children). A logger-level

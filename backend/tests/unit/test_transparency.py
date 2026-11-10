@@ -86,7 +86,7 @@ async def test_detection_report_is_verifiable_and_contains_only_a_hash(
     assert claims["method"] == "watermark"
     assert claims["status"] == "detected"
     assert header["typ"] == "JWT"
-    assert claims["detector"] == f"{ISSUER}/api/transparency/detect"
+    assert claims["detector"] == f"{ISSUER}/api/v1/transparency/detect"
     assert "marked text" not in json.dumps(claims)
 
 

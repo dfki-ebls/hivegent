@@ -56,7 +56,7 @@ describe("RunPythonTool", () => {
 
     expect(await screen.findByText("print(1)")).toBeTruthy();
     expect(requestText).toHaveBeenCalledWith(
-      expect.stringContaining("/api/documents/%2Ftmp/report.py?conversation_id=c1"),
+      expect.stringContaining("/api/v1/documents/%2Ftmp/report.py?conversation_id=c1"),
       "fetchDocumentContent",
     );
   });
@@ -161,7 +161,7 @@ describe("temporary document previews", () => {
 
     expect(await screen.findByText("Temporary document contents")).toBeTruthy();
     expect(requestText).toHaveBeenLastCalledWith(
-      expect.stringContaining("/api/documents/%2Ftmp/notes.md?conversation_id=c1"),
+      expect.stringContaining("/api/v1/documents/%2Ftmp/notes.md?conversation_id=c1"),
       "fetchDocumentContent",
     );
   });
