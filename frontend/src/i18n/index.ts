@@ -27,6 +27,8 @@ export const LANGUAGE = browserLanguage(navigator.languages);
 void i18n.use(initReactI18next).init({
   resources: { en: { translation: en }, de: { translation: de } },
   lng: LANGUAGE,
+  fallbackLng: "en",
+  supportedLngs: LANGUAGES,
   initAsync: false,
   interpolation: { escapeValue: false },
 });
