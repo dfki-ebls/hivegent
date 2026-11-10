@@ -26,6 +26,7 @@ from ..types import AUTO_APPROVED_MODES, MUTATING_MODES, DocumentFilter, Mode
 from .subagent_events import SubagentUpdate
 
 __all__ = [
+    "ASK_USER_TOOL",
     "SELF_BOUNDED",
     "WINDOW_MAX_CHARS",
     "CompletionRefused",
@@ -35,6 +36,9 @@ __all__ = [
     "UserDeps",
     "agent_toolset",
 ]
+
+ASK_USER_TOOL = "ask_user"
+"""The tool through which the model asks the user, whose answers are the user's own."""
 
 ExploreTaskArg = Annotated[
     str,

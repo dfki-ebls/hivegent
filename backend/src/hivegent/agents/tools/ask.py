@@ -12,11 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic_ai import FunctionToolset
 from pydantic_ai.exceptions import CallDeferred
 
-from ..common import UserDeps, agent_toolset
+from ..common import ASK_USER_TOOL, UserDeps, agent_toolset
 
 __all__ = [
     "ANSWERS",
-    "ASK_USER_TOOL",
     "DISMISSED_QUESTIONS",
     "AskAnswer",
     "AskOption",
@@ -24,8 +23,6 @@ __all__ = [
     "ask_toolset",
     "ask_user",
 ]
-
-ASK_USER_TOOL = "ask_user"
 
 DISMISSED_QUESTIONS = (
     "The user dismissed these questions without answering. Do not ask them "

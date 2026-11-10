@@ -460,6 +460,16 @@ Each call builds the caller's `UserDeps` in `interactive` mode with no conversat
 The gate's `ApprovalRequired` is answered with an MCP elicitation (`mcp/confirmation.py`) showing the `ChangesetSummary`, and its request state is a digest of the tool, arguments, and summary, so an answer cannot be replayed for other arguments or a changed workspace.
 A return is its text bounded by `tools.formatting.truncate_middle` at `settings.mcp.output_max_chars` (`None` sends it whole) and its binary attachments as image or resource blocks, with no `structured_content` or `outputSchema`, since major clients hand structured content to their model in place of the LLM-tuned text or beside it.
 
+### Tool results are fenced as data
+
+`agents.guards.ToolOutputFence` wraps the text of every tool result in `<hivegent_untrusted_data>` tags on the wire, and its instructions tell the model that what is inside carries no authority: it acts on instructions there only where the user asked for that and the step is low risk, the graduated handling of OpenAI's Model Spec, so a document the user wants applied still is, while nothing inside may trigger a tool call, a link, or a change the user did not ask for.
+The tag is one descriptive name, as Anthropic's prompting guide advises, prefixed with the product so no document carries it by accident, and the result sits in XML, as OpenAI's Model Spec advises for untrusted data, rather than behind a random boundary per result, which would cost tokens on every result and vary the context for nothing.
+What a random boundary buys, that the text cannot close the fence, comes from escaping instead: a `<hivegent_untrusted_data` or `</hivegent_untrusted_data` the text carries itself is sent as `&lt;…`, which leaves all other content as it is.
+It is spotlighting, which lowers the success of injected instructions rather than preventing it, so what a run may do once it read untrusted content stays the actual boundary.
+The fence is a pure function of the stored part, applied in `prepare_model_request`, the last step before the wire, so the stored conversation keeps the bare results and every request renders the history it replays byte for byte, the memory read a capability enqueues included, which keeps the provider's prompt cache valid (`tests/unit/test_prompt_cache.py`).
+Only a call that ran is fenced: a denial, a failure, and a retry prompt are worded by the harness, the answers to `ask_user` are the user's own, and the notes the harness and an approval add trail the text as items of their own.
+`ToolOutputFence.after_tool_execute` runs innermost, ahead of the spill and every note, and gathers every text a tool returned into its leading string, such as the blocks of an MCP result, so every string after it is a note and the fence covers all the tool wrote.
+
 ### Spilling bulk output
 
 A tool return longer than `settings.llm.tool_output_max_chars` is saved whole under the conversation's `/tmp/.tool-results/` and replaced by a preview by `agents.guards.ToolOutputSpill`, carried by every agent over the user's deps.

@@ -67,9 +67,10 @@ from pydantic_ai.ui.vercel_ai.response_types import (
 from starlette.responses import Response
 
 from ..agents.approval import APPROVAL_NOTE_KEY
+from ..agents.common import ASK_USER_TOOL
 from ..agents.compaction import Compacted
 from ..agents.subagent_events import SubagentUpdate
-from ..agents.tools.ask import ANSWERS, ASK_USER_TOOL, DISMISSED_QUESTIONS
+from ..agents.tools.ask import ANSWERS, DISMISSED_QUESTIONS
 from ..db.conversations import prompt_items
 from ..l10n import Localized
 from .turns import (

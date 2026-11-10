@@ -22,6 +22,7 @@ from hivegent.agents.common import UserDeps
 from hivegent.config import InferenceProvider
 from hivegent.db.conversations import _dump_messages, _load_messages
 from hivegent.llm import create_openai_chat_model
+from hivegent.prompts import FENCE_TAG
 from hivegent.store import User
 from hivegent.types import Mode, ToolsSpec
 from tests.helpers import owned
@@ -171,6 +172,7 @@ async def test_each_request_extends_the_previous_one(
     assert "~/b.md" in sent and "Write mode" in sent
     assert "failed 3 times in a row" in sent
     assert "most of its 4 model requests" in sent
+    assert f"<{FENCE_TAG}>" in sent
     assert all(message["role"] != "system" for message in requests[-1]["messages"][1:])
 
     for previous, current in pairwise(requests):

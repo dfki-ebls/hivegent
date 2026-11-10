@@ -18,6 +18,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from hivegent.agents import RunPrefix, build_capabilities
+from hivegent.agents.guards import fence_messages
 from hivegent.agents.summarize import COMPACT_PROMPT, _plan, summarize_conversation
 from hivegent.l10n import LANGUAGES, Language
 from hivegent.types import ToolsSpec
@@ -98,7 +99,7 @@ async def test_compaction_continues_the_conversation_instead_of_re_rendering_it(
     sent = seen[0]
     # Every original message is replayed as itself, so everything ahead of the
     # appended prompt is the prefix the provider already holds.
-    assert sent[: len(_MESSAGES)] == _MESSAGES
+    assert sent[: len(_MESSAGES)] == fence_messages(_MESSAGES)
     request = sent[-1]
     assert isinstance(request, ModelRequest)
     prompt = request.parts[-1]
@@ -161,8 +162,8 @@ async def test_compaction_sheds_again_when_the_trimmed_turn_still_overflows(
     assert summary == "summary"
     # The refused attempt carried every turn the endpoint had served; the retry
     # sheds from the tail, so what remains is still the block it has cached.
-    assert seen[0][:-1] == history[:8]
-    assert seen[1][:-1] == history[:6]
+    assert seen[0][:-1] == fence_messages(history[:8])
+    assert seen[1][:-1] == fence_messages(history[:6])
 
 
 def test_plan_never_cuts_on_an_unanswered_tool_call() -> None:

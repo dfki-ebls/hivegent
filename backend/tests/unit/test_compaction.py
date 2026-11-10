@@ -30,6 +30,7 @@ from hivegent.agents.compaction import (
     compaction_cut,
     is_compaction,
 )
+from hivegent.agents.guards import fence_messages
 from hivegent.agents.summarize import COMPACT_PROMPT
 from hivegent.agents.window import compaction_window
 from hivegent.db.conversations import is_user_request
@@ -181,7 +182,7 @@ async def test_an_overflowing_prompt_is_compacted_ahead_of_it_and_retried(
     captured, compacted = await model.run_turn("next question", _HISTORY)
 
     # The refused turn, the summary asked as its next turn, then the retry.
-    assert model.seen[1][: len(_HISTORY)] == _HISTORY
+    assert model.seen[1][: len(_HISTORY)] == fence_messages(_HISTORY)
     # Summary and prompt merged into the one request the retry sends.
     assert _prompts(model.seen[2][0]) == ["reply 2", "next question"]
     assert [event.part for event in compacted] == [CompactionPart(content="reply 2")]

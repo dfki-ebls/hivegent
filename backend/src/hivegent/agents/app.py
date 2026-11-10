@@ -16,6 +16,7 @@ from .guards import (
     IncompleteToolCallGuard,
     LimitNotes,
     PromptImageLimit,
+    ToolOutputFence,
     ToolOutputSpill,
 )
 from .window import CompactionWindow
@@ -70,7 +71,7 @@ def _user_agent(name: str) -> Agent[UserDeps, str]:
         deps_type=UserDeps,
         retries=settings.llm.retries,
         model_settings=default_model_settings,
-        capabilities=[_window, *guards, _spill],
+        capabilities=[_window, *guards, ToolOutputFence(), _spill],
     )
 
 
