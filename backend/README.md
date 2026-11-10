@@ -212,7 +212,7 @@ That response is not always the last message, since the calls it ran beside the 
 The next request resumes against them: `ChatAdapter.resume` keeps only the decisions and answers for calls still pending, as the client re-sends every settled card, and builds the results with `DeferredToolRequests.build_results`, which refuses a call answered with the other kind of result with a 422.
 `ChatAdapter.deferred_tool_results` is therefore always `None`, so the base adapter never resumes from the client's claims alone.
 The client never receives the stored requests (`_client_metadata`), only what each `ApprovalRequired` carried, stored beside them as `approvalMetadata`.
-Migration `f4a5b6c7d8e9` stored them for the turns paused before, from their unanswered calls.
+Migration `e3f4a5b6c7d8` stored them for the turns paused before, from their unanswered calls.
 
 An approval or question the user never answers is closed by the next turn (`abandon_pending_calls`), stored as its own node before the run, since pydantic-ai would otherwise repair the dangling call as "interrupted" and the model would reissue it on every turn.
 The stored requests say which pending call is denied and which dismissed, and the changesets of every approval that is not approved are discarded (`discard_unapproved_changes`).
