@@ -7,6 +7,7 @@ would pay for per call, which is also why the pool is owned here rather than by
 the tool: a tool instance is built per call.
 """
 
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -22,11 +23,15 @@ __all__ = ["get_monty_pool", "monty_pool_lifespan"]
 async def _open_pool() -> AsyncGenerator[AsyncMonty]:
     """Spawn the configured worker pool and reap it on exit."""
     sandbox = settings.sandbox
+    # CPU time keeps a program's budget fair under server load, but Monty only
+    # measures it on Linux and needs a finite request timeout as its backstop.
+    cpu_clock = sys.platform == "linux" and sandbox.request_timeout_seconds is not None
     async with AsyncMonty(
         min_processes=sandbox.min_processes,
         max_processes=sandbox.max_processes,
         checkout_timeout=sandbox.checkout_timeout_seconds,
         request_timeout=sandbox.request_timeout_seconds,
+        execution_clock="cpu" if cpu_clock else "wall",
     ) as pool:
         yield pool
 
