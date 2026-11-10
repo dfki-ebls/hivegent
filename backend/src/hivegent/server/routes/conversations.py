@@ -10,6 +10,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import TypeAdapter
 from pydantic_ai import BinaryContent, DeferredToolRequests
 from pydantic_ai.messages import (
     ModelMessage,
@@ -98,6 +99,8 @@ from ..common import (
     resolve_workspace_path,
 )
 from ..operations import attachment_disposition
+from ..problems import problem_response
+from ..runs import Run, runs
 from ..turns import Replay, abandon_pending_calls, pending_requests
 from ..vercel import (
     SDK_VERSION,
@@ -177,14 +180,43 @@ def _too_many_images(cap: int) -> Localized[str]:
 
 
 _INVALID_CHAT_REQUEST = Localized(en="Invalid chat request", de="Ungültige Chatanfrage")
-_CHAT_STREAM: dict[int | str, dict[str, Any]] = {
+_TURN_RUNNING = Localized(
+    en="Another turn of this conversation is still running, wait for it or stop it",
+    de="Eine andere Runde dieser Konversation läuft noch, warte auf sie oder stoppe sie",
+)
+_UI_MESSAGES = TypeAdapter(list[UIMessage])
+_JSON = "application/json"
+_STREAM = {
+    SSE_CONTENT_TYPE: {
+        "schema": {
+            "type": "string",
+            "description": (
+                "A Vercel AI UI message stream, "
+                "see https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol"
+            ),
+        }
+    }
+}
+_CHAT_RESPONSES: dict[int | str, dict[str, Any]] = {
     200: {
         "description": (
-            "The turn as a Vercel AI UI message stream, "
-            "see https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol"
+            "The turn as it streams, or with `Accept: application/json` the "
+            "conversation's active path once the turn is stored, its last message "
+            "being the answer"
         ),
-        "content": {SSE_CONTENT_TYPE: {"schema": {"type": "string"}}},
-    }
+        "content": {
+            **_STREAM,
+            _JSON: {
+                "schema": {"type": "array", "items": {"$ref": "#/components/schemas/UIMessage"}}
+            },
+        },
+    },
+    409: problem_response("Another turn of the conversation is running"),
+    502: problem_response("The turn failed, with `Accept: application/json`"),
+}
+_RESUME_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"description": "The running turn, from its first chunk", "content": _STREAM},
+    204: {"description": "No turn is running"},
 }
 _INVALID_MESSAGE_ID = Localized(
     en="A new message needs a UUID as its id",
@@ -694,6 +726,53 @@ async def _prepare_turn(
     return run_and_persist(adapter, stream, persist=persist, subagent_sink=subagent_sink)
 
 
+async def _answer(
+    conversation: OwnedConversation, run: Run, accept: str | None
+) -> Response:
+    """The turn as it streams, or the stored conversation once it ended for a JSON client."""
+    if _quality(accept, _JSON) <= _quality(accept, SSE_CONTENT_TYPE):
+        return stream_response(run.follow())
+
+    await run.wait()
+
+    if (error := run.error) is not None:
+        raise HTTPException(status_code=502, detail=error)
+
+    return Response(
+        _UI_MESSAGES.dump_json(await _active_messages(conversation), by_alias=True),
+        media_type=_JSON,
+    )
+
+
+def _quality(accept: str | None, media_type: str) -> float:
+    """The quality *accept* gives *media_type* (RFC 9110), its most specific range deciding.
+
+    Examples:
+        >>> _quality("application/json, text/event-stream;q=0.5", "text/event-stream")
+        0.5
+        >>> _quality("application/jsonl, */*;q=0.1", "application/json")
+        0.1
+        >>> _quality(None, "application/json")
+        0.0
+    """
+    kind = media_type.split("/")[0]
+    ranges: dict[str, float] = {}
+
+    for item in (accept or "").split(","):
+        media, *params = (part.strip() for part in item.split(";"))
+        weights = [p.partition("=")[2] for p in params if p.partition("=")[0] == "q"]
+
+        # A malformed weight states no preference.
+        try:
+            ranges[media.lower()] = float(weights[0]) if weights else 1.0
+        except ValueError:
+            continue
+
+    return next(
+        (ranges[r] for r in (media_type, f"{kind}/*", "*/*") if r in ranges), 0.0
+    )
+
+
 def _prompt_id(adapter: ChatAdapter[UserDeps, str]) -> UUID | None:
     """The id the client gave the turn's new user message, ``None`` without one.
 
@@ -765,12 +844,18 @@ def _compact_active_path(
 @router.post(
     "/conversations/{conversation_id}/chat",
     response_class=StreamingResponse,
-    responses=_CHAT_STREAM,
+    responses=_CHAT_RESPONSES,
 )
 async def create_conversation_chat(
     opened: Opened, config: ChatRequest, request: Request
 ) -> Response:
-    """Run a turn in a conversation, starting it at a fresh id the client chose."""
+    """Run a turn in a conversation, starting it at a fresh id the client chose.
+
+    The turn runs on its own (:mod:`~hivegent.server.runs`), so a client that
+    leaves only stops following it, a retry with the same user message follows
+    the running turn, any other request is refused untouched while it runs,
+    and ``GET .../stream`` follows it again after a reload.
+    """
     conversation, exists = opened
     accept = request.headers.get("accept")
     adapter = ChatAdapter[UserDeps, str](
@@ -780,6 +865,46 @@ async def create_conversation_chat(
         sdk_version=SDK_VERSION,
     )
     prompt_id = _prompt_id(adapter)
-    chunks = await _prepare_turn(conversation, config, adapter, prompt_id, exists=exists)
 
-    return stream_response(chunks)
+    # A retry of the running turn's request follows it, any other is refused.
+    if (run := runs.get(conversation.id)) is not None:
+        if prompt_id is None or run.prompt_id != prompt_id:
+            raise HTTPException(status_code=409, detail=_TURN_RUNNING.current)
+
+        return await _answer(conversation, run, accept)
+
+    run = await runs.start(
+        conversation.id,
+        prompt_id,
+        _prepare_turn(conversation, config, adapter, prompt_id, exists=exists),
+    )
+
+    return await _answer(conversation, run, accept)
+
+
+@router.get(
+    "/conversations/{conversation_id}/stream",
+    response_class=StreamingResponse,
+    responses=_RESUME_RESPONSES,
+)
+async def follow_conversation_turn(opened: Opened) -> Response:
+    """Follow the running turn of a conversation from its first chunk.
+
+    The AI SDK's resumable stream: ``204`` while no turn runs, so a client
+    reloading after the turn ended reads it from ``.../messages`` instead.
+    """
+    run = runs.get(opened[0].id)
+
+    if run is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    return stream_response(run.follow())
+
+
+@router.delete(
+    "/conversations/{conversation_id}/stream",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def stop_conversation_turn(opened: Opened) -> None:
+    """Stop the running turn of a conversation, once it stored what it got to."""
+    await runs.cancel(opened[0].id)

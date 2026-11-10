@@ -51,6 +51,7 @@ flowchart LR
 
 - REST under `/api/v1` for documents, conversations, and settings, with typed bodies, idempotent methods wherever a retry lands the same state, and RFC 9457 problems for every error.
 - Vercel AI Data Stream Protocol for chat, Server-Sent Events for job progress and workspace changes.
+- A chat turn runs apart from its request, so a client that leaves only stops following it, follows it again at `GET /api/v1/conversations/{id}/stream`, and stops it with `DELETE` there.
 - Chat configuration (model, reasoning effort, mode, document filters, tools) travels with each chat request.
 - The client mints conversation and user message ids as UUIDs and chats at `POST /api/v1/conversations/{id}/chat`, which claims an id no conversation holds, while the server stays authoritative for history and authorizes every access.
 - RAGold receives a reply as a gold benchmark entry: the backend builds the zip (`POST /api/v1/conversations/{id}/ragold`) and the SPA hands it to a RAGold tab by `postMessage`, enabled by `settings.ragold.url` (env `HIVEGENT_RAGOLD__URL`).

@@ -106,6 +106,16 @@ export function chatUrl(conversationId: string): string {
   return apiUrl(`/conversations/${conversationId}/chat`);
 }
 
+/** The running turn of a conversation, which a reload follows again and a stop ends. */
+export function turnUrl(conversationId: string): string {
+  return apiUrl(`/conversations/${conversationId}/stream`);
+}
+
+/** Stop the running turn on the server, where it runs on after the client stopped reading. */
+export function stopTurn(conversationId: string): Promise<void> {
+  return requestVoid(turnUrl(conversationId), "stopTurn", { method: "DELETE" });
+}
+
 function listConversations(): Promise<ConversationSummary[]> {
   return requestJson(
     apiUrl("/conversations"),

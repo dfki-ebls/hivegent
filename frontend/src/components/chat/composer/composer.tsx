@@ -17,7 +17,8 @@ import { keyPrefix } from "@/i18n";
 import { formatFileSize } from "@/i18n/format";
 import { selectAttachmentLimits, useServerSettings } from "@/api/settings";
 import { transcribeAudio } from "@/api/transcription";
-import { useChatContext, useChatSelector } from "@/components/chat/chat-context";
+import { useChatSelector } from "@/components/chat/chat-context";
+import { useChatActions } from "@/hooks/chat/use-chat-actions";
 import { isChatBusy } from "@/lib/chat/chat-utils";
 import { useComposerStore } from "@/stores/composer-store";
 
@@ -48,7 +49,7 @@ export function Composer({ onSubmit }: { onSubmit: (text: string, files: FileUIP
   const transcribe = useServerSettings((settings) => settings.stt_model)
     ? transcribeAudio
     : undefined;
-  const { chat } = useChatContext();
+  const { stop } = useChatActions();
   const status = useChatSelector((chat) => chat.status);
   const streaming = isChatBusy(status);
   const agentMode = useComposerStore((state) => state.agentMode);
@@ -175,7 +176,7 @@ export function Composer({ onSubmit }: { onSubmit: (text: string, files: FileUIP
           />
           <ModeSelector value={agentMode} onChange={setAgentMode} />
           {/* Enter still submits while streaming, which steers the running turn. */}
-          <SubmitStopButton status={status} empty={!canSend} onStop={() => void chat.stop()} />
+          <SubmitStopButton status={status} empty={!canSend} onStop={stop} />
         </InputGroupAddon>
       </InputGroup>
     </form>

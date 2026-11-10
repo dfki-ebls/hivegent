@@ -29,6 +29,7 @@ from .operations import cleanup_spool_dir
 from .problems import install_problem_handlers
 from .routes import api_router
 from .routes.public import router as public_router
+from .runs import runs
 
 __all__ = ["create_app", "mcp_http_app"]
 
@@ -119,6 +120,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     ):
         await apply_migrations()
         await background.enter_async_context(_housekeeping())
+        # Unwound ahead of the engine, so a turn the shutdown stops is stored.
+        background.push_async_callback(runs.aclose)
         await _verify_fts_config()
         cleanup_spool_dir()
         await load_persisted_state(app)

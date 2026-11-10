@@ -128,6 +128,7 @@ export const app = {
       update: "Aktualisieren fehlgeschlagen",
       generateTitle: "Titel konnte nicht erstellt werden",
       importConversation: "Import fehlgeschlagen",
+      stopTurn: "Anhalten der Antwort fehlgeschlagen",
       exportRagold: "Export nach RAGold fehlgeschlagen",
       fetchPipelines: "Pipelines konnten nicht geladen werden",
       fetchPipelineConfig: "Konfiguration der Pipeline konnte nicht geladen werden",

@@ -1,12 +1,14 @@
 import { useMemo } from "react";
 import { useChatContext } from "@/components/chat/chat-context";
-import type { ChatRequestConfig } from "@/api/conversations";
+import { type ChatRequestConfig, stopTurn } from "@/api/conversations";
+import { toast } from "@/components/ui/toast";
 import { joinTextParts, lastUserIndex, resendOf } from "@/lib/chat/chat-utils";
 import type { ChatMessage } from "@/lib/chat/message";
+import { errorMessage } from "@/lib/utils";
 
 /** The actions that rewrite the transcript of the chat being rendered. */
 export function useChatActions() {
-  const { chat } = useChatContext();
+  const { chat, conversationId } = useChatContext();
 
   return useMemo(
     () => ({
@@ -29,7 +31,20 @@ export function useChatActions() {
         void chat.sendMessage(undefined, {
           body: { compact: true } satisfies Partial<ChatRequestConfig>,
         }),
+      /**
+       * Stop the turn at the server, which runs it on when the client only stops reading.
+       * Its stream then ends by itself once the turn is stored, so nothing queued is sent
+       * while the server holds the turn, and the client stops reading only when that failed.
+       */
+      stop: () => {
+        if (!conversationId) return void chat.stop();
+
+        void stopTurn(conversationId).catch((error: unknown) => {
+          toast.add({ type: "error", title: errorMessage(error) });
+          void chat.stop();
+        });
+      },
     }),
-    [chat],
+    [chat, conversationId],
   );
 }

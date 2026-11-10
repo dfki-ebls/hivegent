@@ -33,8 +33,13 @@ const T_OPTIONS = keyPrefix(($) => $.chat.messages);
 export function MessageList() {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const { t: tRoot } = useTranslation();
-  const { chat } = useChatContext();
-  const { messages: streamed, status, error, clearError } = useChat({ chat, throttle: 50 });
+  const { chat, conversationId } = useChatContext();
+  // A stored conversation follows the turn still running at the server after a reload.
+  const { messages: streamed, status, error, clearError } = useChat({
+    chat,
+    throttle: 50,
+    resume: conversationId !== null,
+  });
   const { retry } = useChatActions();
   // A compaction shows where the server stores it, as after a reload.
   const messages = useMemo(() => placeCompactions(streamed), [streamed]);

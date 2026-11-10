@@ -226,6 +226,16 @@ Every node is inserted, never upserted, so a chosen id can neither replace nor r
 An edit sends the edited node as `messageId` and the edited message under a fresh id, which becomes a sibling of the edited node.
 A regenerate, a compaction, and a post-approval continuation carry no new user message, so their nodes take server ids.
 
+### A turn runs apart from its request
+
+A turn runs as a task of `server.runs.runs`, at most one per conversation, which keeps every chunk it streamed until it ends.
+The request that started it follows it, and a client that leaves only stops following, so a closed tab or a sleeping phone loses no answer.
+`GET /conversations/{id}/stream` follows the running turn again from its first chunk, the AI SDK's resumable stream, and answers 204 while none runs, so a client reloading after the turn ended reads it from `.../messages`.
+A request takes the conversation's slot before it prepares or writes anything and gives it up when it is refused, so a retry of the running turn's request, the same user message id, follows that turn, and any other request is refused with 409 untouched.
+`DELETE /conversations/{id}/stream` is the only way to stop a turn, and returns once the turn stored what it got to, as the shutdown does for every running turn before the database closes.
+`Accept: application/json` waits for the turn and answers the active path, its last message being the answer, or a 502 problem when the turn failed, so a client without a stream parser drives the same loop.
+The registry lives in the process like the maintenance flag, so it holds for the single-process deployment, and a turn ends with the process.
+
 ### A paused run stores what it awaits
 
 A run that ends on `DeferredToolRequests` stores them on its last response under the server-only `deferredToolRequests` metadata key, as pydantic-ai's `Conversation.deferred_tool_requests` carries them, since the messages show which calls are unanswered but not whether each awaits an approval or an answer, nor what it was deferred with.
@@ -238,7 +248,7 @@ Migration `e3f4a5b6c7d8` stored them for the turns paused before, from their una
 An approval or question the user never answers is closed by the next turn (`abandon_pending_calls`), stored as its own node before the run, since pydantic-ai would otherwise repair the dangling call as "interrupted" and the model would reissue it on every turn.
 The stored requests say which pending call is denied and which dismissed, and the changesets of every approval that is not approved are discarded (`discard_unapproved_changes`).
 
-Persistence is hard-fail: a failed write surfaces as a trailing error chunk, and is only logged on a client disconnect.
+Persistence is hard-fail: a failed write surfaces as a trailing error chunk, and is only logged on a cancel.
 `run_and_persist` persists exactly what `capture_run_messages()` holds.
 A run starts from the history with consecutive requests merged, as an approval resumed beside calls that already ran leaves them, so `turns.Replay` measures the replayed prefix as the run normalizes it (`repair_messages`), where the turn's messages start.
 A turn that never finished first gets `close_orphan_tool_calls` and `record_turn_error`, while a clean finish is stored untouched, so a pending approval reloads as one.

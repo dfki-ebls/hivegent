@@ -33,7 +33,7 @@ export function ChatSidebar() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { chat, conversationId } = useChatContext();
-  const { compact } = useChatActions();
+  const { compact, stop } = useChatActions();
   const busy = useChatBusy();
   const hasMessages = useChatSelector((chat) => chat.messages.length > 0);
   // Compaction summarizes a stored conversation, so an empty one has nothing to compact.
@@ -138,7 +138,7 @@ export function ChatSidebar() {
       onValueChange={(value) => setActiveTab(value as ChatTab)}
       className="flex h-full flex-col"
     >
-      <StreamingNavGuard isStreaming={busy} onStop={() => void chat.stop()} />
+      <StreamingNavGuard isStreaming={busy} onStop={stop} />
       <ChatHeader
         activeTab={activeTab}
         hasMessages={hasMessages}

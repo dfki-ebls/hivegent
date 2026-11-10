@@ -124,6 +124,7 @@ export const app = {
       update: "Update failed",
       generateTitle: "Title generation failed",
       importConversation: "Import failed",
+      stopTurn: "Stopping the answer failed",
       exportRagold: "Failed to export to RAGold",
       fetchPipelines: "Failed to fetch pipelines",
       fetchPipelineConfig: "Failed to fetch pipeline configuration",

@@ -4,7 +4,13 @@ import { DefaultChatTransport } from "ai";
 import { useState } from "react";
 import { useChatInstance } from "@/components/chat/chat-context";
 import { chatFetch } from "@/api/client";
-import { type ChatRequestConfig, chatUrl, conversationQueries } from "@/api/conversations";
+import {
+  type ChatRequestConfig,
+  chatUrl,
+  conversationQueries,
+  getConversationMessages,
+  turnUrl,
+} from "@/api/conversations";
 import { buildLlmConfig } from "@/api/settings";
 import { buildToolsPayload } from "@/api/tools";
 import { placeCompactions, shouldContinueRun } from "@/lib/chat/chat-utils";
@@ -42,11 +48,20 @@ export function chatSettings(): ChatRequestConfig {
  * that request settingless and the turn would resume with the server's
  * defaults. A per-call body only adds a flag to its own request, such as
  * `compact`, which addresses no message since it compacts the active path.
+ *
+ * A turn runs on at the server when the client stops reading, so a reload
+ * follows it again at its own route, from its first chunk. The replay
+ * continues the message the stored history ends with, which the server ends
+ * with what the turn answers or continues, so it is no replay of a whole message.
+ * A turn that ended since the history was read is not followed, so
+ * *onNoTurn* reads the history again.
  */
-function transportOf(conversationId: string) {
-  return new DefaultChatTransport<ChatMessage>({
+function transportOf(conversationId: string, onNoTurn: () => void) {
+  const transport = new DefaultChatTransport<ChatMessage>({
     api: chatUrl(conversationId),
     fetch: chatFetch,
+    resumeStreamIsReplay: false,
+    prepareReconnectToStreamRequest: () => ({ api: turnUrl(conversationId) }),
     prepareSendMessagesRequest: ({ id, messages, body, trigger, messageId }) => {
       const compact = body?.compact === true;
       const last = compact || trigger === "regenerate-message" ? undefined : messages.at(-1);
@@ -70,6 +85,17 @@ function transportOf(conversationId: string) {
       };
     },
   });
+  const reconnect = transport.reconnectToStream.bind(transport);
+
+  transport.reconnectToStream = async (options) => {
+    const stream = await reconnect(options);
+
+    if (stream === null) onNoTurn();
+
+    return stream;
+  };
+
+  return transport;
 }
 
 /** The chat of one conversation, which starts from its stored *messages*. */
@@ -82,7 +108,14 @@ function createChat(
   const chat: Chat<ChatMessage> = new Chat<ChatMessage>({
     id,
     messages,
-    transport: transportOf(id),
+    transport: transportOf(id, () => {
+      const read = chat.messages;
+
+      void getConversationMessages(id).then((stored) => {
+        // Unless the user moved on meanwhile.
+        if (chat.messages === read) chat.messages = stored;
+      });
+    }),
     // The server stores every user message under the id it was sent with.
     generateId: () => crypto.randomUUID(),
     sendAutomaticallyWhen: shouldContinueRun,
