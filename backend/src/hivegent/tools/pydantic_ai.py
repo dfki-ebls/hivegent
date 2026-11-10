@@ -202,7 +202,7 @@ def for_pydantic_ai[D](
     # Build parameter list: RunContext first, then __call__ params.
     # Use getattr to build RunContext[D] at runtime without a subscript
     # expression that ty would interpret as a static type form.
-    ctx_annotation: Any = RunContext.__class_getitem__(deps_type)  # pyright: ignore[reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
+    ctx_annotation: Any = RunContext.__class_getitem__(deps_type)  # pyright: ignore[reportAttributeAccessIssue]  # ty: ignore[missing-attribute]
     ctx_param = inspect.Parameter(
         "ctx",
         inspect.Parameter.POSITIONAL_OR_KEYWORD,

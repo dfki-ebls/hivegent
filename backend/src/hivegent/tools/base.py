@@ -1412,7 +1412,7 @@ class ToolSpec:
         wrapper.__doc__ = self.description
         wrapper.__module__ = self.source_module
         # __signature__ is not in the FunctionType stub; use setattr.
-        wrapper.__signature__ = sig  # type: ignore[attr-defined]  # pyright: ignore[reportFunctionMemberAccess]  # ty: ignore[unresolved-attribute]
+        wrapper.__signature__ = sig  # type: ignore[attr-defined]  # pyright: ignore[reportFunctionMemberAccess]  # ty: ignore[missing-attribute]
 
     @classmethod
     @cache

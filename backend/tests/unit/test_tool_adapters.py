@@ -251,7 +251,7 @@ class TestToolSpec:
             """Return the payload without its envelope."""
 
             @override
-            def __call__(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]  # ty: ignore[invalid-method-override]
+            def __call__(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]  # ty: ignore[incompatible-method-override]
                 return "no envelope"
 
         def _bare(_d: _Deps) -> _Bare:
