@@ -43,7 +43,7 @@ in
 
     port = lib.mkOption {
       type = lib.types.port;
-      default = 3001;
+      default = 3003;
       description = ''
         Webhook port the bridge listens on. The rendered config JSON, Caddy
         upstream, and systemd bind allow list derive from this option, so the

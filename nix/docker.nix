@@ -46,7 +46,7 @@
   enableBridge ? false,
   bridge ? null,
   bridgeHost ? "127.0.0.1",
-  bridgePort ? 3001,
+  bridgePort ? 3003,
   # Volume holding the workspace, store, model caches, and Caddy state.
   dataDir ? "/data",
 }:

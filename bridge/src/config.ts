@@ -158,7 +158,7 @@ export function resolveConfig(env: NodeJS.ProcessEnv, file: FileConfig): BridgeC
     postgresUrl: requireValue(env.POSTGRES_URL ?? file.postgresUrl, "POSTGRES_URL"),
     botUserName: env.BOT_USERNAME ?? file.botUserName ?? "hivegent",
     host: env.HOST ?? file.host ?? DEFAULT_HOST,
-    port: env.PORT !== undefined ? Number(env.PORT) : (file.port ?? 3001),
+    port: env.PORT !== undefined ? Number(env.PORT) : (file.port ?? 3003),
     adapters: resolveAdapters(env, file),
   };
 }
