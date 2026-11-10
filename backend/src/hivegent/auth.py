@@ -102,8 +102,8 @@ _ADMIN_REQUIRED = Localized(
 # ``RS256`` is the one algorithm OpenID Connect Core requires of every
 # provider, and what Keycloak, Entra ID, Okta and Auth0 sign with by default;
 # ``ES256`` and the Ed25519 pair cover the providers that prefer elliptic
-# curves.  joserfc spells the JWS alg ``EdDSA`` and the JWK ``crv`` value
-# ``Ed25519``; both names appear in the wild, so accept either.
+# curves.  RFC 9864 replaces the generic ``EdDSA`` alg with ``Ed25519``,
+# but IdPs still sign with the former, so accept either.
 DEFAULT_JWT_ALGORITHMS: tuple[str, ...] = ("RS256", "ES256", "EdDSA", "Ed25519")
 
 
