@@ -58,6 +58,8 @@ def configure_observability(app: FastAPI) -> None:
     logfire.instrument_fastapi(app)
     logfire.instrument_pydantic_ai()
     logfire.instrument_mcp()
+    # Before the lifespan opens the sandbox pool, which it must precede.
+    logfire.instrument_monty()
 
     logger.info(
         "Observability configured (otlp=%s, logfire_saas=%s)",
