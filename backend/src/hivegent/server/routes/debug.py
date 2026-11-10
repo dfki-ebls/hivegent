@@ -34,6 +34,7 @@ from ...agents import (
 from ...agents.debugger import DebugDeps, Step, conversation_steps, write_report
 from ...agents.tools.conversation import format_messages
 from ...auth import require_admin
+from ...config import parse_uuid
 from ...db.conversations import (
     ConversationSummary,
     OwnedConversation,
@@ -117,7 +118,9 @@ async def _any_conversation(
     _admin: Annotated[User, Depends(require_admin)],
 ) -> OwnedConversation:
     """The path's conversation as its owner's, whoever that is, for an admin."""
-    return found(await any_conversation(conversation_id))
+    parsed = parse_uuid(conversation_id)
+
+    return found(None if parsed is None else await any_conversation(parsed))
 
 
 type AnyConversation = Annotated[OwnedConversation, Depends(_any_conversation)]

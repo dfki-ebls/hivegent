@@ -5,6 +5,7 @@ import os
 import time
 from dataclasses import replace
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -32,7 +33,7 @@ from hivegent.tools.table import QueryTableTool
 from hivegent.tools.workspace_os import ChangesetLimits
 from hivegent.workspace import Gateway, Location, PlannedChangeset
 from hivegent.workspace import changeset as gateway
-from tests.helpers import LIMITS, conversation_id, owned
+from tests.helpers import LIMITS, label_id, owned
 
 
 def _gateway(folder: Path) -> Gateway:
@@ -64,21 +65,25 @@ async def test_the_document_route_reads_an_owned_conversations_tmp(
         tmp_dir(data_dir, owned("c2")) / "report.py"
     )
 
-    async def lookup(user: User, cid: str) -> OwnedConversation | None:
-        return owned(cid, user) if user.id == "u" and cid == "c1" else None
+    async def lookup(user: User, cid: UUID) -> OwnedConversation | None:
+        return owned("c1", user) if user.id == "u" and cid == label_id("c1") else None
 
     monkeypatch.setattr(documents, "owned_conversation", lookup)
     user = User(id="u")
 
     if status != 200:
         with pytest.raises(HTTPException) as exc:
-            await documents.get_document_content(filepath, user, conversation_id)
+            await documents.get_document_content(
+                filepath, user, label_id(conversation_id)
+            )
 
         assert exc.value.status_code == status
 
         return
 
-    response = await documents.get_document_content(filepath, user, conversation_id)
+    response = await documents.get_document_content(
+        filepath, user, label_id(conversation_id)
+    )
     assert response.body == b"print('c1')"
 
 
@@ -326,7 +331,7 @@ async def test_the_sweep_removes_a_folder_only_once_all_of_it_is_idle(
 
     assert await sweep_conversations() == 1
     assert sorted(path.name for path in root.iterdir()) == sorted(
-        conversation_id(name) for name in ("fresh-changeset", "fresh-tmp")
+        str(label_id(name)) for name in ("fresh-changeset", "fresh-tmp")
     )
 
 

@@ -21,11 +21,12 @@ guessing its id.
 
 import asyncio
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import TypeAdapter, ValidationError
 
 from .changes import Changeset
-from .config import is_canonical_uuid, new_id, settings
+from .config import parse_uuid, settings
 from .db.conversations import OwnedConversation
 from .files import atomic_write
 
@@ -49,19 +50,18 @@ def _folder(conversation: OwnedConversation) -> Path:
 def _path(conversation: OwnedConversation, changeset_id: str) -> Path | None:
     """Where *conversation*'s *changeset_id* is stored, ``None`` for an id :func:`stage` never mints.
 
-    The id arrives from a model's tool call, so only the exact shape
-    :func:`stage` mints may become a file name, which no traversal can escape.
+    The id arrives from a model's tool call, so only the canonical spelling
+    of a UUID, the shape :func:`stage` mints, may become a file name, which no
+    traversal can escape.
     """
-    return (
-        _folder(conversation) / f"{changeset_id}.json"
-        if is_canonical_uuid(changeset_id)
-        else None
-    )
+    parsed = parse_uuid(changeset_id)
+
+    return None if parsed is None else _folder(conversation) / f"{parsed}.json"
 
 
 async def stage(conversation: OwnedConversation, changeset: Changeset[str]) -> str:
     """Store *changeset* for *conversation* and return the id that applies it."""
-    changeset_id = new_id()
+    changeset_id = str(uuid4())
     data = _ADAPTER.dump_json(changeset)
     await asyncio.to_thread(
         atomic_write, _folder(conversation) / f"{changeset_id}.json", data

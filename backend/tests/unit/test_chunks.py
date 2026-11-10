@@ -1,6 +1,7 @@
 """Unit tests for document chunking coordination."""
 
 from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -25,7 +26,7 @@ def _entry_metadata() -> EntryMetadata:
 def _document_metadata(pipeline: str) -> DocumentMetadata:
     return DocumentMetadata(
         **_entry_metadata().model_dump(),
-        id="doc-id",
+        id=uuid4(),
         pipeline=pipeline,
         created_at=datetime.now(UTC),
         chunks=[],
@@ -36,7 +37,7 @@ def _document_metadata(pipeline: str) -> DocumentMetadata:
 async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
     user_store: Casebase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stamped: list[str] = []
+    stamped: list[UUID] = []
 
     async def upsert_document(
         store: Casebase, entry: EntryMetadata, pipeline: str, line_count: int
@@ -44,11 +45,11 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
         _ = store, entry, line_count
         return _document_metadata(pipeline)
 
-    async def index_document(document_id: str, raw_chunks: object) -> None:
+    async def index_document(document_id: UUID, raw_chunks: object) -> None:
         _ = document_id, raw_chunks
         raise RuntimeError("index failed")
 
-    async def set_content_state(document_id: str, digest: str, stat: object) -> None:
+    async def set_content_state(document_id: UUID, digest: str, stat: object) -> None:
         _ = digest, stat
         stamped.append(document_id)
 

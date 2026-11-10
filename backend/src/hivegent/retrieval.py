@@ -27,6 +27,7 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import cast
+from uuid import UUID
 
 import cbrkit
 import logfire
@@ -195,6 +196,8 @@ class _RetrievalState:
                 return self._storage
             from .db.engine import get_engine
 
+            # TODO(cbrkit): key by `UUID` once cbrkit takes native uuid keys,
+            # and drop `Chunk.id`'s `as_uuid=False` and the `str` filter values.
             self._storage = PgvectorAsync[str, Chunk](
                 engine=get_engine(),
                 model=Chunk,
@@ -224,7 +227,7 @@ async def warm_index() -> None:
     await _state.get_storage()
 
 
-async def index_document(document_id: str, chunks: Sequence[ChunkData]) -> None:
+async def index_document(document_id: UUID, chunks: Sequence[ChunkData]) -> None:
     """Atomically replace *document_id*'s chunk rows with *chunks*.
 
     Each chunk is passed to cbrkit as a :class:`Chunk` instance keyed by
@@ -237,7 +240,8 @@ async def index_document(document_id: str, chunks: Sequence[ChunkData]) -> None:
     Empty *chunks* just deletes any existing rows for the document.
     """
     storage = await _state.get_storage()
-    where = cbrkit_filter.Eq("document_id", document_id)
+    # TODO(cbrkit): pass the `UUID` once filters take native uuid values.
+    where = cbrkit_filter.Eq("document_id", str(document_id))
     if not chunks:
         await storage.delete_where(where)
         return
@@ -474,9 +478,8 @@ def build_search_tool(
         doc_ids = await db_documents.resolve_accessible_document_ids(
             stores, filters=document_filters
         )
-        if not doc_ids:
-            return cbrkit_filter.Eq("document_id", "")  # match nothing
-        return cbrkit_filter.In("document_id", doc_ids)
+        # TODO(cbrkit): pass the `UUID`s once filters take native uuid values.
+        return cbrkit_filter.In("document_id", [str(doc_id) for doc_id in doc_ids])
 
     # TODO(cbrkit): scope by a subquery on the owners instead of the ids, so a
     # search no longer carries one parameter per accessible document, which

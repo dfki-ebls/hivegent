@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import replace
 from itertools import chain
 from typing import Annotated, cast
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
@@ -41,7 +42,7 @@ from ...agents.compaction import (
 )
 from ...agents.subagent_events import SubagentUpdate
 from ...auth import get_current_user
-from ...config import RagoldSettings, is_canonical_uuid, settings
+from ...config import RagoldSettings, parse_uuid, settings
 from ...converters import INGESTIBLE_IMAGE_MEDIA_TYPES
 from ...converters.images import sanitize_image_bytes
 from ...db.conversations import (
@@ -174,8 +175,8 @@ def _too_many_images(cap: int) -> Localized[str]:
 
 _INVALID_CHAT_REQUEST = Localized(en="Invalid chat request", de="Ungültige Chatanfrage")
 _INVALID_MESSAGE_ID = Localized(
-    en="A new message needs a lowercase UUID as its id",
-    de="Eine neue Nachricht braucht eine UUID in Kleinbuchstaben als ID",
+    en="A new message needs a UUID as its id",
+    de="Eine neue Nachricht braucht eine UUID als ID",
 )
 _MESSAGE_ID_TAKEN = Localized(
     en="A message with this id exists already, send it under a new id",
@@ -193,9 +194,12 @@ async def _owned_conversation(
     """The path's conversation, once the database names the caller its owner.
 
     Every ``{conversation_id}`` route takes the :class:`OwnedConversation` its
-    message tree and ``/tmp`` need from here.
+    message tree and ``/tmp`` need from here, and an id that is no UUID names
+    no conversation.
     """
-    return found(await owned_conversation(user, conversation_id))
+    parsed = parse_uuid(conversation_id)
+
+    return found(None if parsed is None else await owned_conversation(user, parsed))
 
 
 type Owned = Annotated[OwnedConversation, Depends(_owned_conversation)]
@@ -206,7 +210,9 @@ async def _opened_conversation(
     user: Annotated[User, Depends(get_current_user)],
 ) -> tuple[OwnedConversation, bool]:
     """The path's conversation and whether its row exists (:func:`open_conversation`)."""
-    return found(await open_conversation(user, conversation_id))
+    parsed = parse_uuid(conversation_id)
+
+    return found(None if parsed is None else await open_conversation(user, parsed))
 
 
 type Opened = Annotated[tuple[OwnedConversation, bool], Depends(_opened_conversation)]
@@ -382,7 +388,7 @@ async def export_conversation_route(conversation: Owned) -> Response:
     result = await load_active_for_display(conversation)
     pairs, siblings = result if result else ([], {})
     server = ServerConversation(
-        id=summary.id,
+        id=str(summary.id),
         title=summary.title,
         messages=dump_messages_with_ids(pairs, siblings=siblings),
         instructions=_instruction_snapshots(pairs),
@@ -645,7 +651,7 @@ async def _run_chat(
                 usage_limits=turn_usage_limits,
                 # The server's id rather than the client's, so the run knows the
                 # one conversation its `/tmp` and persisted turns belong to.
-                conversation_id=conversation.id,
+                conversation_id=str(conversation.id),
             )
         )
     )
@@ -670,14 +676,14 @@ async def _run_chat(
     )
 
 
-def _prompt_id(adapter: ChatAdapter[UserDeps, str]) -> str | None:
+def _prompt_id(adapter: ChatAdapter[UserDeps, str]) -> UUID | None:
     """The id the client gave the turn's new user message, ``None`` without one.
 
     A regenerate, a compaction, and a post-approval continuation carry no new
     user message, so the client addresses none of their nodes.
 
     Raises:
-        HTTPException: 422 when the id is no canonical UUID.
+        HTTPException: 422 when the id is no UUID.
     """
     if not adapter.messages or not is_user_request(adapter.messages[-1]):
         return None
@@ -688,10 +694,12 @@ def _prompt_id(adapter: ChatAdapter[UserDeps, str]) -> str | None:
         if message.role == "user"
     )
 
-    if not is_canonical_uuid(message_id):
+    parsed = parse_uuid(message_id)
+
+    if parsed is None:
         raise HTTPException(status_code=422, detail=_INVALID_MESSAGE_ID.current)
 
-    return message_id
+    return parsed
 
 
 def _compact_active_path(
@@ -699,7 +707,7 @@ def _compact_active_path(
     adapter: ChatAdapter[UserDeps, str],
     run_prefix: RunPrefix,
     prefix: list[ModelMessage],
-    fork_id: str | None,
+    fork_id: UUID | None,
 ) -> Response:
     """Stream the compaction of *prefix*, stored at its cut once made.
 

@@ -14,6 +14,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -61,6 +62,7 @@ from hivegent.agents.tools.ask import DISMISSED_QUESTIONS, ask_user
 from hivegent.db.conversations import (
     CHAT_ERROR_KEY,
     ActiveNode,
+    MessagePair,
     _fork_for_path,
     import_conversation,
     is_user_request,
@@ -85,6 +87,7 @@ from hivegent.types import (
     ConversationArchive,
     ServerConversation,
 )
+from tests.helpers import label_id
 
 
 def _texts(messages: Sequence[ModelMessage]) -> list[str]:
@@ -99,7 +102,7 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
 
 def _ui_messages(messages: Sequence[ModelMessage]) -> list[UIMessage]:
     """Project *messages* the way a reload does, with placeholder node ids."""
-    return dump_messages_with_ids([(f"n{i}", m) for i, m in enumerate(messages)])
+    return dump_messages_with_ids([(label_id(f"n{i}"), m) for i, m in enumerate(messages)])
 
 
 def _parts[T](messages: Sequence[ModelMessage], kind: type[T]) -> list[T]:
@@ -827,7 +830,7 @@ async def test_reasoning_duration_is_persisted_as_message_metadata(
     assert response.metadata == {REASONING_DURATIONS_KEY: durations}
     assert "reasoningDurationsMs" in body
 
-    ui = dump_messages_with_ids([("n1", response)])
+    ui = dump_messages_with_ids([(label_id("n1"), response)])
 
     assert isinstance(ui[0].metadata, dict)
     assert ui[0].metadata[REASONING_DURATIONS_KEY] == durations
@@ -857,7 +860,9 @@ def test_an_export_imports_as_the_messages_it_stores() -> None:
         ModelRequest(parts=[UserPromptPart(content="q2")]),
         ModelResponse(parts=[call], model_name="m"),
     ]
-    shown = dump_messages_with_ids([(f"n{i}", m) for i, m in enumerate(stored)])
+    shown = dump_messages_with_ids(
+        [(label_id(f"n{i}"), m) for i, m in enumerate(stored)]
+    )
 
     loaded = load_archived(shown)
 
@@ -887,12 +892,12 @@ async def test_import_conversation_rejects_empty_export() -> None:
 class TestInstructionSnapshots:
     """The system prompts an export reads back out of the stored history."""
 
-    def _pairs(self, *instructions: str | None) -> list[tuple[str, ModelMessage]]:
-        pairs: list[tuple[str, ModelMessage]] = []
+    def _pairs(self, *instructions: str | None) -> list[MessagePair]:
+        pairs: list[MessagePair] = []
         for i, text in enumerate(instructions):
             pairs.append(
                 (
-                    f"n{i}",
+                    label_id(f"n{i}"),
                     ModelRequest(
                         parts=[UserPromptPart(content=f"q{i}")], instructions=text
                     ),
@@ -905,19 +910,19 @@ class TestInstructionSnapshots:
         snapshots = _instruction_snapshots(self._pairs("SYS", "SYS", "SYS"))
 
         assert len(snapshots) == 1
-        assert snapshots[0].message_ids == ["n0", "n1", "n2"]
+        assert snapshots[0].message_ids == _ids("n0", "n1", "n2")
 
     def test_a_changed_prompt_starts_a_new_snapshot(self) -> None:
         """Narrowing the document scope mid-conversation stays visible."""
         snapshots = _instruction_snapshots(self._pairs("SYS", "SYS scoped", "SYS"))
 
         assert [s.text for s in snapshots] == ["SYS", "SYS scoped", "SYS"]
-        assert [s.message_ids for s in snapshots] == [["n0"], ["n1"], ["n2"]]
+        assert [s.message_ids for s in snapshots] == [_ids("n0"), _ids("n1"), _ids("n2")]
 
     def test_messages_carrying_no_prompt_are_skipped(self) -> None:
         """Responses hold none, and an imported turn may have lost its own."""
-        pairs: list[tuple[str, ModelMessage]] = [
-            ("n0", ModelResponse(parts=[TextPart(content="a")])),
+        pairs: list[MessagePair] = [
+            (label_id("n0"), ModelResponse(parts=[TextPart(content="a")])),
             *self._pairs(None),
         ]
         assert _instruction_snapshots(pairs) == []
@@ -977,6 +982,10 @@ class TestConversationArchive:
         assert ConversationArchive().active_path() == ([], None)
 
 
+def _ids(*labels: str) -> list[UUID]:
+    return [label_id(label) for label in labels]
+
+
 def _path() -> list[ActiveNode]:
     """A two-turn active path: user, answer, user, answer."""
     messages: list[ModelMessage] = [
@@ -986,17 +995,19 @@ def _path() -> list[ActiveNode]:
         ModelResponse(parts=[TextPart(content="a2")]),
     ]
     return [
-        ActiveNode(f"n{i}", f"n{i - 1}" if i else None, msg)
+        ActiveNode(label_id(f"n{i}"), label_id(f"n{i - 1}") if i else None, msg)
         for i, msg in enumerate(messages)
     ]
 
 
 def test_edit_forks_under_the_edited_message() -> None:
     """An edited user turn is replayed up to (not including) itself."""
-    prefix, fork_id = _fork_for_path(_path(), regenerate=False, message_id="n2")
+    prefix, fork_id = _fork_for_path(
+        _path(), regenerate=False, message_id=label_id("n2")
+    )
 
     assert _texts(prefix) == ["q1", "a1"]
-    assert fork_id == "n1"
+    assert fork_id == label_id("n1")
 
 
 @pytest.mark.parametrize("message_id", ["local-42", "n3"])
@@ -1010,33 +1021,37 @@ def test_submit_not_addressing_a_user_turn_continues_the_conversation(
     the *assistant* message's id — forking there would drop the very response
     holding the approved call.
     """
-    prefix, fork_id = _fork_for_path(_path(), regenerate=False, message_id=message_id)
+    prefix, fork_id = _fork_for_path(
+        _path(), regenerate=False, message_id=label_id(message_id)
+    )
 
     assert _texts(prefix) == ["q1", "a1", "q2", "a2"]
-    assert fork_id == "n3"
+    assert fork_id == label_id("n3")
 
 
 def test_regenerate_forks_at_the_nearest_user_turn() -> None:
     """Regenerating an answer replays through the user turn that asked for it."""
-    prefix, fork_id = _fork_for_path(_path(), regenerate=True, message_id="n3")
+    prefix, fork_id = _fork_for_path(
+        _path(), regenerate=True, message_id=label_id("n3")
+    )
 
     assert _texts(prefix) == ["q1", "a1", "q2"]
-    assert fork_id == "n2"
+    assert fork_id == label_id("n2")
 
 
 def test_dump_messages_with_ids_anchors_node_ids() -> None:
     """Each ``UIMessage.id`` is its head node id, and a turn is one message."""
-    pairs: list[tuple[str, ModelMessage]] = [
-        ("n1", ModelRequest(parts=[UserPromptPart(content="q")])),
+    pairs: list[MessagePair] = [
+        (label_id("n1"), ModelRequest(parts=[UserPromptPart(content="q")])),
         (
-            "n2",
+            label_id("n2"),
             ModelResponse(
                 parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c1")],
                 metadata={REASONING_DURATIONS_KEY: {"r1": [1000]}},
             ),
         ),
         (
-            "n3",
+            label_id("n3"),
             ModelRequest(
                 parts=[
                     ToolReturnPart(tool_name="t", content="r", tool_call_id="c1"),
@@ -1045,7 +1060,7 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
             ),
         ),
         (
-            "n4",
+            label_id("n4"),
             ModelResponse(
                 parts=[TextPart(content="answer")],
                 metadata={REASONING_DURATIONS_KEY: {"r2": [2400]}},
@@ -1053,11 +1068,13 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
         ),
     ]
 
-    ui = dump_messages_with_ids(pairs, siblings={"n2": ["n2", "n5"]})
+    ui = dump_messages_with_ids(
+        pairs, siblings={label_id("n2"): [label_id("n2"), label_id("n5")]}
+    )
 
     # The turn folds into its first response, as it streamed, and the request
     # holding only a tool return and harness feedback emits no UIMessage.
-    assert [msg.id for msg in ui] == ["n1", "n2"]
+    assert [msg.id for msg in ui] == [str(label_id("n1")), str(label_id("n2"))]
 
     answer = ui[1]
     assert [part.type for part in answer.parts] == ["tool-t", "text"]
@@ -1067,14 +1084,17 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
     # branchCount / branchIndex are derived from the sibling list.
     assert answer.metadata["branch"]["branchCount"] == 2
     assert answer.metadata["branch"]["branchIndex"] == 0
-    assert answer.metadata["branch"]["siblingIds"] == ["n2", "n5"]
+    assert answer.metadata["branch"]["siblingIds"] == [
+        str(label_id("n2")),
+        str(label_id("n5")),
+    ]
 
 
 async def test_a_compaction_streams_as_the_part_a_reload_shows() -> None:
     """A run's compaction reaches the client as it reloads."""
     adapter = _adapter([])
     part = CompactionPart(content="the gist")
-    reloaded = dump_messages_with_ids([("n1", ModelResponse(parts=[part]))])
+    reloaded = dump_messages_with_ids([(label_id("n1"), ModelResponse(parts=[part]))])
     shown = reloaded[0].parts[-1].model_dump(mode="json", by_alias=True)
 
     live = [

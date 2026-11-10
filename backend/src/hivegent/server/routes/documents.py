@@ -18,6 +18,7 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
 from starlette.responses import Response
@@ -616,7 +617,7 @@ def _tmp_file(conversation: OwnedConversation, filepath: str) -> Path | None:
 async def get_document_content(
     filepath: str,
     user: Annotated[User, Depends(get_current_user)],
-    conversation_id: str | None = None,
+    conversation_id: UUID | None = None,
 ) -> Response:
     """Get the content of a document or asset.
 

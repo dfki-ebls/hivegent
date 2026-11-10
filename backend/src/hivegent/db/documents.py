@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
 from typing import Any, Self, TypedDict
+from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy import delete, func, select, update
@@ -191,7 +192,7 @@ def _document_from_row(
     )
 
 
-async def _load_chunks(s: AsyncSession, doc_id: str) -> list[ChunkData]:
+async def _load_chunks(s: AsyncSession, doc_id: UUID) -> list[ChunkData]:
     """Load a document's chunks in idx order, reading text from ``chunks.text``."""
     stmt = (
         select(
@@ -405,7 +406,7 @@ async def resolve_accessible_document_ids(
     stores: Sequence[Casebase],
     *,
     filters: Mapping[Casebase, DocumentFilter | None] = {},
-) -> list[str]:
+) -> list[UUID]:
     """Return the ids of the documents owned by *stores* the caller may see.
 
     Used at search time to scope the cbrkit vector query without
@@ -448,7 +449,7 @@ async def resolve_accessible_document_ids(
         )
         rows = result.all()
 
-    admitted: list[str] = []
+    admitted: list[UUID] = []
     for row in rows:
         store = Casebase.for_owner(row.owner_user_id, row.owner_group_id)
         document_filter = scoped.get(store)
@@ -600,7 +601,7 @@ async def update_entry(
 
 
 async def set_content_state(
-    document_id: str, content_digest: str, stat: ContentStat | None
+    document_id: UUID, content_digest: str, stat: ContentStat | None
 ) -> None:
     """Stamp a document's content fingerprint + stat after chunks are durable."""
     async with session() as s:

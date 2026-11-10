@@ -3,6 +3,7 @@
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import Field
 from pydantic_ai import FunctionToolset, RunContext
@@ -15,6 +16,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from ...config import parse_uuid
 from ...db.conversations import (
     ConversationData,
     ConversationSummary,
@@ -72,7 +74,7 @@ QueryArg = Annotated[
     ),
 ]
 ConversationIdArg = Annotated[
-    str | None,
+    UUID | None,
     Field(
         description=(
             "A conversation `id` from `list_conversations`, or null for the "
@@ -172,7 +174,7 @@ async def list_conversations(
 @conversation_toolset.tool
 async def get_conversation(
     ctx: RunContext[UserDeps],
-    conversation_id: str,
+    conversation_id: UUID,
 ) -> ToolReturn:
     """Load a past conversation's full content for analysis.
 
@@ -205,7 +207,9 @@ async def search_conversation(
     prompt, assistant text, or tool call, prefixed by the `[position]` of
     its message, and the turn in progress is not stored yet.
     """
-    target = conversation_id or ctx.conversation_id
+    target = conversation_id or (
+        None if ctx.conversation_id is None else parse_uuid(ctx.conversation_id)
+    )
 
     if target is None:
         raise ModelRetry("no current conversation, pass a `conversation_id`.")

@@ -27,6 +27,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any, TypedDict, override
+from uuid import UUID, uuid4
 
 from pydantic_ai import AgentRunEvents, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.exceptions import ToolFailed
@@ -69,7 +70,6 @@ from ..agents.approval import APPROVAL_NOTE_KEY
 from ..agents.compaction import Compacted
 from ..agents.subagent_events import SubagentUpdate
 from ..agents.tools.ask import ANSWERS, ASK_USER_TOOL, DISMISSED_QUESTIONS
-from ..config import new_id
 from ..db.conversations import prompt_items
 from ..l10n import Localized
 from .turns import (
@@ -592,9 +592,9 @@ def _shown(message: ModelMessage) -> ModelMessage:
 
 
 def dump_messages_with_ids(
-    pairs: Sequence[tuple[str, ModelMessage]],
+    pairs: Sequence[tuple[UUID, ModelMessage]],
     *,
-    siblings: Mapping[str, Sequence[str]] | None = None,
+    siblings: Mapping[UUID, Sequence[UUID]] | None = None,
 ) -> list[UIMessage]:
     """Project ``(node_id, message)`` pairs to ``UIMessage``s keyed by node id.
 
@@ -626,12 +626,12 @@ def dump_messages_with_ids(
                 branch = BranchInfo(
                     branchCount=len(sib_ids),
                     branchIndex=sib_ids.index(node_id),
-                    siblingIds=sib_ids,
+                    siblingIds=[str(sibling) for sibling in sib_ids],
                 )
                 msg.metadata = {**(msg.metadata or {}), "branch": branch}
 
     def assign_id(msg: ModelMessage, _role: str, _index: int) -> str:
-        return node_by_obj.get(id(msg)) or new_id()
+        return str(node_by_obj.get(id(msg)) or uuid4())
 
     ui_messages = _fold_turns(
         ChatAdapter.dump_messages(

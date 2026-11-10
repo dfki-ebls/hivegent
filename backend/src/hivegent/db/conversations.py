@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from functools import reduce
 from pathlib import Path
 from typing import Any
+from uuid import UUID, uuid4
 
 from pydantic import (
     BaseModel,
@@ -57,12 +58,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from ..config import (
-    new_id,
-    sanitize_conversation_id,
-    sanitize_user_id,
-    settings,
-)
+from ..config import sanitize_user_id, settings
 from ..l10n import Localized
 from ..store import User
 from ._common import affected_rows, ensure_row
@@ -112,14 +108,12 @@ class OwnedConversation:
     tree and the conversation's :meth:`folder` require.  An absent id proves no
     more than that it was free, so it is claimed (:func:`claim_conversation`)
     before anything is written, and every statement still matches the owner
-    too.  The id is checked to be a safe path segment, since it names it.
+    too.  The id is a UUID, so its canonical string is a safe path
+    segment.
     """
 
     user: User
-    id: str
-
-    def __post_init__(self) -> None:
-        sanitize_conversation_id(self.id)
+    id: UUID
 
     @staticmethod
     def root(data_dir: Path) -> Path:
@@ -139,7 +133,7 @@ class OwnedConversation:
         :meth:`user_root`, so a run still writing after its conversation was
         deleted never reaches another user who claims the freed id.
         """
-        return self.user_root(data_dir, self.user) / self.id
+        return self.user_root(data_dir, self.user) / str(self.id)
 
 
 class MessageIdTaken(Exception):
@@ -154,13 +148,13 @@ class MessageIdTaken(Exception):
 class ActiveNode:
     """A node id, its parent id, and decoded message, in root->leaf order."""
 
-    id: str
-    parent_id: str | None
+    id: UUID
+    parent_id: UUID | None
     message: ModelMessage
 
 
 # A node id paired with its decoded message — the public active-path shape.
-type MessagePair = tuple[str, ModelMessage]
+type MessagePair = tuple[UUID, ModelMessage]
 
 # Message metadata key carrying a run's error text so the frontend can re-render
 # the chat error banner from reloaded history (a stream error is otherwise a
@@ -189,7 +183,7 @@ _IMPORT_FAILED = Localized(
 class ConversationData(BaseModel):
     """Full conversation as exposed to the API and the agent runtime."""
 
-    id: str = Field(description="Conversation identifier")
+    id: UUID = Field(description="Conversation identifier")
     title: str = Field(description="Conversation title")
     created_at: datetime = Field(description="When the conversation was created")
     updated_at: datetime = Field(description="When the conversation was last updated")
@@ -209,7 +203,7 @@ class ConversationData(BaseModel):
 class ConversationSummary(BaseModel):
     """Lightweight conversation row for list views."""
 
-    id: str
+    id: UUID
     title: str
     created_at: datetime
     updated_at: datetime
@@ -300,7 +294,7 @@ def extract_title(messages: Sequence[ModelMessage]) -> str | None:
 # ─── Active-path traversal ─────────────────────────────────────────────
 
 
-def _newest_leaf_id(conversation_id: str) -> ColumnElement[str]:
+def _newest_leaf_id(conversation_id: UUID) -> ColumnElement[UUID]:
     """Scalar subquery of a conversation's active leaf: its newest childless node.
 
     A turn appends its messages as one chain in a single transaction, so they
@@ -330,7 +324,9 @@ def _newest_leaf_id(conversation_id: str) -> ColumnElement[str]:
     )
 
 
-def _active_path_cte(conversation_id: str, leaf_id: str | ColumnElement[str]) -> CTE:
+def _active_path_cte(
+    conversation_id: UUID, leaf_id: UUID | ColumnElement[UUID]
+) -> CTE:
     """Recursive CTE of the nodes from *leaf_id* up to the root.
 
     *leaf_id* is the active leaf — either an explicit node id or the scalar
@@ -368,7 +364,7 @@ def _active_path_cte(conversation_id: str, leaf_id: str | ColumnElement[str]) ->
 
 
 async def _load_active_path(
-    s: AsyncSession, conversation_id: str, leaf_id: str | None = None
+    s: AsyncSession, conversation_id: UUID, leaf_id: UUID | None = None
 ) -> list[ActiveNode]:
     """Walk a leaf up to the root via ``parent_id``, returned root->leaf.
 
@@ -391,8 +387,8 @@ async def _load_active_path(
 
 
 async def _sibling_map(
-    s: AsyncSession, conversation_id: str, path: Sequence[ActiveNode]
-) -> dict[str, list[str]]:
+    s: AsyncSession, conversation_id: UUID, path: Sequence[ActiveNode]
+) -> dict[UUID, list[UUID]]:
     """Map each active node that has siblings to its ordered sibling ids.
 
     Only the children of the active path's parents are fetched (those are the
@@ -411,7 +407,7 @@ async def _sibling_map(
             .order_by(Message.created_at)
         )
     ).all()
-    children: dict[str | None, list[str]] = {}
+    children: dict[UUID | None, list[UUID]] = {}
     for node_id, parent_id in rows:
         children.setdefault(parent_id, []).append(node_id)
 
@@ -423,8 +419,8 @@ async def _sibling_map(
 
 
 async def _display(
-    s: AsyncSession, conversation_id: str
-) -> tuple[list[MessagePair], dict[str, list[str]]]:
+    s: AsyncSession, conversation_id: UUID
+) -> tuple[list[MessagePair], dict[UUID, list[UUID]]]:
     path = await _load_active_path(s, conversation_id)
     pairs = [(node.id, node.message) for node in path]
     return pairs, await _sibling_map(s, conversation_id, path)
@@ -475,16 +471,10 @@ async def _get_owned(
 
 
 async def owned_conversation(
-    user: User, conversation_id: str
+    user: User, conversation_id: UUID
 ) -> OwnedConversation | None:
-    """The one ownership check: *conversation_id* as *user*'s, or ``None``.
-
-    An id that is no safe path segment names no conversation either.
-    """
-    try:
-        conversation = OwnedConversation(user, conversation_id)
-    except ValueError:
-        return None
+    """The one ownership check: *conversation_id* as *user*'s, or ``None``."""
+    conversation = OwnedConversation(user, conversation_id)
 
     async with session() as s:
         found = await s.scalar(select(Conversation.id).where(_row(conversation)))
@@ -492,17 +482,12 @@ async def owned_conversation(
     return None if found is None else conversation
 
 
-async def any_conversation(conversation_id: str) -> OwnedConversation | None:
+async def any_conversation(conversation_id: UUID) -> OwnedConversation | None:
     """*conversation_id* as its owner's, whoever that is, or ``None``.
 
     The ownership check for an admin reading across users, which reads the
     owner from the row rather than checking it against the caller.
     """
-    try:
-        sanitize_conversation_id(conversation_id)
-    except ValueError:
-        return None
-
     async with session() as s:
         owner = await s.scalar(
             select(Conversation.user_id).where(Conversation.id == conversation_id)
@@ -512,23 +497,15 @@ async def any_conversation(conversation_id: str) -> OwnedConversation | None:
 
 
 async def open_conversation(
-    user: User, conversation_id: str
+    user: User, conversation_id: UUID
 ) -> tuple[OwnedConversation, bool] | None:
-    """*conversation_id* as *user*'s and whether its row exists, or ``None``.
-
-    Another user's id is ``None`` like an invalid one.
-    """
-    try:
-        conversation = OwnedConversation(user, conversation_id)
-    except ValueError:
-        return None
-
+    """*conversation_id* as *user*'s and whether its row exists, or ``None`` for another user's."""
     found = await any_conversation(conversation_id)
 
     if found is not None and found.user.id != user.id:
         return None
 
-    return conversation, found is not None
+    return OwnedConversation(user, conversation_id), found is not None
 
 
 async def claim_conversation(conversation: OwnedConversation) -> bool:
@@ -566,7 +543,7 @@ async def load_conversation(conversation: OwnedConversation) -> ConversationData
 
 async def load_active_for_display(
     conversation: OwnedConversation,
-) -> tuple[list[MessagePair], dict[str, list[str]]] | None:
+) -> tuple[list[MessagePair], dict[UUID, list[UUID]]] | None:
     """Return the active path as ``(node_id, message)`` pairs plus sibling map.
 
     The node ids anchor each ``UIMessage.id`` so the client can address a
@@ -683,7 +660,7 @@ async def owned_conversations(user: User) -> list[OwnedConversation]:
 # ─── Writes ────────────────────────────────────────────────────────────
 
 
-async def _lock(s: AsyncSession, conversation_id: str) -> None:
+async def _lock(s: AsyncSession, conversation_id: UUID) -> None:
     """Serialise concurrent writes to one conversation for this transaction.
 
     The fork-load / append / active-leaf sequences below are read-then-write,
@@ -691,13 +668,15 @@ async def _lock(s: AsyncSession, conversation_id: str) -> None:
     interleave.  The advisory lock auto-releases on commit/rollback.
     """
     await s.execute(
-        select(func.pg_advisory_xact_lock(func.hashtextextended(conversation_id, 0)))
+        select(
+            func.pg_advisory_xact_lock(func.hashtextextended(str(conversation_id), 0))
+        )
     )
 
 
 def _fork_for_path(
-    path: Sequence[ActiveNode], *, regenerate: bool, message_id: str | None
-) -> tuple[list[ModelMessage], str | None]:
+    path: Sequence[ActiveNode], *, regenerate: bool, message_id: UUID | None
+) -> tuple[list[ModelMessage], UUID | None]:
     """Resolve the (prefix, fork-parent) for a turn over a loaded active path.
 
     The new branch is appended under the returned fork node, and the run
@@ -722,18 +701,17 @@ def _fork_for_path(
     if not ids:
         return [], None
 
+    target = next((i for i, node_id in enumerate(ids) if node_id == message_id), None)
+
     if regenerate:
-        idx = ids.index(message_id) if message_id in ids else len(ids) - 1
+        idx = len(ids) - 1 if target is None else target
         for i in range(idx, -1, -1):
             if is_user_request(msgs[i]):
                 return msgs[: i + 1], ids[i]
         return msgs, ids[-1]
 
-    if message_id in ids:
-        idx = ids.index(message_id)
-
-        if is_user_request(msgs[idx]):
-            return (msgs[:idx], ids[idx - 1]) if idx > 0 else ([], None)
+    if target is not None and is_user_request(msgs[target]):
+        return (msgs[:target], ids[target - 1]) if target > 0 else ([], None)
 
     return msgs, ids[-1]
 
@@ -742,9 +720,9 @@ async def resolve_fork(
     conversation: OwnedConversation,
     *,
     regenerate: bool,
-    message_id: str | None,
-    prompt_id: str | None,
-) -> tuple[list[ModelMessage], str | None]:
+    message_id: UUID | None,
+    prompt_id: UUID | None,
+) -> tuple[list[ModelMessage], UUID | None]:
     """Return the history prefix and fork-parent node for the next turn.
 
     Reads the active path; a conversation with no persisted turn yet forks at
@@ -779,12 +757,12 @@ async def resolve_fork(
 
 async def append_branch(
     conversation: OwnedConversation,
-    parent_id: str | None,
+    parent_id: UUID | None,
     messages: Sequence[ModelMessage],
     *,
-    prompt_id: str | None = None,
+    prompt_id: UUID | None = None,
     title: str | None = None,
-) -> str | None:
+) -> UUID | None:
     """Append *messages* as a chain under *parent_id* and make it active.
 
     *messages* is the turn's delta (its new messages past the loaded prefix).
@@ -815,9 +793,9 @@ async def append_branch(
             None,
         )
         parent = parent_id
-        last_id: str | None = None
+        last_id: UUID | None = None
         for index, payload in enumerate(_dump_messages(msg_list)):
-            node_id = prompt_id if index == prompt_index and prompt_id else new_id()
+            node_id = prompt_id if index == prompt_index and prompt_id else uuid4()
             s.add(
                 Message(
                     id=node_id,
@@ -835,7 +813,7 @@ async def append_branch(
 
 
 async def insert_above(
-    conversation: OwnedConversation, node_id: str, message: ModelMessage
+    conversation: OwnedConversation, node_id: UUID, message: ModelMessage
 ) -> None:
     """Insert *message* between the parent of *node_id* and all of its children.
 
@@ -857,7 +835,7 @@ async def insert_above(
             )
         ).scalar_one()
         inserted = Message(
-            id=new_id(),
+            id=uuid4(),
             conversation_id=conversation.id,
             parent_id=parent_id,
             payload=_dump_messages([message])[0],
@@ -889,7 +867,7 @@ async def set_conversation_title(
     return None if conv is None else _to_summary(conv)
 
 
-async def remove_conversations(user: User, ids: Collection[str]) -> int:
+async def remove_conversations(user: User, ids: Collection[UUID]) -> int:
     """Delete *user*'s conversations among *ids* (cascades to their messages).
 
     Returns how many were deleted.
@@ -926,7 +904,7 @@ async def import_conversation(
     if not messages:
         raise ValueError(_NO_MESSAGES.current)
 
-    conversation = OwnedConversation(user, new_id())
+    conversation = OwnedConversation(user, uuid4())
     await claim_conversation(conversation)
     await append_branch(conversation, None, messages, title=title)
 

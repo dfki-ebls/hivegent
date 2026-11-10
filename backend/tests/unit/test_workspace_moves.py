@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -92,7 +93,7 @@ def _doc(stem: str, original_suffix: str | None = None) -> DocumentMetadata:
         assets_dir=None,
         origin="upload",
         generated_by="converter",
-        id="doc-id",
+        id=uuid4(),
         pipeline="recursive",
         created_at=datetime.now(UTC),
         chunks=[],

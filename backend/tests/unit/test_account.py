@@ -13,7 +13,7 @@ from hivegent.server import common
 from hivegent.server.routes import account, conversations
 from hivegent.store import User
 from hivegent.tmp import tmp_dir
-from tests.helpers import conversation_id, owned
+from tests.helpers import label_id, owned
 
 
 async def test_delete_all_user_data_announces_to_other_clients(
@@ -55,7 +55,7 @@ async def test_tmp_folders_go_by_the_conversation_ids_the_database_names(
         assert not any(
             folder.exists()
             for label, folder in folders.items()
-            if conversation_id(label) in ids
+            if label_id(label) in ids
         )
         removed.extend(ids)
 
@@ -76,7 +76,7 @@ async def test_tmp_folders_go_by_the_conversation_ids_the_database_names(
 
     await conversations.delete_all_conversations_route(user)
     assert [cid for cid, folder in folders.items() if folder.exists()] == ["c3"]
-    assert removed == [conversation_id("c1"), conversation_id("c2")]
+    assert removed == [label_id("c1"), label_id("c2")]
 
     assert (await account.delete_tmp(user)).files_removed == 1
     assert not any(folder.exists() for folder in folders.values())

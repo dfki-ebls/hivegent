@@ -123,7 +123,7 @@ Edits are not checked, since they change a file they did not build.
 
 `/tmp` holds a conversation's working state that is never a document: intermediates, state for a later `run_python` call, scripts, and spilled tool results.
 Each conversation owns `<data_dir>/conversations/<user_id>/<id>/` (`OwnedConversation.folder`), outside every workspace, holding its `tmp/` and the `changesets/` its programs staged.
-Ownership comes from the `conversations` row, never the path, and an `OwnedConversation` is obtained only from the database or by `open_conversation` for an absent id, with an id that must be a safe path segment, so no caller can name another user's folder.
+Ownership comes from the `conversations` row, never the path, and an `OwnedConversation` is obtained only from the database or by `open_conversation` for an absent id, with a `UUID` id whose canonical string names the folder, so no caller can name another user's folder.
 The user level keeps what a run writes after its conversation was deleted with its user, so another user who claims the freed id never reaches it, and the sweep removes it once idle.
 `tmp.tmp_dir` is the one place an id becomes a path, and every `{conversation_id}` route resolves through one dependency.
 
@@ -189,15 +189,17 @@ It is left for later, since the newest leaf already is the active branch for eve
 
 ### Clients choose conversation and message ids
 
-The client mints a conversation's id and the id of every new user message as canonical lowercase UUIDs (`config.new_id`, the form every id the server mints takes too), so it never waits for the server to name what it addresses next, and no response header carries an id.
-`POST /api/conversations/{id}/chat` is the only chat route, and `open_conversation` resolves its id: every conversation id is a canonical UUID (`OwnedConversation` checks it), an owned conversation is used, an absent id opens a new one, and an invalid id or another user's answers 404.
-Migration `e3f4a5b6c7d8` rewrote every earlier conversation and message id into a random UUIDv4 and deleted every conversation folder, so links to an old id answer 404.
+The client mints a conversation's id and the id of every new user message as random UUIDs, the form every id the server mints takes too, so it never waits for the server to name what it addresses next, and no response header carries an id.
+Every id the app or a client mints is a native `uuid` column read as a `UUID`, parsed at the boundary (`config.parse_uuid`), so it has one spelling in the database, on disk, and on the wire.
+`chunks.id` alone reads as a `str`, since cbrkit keys a casebase by `int | str`, and the `TODO(cbrkit)` markers name what goes once it takes native uuid keys.
+`POST /api/conversations/{id}/chat` is the only chat route, and `open_conversation` resolves its id: an owned conversation is used, an absent id opens a new one, and an id that is no UUID or another user's answers 404.
+Migration `e3f4a5b6c7d8` retyped every such id to `uuid`, an old one becoming its md5 so each column converts on its own, and deleted every conversation folder, so links to an old id answer 404.
 `open_conversation` also reports whether the row exists, and only for an absent one does `claim_conversation` create it right before the run, behind every check that can refuse the request, so a refused request leaves no row.
 Its `INSERT ... ON CONFLICT DO NOTHING` lets the database decide between racing claims: the second waits for the first to commit and answers 404 unless the caller owns the row.
 `append_branch` never creates a row, and titles an untitled one from its first user message.
 `GET /api/conversations/{id}/messages` answers `[]` for an absent id, so a client opens a new chat at its own id, and a deleted conversation's id is absent again.
 
-The new user message is stored under the client's `UIMessage.id` (`_prompt_id`), refused with 422 unless it is a canonical UUID, and with 409 when a node of the conversation holds it (checked by `resolve_fork` in the session that loads the history), since a collision at the write after streaming would lose the turn.
+The new user message is stored under the client's `UIMessage.id` (`_prompt_id`), refused with 422 unless it is a UUID, and with 409 when a node of the conversation holds it (checked by `resolve_fork` in the session that loads the history), since a collision at the write after streaming would lose the turn.
 Node ids are keyed per conversation, `(conversation_id, id)`, so no id another conversation holds is ever probed, and a parent always lies in its child's conversation.
 Every node is inserted, never upserted, so a chosen id can neither replace nor re-parent a node, and a 409 tells only that an id the client already knows is taken.
 An edit sends the edited node as `messageId` and the edited message under a fresh id, which becomes a sibling of the edited node.

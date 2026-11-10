@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Protocol, Self, get_args
+from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
@@ -321,7 +322,7 @@ class ChatRequestConfig(BaseModel):
         default="submit-message",
         description="Whether this turn submits a new/edited message or regenerates one",
     )
-    message_id: str | None = Field(
+    message_id: UUID | None = Field(
         default=None,
         # The AI SDK spells this one camelCase in the body it builds, unlike
         # every field beside it, which the frontend adds in the wire's own
@@ -414,7 +415,7 @@ class InstructionsSnapshot(BaseModel):
     than one per message, and *when* it changed is legible from the ids.
     """
 
-    message_ids: list[str] = Field(
+    message_ids: list[UUID] = Field(
         description="Ids of the messages sent under this prompt, in order"
     )
     text: str = Field(description="The fully composed system prompt")

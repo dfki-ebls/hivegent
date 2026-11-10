@@ -7,7 +7,7 @@ import unicodedata
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Literal, TypedDict
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, PositiveInt, SecretStr
 from pydantic_settings import (
@@ -55,11 +55,9 @@ __all__ = [
     "UrlPolicySettings",
     "content_digest",
     "content_hash",
-    "is_canonical_uuid",
-    "new_id",
     "normalize_unicode",
+    "parse_uuid",
     "reveal",
-    "sanitize_conversation_id",
     "sanitize_document_path",
     "sanitize_group_id",
     "sanitize_user_id",
@@ -115,7 +113,6 @@ _SAFE_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]+")
 
 _USER = Localized(en="User", de="Benutzer")
 _GROUP = Localized(en="Group", de="Gruppen")
-_CONVERSATION = Localized(en="Conversation", de="Konversations")
 
 
 def _empty_id(kind: Localized[str]) -> Localized[str]:
@@ -212,40 +209,21 @@ def sanitize_group_id(group_id: str) -> str:
     return _sanitize_id(group_id, _GROUP)
 
 
-def sanitize_conversation_id(conversation_id: str) -> str:
-    """Check a conversation ID, a canonical UUID, which names its folder on disk.
+def parse_uuid(value: str) -> UUID | None:
+    """*value* as a UUID, or ``None`` when it is none.
 
-    Raises:
-        ValueError: If the ID is no canonical UUID.
-    """
-    if not is_canonical_uuid(conversation_id):
-        raise ValueError(_invalid_id(_CONVERSATION, conversation_id).current)
+    Every id the app or a client mints is a random UUID, and its canonical
+    string, never the spelling it arrived in, is what names a folder on disk.
 
-    return conversation_id
-
-
-def new_id() -> str:
-    """A fresh id, the random UUID form every id the app and its clients mint takes."""
-    return str(uuid4())
-
-
-def is_canonical_uuid(value: str) -> bool:
-    """Whether *value* is a UUID in its canonical lowercase spelling.
-
-    The one form a client may choose an id in, so every id it mints is a safe
-    path segment and has exactly one spelling.
-
-    >>> is_canonical_uuid(new_id())
+    >>> parse_uuid("0B6C4C9E-4F9A-4F0E-9D7A-3F6E2B1C8A90")
+    UUID('0b6c4c9e-4f9a-4f0e-9d7a-3f6e2b1c8a90')
+    >>> parse_uuid("../etc") is None
     True
-    >>> is_canonical_uuid("0B6C4C9E-4F9A-4F0E-9D7A-3F6E2B1C8A90")
-    False
-    >>> is_canonical_uuid("V1StGXR8_Z5jdHi6B-myT")
-    False
     """
     try:
-        return str(UUID(value)) == value
+        return UUID(value)
     except ValueError:
-        return False
+        return None
 
 
 def normalize_unicode(value: str) -> str:

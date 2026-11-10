@@ -21,6 +21,7 @@ between chunk metadata and vectors.
 import enum
 from datetime import UTC, datetime
 from typing import Any, ClassVar
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from cbrkit.indexable import PGVECTOR, TSVECTOR, tsvector_computed
@@ -32,6 +33,7 @@ from sqlalchemy import (
     Index,
     MetaData,
     UniqueConstraint,
+    Uuid,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import (
@@ -43,7 +45,7 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.types import DateTime, TypeEngine
 
-from ..config import new_id, settings
+from ..config import settings
 
 __all__ = [
     "ApplicationSettings",
@@ -229,7 +231,7 @@ class Conversation(Timestamped, Base):
     __table_args__ = (Index(None, "user_id", "updated_at"),)
 
     # Chosen by the client, so it has no default.
-    id: Mapped[str] = mapped_column(primary_key=True)
+    id: Mapped[UUID] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     title: Mapped[str | None]
 
@@ -269,11 +271,11 @@ class Message(Base):
         ),
     )
 
-    conversation_id: Mapped[str] = mapped_column(
+    conversation_id: Mapped[UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
     )
-    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
-    parent_id: Mapped[str | None]
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    parent_id: Mapped[UUID | None]
     payload: Mapped[dict[str, Any]]
     created_at: Mapped[datetime] = mapped_column(
         default=_now, server_default=sa.func.now()
@@ -303,7 +305,7 @@ class Document(Timestamped, Base):
         UniqueConstraint("owner_group_id", "stem_path"),
     )
 
-    id: Mapped[str] = mapped_column(primary_key=True, default=new_id)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     owner_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE")
     )
@@ -360,6 +362,8 @@ _VECTOR_DIM = settings.embedding.dimension
 # ``Chunk(...)`` call site at type-check time.  ``init=False`` columns
 # are cbrkit-owned (``id`` generated key, ``embedding``, ``tsv``) and never
 # passed by the host; ``kw_only`` frees us from default-ordering rules.
+# TODO(cbrkit): read ``id`` as a ``UUID`` once cbrkit takes native uuid keys,
+# as it keys a casebase by ``int | str`` until then.
 class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUnsafeMultipleInheritance]
     """Per-row chunk content + embedding + host metadata, one row each.
 
@@ -387,9 +391,14 @@ class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUns
         Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
     )
 
-    id: Mapped[str] = mapped_column(primary_key=True, init=False, default_factory=new_id)
+    id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        primary_key=True,
+        init=False,
+        default_factory=lambda: str(uuid4()),
+    )
     text: Mapped[str]
-    document_id: Mapped[str] = mapped_column(
+    document_id: Mapped[UUID] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), index=True
     )
     idx: Mapped[int]

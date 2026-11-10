@@ -7,14 +7,13 @@ import pytest
 from hivegent import entries
 from hivegent.agents.common import UserDeps
 from hivegent.changes import Changeset, Delete
-from hivegent.db.conversations import OwnedConversation
 from hivegent.server.common import parse_document_scope
 from hivegent.store import Casebase, User, WorkspaceScope
 from hivegent.tmp import tmp_dir
 from hivegent.tools.base import SearchPath, resolve_accessible_file
 from hivegent.types import DocumentFilter
 from hivegent.workspace.operations import Location, route
-from tests.helpers import owned
+from tests.helpers import label_id, owned
 
 
 def _deps(conversation_id: str | None) -> UserDeps:
@@ -88,16 +87,16 @@ class TestConversationTmp:
             ) or pytest.fail("unresolved")
             assert sp.prefixed(local) == "/tmp/state.json"
             assert absolute.read_text() == conversation
-            assert resolve_accessible_file(paths, f"/tmp/../{other}/state.json") is None
+            assert (
+                resolve_accessible_file(paths, f"/tmp/../{label_id(other)}/state.json")
+                is None
+            )
 
         # A caller without a conversation, such as MCP, has no `/tmp` at all.
         assert (
             resolve_accessible_file(_deps(None).search_paths(), "/tmp/state.json")
             is None
         )
-
-        with pytest.raises(ValueError, match="Invalid conversation ID"):
-            _ = OwnedConversation(User("u"), "../c1")
 
 
 class TestCaseFolding:
