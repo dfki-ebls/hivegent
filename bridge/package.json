@@ -22,7 +22,7 @@
     "@chat-adapter/teams": "^4",
     "ai": "^7",
     "chat": "^4",
-    "srvx": "^0.11",
+    "srvx": "^1",
     "zod": "^4"
   },
   "devDependencies": {
