@@ -15,7 +15,8 @@ buildNpmPackage (finalAttrs: {
 
   # The canonical logo lives at the repo-level `assets/` and is symlinked into
   # `public/`, and `vite.config.ts` reads the repo-level license
-  # and additional terms, so the build source must span the repo root.
+  # and additional terms, and the tests read the shared RAGold schema,
+  # so the build source must span the repo root.
   src = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [
@@ -23,6 +24,7 @@ buildNpmPackage (finalAttrs: {
       ../assets/logo.svg
       ../LICENSE
       ../TERMS
+      ../schemas/ragold.json
     ];
   };
   sourceRoot = "${finalAttrs.src.name}/frontend";

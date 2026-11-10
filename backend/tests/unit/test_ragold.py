@@ -21,7 +21,7 @@ from hivegent.store import Casebase, User
 
 from ..helpers import owned
 
-SCHEMA = Path(__file__).parents[1] / "fixtures" / "ragold-schema.json"
+SCHEMA = Path(__file__).parents[3] / "schemas" / "ragold.json"
 
 
 @pytest.fixture(autouse=True)

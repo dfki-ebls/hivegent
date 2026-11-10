@@ -11,7 +11,7 @@ import {
 } from "@/lib/ragold";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 // Vendored from RAGold, which the backend validates its archives against.
-import ragoldSchema from "../../../../backend/tests/fixtures/ragold-schema.json";
+import ragoldSchema from "../../../../schemas/ragold.json";
 
 const { Annotation, KeyFact, Passage } = ragoldSchema.$defs;
 

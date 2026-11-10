@@ -104,8 +104,8 @@ let
       }
     );
     # `license-files` in `pyproject.toml` reaches the repo-level license
-    # and additional terms through symlinks,
-    # so the build source must span both for them to resolve.
+    # and additional terms through symlinks, and the tests read the shared
+    # RAGold schema, so the build source must span the repo root.
     hivegent-backend = prev.hivegent-backend.overrideAttrs (
       finalAttrs: old: {
         src = lib.fileset.toSource {
@@ -114,6 +114,7 @@ let
             ./.
             ../LICENSE
             ../TERMS
+            ../schemas/ragold.json
           ];
         };
         sourceRoot = "${finalAttrs.src.name}/backend";

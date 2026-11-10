@@ -336,7 +336,7 @@ The entry is complete when it leaves hivegent: question type, answerability, and
 Since RAGold matches passages against the rendered original, `RagoldPassage` turns their markdown into plain text (`plain_text`), one block per line with table cells joined by tabs, and refuses a passage of markdown syntax alone with a 422.
 The text still differs from RAGold's rendering in whitespace and line breaks, which RAGold and its evaluators tolerate by normalizing both sides as its README specifies.
 The zip is spooled in full, hashing each file while it is copied, before the first byte is sent, so a failure is an HTTP error rather than a truncated archive.
-`tests/fixtures/ragold-schema.json` is RAGold's published schema, which the contract test validates against, so refresh it when RAGold changes the format.
+`schemas/ragold.json` at the repo root is RAGold's published schema, which the contract test validates against, so refresh it when RAGold changes the format.
 The route and the client action are hidden while `settings.ragold.url` is unset.
 
 ## Document tools
