@@ -50,7 +50,6 @@ from typing import Any, NamedTuple, NoReturn, TypeGuard, override
 from pydantic_monty import (
     AbstractOS,
     MontyFileHandle,
-    OSAccess,
     OsFunction,
     StatResult,
 )
@@ -296,16 +295,17 @@ def _os_error[E: OSError](kind: type[E], code: int, name: str) -> E:
 
 @dataclass(slots=True)
 class WorkspaceOS(AbstractOS):
-    """Routes the mounted roots to the overlay and the disk, and the rest to ``inner``.
+    """Routes the mounted roots to the overlay and the disk.
 
-    ``inner`` answers what names no path, the environment and the clocks.
+    What names no path, the environment and entropy, is answered here, while
+    Monty answers the clocks itself.
     """
 
     paths: tuple[SearchPath, ...]
     """Every root the read tools span, with their filters applied."""
 
-    inner: OSAccess
-    """The run's own environment and clocks."""
+    environ: dict[str, str]
+    """The run's own environment."""
 
     limits: ChangesetLimits
     """What the gated roots may be changed by one program."""
@@ -419,24 +419,23 @@ class WorkspaceOS(AbstractOS):
         *,
         is_async: bool = False,
     ) -> Any:
-        """Send one operation to the mount, refuse it, or hand it to ``inner``.
+        """Send one operation to the mount, refuse it, or answer it here.
 
         The one place that is decided, which is the seam ``AbstractOS`` offers
         for exactly this.  An operation naming no path at all, the environment
-        or entropy, belongs to ``inner``.  A path outside every root is refused
+        or entropy, is answered by ``AbstractOS`` itself.  A path outside every root is refused
         rather than kept in memory: whatever a program wrote there would be
         gone after the call, which is the state a later call then looks for.
         A rename with one end mounted is the mount's, which refuses the other.
         """
-        if any(self._mounted(arg) for arg in args):
-            return super().dispatch(function_name, args, kwargs, is_async=is_async)
-
-        if path := next(filter(_is_path, args), None):
+        if not any(self._mounted(arg) for arg in args) and (
+            path := next(filter(_is_path, args), None)
+        ):
             raise PermissionError(
                 f"'{_text(path)}' is outside this run's filesystem.{_root_hint(self.paths)}"
             )
 
-        return self.inner.dispatch(function_name, args, kwargs, is_async=is_async)
+        return super().dispatch(function_name, args, kwargs, is_async=is_async)
 
     def _root(self, canonical: str) -> SearchPath | None:
         """The search path *canonical* names bare, if it names one at all."""
@@ -1199,13 +1198,10 @@ class WorkspaceOS(AbstractOS):
     def path_resolve(self, path: PurePosixPath) -> str:
         return str(path)
 
-    # `AbstractOS` declares these two abstract, so they are implemented rather
-    # than left to the routing above, which already sends every operation that
-    # names no path to the run's own filesystem.
     @override
     def get_environ(self) -> dict[str, str]:
-        return self.inner.get_environ()
+        return self.environ
 
     @override
     def getenv(self, key: str, default: str | None = None) -> str | None:
-        return self.inner.getenv(key, default)
+        return self.environ.get(key, default)

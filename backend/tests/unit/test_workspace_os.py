@@ -10,7 +10,6 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 import pytest
-from pydantic_monty import OSAccess
 
 from hivegent import entries
 from hivegent.changes import Changeset, Write
@@ -52,7 +51,7 @@ def _mount(workspace: Path, *, writable: bool = False) -> WorkspaceOS:
 
     return WorkspaceOS(
         paths=(scoped, tmp),
-        inner=OSAccess([], environ={}),
+        environ={},
         limits=ChangesetLimits(max_operations=200, max_deletes=100, max_chars=10_000),
         writable=(scoped, tmp) if writable else (tmp,),
     )

@@ -9,7 +9,6 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 from pydantic import TypeAdapter
-from pydantic_monty import OSAccess
 
 from hivegent import staging
 from hivegent.changes import Changeset, CreateDir, Delete, Move, Write
@@ -38,7 +37,7 @@ def mount(tmp_path: Path) -> WorkspaceOS:
     roots = (root, SearchPath(path=tmp, scope=TMP_SCOPE, policy=Direct()))
 
     return WorkspaceOS(
-        paths=roots, inner=OSAccess([], environ={}), limits=LIMITS, writable=roots
+        paths=roots, environ={}, limits=LIMITS, writable=roots
     )
 
 

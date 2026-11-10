@@ -25,7 +25,6 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
-from pydantic_monty import OSAccess
 
 from hivegent import workspace, workspace_events
 from hivegent.changes import (
@@ -754,7 +753,7 @@ class TestChangesets:
     ) -> None:
         root = SearchPath(path=layout, scope=user_store.scope)
         mount = WorkspaceOS(
-            paths=(root,), writable=(root,), inner=OSAccess([]), limits=LIMITS
+            paths=(root,), writable=(root,), environ={}, limits=LIMITS
         )
         directory = WORKSPACE_MOUNT / "~/dir"
 

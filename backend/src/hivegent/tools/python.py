@@ -17,7 +17,6 @@ from pydantic_monty import (
     MontyShutdown,
     MontySyntaxError,
     MontyTypingError,
-    OSAccess,
     ResourceLimits,
 )
 
@@ -469,7 +468,7 @@ class RunPythonTool(AsyncPathTool[PythonResult]):
 
         return WorkspaceOS(
             paths=self.resolved_paths,
-            inner=OSAccess([], environ=environ | dict(self.environ)),
+            environ=environ | dict(self.environ),
             limits=self.changeset_limits,
             writable=self.writable,
             max_document_chars=self.max_document_chars,
