@@ -2,11 +2,10 @@
 self-hosted OpenAI-compatible endpoints need."""
 
 import asyncio
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Literal, override
+from collections.abc import Callable, Mapping, Sequence
+from typing import Literal
 
 from openai import AsyncOpenAI
-from openai.types.chat import chat_completion_chunk
 from pydantic_ai import Agent, UserContent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import (
@@ -14,10 +13,9 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     UnexpectedModelBehavior,
 )
-from pydantic_ai.messages import ModelResponseStreamEvent, PartStartEvent
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
-from pydantic_ai.profiles import ModelProfile, ModelProfileSpec, merge_profile
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -26,7 +24,9 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.vllm import VLLMProvider
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -57,45 +57,6 @@ _CONTEXT_OVERFLOW_PHRASES = (
     "the model's context length",
     "exceeds the maximum allowed length",
 )
-
-
-class _SegmentedOpenAIStreamedResponse(OpenAIStreamedResponse):
-    """Start a new text part when content resumes after a tool call.
-
-    vLLM's ``qwen3_xml`` parser returns to content mode after ``</tool_call>``,
-    so prose (or just the trailing newline) streams as ``content`` deltas that
-    follow the ``tool_calls`` ones.  pydantic-ai keys all text at the fixed
-    ``'content'`` vendor id, so that tail is appended to the ``TextPart`` its
-    own stream layer already closed: the run's message list reorders the answer
-    around the tool call, and the Vercel adapter emits a ``text-delta`` for a
-    text part the frontend has ended, which is a hard error there.  Untracking
-    the vendor id is how pydantic-ai itself ends a text run (see
-    ``_handle_embedded_thinking_end``), and it fixes both symptoms at once —
-    a guard in ``ChatEventStream`` would repair only the wire.
-
-    Scoped to tool calls: text resuming after a *separate-field* thinking part
-    would need the same treatment, but no reasoning parser we serve orders a
-    response that way.
-    """
-
-    @override
-    def _map_tool_call_delta(
-        self, choice: chat_completion_chunk.Choice
-    ) -> Iterable[ModelResponseStreamEvent]:
-        for event in super()._map_tool_call_delta(choice):
-            if isinstance(event, PartStartEvent):
-                self._parts_manager._stop_tracking_vendor_id("content")
-
-            yield event
-
-
-class _SegmentedOpenAIChatModel(OpenAIChatModel):
-    """Model that streams through :class:`_SegmentedOpenAIStreamedResponse`."""
-
-    @property
-    @override
-    def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
-        return _SegmentedOpenAIStreamedResponse
 
 
 def is_context_overflow(error: Exception) -> bool:
@@ -150,10 +111,9 @@ def create_openai_client(
     ).client
 
 
-# Model families a self-hosted runtime serves, borrowed from
-# https://github.com/pydantic/pydantic-ai/pull/6153.  pydantic-ai ships the same
-# map in ``OllamaProvider.model_profile``, which is not reusable here: it merges
-# Ollama's own server quirks on top of it.
+# Model families llama.cpp serves, the same map pydantic-ai maintains in
+# ``VLLMProvider.model_profile``, which is not reusable here: it merges vLLM's
+# own server quirks on top of it.
 _FAMILY_PROFILES: Mapping[str, Callable[[str], ModelProfile | None]] = {
     "llama": meta_model_profile,
     "gemma": google_model_profile,
@@ -162,8 +122,25 @@ _FAMILY_PROFILES: Mapping[str, Callable[[str], ModelProfile | None]] = {
     "deepseek": deepseek_model_profile,
     "mistral": mistral_model_profile,
     "command": cohere_model_profile,
+    "c4ai-command": cohere_model_profile,
     "gpt-oss": harmony_model_profile,
+    "glm": zai_model_profile,
 }
+
+# What a self-hosted runtime needs on top of the provider and family profiles.
+# ``supports_thinking`` because these endpoints serve reasoning models
+# pydantic-ai cannot name-infer, so its ``False`` would silently strip the
+# unified ``thinking`` setting from every request, and
+# ``ignore_streamed_leading_whitespace`` because the whitespace is what the
+# local chat templates emit around a tool call, whatever a family measured
+# against its own hosted endpoint.  ``supports_inline_system_prompts`` is off
+# because their chat templates reject a ``system`` message after the first user
+# turn (see "Run state appends its changes" in the README).
+_SELF_HOSTED_PROFILE = OpenAIModelProfile(
+    supports_thinking=True,
+    supports_inline_system_prompts=False,
+    ignore_streamed_leading_whitespace=True,
+)
 
 
 def _bare_model_name(model: str) -> str:
@@ -179,51 +156,18 @@ def _match_prefix[T](bare_name: str, table: Mapping[str, T]) -> T | None:
     )
 
 
-def _family_profile(model: str) -> ModelProfile | None:
-    """pydantic-ai's profile for the family *model* belongs to, if any."""
+def _llama_cpp_profile(model: str) -> ModelProfile:
+    """The family profile of *model* under the self-hosted one.
+
+    The OpenAI provider profiles by served name, so it hands every self-hosted
+    model the OpenAI family's, which keeps the ``$ref``/``$defs`` a local
+    runtime's guided decoding wants inlined.  The family profile puts the real
+    family back, and the self-hosted one goes on top of both.
+    """
     bare_name = _bare_model_name(model)
     family = _match_prefix(bare_name, _FAMILY_PROFILES)
 
-    return family(bare_name) if family else None
-
-
-def _self_hosted_profile(
-    model: str, *, merge_system_messages: bool
-) -> ModelProfileSpec:
-    """Profile a self-hosted runtime needs on top of the provider's.
-
-    Three layers with three owners: the OpenAI provider profiles by served
-    name, so it hands every self-hosted model the OpenAI family's, which keeps
-    the ``$ref``/``$defs`` a local runtime's guided decoding wants inlined;
-    :func:`_family_profile` puts the real family back; ours goes on top of
-    both.  ``supports_thinking`` because these endpoints serve reasoning models
-    pydantic-ai cannot name-infer, so its ``False`` would silently strip the
-    unified ``thinking`` setting from every request, and
-    ``ignore_streamed_leading_whitespace`` because the whitespace is what the
-    local chat templates emit around a tool call, whatever a family measured
-    against its own hosted endpoint.
-
-    ``supports_inline_system_prompts`` is off because their chat templates
-    reject a ``system`` message after the first user turn (see "Run state
-    appends its changes" in the README).
-
-    *merge_system_messages* answers the Qwen chat template as vLLM applies it,
-    which rejects a second leading ``system`` message the same way, while
-    per-capability instructions render as one each.  It is keyed on the runtime
-    rather than the family because a vLLM deployment applies that template
-    whether or not the served name carries ``qwen``.
-    """
-    overrides = OpenAIModelProfile(
-        supports_thinking=True,
-        supports_inline_system_prompts=False,
-        ignore_streamed_leading_whitespace=True,
-    )
-    if merge_system_messages:
-        overrides["openai_chat_supports_multiple_system_messages"] = False
-
-    family = _family_profile(model)
-
-    return lambda profile: merge_profile(profile, family, overrides)
+    return merge_profile(family(bare_name) if family else None, _SELF_HOSTED_PROFILE)
 
 
 def create_openai_chat_model(
@@ -244,8 +188,9 @@ def create_openai_chat_model(
     means the config was never resolved and is read as that strict contract,
     the same way :func:`_reasoning_extra_body` reads it.
 
-    The segmented stream answers vLLM's ``qwen3_xml`` parser returning to
-    content mode after a tool call; llama.cpp's leaves message order alone.
+    vLLM gets pydantic-ai's own provider, whose profile already names the
+    families it serves and merges the leading ``system`` messages its chat
+    templates reject.
     """
     provider = create_openai_provider(
         api_key=api_key,
@@ -258,16 +203,14 @@ def create_openai_chat_model(
 
         case InferenceProvider.LLAMA_CPP:
             return OpenAIChatModel(
-                model,
-                provider=provider,
-                profile=_self_hosted_profile(model, merge_system_messages=False),
+                model, provider=provider, profile=_llama_cpp_profile(model)
             )
 
         case InferenceProvider.VLLM:
-            return _SegmentedOpenAIChatModel(
+            return OpenAIChatModel(
                 model,
-                provider=provider,
-                profile=_self_hosted_profile(model, merge_system_messages=True),
+                provider=VLLMProvider(openai_client=provider.client),
+                profile=_SELF_HOSTED_PROFILE,
             )
 
 

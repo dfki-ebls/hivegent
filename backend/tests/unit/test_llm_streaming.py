@@ -27,7 +27,11 @@ def _choice(delta: ChoiceDelta) -> Choice:
 def test_content_after_tool_call_starts_a_new_text_part(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Interleaved vLLM content must remain a valid ordered part stream."""
+    """Interleaved vLLM content must remain a valid ordered part stream.
+
+    vLLM's ``qwen3_xml`` parser returns to content mode after ``</tool_call>``,
+    which pydantic-ai answers by starting a new text part.
+    """
     monkeypatch.setattr(llm_module, "get_user_http_client", lambda: None)
     model = create_openai_chat_model(
         "test-model",
@@ -132,10 +136,10 @@ def test_openai_endpoint_gets_no_self_hosted_quirks(
 def test_only_vllm_merges_leading_system_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Segmentation and the system-message merge answer vLLM alone.
+    """The system-message merge answers vLLM alone.
 
-    llama.cpp orders messages correctly and accepts several system messages,
-    so it takes the shared self-hosted profile without either workaround.  The
+    llama.cpp accepts several system messages, so it takes the shared
+    self-hosted profile without the merge.  The
     shared half is asserted on a name no family claims, so it witnesses our own
     layer rather than a family that happens to agree with it.
     """
@@ -144,8 +148,6 @@ def test_only_vllm_merges_leading_system_messages(
     vllm = _model("some-local-model", InferenceProvider.VLLM)
     llama_cpp = _model("some-local-model", InferenceProvider.LLAMA_CPP)
 
-    assert type(vllm) is llm_module._SegmentedOpenAIChatModel
-    assert type(llama_cpp) is OpenAIChatModel
     assert vllm.profile.get("openai_chat_supports_multiple_system_messages") is False
     assert (
         llama_cpp.profile.get("openai_chat_supports_multiple_system_messages") is None
