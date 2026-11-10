@@ -90,7 +90,8 @@ export function thirdPartyLicenses(fileName: string, preamble?: string): Plugin 
       order: "post",
       handler(_, bundle) {
         const { name, config } = this.environment;
-        const dirs = packages.getOrInsertComputed(name, () => new Set());
+        const dirs = packages.get(name) ?? new Set<string>();
+        packages.set(name, dirs);
         outDirs.set(name, resolve(config.root, config.build.outDir));
 
         const ids = Object.values(bundle).flatMap((output) =>
