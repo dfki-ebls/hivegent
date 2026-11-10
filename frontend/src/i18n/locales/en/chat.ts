@@ -191,7 +191,8 @@ export const chat = {
     removePassage: "Remove the passage",
     notes: "Notes",
     transfer: "Transfer",
-    incomplete: "Fill in the query and response, and pick the type, answerability, and every grade.",
+    incomplete:
+      "Fill in the query and response, and pick the type, answerability, and every grade.",
     done_one: "RAGold imported {{count}} entry",
     done_other: "RAGold imported {{count}} entries",
     popupBlocked: "The browser blocked the RAGold tab. Allow pop-ups for this site and try again.",

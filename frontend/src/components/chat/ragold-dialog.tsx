@@ -1,13 +1,6 @@
 import { type QueryObserverResult, useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { FileTextIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
-import {
-  type RefObject,
-  type SyntheticEvent,
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type RefObject, type SyntheticEvent, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LoadingPanel } from "@/components/common/status-panel";
@@ -121,7 +114,8 @@ function useTextSelection(ref: RefObject<HTMLTextAreaElement | null>) {
 
   const onSelect = ({
     currentTarget: { value, selectionStart, selectionEnd },
-  }: SyntheticEvent<HTMLTextAreaElement>) => setText(value.slice(selectionStart, selectionEnd).trim());
+  }: SyntheticEvent<HTMLTextAreaElement>) =>
+    setText(value.slice(selectionStart, selectionEnd).trim());
 
   const clear = () => {
     setText("");
@@ -422,9 +416,8 @@ function KeyFactsField({
   const options = useOptions();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const selection = useTextSelection(textarea);
-  const updateKeyFacts = (
-    update: (keyFacts: RagoldDraft["keyFacts"]) => RagoldDraft["keyFacts"],
-  ) => setDraft((prev) => ({ ...prev, keyFacts: update(prev.keyFacts) }));
+  const updateKeyFacts = (update: (keyFacts: RagoldDraft["keyFacts"]) => RagoldDraft["keyFacts"]) =>
+    setDraft((prev) => ({ ...prev, keyFacts: update(prev.keyFacts) }));
 
   return (
     <>

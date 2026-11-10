@@ -360,7 +360,10 @@ async def reconcile_index_state() -> None:
                 )
                 s.add(row)
 
-            previous = {"provider": row.embedding_provider, "model": row.embedding_model}
+            previous = {
+                "provider": row.embedding_provider,
+                "model": row.embedding_model,
+            }
             if complete and previous == current:
                 return
 

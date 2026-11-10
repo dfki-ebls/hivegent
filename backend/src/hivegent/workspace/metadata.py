@@ -70,7 +70,9 @@ async def resolve_entry(store: Casebase, reference: str) -> EntryPaths:
     """Resolve a logical entry's paths from disk, overlaid with its SQL row."""
     resolved, metadata = await asyncio.gather(
         asyncio.to_thread(
-            lambda: resolve_entry_paths(store.workspace_dir(settings.data_dir), reference)
+            lambda: resolve_entry_paths(
+                store.workspace_dir(settings.data_dir), reference
+            )
         ),
         db_documents.get_entry_metadata(store, reference),
     )

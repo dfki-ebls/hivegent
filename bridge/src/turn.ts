@@ -1,6 +1,5 @@
 /** Platform-agnostic turn handler: map thread → conversation, stream the reply. */
 
-
 import type { Message, MessageContext, Thread } from "chat";
 
 import type { BridgeConfig } from "./config.js";

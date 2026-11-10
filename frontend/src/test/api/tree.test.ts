@@ -27,9 +27,11 @@ vi.mock("@/api/client", async (importOriginal) => ({
 
     return scope === undefined
       ? applyChanges(
-          (JSON.parse(typeof init?.body === "string" ? init.body : "") as {
-            operations: ChangeOperation[];
-          }).operations,
+          (
+            JSON.parse(typeof init?.body === "string" ? init.body : "") as {
+              operations: ChangeOperation[];
+            }
+          ).operations,
         )
       : getDirectories(decodeURIComponent(scope), init?.signal ?? undefined);
   },

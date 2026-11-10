@@ -91,13 +91,7 @@ interface PromptItemProps {
  * Something the agent asks the user, an approval or questions.
  * It asks rather than reports, so it stands outside the trace until it is answered.
  */
-export function PromptItem({
-  icon,
-  title,
-  description,
-  actions,
-  children,
-}: PromptItemProps) {
+export function PromptItem({ icon, title, description, actions, children }: PromptItemProps) {
   const titleId = useId();
 
   return (

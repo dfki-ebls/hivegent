@@ -102,7 +102,9 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
 
 def _ui_messages(messages: Sequence[ModelMessage]) -> list[UIMessage]:
     """Project *messages* the way a reload does, with placeholder node ids."""
-    return dump_messages_with_ids([(label_id(f"n{i}"), m) for i, m in enumerate(messages)])
+    return dump_messages_with_ids(
+        [(label_id(f"n{i}"), m) for i, m in enumerate(messages)]
+    )
 
 
 def _parts[T](messages: Sequence[ModelMessage], kind: type[T]) -> list[T]:
@@ -275,7 +277,12 @@ _CLOSED = ModelRequest(
         ],
         _ANSWERED[:1],
     ],
-    ids=["after-compaction", "past-compaction", "after-closed-call", "after-failed-prompt"],
+    ids=[
+        "after-compaction",
+        "past-compaction",
+        "after-closed-call",
+        "after-failed-prompt",
+    ],
 )
 async def test_a_prompt_merged_into_the_replay_is_its_own_node(
     prefix: list[ModelMessage],
@@ -917,7 +924,11 @@ class TestInstructionSnapshots:
         snapshots = _instruction_snapshots(self._pairs("SYS", "SYS scoped", "SYS"))
 
         assert [s.text for s in snapshots] == ["SYS", "SYS scoped", "SYS"]
-        assert [s.message_ids for s in snapshots] == [_ids("n0"), _ids("n1"), _ids("n2")]
+        assert [s.message_ids for s in snapshots] == [
+            _ids("n0"),
+            _ids("n1"),
+            _ids("n2"),
+        ]
 
     def test_messages_carrying_no_prompt_are_skipped(self) -> None:
         """Responses hold none, and an imported turn may have lost its own."""

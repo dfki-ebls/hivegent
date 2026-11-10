@@ -87,7 +87,9 @@ async def test_archive_matches_the_ragold_schema() -> None:
             "report.pdf",
             "notes.md",
         }
-        (notes,) = (info for info in archive.infolist() if info.filename.endswith("/notes.md"))
+        (notes,) = (
+            info for info in archive.infolist() if info.filename.endswith("/notes.md")
+        )
         assert notes.date_time == (1980, 1, 1, 0, 0, 0)
         assert archive.read(notes) == b"Notes"
         (annotation,) = data["annotations"].values()

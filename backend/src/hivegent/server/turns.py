@@ -150,9 +150,10 @@ def pending_requests(messages: Sequence[ModelMessage]) -> DeferredToolRequests |
         None,
     )
 
-    if index is None or (
-        stored := (messages[index].metadata or {}).get(DEFERRED_KEY)
-    ) is None:
+    if (
+        index is None
+        or (stored := (messages[index].metadata or {}).get(DEFERRED_KEY)) is None
+    ):
         return None
 
     requests = DEFERRED_REQUESTS.validate_python(stored)

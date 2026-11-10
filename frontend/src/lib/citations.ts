@@ -78,7 +78,10 @@ export interface ResolvedPosition {
 }
 
 /** The positions of a citation's *line* in a document, resolved against its captured *chunks*. */
-export function resolveCitation(chunks: FetchedChunk[], line: string | undefined): ResolvedPosition[] {
+export function resolveCitation(
+  chunks: FetchedChunk[],
+  line: string | undefined,
+): ResolvedPosition[] {
   return parseLinePositions(line).map((position) => ({
     position,
     evidence: evidenceForPosition(chunks, position),

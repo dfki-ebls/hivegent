@@ -259,7 +259,11 @@ export function ScopeSection({
     // optimistically grafted directory counts immediately.
     if (!directoryTree?.root.children?.length) {
       return (
-        <StatusPanel icon={FolderOpenIcon} title={t(($) => $.documents.scope.empty)} className="p-4" />
+        <StatusPanel
+          icon={FolderOpenIcon}
+          title={t(($) => $.documents.scope.empty)}
+          className="p-4"
+        />
       );
     }
 
@@ -294,7 +298,11 @@ export function ScopeSection({
   const flatList = () => {
     if (filtered.length === 0) {
       return (
-        <StatusPanel icon={SearchXIcon} title={t(($) => $.documents.scope.noMatches)} className="p-4" />
+        <StatusPanel
+          icon={SearchXIcon}
+          title={t(($) => $.documents.scope.noMatches)}
+          className="p-4"
+        />
       );
     }
 

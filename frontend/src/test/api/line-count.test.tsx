@@ -6,7 +6,8 @@ import { documentQueries } from "@/api/documents";
 import { createQueryWrapper } from "@/test/render";
 
 const { requestJson } = vi.hoisted(() => ({
-  requestJson: vi.fn<(url: string, error: string, schema: unknown, init?: RequestInit) => Promise<unknown>>(),
+  requestJson:
+    vi.fn<(url: string, error: string, schema: unknown, init?: RequestInit) => Promise<unknown>>(),
 }));
 
 vi.mock("@/api/client", async (importOriginal) => ({
@@ -28,6 +29,8 @@ describe("documentQueries.lineCount", () => {
 
     await waitFor(() => expect(result.current).toEqual([40, null]));
     expect(requestJson).toHaveBeenCalledOnce();
-    expect(requestJson.mock.calls[0]?.[3]?.body).toBe(JSON.stringify({ files: ["a.md", "tmp.md"] }));
+    expect(requestJson.mock.calls[0]?.[3]?.body).toBe(
+      JSON.stringify({ files: ["a.md", "tmp.md"] }),
+    );
   });
 });

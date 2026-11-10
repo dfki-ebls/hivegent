@@ -45,7 +45,9 @@ export function Composer({ onSubmit }: { onSubmit: (text: string, files: FileUIP
   // route all gate on one table: a file the model could not read is refused
   // here rather than after a round trip.
   const limits = useServerSettings(selectAttachmentLimits);
-  const transcribe = useServerSettings((settings) => settings.stt_model) ? transcribeAudio : undefined;
+  const transcribe = useServerSettings((settings) => settings.stt_model)
+    ? transcribeAudio
+    : undefined;
   const { chat } = useChatContext();
   const status = useChatSelector((chat) => chat.status);
   const streaming = isChatBusy(status);
@@ -173,11 +175,7 @@ export function Composer({ onSubmit }: { onSubmit: (text: string, files: FileUIP
           />
           <ModeSelector value={agentMode} onChange={setAgentMode} />
           {/* Enter still submits while streaming, which steers the running turn. */}
-          <SubmitStopButton
-            status={status}
-            empty={!canSend}
-            onStop={() => void chat.stop()}
-          />
+          <SubmitStopButton status={status} empty={!canSend} onStop={() => void chat.stop()} />
         </InputGroupAddon>
       </InputGroup>
     </form>

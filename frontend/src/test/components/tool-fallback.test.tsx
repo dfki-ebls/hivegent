@@ -24,7 +24,9 @@ describe("ToolFallback", () => {
       input: { changeset_id: "internal-id" },
       output: "Applied changes.",
     };
-    render(getToolHandler("apply_changes")?.render?.({ part: call, metadata: null, prompt: false }));
+    render(
+      getToolHandler("apply_changes")?.render?.({ part: call, metadata: null, prompt: false }),
+    );
     fireEvent.click(screen.getByText("Apply Changes"));
 
     expect(screen.getByText("Applied changes.")).toBeTruthy();

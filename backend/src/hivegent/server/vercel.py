@@ -115,8 +115,6 @@ SUBAGENT_CHUNK_TYPE = "data-subagent"
 REASONING_DURATIONS_KEY = "reasoningDurationsMs"
 
 
-
-
 _SAVE_FAILED = Localized(
     en="Failed to save the conversation.",
     de="Die Konversation konnte nicht gesichert werden.",
@@ -128,17 +126,14 @@ _RUN_FAILED = Localized(
 )
 
 
-
 # Message metadata key mapping each approval-pending tool call id to the
 # metadata its `ApprovalRequired` carried, set on the response that asked.
 APPROVAL_METADATA_KEY = "approvalMetadata"
 
 
-
 _ASK_USER_PART = f"tool-{ASK_USER_TOOL}"
 
 type PersistTurn = Callable[[Sequence[ModelMessage]], Awaitable[None]]
-
 
 
 async def agent_events[OutputT](
@@ -267,7 +262,9 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
             }
 
         if isinstance(output := event.result.output, DeferredToolRequests):
-            ui_metadata[DEFERRED_KEY] = DEFERRED_REQUESTS.dump_python(output, mode="json")
+            ui_metadata[DEFERRED_KEY] = DEFERRED_REQUESTS.dump_python(
+                output, mode="json"
+            )
 
             if approvals := {
                 call.tool_call_id: output.metadata[call.tool_call_id]
@@ -284,7 +281,9 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
                 chunk.message_metadata, dict
             ):
                 chunk = chunk.model_copy(
-                    update={"message_metadata": _client_metadata(chunk.message_metadata)}
+                    update={
+                        "message_metadata": _client_metadata(chunk.message_metadata)
+                    }
                 )
 
             yield chunk
@@ -293,10 +292,6 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
 def _client_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
     """*metadata* as the client sees it, without the stored requests."""
     return {key: value for key, value in metadata.items() if key != DEFERRED_KEY}
-
-
-
-
 
 
 class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
@@ -404,7 +399,9 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
         """Never derived from the request alone, :meth:`resume` builds them."""
         return None
 
-    def resume(self, pending: DeferredToolRequests | None) -> DeferredToolResults | None:
+    def resume(
+        self, pending: DeferredToolRequests | None
+    ) -> DeferredToolResults | None:
         """Resume the run with the user's decisions, notes, and answers to *pending*.
 
         *pending* are the stored requests (:func:`pending_requests`), so a
@@ -468,12 +465,6 @@ async def _persist_safely(
         await persist(messages)
     except Exception:
         logger.exception("Failed to persist conversation turn")
-
-
-
-
-
-
 
 
 def _attach_approvals(
@@ -729,14 +720,6 @@ async def _merge_subagent_events(
         driver.cancel()
         with contextlib.suppress(BaseException):
             await driver
-
-
-
-
-
-
-
-
 
 
 async def run_and_persist[DepsT, OutputT](

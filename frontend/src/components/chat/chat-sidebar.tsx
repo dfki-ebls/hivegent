@@ -41,9 +41,8 @@ export function ChatSidebar() {
   // and on an open approval or question, which a compaction would leave unanswerable.
   const promptOpen = useChatSelector(
     (chat) =>
-      chat.lastMessage?.parts.some(
-        (part) => isToolUIPart(part) && isOpenPrompt(part, "waiting"),
-      ) ?? false,
+      chat.lastMessage?.parts.some((part) => isToolUIPart(part) && isOpenPrompt(part, "waiting")) ??
+      false,
   );
   const compactDisabled = !hasMessages || busy || promptOpen;
   const clearFilter = useDocumentFilterStore((state) => state.clear);

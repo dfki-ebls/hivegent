@@ -9,7 +9,9 @@ import { fetchDocumentAsset } from "@/api/documents";
 import type { ToolPart } from "@/lib/chat/tool-part";
 import { createTestChat, renderWithChat } from "@/test/chat";
 
-const { requestText } = vi.hoisted(() => ({ requestText: vi.fn<(url: string) => Promise<string>>() }));
+const { requestText } = vi.hoisted(() => ({
+  requestText: vi.fn<(url: string) => Promise<string>>(),
+}));
 
 vi.mock("@/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/client")>()),

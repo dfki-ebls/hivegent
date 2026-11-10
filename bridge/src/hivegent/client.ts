@@ -1,6 +1,5 @@
 /** HTTP client for hivegent's chat endpoints (Vercel AI SDK request contract). */
 
-
 import type { UIMessage } from "ai";
 
 import type { BridgeConfig } from "../config.js";

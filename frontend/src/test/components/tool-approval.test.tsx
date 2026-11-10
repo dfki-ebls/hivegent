@@ -78,7 +78,9 @@ describe("tool approval", () => {
     );
     fireEvent.click(card(0).getByRole("button", { name: "Deny" }));
 
-    expect(decide.mock.calls).toEqual([[{ id: "call-1", approved: false, reason: "Wrong folder." }]]);
+    expect(decide.mock.calls).toEqual([
+      [{ id: "call-1", approved: false, reason: "Wrong folder." }],
+    ]);
   });
 
   it("stages the card choices of several requests and sends them on submit", () => {

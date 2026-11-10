@@ -184,7 +184,9 @@ class _Entry(_Camel):
 
     @model_validator(mode="after")
     def _key_facts_are_excerpts(self) -> Self:
-        if missing := [fact.text for fact in self.key_facts if fact.text not in self.response]:
+        if missing := [
+            fact.text for fact in self.key_facts if fact.text not in self.response
+        ]:
             raise ValueError(f"Key facts missing from the response: {missing}")
 
         return self

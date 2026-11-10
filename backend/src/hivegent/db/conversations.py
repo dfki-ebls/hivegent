@@ -324,9 +324,7 @@ def _newest_leaf_id(conversation_id: UUID) -> ColumnElement[UUID]:
     )
 
 
-def _active_path_cte(
-    conversation_id: UUID, leaf_id: UUID | ColumnElement[UUID]
-) -> CTE:
+def _active_path_cte(conversation_id: UUID, leaf_id: UUID | ColumnElement[UUID]) -> CTE:
     """Recursive CTE of the nodes from *leaf_id* up to the root.
 
     *leaf_id* is the active leaf — either an explicit node id or the scalar

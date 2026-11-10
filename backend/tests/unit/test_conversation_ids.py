@@ -158,7 +158,9 @@ async def test_a_claim_skips_a_taken_id_and_answers_by_its_owner(
 
 
 async def test_an_absent_id_has_no_messages_yet() -> None:
-    assert await routes.get_conversation_messages((owned(str(_ID), _ALICE), False)) == []
+    assert (
+        await routes.get_conversation_messages((owned(str(_ID), _ALICE), False)) == []
+    )
 
 
 async def test_another_users_id_answers_404(
@@ -246,7 +248,9 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
     monkeypatch.setattr(routes, "run_and_persist", run)
 
     with pytest.raises(HTTPException if status else _Reached) as raised:
-        await routes._run_chat(owned(str(_ID)), _chat_request(message_id), exists=exists)
+        await routes._run_chat(
+            owned(str(_ID)), _chat_request(message_id), exists=exists
+        )
 
     if isinstance(raised.value, HTTPException):
         assert raised.value.status_code == status

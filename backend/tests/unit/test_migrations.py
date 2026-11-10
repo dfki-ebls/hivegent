@@ -50,7 +50,9 @@ _ALONE = replace(_PAUSED, parts=_PAUSED.parts[1:])
 @pytest.mark.parametrize("ran_beside", [False, True])
 def test_a_paused_turn_gets_the_requests_it_awaits(ran_beside: bool) -> None:
     """The unanswered calls become the stored requests, approval and question apart."""
-    paused = _migration("20261101_1200_e3f4a5b6c7d8_uuid_ids_deferred_requests.py").paused
+    paused = _migration(
+        "20261101_1200_e3f4a5b6c7d8_uuid_ids_deferred_requests.py"
+    ).paused
     leaf, parent = (_RAN, _PAUSED) if ran_beside else (_ALONE, _PROMPT)
 
     response_id, payload = paused("leaf", _dump(leaf), "parent", _dump(parent))

@@ -782,9 +782,7 @@ function DocumentDialogBody({
     }
 
     if (!activeChunk) {
-      return (
-        <StatusPanel icon={TextSelectIcon} title={t(($) => $.documents.dialog.selectChunk)} />
-      );
+      return <StatusPanel icon={TextSelectIcon} title={t(($) => $.documents.dialog.selectChunk)} />;
     }
 
     if (!fullContent) {
@@ -1044,9 +1042,7 @@ function DocumentDialogBody({
       <div className="flex min-h-0 flex-1 border-t">
         {renderSidebar()}
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {renderMainContent()}
-        </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{renderMainContent()}</div>
       </div>
     </>
   );

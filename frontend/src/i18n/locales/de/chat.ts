@@ -195,8 +195,7 @@ export const chat = {
     removePassage: "Passage entfernen",
     notes: "Notizen",
     transfer: "Übertragen",
-    incomplete:
-      "Fülle Anfrage und Antwort aus und wähle Typ, Beantwortbarkeit und jede Bewertung.",
+    incomplete: "Fülle Anfrage und Antwort aus und wähle Typ, Beantwortbarkeit und jede Bewertung.",
     done_one: "RAGold hat {{count}} Eintrag importiert",
     done_other: "RAGold hat {{count}} Einträge importiert",
     popupBlocked:
