@@ -208,9 +208,9 @@ class JobManager:
     module-level :data:`manager` singleton.
     """
 
-    max_concurrency: int = 2
-    retain_seconds: float = 3600.0
-    queue_maxsize: int = 1024
+    max_concurrency: int = field(default_factory=lambda: settings.jobs.max_concurrency)
+    retain_seconds: float = field(default_factory=lambda: settings.jobs.retain_seconds)
+    queue_maxsize: int = field(default_factory=lambda: settings.jobs.queue_maxsize)
     # Per owner, its jobs by id in the order they came, so a lookup by id
     # never reaches another owner's job.
     _jobs: dict[str, dict[str, _Job]] = field(default_factory=dict, init=False)
@@ -389,8 +389,4 @@ class JobManager:
                 del self._jobs[owner]
 
 
-manager = JobManager(
-    max_concurrency=settings.jobs.max_concurrency,
-    retain_seconds=settings.jobs.retain_seconds,
-    queue_maxsize=settings.jobs.queue_maxsize,
-)
+manager = JobManager()
