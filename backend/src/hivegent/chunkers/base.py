@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from ..workers.pool import run_offloaded
+from ..workers.pool import pipeline_pool
 
 __all__ = [
     "ChunkData",
@@ -153,10 +153,10 @@ class DocumentChunker(ABC):
     """Abstract base class for document chunkers.
 
     CPU/model-bound chunkers implement the sync :meth:`_split_sync`; the base
-    :meth:`_split` offloads it through :func:`hivegent.workers.pool.run_offloaded`
-    (a persistent worker process when the pool is on, a lock-guarded thread
-    otherwise).  Chunkers that do no offloadable work (the no-op chunker, the
-    LLM-driven slumber chunker) override :meth:`_split` directly.  The base
+    :meth:`_split` offloads it to the persistent worker pool
+    (:data:`hivegent.workers.pool.pipeline_pool`).  Chunkers that do no
+    offloadable work (the no-op chunker, the LLM-driven slumber chunker)
+    override :meth:`_split` directly.  The base
     :meth:`__call__` annotates each returned chunk with 1-based line numbers.
     """
 
@@ -180,8 +180,7 @@ class DocumentChunker(ABC):
     async def _split(self, text: str, /) -> list[ChunkData]:
         """Split text into chunks.
 
-        Defaults to offloading :meth:`_split_sync` off the event loop (a worker
-        process when the pool is on, a lock-guarded thread otherwise).  Chunkers
+        Defaults to offloading :meth:`_split_sync` to a worker process.  Chunkers
         that are trivial or I/O-bound override this to run on the event loop.
 
         Args:
@@ -190,7 +189,7 @@ class DocumentChunker(ABC):
         Returns:
             List of ChunkData objects (line numbers may be unset).
         """
-        return await run_offloaded(self._split_sync, text)
+        return await pipeline_pool.run(self._split_sync, text)
 
     async def __call__(self, text: str, /) -> list[ChunkData]:
         """Split text into chunks and annotate line numbers.

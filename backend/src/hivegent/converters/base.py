@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 import PIL.Image
 
-from ..workers.pool import run_offloaded
+from ..workers.pool import pipeline_pool
 
 __all__ = [
     "DOCUMENT_EXTENSION",
@@ -266,11 +266,11 @@ class DocumentConverter(ABC):
     """Abstract base class for document converters.
 
     CPU/model-bound converters (docling, marker, markitdown, …)
-    implement the sync :meth:`_convert_sync`; the base :meth:`_convert` offloads
-    it through :func:`hivegent.workers.pool.run_offloaded` (a persistent worker
-    process when the pool is on, a lock-guarded thread otherwise).  Native-async
-    converters (kreuzberg, llm, pandoc) override :meth:`_convert` to run on the
-    event loop and never touch either path.
+    implement the sync :meth:`_convert_sync`, and the base :meth:`_convert`
+    offloads it to the persistent worker pool
+    (:data:`hivegent.workers.pool.pipeline_pool`).  Native-async converters
+    (kreuzberg, llm, pandoc) override :meth:`_convert` to run on the event loop
+    and never touch the pool.
     """
 
     name: ClassVar[str]
@@ -301,8 +301,7 @@ class DocumentConverter(ABC):
     async def _convert(self, path: Path, /) -> ConversionResult:
         """Convert a document to markdown.
 
-        Defaults to offloading :meth:`_convert_sync` off the event loop (a worker
-        process when the pool is on, a lock-guarded thread otherwise).
+        Defaults to offloading :meth:`_convert_sync` to a worker process.
         Native-async converters override this to run on the event loop.
 
         Args:
@@ -311,7 +310,7 @@ class DocumentConverter(ABC):
         Returns:
             The conversion result with markdown and optional extracted images.
         """
-        return await run_offloaded(self._convert_sync, path)
+        return await pipeline_pool.run(self._convert_sync, path)
 
     async def __call__(self, path: Path, /) -> ConversionResult:
         """Convert *path*, offloading CPU-bound work off the event loop."""

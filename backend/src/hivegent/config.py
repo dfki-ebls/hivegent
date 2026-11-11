@@ -936,30 +936,29 @@ class ComputeSettings(BaseModel):
     ``batch_size`` is the page batch fed to the layout/table/OCR models;
     larger batches raise GPU utilization at the cost of VRAM.
 
-    ``worker_processes`` >= 2 activates a persistent worker-process pool (see
-    :mod:`hivegent.workers.pool`) so several documents convert and chunk in
-    parallel, each worker holding its own models — a steady pool size, separate
-    from and additive to the single-use isolation workers
+    ``worker_processes`` sizes the persistent worker-process pool (see
+    :mod:`hivegent.workers.pool`) that converts and chunks documents, one per
+    worker at a time, each worker holding its own models.  It is a steady pool
+    size, separate from and additive to the single-use isolation workers
     (:attr:`IsolationSettings.max_workers`).  Memory scales with the count, and
     ``num_threads`` is the *total* thread budget that :attr:`threads_per_worker`
     splits across the pool, so keep ``worker_processes`` near the core count with
-    ``num_threads`` at or above it.  The default 1 keeps every stage in-process
-    on a lock-guarded thread, spawning nothing — right for one core and tests.
+    ``num_threads`` at or above it.
     """
 
     num_threads: int = 8
     batch_size: int = 8
-    worker_processes: int = 1
+    worker_processes: int = Field(default=1, ge=1)
 
     @property
     def threads_per_worker(self) -> int:
         """Per-worker intra-op thread budget: ``num_threads`` split across the pool.
 
-        Floored at 1, and simply ``num_threads`` when the pool is off.  The
-        docling/marker/mineru/pdf-oxide accelerators read this to size their
+        Floored at 1.  The docling/marker/mineru/pdf-oxide accelerators read
+        this to size their
         torch/onnxruntime pools, so processes never oversubscribe the cores.
         """
-        return max(1, self.num_threads // max(1, self.worker_processes))
+        return max(1, self.num_threads // self.worker_processes)
 
 
 class OcrSettings(BaseModel):

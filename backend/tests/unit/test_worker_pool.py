@@ -1,9 +1,9 @@
-"""Tests for the persistent pipeline worker pool's dispatch and recovery logic.
+"""Tests for the persistent pipeline worker pool's recovery logic.
 
-Stateless: no real worker processes are spawned.  The pool-active path is
-exercised with the executor call monkeypatched, so these run without touching
-multiprocessing (real cross-process execution is a manual smoke test, like the
-other live-surface paths).
+Stateless: no real worker processes are spawned.  The executor is
+monkeypatched, so these run without touching multiprocessing (real
+cross-process execution is a manual smoke test, like the other live-surface
+paths).
 """
 
 import asyncio
@@ -12,50 +12,7 @@ from concurrent.futures.process import BrokenProcessPool
 
 import pytest
 
-from hivegent.config import settings
-from hivegent.workers.pool import ProcessPool, run_offloaded
-
-
-async def test_run_offloaded_runs_in_process_when_pool_off(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With the pool off, work runs in-process — proven by a non-picklable closure."""
-    monkeypatch.setattr(settings.compute, "worker_processes", 1)
-    captured: list[int] = []
-
-    def work(x: int) -> int:
-        # A local closure cannot be pickled, so reaching this at all proves the
-        # call ran in a thread here, not shipped to a worker process.
-        captured.append(x)
-        return x * 2
-
-    result = await run_offloaded(work, 21)
-
-    assert result == 42
-    assert captured == [21]
-
-
-async def test_run_offloaded_dispatches_to_pool_when_active(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With the pool on, work is handed to the process pool rather than a thread."""
-    monkeypatch.setattr(settings.compute, "worker_processes", 2)
-    calls: list[tuple[object, tuple[object, ...]]] = []
-
-    async def fake_run(self: ProcessPool, func: object, /, *args: object) -> str:
-        calls.append((func, args))
-        return "from-pool"
-
-    # ProcessPool is slotted, so patch the method on the class, not the instance.
-    monkeypatch.setattr(ProcessPool, "run", fake_run)
-
-    def work(x: int) -> int:
-        return x
-
-    result = await run_offloaded(work, 7)
-
-    assert result == "from-pool"
-    assert calls == [(work, (7,))]
+from hivegent.workers.pool import ProcessPool
 
 
 async def test_pool_rebuilds_and_retries_once_on_dead_worker(

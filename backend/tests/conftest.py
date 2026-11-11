@@ -6,6 +6,8 @@ No test connects to a live database or any other stateful service.
 """
 
 import os
+from collections.abc import Iterator
+from concurrent.futures import Executor, ThreadPoolExecutor
 from pathlib import Path
 
 # Settings resolve once on import, so the variables of a developer's shell,
@@ -17,10 +19,24 @@ import pytest
 from pydantic_ai import models
 
 from hivegent.agents import RunPrefix
+from hivegent.workers.pool import ProcessPool
 
 # No test reaches a live model, so a request that would is an error, and a test
 # serving one from a mock transport allows it explicitly.
 models.ALLOW_MODEL_REQUESTS = False
+
+
+@pytest.fixture(autouse=True)
+def _pipeline_pool(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Run offloaded pipeline work on threads, so no test spawns a process."""
+    with ThreadPoolExecutor() as executor:
+
+        async def current(_self: ProcessPool) -> Executor:
+            return executor
+
+        # ProcessPool is slotted, so patch the method on the class.
+        monkeypatch.setattr(ProcessPool, "_current", current)
+        yield
 
 
 @pytest.fixture(autouse=True)
