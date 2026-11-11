@@ -52,6 +52,7 @@ from .llm import create_openai_client
 from .store import Casebase
 from .tools.retrieval import SearchResult, VectorSearchTool
 from .types import DocumentFilter
+from .workers.pool import limit_torch_threads
 
 __all__ = [
     "build_search_tool",
@@ -105,6 +106,7 @@ def _build_reranker(device: str) -> AsyncRetrieverFunc[str, str, float] | None:
     if cfg.provider == "sentence-transformers":
         from sentence_transformers import CrossEncoder
 
+        limit_torch_threads()
         model = CrossEncoder(cfg.model, device=None if device == "auto" else device)
         return cbrkit.retrieval.rerank.cross_encoder(model=model)
     if not cfg.base_url:
@@ -142,6 +144,7 @@ def _build_embedding_func(
     else:
         from sentence_transformers import SentenceTransformer
 
+        limit_torch_threads()
         model = SentenceTransformer(
             cfg.model, device=None if device == "auto" else device
         )

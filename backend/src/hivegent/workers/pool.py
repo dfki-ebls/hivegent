@@ -24,7 +24,22 @@ from multiprocessing import get_context
 
 from ..config import settings
 
-__all__ = ["ProcessPool", "pipeline_pool"]
+__all__ = ["ProcessPool", "limit_torch_threads", "pipeline_pool"]
+
+
+def limit_torch_threads() -> None:
+    """Hold this process's torch to its share of the thread budget.
+
+    Torch defaults to every core, so without this each worker, and the server
+    with its own embedding and reranking models, would oversubscribe the cores.
+    A no-op when torch is not installed.
+    """
+    try:
+        import torch
+    except ImportError:
+        return
+
+    torch.set_num_threads(settings.compute.threads_per_worker)
 
 
 @dataclass(slots=True)
@@ -51,6 +66,7 @@ class ProcessPool:
                 self._executor = ProcessPoolExecutor(
                     max_workers=settings.compute.worker_processes,
                     mp_context=get_context("spawn"),
+                    initializer=limit_torch_threads,
                 )
 
             return self._executor

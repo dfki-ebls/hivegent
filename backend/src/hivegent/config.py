@@ -954,8 +954,8 @@ class ComputeSettings(BaseModel):
     def threads_per_worker(self) -> int:
         """Per-worker intra-op thread budget: ``num_threads`` split across the pool.
 
-        Floored at 1.  The docling/marker/mineru/pdf-oxide accelerators read
-        this to size their
+        Floored at 1.  The docling/marker/mineru/pdf-oxide accelerators and
+        the server's own embedding and reranking models read this to size their
         torch/onnxruntime pools, so processes never oversubscribe the cores.
         """
         return max(1, self.num_threads // self.worker_processes)
