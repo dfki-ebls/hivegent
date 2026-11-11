@@ -279,6 +279,13 @@ The Vercel AI request models forbid extra fields, and so does `ChatRequest` arou
 Such drift is fixed upstream, never by relaxing `extra='forbid'`, which is what stops a malformed `approval` from matching the unanswered variant and releasing a gated call.
 `tests/unit/test_client_messages.py` pins the shape a real client posts.
 
+### The client receives only what it declares
+
+The Vercel adapter streams and dumps run state, such as model setting deltas and enqueued messages, as data parts for a client that sends the history back, while this client sends its new prompt only.
+`CLIENT_DATA_TYPES` in `server/vercel.py` mirrors the data parts the frontend declares, and every other one stays server side, live and on reload alike, so a part a pydantic-ai update adds never reaches the client unannounced.
+The transcript also decides for every kind of request part whether it shows, ending in `assert_never`, so such an update fails type checking until the new kind is decided.
+The chat debugger keeps the client-held history the adapter is built for, and is left unfiltered.
+
 ### Tool approvals round-trip symmetrically
 
 A decision's `reason` is the user's optional note, and the model-facing text is worded in the backend, in English.

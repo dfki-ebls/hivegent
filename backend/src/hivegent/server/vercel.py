@@ -26,20 +26,29 @@ from collections.abc import (
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
-from typing import Any, TypedDict, override
+from typing import Any, TypedDict, assert_never, override
 from uuid import UUID, uuid4
 
 from pydantic_ai import AgentRunEvents, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
     CapabilityEvent,
+    CapabilityLoadDeltaPart,
     CompactionPart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelSettingsDeltaPart,
     RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # ty: ignore[deprecated]
+    SpeechPart,
+    SystemPromptPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
+    ToolReturnPart,
     UserContent,
     UserPromptPart,
 )
@@ -47,6 +56,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai.ui import NativeEvent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai.request_types import (
+    DataUIPart,
     DynamicToolApprovalRespondedPart,
     DynamicToolUIPart,
     ToolApprovalRequestedPart,
@@ -57,6 +67,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     ToolOutputErrorPart,
     ToolUIPart,
     UIMessage,
+    UIMessagePart,
 )
 from pydantic_ai.ui.vercel_ai.response_types import (
     BaseChunk,
@@ -74,6 +85,7 @@ from ..agents.tools.ask import ANSWERS, DISMISSED_QUESTIONS
 from ..concurrency import shield_to_completion
 from ..db.conversations import prompt_items
 from ..l10n import Localized
+from ..tools.pydantic_ai import DATA_CHUNK_TYPE
 from .turns import (
     DEFERRED_KEY,
     DEFERRED_REQUESTS,
@@ -111,6 +123,11 @@ SDK_VERSION = 7
 # Transient data-part type carrying live subagent transcript snapshots; the
 # frontend consumes these via `useChat({ onData })` (see `lib/chat/subagent.ts`).
 SUBAGENT_CHUNK_TYPE = "data-subagent"
+
+# The data parts the client declares (`chatDataSchemas` in
+# `frontend/src/lib/chat/message.ts`), kept in sync by hand.  Every other one
+# stays server side (see `backend/README.md`).
+CLIENT_DATA_TYPES = frozenset({"data-compaction", SUBAGENT_CHUNK_TYPE, DATA_CHUNK_TYPE})
 
 # Message metadata key carrying per-reasoning-block stream durations in
 # milliseconds, keyed by run id and ordered by the reasoning parts of that run,
@@ -560,16 +577,54 @@ def _fold_turns(messages: Iterable[UIMessage]) -> list[UIMessage]:
     return folded
 
 
-_HARNESS_PARTS = (RetryFeedbackPart, ToolAvailabilityDeltaPart)
+def _reaches_client(part: BaseChunk | UIMessagePart) -> bool:
+    """Whether *part* is no data part or one in :data:`CLIENT_DATA_TYPES`."""
+    return not isinstance(part, DataChunk | DataUIPart) or part.type in CLIENT_DATA_TYPES
+
+
+def _client_parts(messages: Iterable[UIMessage]) -> Iterable[UIMessage]:
+    """*messages* with only the parts that reach the client, dropping any left empty."""
+    for message in messages:
+        message.parts = [part for part in message.parts if _reaches_client(part)]
+
+        if message.parts:
+            yield message
+
+
+def _is_shown(part: ModelRequestPart) -> bool:
+    """Whether a transcript shows *part*, decided for every kind of request part.
+
+    Retry feedback and the deltas are run state addressed to the model, and the
+    adapter would dump each as a message of its own between two responses of
+    one turn, which then no longer folds into the message it streamed as.  The
+    deltas dump as data parts :data:`CLIENT_DATA_TYPES` withholds too, and are
+    listed so that a part kind a pydantic-ai update adds fails type checking
+    until it is decided.
+    """
+    match part:
+        case SystemPromptPart() | UserPromptPart() | ToolReturnPart() | CompactionPart():
+            return True
+
+        case (
+            RetryFeedbackPart()
+            | RetryPromptPart()  # pyright: ignore[reportDeprecated]  # ty: ignore[deprecated]
+            | ToolAvailabilityDeltaPart()
+            | CapabilityLoadDeltaPart()
+            | ModelSettingsDeltaPart()
+            | InstructionDeltaPart()
+            | InstructionBaselinePart()
+            | SpeechPart()
+        ):
+            return False
+
+        case _:
+            assert_never(part)
 
 
 def _shown(message: ModelMessage) -> ModelMessage:
-    """*message* without what a transcript leaves out.
+    """*message* without what a transcript leaves out (:func:`_is_shown`).
 
-    Retry feedback and tool availability are addressed to the model, and the
-    adapter would dump each as a message of its own between two responses of
-    one turn, which then no longer folds into the message it streamed as.  The
-    stored requests a response carries stay server side (:func:`_client_metadata`).
+    The stored requests a response carries stay server side (:func:`_client_metadata`).
     """
     if isinstance(message, ModelResponse):
         return (
@@ -578,7 +633,7 @@ def _shown(message: ModelMessage) -> ModelMessage:
             else message
         )
 
-    parts = [part for part in message.parts if not isinstance(part, _HARNESS_PARTS)]
+    parts = [part for part in message.parts if _is_shown(part)]
 
     return (
         message if len(parts) == len(message.parts) else replace(message, parts=parts)
@@ -597,8 +652,9 @@ def dump_messages_with_ids(
     The adapter invokes the id generator with the exact objects passed here (it
     iterates this same list), so the identity lookup is an exact match and
     stays correct even when one request emits several ``UIMessage``s, one per
-    run of same-role parts; a request left with only tool returns once the
-    harness parts are dropped (see :func:`_shown`) emits none.  An
+    run of same-role parts; a request left with nothing to show once
+    :func:`_shown` and :func:`_client_parts` drop what stays server side emits
+    none.  An
     unmapped object — unreachable today — degrades to a fresh non-addressable id
     rather than raising.  When given, *siblings* maps a forking node to its
     ordered sibling ids; its :class:`BranchInfo` is merged under a ``branch``
@@ -628,10 +684,12 @@ def dump_messages_with_ids(
         return str(node_by_obj.get(id(msg)) or uuid4())
 
     ui_messages = _fold_turns(
-        ChatAdapter.dump_messages(
-            [msg for _, msg in pairs],
-            generate_message_id=assign_id,
-            sdk_version=SDK_VERSION,
+        _client_parts(
+            ChatAdapter.dump_messages(
+                [msg for _, msg in pairs],
+                generate_message_id=assign_id,
+                sdk_version=SDK_VERSION,
+            )
         )
     )
     _attach_approvals(ui_messages, recorded_decisions(msg for _, msg in pairs))
@@ -726,9 +784,12 @@ async def _merge_subagent_events(
 
 
 def stream_response(chunks: AsyncIterator[BaseChunk]) -> StreamingResponse:
-    """The UI message stream of *chunks*, encoded for the frontend's SDK version."""
+    """The UI message stream of *chunks*, encoded for the frontend's SDK version.
+
+    Only the parts that reach the client are sent (:data:`CLIENT_DATA_TYPES`).
+    """
     return VercelAIEventStream[None, str](sdk_version=SDK_VERSION).streaming_response(
-        chunks
+        chunk async for chunk in chunks if _reaches_client(chunk)
     )
 
 

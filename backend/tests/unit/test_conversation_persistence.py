@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryInfo,
     TextPart,
@@ -53,6 +54,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     ToolOutputErrorPart,
     UIMessage,
 )
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
 
 import hivegent.server.vercel as vercel_module
 from hivegent.agents.approval import ApprovalNotes, approval_note_text
@@ -1064,7 +1066,15 @@ def test_regenerate_forks_at_the_nearest_user_turn() -> None:
 def test_dump_messages_with_ids_anchors_node_ids() -> None:
     """Each ``UIMessage.id`` is its head node id, and a turn is one message."""
     pairs: list[MessagePair] = [
-        (label_id("n1"), ModelRequest(parts=[UserPromptPart(content="q")])),
+        (
+            label_id("n1"),
+            ModelRequest(
+                parts=[
+                    ModelSettingsDeltaPart(settings={"thinking": "medium"}, top_level=True),
+                    UserPromptPart(content="q"),
+                ]
+            ),
+        ),
         (
             label_id("n2"),
             ModelResponse(
@@ -1076,7 +1086,13 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
             label_id("n3"),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(tool_name="t", content="r", tool_call_id="c1"),
+                    ToolReturnPart(
+                        tool_name="t",
+                        content="r",
+                        tool_call_id="c1",
+                        metadata=DataChunk(type="data-undeclared", data={}),
+                    ),
+                    ModelSettingsDeltaPart(settings={"thinking": "medium"}, top_level=True),
                     RetryFeedbackPart("Answer.", retry=RetryInfo(cause="no_output")),
                 ]
             ),
@@ -1097,6 +1113,7 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
     # The turn folds into its first response, as it streamed, and the request
     # holding only a tool return and harness feedback emits no UIMessage.
     assert [msg.id for msg in ui] == [str(label_id("n1")), str(label_id("n2"))]
+    assert [part.type for part in ui[0].parts] == ["text"]
 
     answer = ui[1]
     assert [part.type for part in answer.parts] == ["tool-t", "text"]
@@ -1127,3 +1144,18 @@ async def test_a_compaction_streams_as_the_part_a_reload_shows() -> None:
     ]
     assert shown == {"type": "data-compaction", "data": {"content": "the gist"}}
     assert live == [shown]
+
+
+async def test_only_declared_data_parts_stream() -> None:
+    """A data part the client does not declare stays server side, as on reload."""
+
+    async def chunks() -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type="data-model-settings-delta", data={})
+        yield DataChunk(type="data-compaction", data={"content": "gist"})
+
+    body = "".join(
+        [str(chunk) async for chunk in stream_response(chunks()).body_iterator]
+    )
+
+    assert "data-compaction" in body
+    assert "data-model-settings-delta" not in body

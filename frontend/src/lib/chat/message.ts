@@ -18,6 +18,7 @@ type ChatMessageMetadata = z.infer<typeof ChatMessageMetadataSchema>;
 
 /**
  * The `data-*` parts the backend streams, keyed by name without the prefix.
+ * Mirrors `CLIENT_DATA_TYPES` in `backend/src/hivegent/server/vercel.py`, which withholds every other one.
  *
  * `compaction` carries the summary that replaced the history before it, live and after a reload.
  * Its data may hold more keys, but only `content` is meant for display.
