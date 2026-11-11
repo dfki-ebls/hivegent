@@ -36,7 +36,7 @@ type ChatDataTypes = {
 /** The message type used throughout the chat, carrying its metadata and data part shapes. */
 export type ChatMessage = UIMessage<ChatMessageMetadata, ChatDataTypes>;
 
-/** What a stored message is validated with, tool parts stay untyped. */
+/** What a stored or streamed message is validated with, tool parts stay untyped. */
 export const messageSchemas = {
   // User messages and earlier responses carry none, which the backend sends as null.
   metadataSchema: ChatMessageMetadataSchema.nullish().transform(

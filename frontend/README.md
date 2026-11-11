@@ -11,6 +11,7 @@ A new chat is `/conversations/<fresh uuid>`, `/` redirects there, and its first 
 Another user's id answers 404, which the route loader turns into the not-found screen (`orNotFound`).
 
 The route loader reads the stored messages afresh on every visit, validated by `validateUIMessages` with the metadata and data part schemas of `lib/chat/message.ts` (tool parts stay untyped).
+The `Chat` validates streamed messages with the same schemas, though the SDK passes a streamed data part it has no schema for, so the backend withholds every data part these schemas do not declare.
 `ChatLayout` is keyed by the conversation id and creates one `Chat` from them (`useHivegentChat`), which owns the messages from then on and stops when the conversation is left.
 
 The backend owns history as a message tree.

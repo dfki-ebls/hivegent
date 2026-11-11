@@ -14,7 +14,7 @@ import {
 import { buildLlmConfig } from "@/api/settings";
 import { buildToolsPayload } from "@/api/tools";
 import { placeCompactions, shouldContinueRun } from "@/lib/chat/chat-utils";
-import type { ChatMessage } from "@/lib/chat/message";
+import { type ChatMessage, messageSchemas } from "@/lib/chat/message";
 import { SubagentLive } from "@/lib/chat/subagent";
 import { useComposerStore } from "@/stores/composer-store";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
@@ -118,6 +118,9 @@ function createChat(
     }),
     // The server stores every user message under the id it was sent with.
     generateId: () => crypto.randomUUID(),
+    // Streamed messages are validated like stored ones.
+    messageMetadataSchema: messageSchemas.metadataSchema,
+    dataPartSchemas: messageSchemas.dataSchemas,
     sendAutomaticallyWhen: shouldContinueRun,
     onData: (part) => {
       if (part.type === "data-subagent") subagents.update(part.data);
