@@ -46,7 +46,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
-          semantic_version: 25
+          semantic_version: 26
           extra_plugins: |
             @cihelper/semanticrelease-plugin-uv@1
             @semantic-release/changelog@6
