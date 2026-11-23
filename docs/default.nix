@@ -2,9 +2,12 @@
   lib,
   stdenvNoCC,
   writeShellApplication,
-  python313,
+  python314,
   mdbook,
   mdbook-mermaid,
+  # The handbook documents a release, so it carries that release's version,
+  # which semantic-release bumps in the backend's `pyproject.toml`.
+  version,
   # Base path the book is hosted under, must start and end with "/". Sets
   # mdbook's `site-url` so absolute references (canonical links, the 404 page)
   # resolve when the book is mounted on a subpath such as "/docs/" behind Caddy
@@ -14,9 +17,7 @@
 }:
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "hivegent-docs";
-  # The one package with no manifest (`pyproject.toml`, `package.json`) to take
-  # its version from.
-  version = "0.0.1";
+  inherit version;
   nativeBuildInputs = [
     mdbook
     mdbook-mermaid
@@ -71,7 +72,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   passthru.serve = writeShellApplication {
     name = "serve";
-    runtimeInputs = [ python313 ];
+    runtimeInputs = [ python314 ];
     text = ''
       python -m http.server \
         --bind 127.0.0.1 \

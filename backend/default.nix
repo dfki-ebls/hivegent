@@ -2,13 +2,12 @@
   lib,
   stdenv,
   callPackage,
-  python313,
+  python314,
   uv2nix,
   pyproject-nix,
   pyproject-build-systems,
   makeBinaryWrapper,
   cacert,
-  autoAddDriverRunpath,
   jq,
   pandoc,
   poppler-utils,
@@ -24,69 +23,79 @@
   # tools (verified: gcc and openssl suffice), so enabling this puts them
   # on the wrapper's PATH.  The toolchain must stay ABI-compatible with
   # the torch wheels pinned in uv.lock, which is why the switch lives here
-  # and not in deployments.  The GPU path additionally relies on the
-  # triton wheel already present in the closure.  Disabled by default:
+  # and not in deployments.  Disabled by default:
   # eager inference is fast enough for these small models, and compilation
   # would otherwise be repaid on every service restart.  Only honored on
-  # Linux — inductor is untested on darwin dev machines and the deployment
+  # Linux, inductor is untested on darwin dev machines and the deployment
   # target is Linux.
   enableTorchCompile ? false,
+  # Project directories of plugins, Python packages with a `pyproject.toml` that
+  # advertise `hivegent.plugins` entry points.  Each joins the backend's venv,
+  # so it runs on the backend's interpreter, and they load only once
+  # `plugins.enabled` names them.
+  plugins ? [ ],
 }:
 let
   torchCompile = enableTorchCompile && stdenv.hostPlatform.isLinux;
   workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
-  projectOverlay = workspace.mkPyprojectOverlay {
-    sourcePreference = "wheel";
-  };
-  patchelfOverlay =
-    final: prev:
-    let
-      names =
-        lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev)
-        ++ lib.filter (name: prev ? ${name}) [
-          "torch"
-          "torchvision"
-          "triton"
-        ];
-    in
-    lib.genAttrs names (
-      name:
-      prev.${name}.overrideAttrs (old: {
-        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ autoAddDriverRunpath ];
-        autoPatchelfIgnoreMissingDeps = [
-          # NVIDIA driver lib, the only one injected at runtime (autoAddDriverRunpath)
-          "libcuda.so.1"
-          # bundled CUDA runtime + torch libs, resolved from the merged virtualenv
-          "libcudart.so.*"
-          "libcublas.so.*"
-          "libcublasLt.so.*"
-          "libcudnn.so.*"
-          "libcufft.so.*"
-          "libcufile.so.*"
-          "libcupti.so.*"
-          "libcurand.so.*"
-          "libcusolver.so.*"
-          "libcusparse.so.*"
-          "libcusparseLt.so.*"
-          "libnvrtc.so.*"
-          "libnvJitLink.so.*"
-          "libnccl.so.*"
-          "libnvshmem_host.so.*"
-          "libc10*.so"
-          "libtorch*.so"
-          # optional NVSHMEM/cuFile transports (RDMA/UCX/libfabric/MPI), not provided
-          "libibverbs.so.*"
-          "librdmacm.so.*"
-          "libmlx5.so.*"
-          "libucp.so.*"
-          "libucs.so.*"
-          "libfabric.so.*"
-          "libmpi.so.*"
-          "liboshmem.so.*"
-          "libpmix.so.*"
-        ];
-      })
+  inherit (pyproject-nix.lib)
+    pep440
+    pep508
+    pep621
+    pypa
+    ;
+  # A plugin joins the venv and takes its dependencies from the backend's own
+  # resolution, so one the backend lacks or holds at a version the plugin
+  # refuses stops the evaluation, and a module clashing with another package
+  # fails the venv's collision check.  A plugin's dependency the backend lacks
+  # is added to the backend's `pyproject.toml` and lock.
+  pluginProjects = map (
+    projectRoot: pyproject-nix.lib.project.loadPyproject { inherit projectRoot; }
+  ) plugins;
+  pluginName = project: pypa.normalizePackageName project.pyproject.project.name;
+  pluginOverlay =
+    final: _prev:
+    lib.listToAttrs (
+      map (
+        project:
+        lib.nameValuePair (pluginName project) (
+          final.callPackage (
+            {
+              stdenv,
+              pyprojectHook,
+              resolveBuildSystem,
+            }:
+            stdenv.mkDerivation (
+              pyproject-nix.build.lib.renderers.mkDerivation {
+                inherit project;
+                environ = pep508.mkEnviron final.python;
+              } { inherit pyprojectHook resolveBuildSystem; }
+            )
+          ) { }
+        )
+      ) pluginProjects
     );
+  pluginConflicts =
+    project:
+    lib.concatMap
+      (
+        dep:
+        let
+          name = pypa.normalizePackageName dep.name;
+          held = pythonSet.${name};
+          version = pep440.parseVersion held.version;
+        in
+        if !(pythonSet ? ${name}) then
+          [ "${pluginName project} needs ${name}, which the backend does not install" ]
+        else
+          lib.optional (
+            !lib.all (cond: pep440.comparators.${cond.op} version cond.version) dep.conditions
+          ) "${pluginName project} refuses ${name} ${held.version}"
+      )
+      (pep621.filterDependenciesByEnviron (pep508.mkEnviron pythonSet.python) [ ] project.dependencies)
+      .dependencies;
+  venvDeps = workspace.deps.optionals // lib.genAttrs (map pluginName pluginProjects) (_: [ ]);
+  projectOverlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
   packageOverlay = final: prev: {
     # Built from the sdist (darwin, see `pyproject.toml`), tesserocr resolves the
     # libraries it links through `pkg-config tesseract lept` rather than bundling
@@ -105,7 +114,8 @@ let
     );
     # `license-files` in `pyproject.toml` reaches the repo-level license
     # and additional terms through symlinks, and the tests read the shared
-    # RAGold schema, so the build source must span the repo root.
+    # RAGold schema and the turn fixtures the frontend replays, so the build
+    # source must span the repo root.
     hivegent-backend = prev.hivegent-backend.overrideAttrs (
       finalAttrs: old: {
         src = lib.fileset.toSource {
@@ -115,6 +125,7 @@ let
             ../LICENSE
             ../TERMS
             ../schemas/ragold.json
+            ../frontend/src/test/fixtures/turns
           ];
         };
         sourceRoot = "${finalAttrs.src.name}/backend";
@@ -155,14 +166,14 @@ let
     );
   };
   baseSet = callPackage pyproject-nix.build.packages {
-    python = python313;
+    python = python314;
   };
   pythonSet = baseSet.overrideScope (
     lib.composeManyExtensions [
       pyproject-build-systems.overlays.wheel
       projectOverlay
-      patchelfOverlay
       packageOverlay
+      pluginOverlay
     ]
   );
   mkVenv =
@@ -173,29 +184,35 @@ let
     # with nothing depending on it.
     (pythonSet.mkVirtualEnv "${name}-${pythonSet.hivegent-backend.version}" deps).overrideAttrs (_: {
       venvIgnoreCollisions = [
-        "${python313.sitePackages}/cv2/*"
+        "${pythonSet.python.sitePackages}/cv2/*"
       ];
     });
   inherit (callPackage pyproject-nix.build.util { }) mkApplication;
 
-  venv = mkVenv "hivegent-env" workspace.deps.optionals;
+  venv =
+    let
+      conflicts = lib.concatMap pluginConflicts pluginProjects;
+    in
+    lib.throwIf (conflicts != [ ]) "Plugin dependency conflicts: ${lib.concatStringsSep ", " conflicts}"
+      (mkVenv "hivegent-env" venvDeps);
 
   # Every Python dependency as its own uv2nix derivation, i.e. what the venv
   # symlinks into.  Neither it nor `venv` is computable outside this scope.
-  venvPackages = pythonSet.resolveVirtualEnv workspace.deps.optionals;
+  venvPackages = pythonSet.resolveVirtualEnv venvDeps;
 
   app = mkApplication {
     inherit venv;
     package = pythonSet.hivegent-backend;
   };
 
-  # - jq, poppler-utils, ripgrep: used by `hivegent/subprocesses/` wrappers.
+  # - jq, ripgrep: used by `exar.subprocess`, through the `Ripgrep` engine of `exar.tools.files.Grep` and `exar.tools.files.Jq`.
+  # - poppler-utils: `pdftotext`, which exar invokes for PDFs.
   # - pandoc is left out: it links the GPL-2.0-only texmath and skylighting,
   #   which the flake could not serve as source under GPL-3.0 (`nix/notices.nix`).
   #   Its converter stays, tested against the binary but unavailable in builds.
   # - poppler-utils (pdftotext): PDF text-recovery fallback for legacy PDFs whose
   #   fonts carry no ToUnicode CMap, which docling's backend dumps as raw glyph
-  #   names — poppler reconstructs the text from the glyph-name convention.
+  #   names, poppler reconstructs the text from the glyph-name convention.
   runtimeInputs = [
     jq
     poppler-utils
@@ -217,7 +234,7 @@ app.overrideAttrs (oldAttrs: {
   };
   # tesserocr (docling OCR) and kreuzberg link their own libtesseract but
   # carry no language data; both resolve it from TESSDATA_PREFIX at runtime
-  # (see `nix/tessdata.nix`) — the tesseract CLI itself is not shipped.
+  # (see `nix/tessdata.nix`), the tesseract CLI itself is not shipped.
   #
   # DOCLING_INFERENCE_COMPILE_TORCH_MODELS tracks `enableTorchCompile`:
   # without the toolchain on PATH, docling's default of compiling its torch
@@ -236,11 +253,14 @@ app.overrideAttrs (oldAttrs: {
     # `nix/sbom.nix` names the SBOM's root component from it, since a venv scan
     # describes the dependencies and not the project they belong to.
     pyproject = ./pyproject.toml;
+    # The interpreter the venv runs on.
+    inherit (pythonSet) python;
     inherit
       runtimeInputs
       tessdata
       venv
       venvPackages
+      plugins
       ;
     enableTorchCompile = torchCompile;
   };

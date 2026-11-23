@@ -8,6 +8,7 @@
     "frontend/src/shadcn.css",
     "frontend/src/typeset.css",
     "frontend/src/**/*.gen.ts",
+    "frontend/src/test/fixtures/**",
     "schemas/ragold.json"
   ]
 }

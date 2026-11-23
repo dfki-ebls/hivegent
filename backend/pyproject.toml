@@ -3,43 +3,43 @@ name = "hivegent-backend"
 version = "0.0.1"
 description = "Agentic system for non-expert users to interact with LLMs guided by experience"
 readme = "README.md"
-requires-python = ">=3.13,<4"
+requires-python = ">=3.14,<4"
 license = "MIT"
 license-files = ["LICENSE", "TERMS"]
 authors = [{ name = "Mirko Lenz", email = "mirko@mirkolenz.com" }]
 dependencies = [
   "alembic>=1,<2",
-  "cbrkit[http,openai,sql,pgvector]>=1.5.6,<2",
+  "cachetools>=8,<9",
+  "cbrkit[bpmn,http,pgvector,pydantic-ai,transformers]",
   "chonkie>=1,<2",
   "cryptography>=50,<51",
-  "fastapi[standard]>=0.135,<1",
-  "fastexcel>=0.20,<1",
-  "fastmcp>=4.0.0b1,<5",
-  "firecrawl-anydoc>=0.2,<0.3",
-  "frozendict>=2.4.7",
+  "exar[anydoc,cbrkit,chonkie,eval,media,pdf-inspector,table]",
+  "fastapi[standard]>=0.163,<0.164",
+  "fastmcp>=4,<5",
+  "frozendict>=2,<3",
   "httpx2>=2,<3",
   "joserfc>=1,<2",
   "logfire>=5,<6",
   "markdown-it-py>=4,<5",
   "markdownify>=1,<2",
   "openai>=3,<4",
-  "opencv-python-headless>=5,<6",
   "opentelemetry-exporter-otlp-proto-http>=1,<2",
-  "opentelemetry-instrumentation-fastapi>=0.60b1",
-  "pdf-inspector>=1,<2",
+  "opentelemetry-instrumentation-fastapi>=0.66b0,<0.67",
   "pillow>=13,<14",
   "polars>=2,<3",
   "psycopg[binary]>=3,<4",
-  "pydantic-ai-slim[ui,openai,mcp]>=2.59,<3",
+  "pydantic-ai-harness>=0.68,<0.69",
+  "pydantic-ai-slim[ui,openai,mcp]>=2,<3",
   "pydantic-monty>=1,<2",
   "pydantic-settings>=2,<3",
-  "pypdfium2>=5,<6",
-  "pyspellchecker>=0.9,<1",
-  "sentence_transformers>=6,<7",
+  "pyspellchecker>=0.9,<0.10",
+  "pyyaml>=6,<7",
   "sqlalchemy[asyncio]>=2,<3",
+  # Transitive via cbrkit and exar, direct only so `tool.uv.sources` applies.
+  "torch>=2,<3",
   "trafilatura>=2,<3",
-  "typer>=0.20,<1",
-  "uvicorn[standard]>=0.40,<1",
+  "typer>=0.27,<0.28",
+  "uvicorn[standard]>=0.54,<0.55",
 ]
 
 [project.scripts]
@@ -47,28 +47,24 @@ hivegent = "hivegent.cli:app"
 
 [project.optional-dependencies]
 all = ["hivegent-backend[docling,pdf-oxide,semantic]"]
-# code = ["chonkie[code]>=1,<2"]
-# marker = ["marker-pdf[full]>=1,<2"]
-# mineru = ["mineru[all]>=3,<4"]
-docling = ["docling>=2,<3", "tesserocr>=2,<3"]
-kreuzberg = ["kreuzberg>=4,<5"]
-markitdown = ["markitdown[docx,outlook,pdf,pptx,xls,xlsx]>=0.1,<1"]
-pdf-oxide = ["pdf_oxide>=0.3,<1"]
-semantic = ["chonkie[semantic]>=1,<2"]
+docling = ["exar[docling]", "torchvision>=0.29,<0.30"]
+kreuzberg = ["exar[kreuzberg]"]
+markitdown = ["exar[markitdown]"]
+pdf-oxide = ["exar[pdf-oxide]"]
+semantic = ["exar[semantic]"]
 
 [dependency-groups]
 dev = [
-  "dirty-equals>=0.10,<1",
-  "inline-snapshot>=0.30,<1",
+  "dirty-equals>=0.11,<0.12",
+  "inline-snapshot>=0.36,<0.37",
   "jsonschema>=4,<5",
   "openpyxl>=3,<4",
-  "pydantic-evals>=2,<3",
   "pytest>=9,<10",
   "pytest-asyncio>=1,<2",
 ]
 
 [build-system]
-requires = ["uv-build>=0.11,<1"]
+requires = ["uv-build>=0.13,<0.14"]
 build-backend = "uv_build"
 
 [tool.alembic]
@@ -89,7 +85,7 @@ enableExperimentalFeatures = true
 
 [tool.logfire]
 # `configure_observability` is a no-op unless an OTLP endpoint or
-# `LOGFIRE_TOKEN` is set; suppress the noisy warning otherwise.
+# `logfire.token` is set, suppress the noisy warning otherwise.
 ignore_no_config = true
 
 [tool.pytest]
@@ -110,17 +106,24 @@ asyncio_mode = "auto"
 [tool.ruff]
 src = ["src"]
 
+# Ruff only recognizes a pydantic model that subclasses `BaseModel` within the
+# same file, so it flags the mutable defaults of the settings sections.
+[tool.ruff.lint.per-file-ignores]
+"src/hivegent/config/*.py" = ["RUF012"]
+
 # The distribution is named for the artifact it ships, the import package for
 # the system it belongs to, so the module has to be named rather than derived.
 [tool.uv.build-backend]
 module-name = "hivegent"
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.exclude-newer-package]
 cbrkit = false
-certifi = "1 day"
-pydantic-ai-slim = "1 day"
-pydantic-graph = "1 day"
-pydantic-evals = "1 day"
+exar = false
 
 [tool.uv.extra-build-dependencies]
 antlr4-python3-runtime = ["setuptools"]
@@ -132,4 +135,10 @@ pylatexenc = ["setuptools"]
 tesserocr = ["setuptools", "cython"]
 
 [tool.uv.sources]
-# cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
+# PyPI's Linux wheels bundle CUDA, macOS has only PyPI's CPU and MPS builds.
+torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+torchvision = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+# The owner's checkouts until cbrkit 2 and exar are released, which the nix
+# build then needs, as it cannot reach these paths.
+cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
+exar = { path = "../../../wi2trier/exar", editable = true }
