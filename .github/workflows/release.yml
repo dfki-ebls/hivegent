@@ -31,15 +31,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: wimpysworld/nothing-but-nix@v12
-      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: $/.github/actions/setup-nix
         with:
-          extra-conf: |
-            accept-flake-config = true
-      - uses: cachix/cachix-action@v17
-        with:
-          name: dfki-ebls
-          authToken: ${{ secrets.CACHIX_TOKEN }}
+          cachix-token: ${{ secrets.CACHIX_TOKEN }}
       - run: nix profile install .#release-env
       - uses: cycjimmy/semantic-release-action@v8
         id: semanticrelease
@@ -55,40 +49,82 @@ jobs:
             semantic-release-major-tag@0.3
             conventional-changelog-conventionalcommits@9
 
-  # Multi-arch container publish to GHCR. Disabled for now: to enable, add a
-  # `docker-manifest` output to the flake (flocken's `mkDockerManifest` over the
-  # x86_64/aarch64 `docker` image streams) and replace `if: false` with the
-  # release gate shown after the `#`.
+  # The release commit bumps every version, so its checks build the images and
+  # SBOMs again, natively per platform, which leaves the publish job only substitutes.
+  check-release:
+    uses: $/.github/workflows/check.yml
+    needs: release
+    if: ${{ needs.release.outputs.released == 'true' }}
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.release.outputs.git-head }}
+    secrets:
+      CACHIX_TOKEN: ${{ secrets.CACHIX_TOKEN }}
+
   deploy-docker:
     name: Docker publish
     runs-on: ubuntu-latest
-    needs: release
-    if: false # ${{ needs.release.outputs.released == 'true' }}
+    needs:
+      - release
+      - check-release
     permissions:
       contents: read
-      packages: write # push the container image to GHCR
+      packages: write # push the image index to GHCR
+      id-token: write # sign with keyless cosign and attest the provenance
+      attestations: write # store the provenance attestation
     environment:
       name: release
-      url: https://ghcr.io/dfki-ebls/hivegent
+      url: https://github.com/dfki-ebls/hivegent/pkgs/container/hivegent
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
           ref: ${{ needs.release.outputs.git-head }}
-      - uses: wimpysworld/nothing-but-nix@v12
-      - uses: docker/setup-qemu-action@v4
+      - uses: $/.github/actions/setup-nix
         with:
-          platforms: arm64
-      - uses: DeterminateSystems/nix-installer-action@v23
-        with:
-          extra-conf: |
-            extra-platforms = aarch64-linux
-            accept-flake-config = true
-      - uses: cachix/cachix-action@v17
-        with:
-          name: dfki-ebls
-          authToken: ${{ secrets.CACHIX_TOKEN }}
-      - run: nix run .#docker-manifest --impure
+          cachix-token: ${{ secrets.CACHIX_TOKEN }}
+      - run: nix run .#docker-manifest
+        id: manifest
         env:
           VERSION: ${{ needs.release.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.manifest.outputs.name }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+  build-docs:
+    name: Docs build
+    runs-on: ubuntu-latest
+    needs: release
+    if: ${{ needs.release.outputs.released == 'true' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release.outputs.git-head }}
+      - uses: $/.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_TOKEN }}
+      - run: nix build .#docs-pages
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ./result
+
+  deploy-docs:
+    name: Docs publish
+    runs-on: ubuntu-latest
+    needs: build-docs
+    permissions:
+      pages: write # deploy the handbook to GitHub Pages
+      id-token: write # authenticate the deployment
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v5
+        id: deploy

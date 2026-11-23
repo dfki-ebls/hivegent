@@ -2,6 +2,11 @@ name: check
 on:
   pull_request:
   workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check instead of the triggering one
+        type: string
+        default: ""
     secrets:
       CACHIX_TOKEN:
         required: false
@@ -10,26 +15,32 @@ on:
       - main
 permissions: {}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
   cancel-in-progress: true
 jobs:
   check:
-    name: Flake check
-    runs-on: ubuntu-latest
+    name: Flake check (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: wimpysworld/nothing-but-nix@v12
-      - uses: DeterminateSystems/nix-installer-action@v23
+          ref: ${{ inputs.ref }}
+      - uses: $/.github/actions/setup-nix
         with:
-          extra-conf: |
-            accept-flake-config = true
-            log-lines = 1000
-      - uses: cachix/cachix-action@v17
-        with:
-          name: dfki-ebls
-          authToken: ${{ secrets.CACHIX_TOKEN }}
-      - run: nix flake check --show-trace --no-build
+          # A pull request only reads the cache, so it cannot plant a store path that a release substitutes.
+          cachix-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_TOKEN || '' }}
+      # Builds only the checks missing from the cache, and outside pull requests pushes their closures.
+      - run: >-
+          nix run --inputs-from . nixpkgs#nix-fast-build -- --skip-cached --no-nom --no-link
+          ${{ github.event_name != 'pull_request' && '--cachix-cache=dfki-ebls' || '' }}
