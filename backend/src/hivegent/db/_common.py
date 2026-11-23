@@ -1,6 +1,6 @@
 """Small helpers shared across repositories.
 
-Strictly cross-cutting utilities only — anything that touches a single
+Strictly cross-cutting utilities only. Anything that touches a single
 identity table lives in that table's own module (:mod:`.users`,
 :mod:`.groups`, …).
 """

@@ -31,7 +31,7 @@ async def write_maintenance_enabled(enabled: bool) -> None:
     """Persist the maintenance flag, materialising the singleton row if needed.
 
     Atomic ``INSERT ... ON CONFLICT DO UPDATE`` per the repository
-    convention — concurrent toggles cannot race a read-then-write.
+    convention, so concurrent toggles cannot race a read-then-write.
     """
     async with session() as s:
         stmt = pg_insert(ApplicationSettings).values(id=1, maintenance_enabled=enabled)

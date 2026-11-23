@@ -1,8 +1,8 @@
 """add application_settings singleton for global toggles
 
 New ``application_settings`` table (singleton row, ``id = 1``) holding
-operator-set switches that affect the entire instance — currently only
-``maintenance_enabled``.  Every toggle column carries a server default
+operator-set switches that affect the entire instance (currently only
+``maintenance_enabled``).  Every toggle column carries a server default
 so an absent or pre-existing row always reads as all-defaults.
 
 Revision ID: c3d4e5f6a7b8

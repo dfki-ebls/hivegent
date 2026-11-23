@@ -6,7 +6,7 @@ export type ChunkPosition =
   | { type: "line_range"; startLine: number; endLine: number }
   | { type: "full_document" }
   | { type: "web_result"; url: string }
-  /** Unlocated span — resolve by searching `FetchedChunk.content` in the document. */
+  /** Unlocated span, resolve by searching `FetchedChunk.content` in the document. */
   | { type: "text" };
 
 /** The model tool a fetched chunk came from. */
@@ -28,7 +28,7 @@ export interface FetchedChunk {
    * Exact character offsets of the chunk in the original document.
    * Populated for semantic-search chunks so the canvas can highlight
    * the precise span rather than rounding to whole lines.  Never sent
-   * to the LLM — citations rely on {@link ChunkPosition} line numbers.
+   * to the LLM, citations rely on {@link ChunkPosition} line numbers.
    */
   startIndex?: number;
   endIndex?: number;

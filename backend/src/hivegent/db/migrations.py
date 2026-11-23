@@ -2,7 +2,7 @@
 
 Exposes :func:`apply_migrations`, called from the FastAPI lifespan and
 the ``hivegent migrate`` CLI.  Builds an Alembic ``Config`` in code so
-no external ``alembic.ini`` is required at runtime — the same
+no external ``alembic.ini`` is required at runtime, and the same
 ``env.py`` shipped inside the package handles both CLI revisions and
 runtime upgrades, and ``resolve_database_url`` keeps a single source
 of truth for the target database.

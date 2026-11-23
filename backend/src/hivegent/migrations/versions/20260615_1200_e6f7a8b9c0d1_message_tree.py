@@ -4,8 +4,8 @@ Replaces the linear ``(conversation_id, idx)`` message store with a tree: each
 message has a global ``id`` and a nullable ``parent_id``.  This lets edits and
 regenerations fork and preserve prior branches instead of overwriting them and
 makes the database the source of truth for history.  The active branch is just
-the newest one — the active path is the conversation's most recently created
-message walked up to the root — so no branch pointer is stored and the
+the newest one.  The active path is the conversation's most recently created
+message walked up to the root, so no branch pointer is stored and the
 ``(conversation_id, created_at)`` index serves the newest-leaf lookup.
 
 The request/response discriminator is not stored: it already lives in the

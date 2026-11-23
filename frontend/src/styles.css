@@ -13,7 +13,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /* Applies only when the viewport is tall enough that a pinned header still
-   leaves room for content — used to disable sticky headers on short windows. */
+   leaves room for content, used to disable sticky headers on short windows. */
 @custom-variant tall (@media (min-height: 640px));
 
 @theme inline {

@@ -4,7 +4,7 @@
  * The active tab is persisted to sessionStorage so a reload keeps the user on
  * the view they were last looking at. Navigation, by contrast, is app-driven:
  * opening a conversation surfaces its Context, while a new one starts on
- * Documents. `openChat` reconciles the two — a reload restores the remembered
+ * Documents. `openChat` reconciles the two, a reload restores the remembered
  * tab, a real in-session navigation surfaces the destination's primary view.
  *
  * Adding a future view (e.g. a graph or database panel) only touches the schema

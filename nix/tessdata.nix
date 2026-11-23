@@ -4,7 +4,7 @@
   linkFarm,
 }:
 # Tesseract language models for the OCR engines linked into the backend
-# (tesserocr for docling, kreuzberg) — both resolve this directory via
+# (tesserocr for docling, kreuzberg), both resolve this directory via
 # TESSDATA_PREFIX at runtime.  The models are the official quantized LSTM
 # ones from tesseract-ocr/tessdata_fast (~2x faster recognition than the
 # combined tessdata that nixpkgs ships); osd backs the orientation

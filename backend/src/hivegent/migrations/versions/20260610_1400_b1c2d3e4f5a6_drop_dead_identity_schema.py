@@ -7,7 +7,7 @@ identity (``users.email``, ``users.display_name``), group identity
 the OIDC token and are reconstructed per request, never persisted.
 
 Safe by construction: every object dropped here was always empty/NULL,
-so no data is lost.  Idempotent across deployments — a freshly created
+so no data is lost.  Idempotent across deployments.  A freshly created
 database runs the baseline (which still creates these objects) and then
 this revision drops them, converging to the same schema as an existing
 database that only runs this revision.
