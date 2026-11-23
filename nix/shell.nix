@@ -4,7 +4,6 @@
   backend,
   mkShell,
   nodejs,
-  python313,
   postgresql_18,
   mdbook,
   mdbook-mermaid,
@@ -12,6 +11,8 @@
   i18next-cli,
   git,
   lib,
+  stdenv,
+  formats,
 }:
 mkShell {
   shellHook = ''
@@ -20,7 +21,7 @@ mkShell {
     # --- Backend ---
     # Anchored to the repo root so the socket path matches the services-flake
     # `socketDir` regardless of the current directory.  libpq treats a relative
-    # host as a TCP name, so the socket dir must be absolute — hence $ROOT_DIR
+    # host as a TCP name, so the socket dir must be absolute, hence $ROOT_DIR
     # rather than a hardcoded path.
     export HIVEGENT_DB__URL="postgresql+psycopg:///hivegent?host=$ROOT_DIR/data/db"
     uv --directory "$ROOT_DIR/backend" sync --all-extras
@@ -35,37 +36,61 @@ mkShell {
     npm --prefix "$ROOT_DIR/bridge" install
   '';
 
-  # === Backend (HIVEGENT_* pydantic settings + Python/OCR toolchain) ===
-  HIVEGENT_ACCEPT_TERMS = "1";
-  HIVEGENT_AUTH__ENABLE = "0";
-  HIVEGENT_AUTH__ALLOW_DISABLED = "1";
-  HIVEGENT_LOGFIRE__ENABLE = "0";
-  HIVEGENT_LLM__MODEL = "qwen3.6-35b-a3b";
-  HIVEGENT_LLM__AUX_MODEL = "qwen3.5-0.8b";
-  HIVEGENT_LLM__BASE_URL = "http://localhost:18000/v1";
-  HIVEGENT_LLM__INFERENCE_PROVIDER = "llama.cpp";
-  # RAGold's dev server (`npm run dev` in the ragold repo).
-  HIVEGENT_RAGOLD__URL = "http://localhost:3002";
-  UV_PYTHON = lib.getExe python313;
+  # === Backend (config.toml like the NixOS module, HIVEGENT_* still override it) ===
+  HIVEGENT_CONFIG_FILE = (formats.toml { }).generate "hivegent-config.toml" {
+    accept_terms = true;
+    debug.enable = true;
+    llm = {
+      default = "qwen3.8-27b";
+      aux = "qwen3.6-35b-a3b";
+      providers.vllm = {
+        base_url = "http://localhost:18080/v1";
+        inference_provider = "vllm";
+      };
+      models = {
+        "qwen3.8-27b" = {
+          provider = "vllm";
+          model = "qwen3.8-27b";
+          reasoning = [
+            "low"
+            "medium"
+            "high"
+          ];
+          vision = true;
+        };
+        "qwen3.6-35b-a3b" = {
+          provider = "vllm";
+          model = "qwen3.6-35b-a3b";
+          vision = true;
+          chat = false;
+        };
+      };
+    };
+    # Monty measures CPU time on Linux alone.
+    sandbox.execution_clock = if stdenv.hostPlatform.isLinux then "cpu" else "wall";
+    # RAGold's dev server (`npm run dev` in the ragold repo).
+    ragold.url = "http://localhost:3002";
+  };
+  UV_PYTHON = lib.getExe backend.python;
   # tesserocr (in-process docling OCR) resolves tessdata from this prefix.
   TESSDATA_PREFIX = backend.tessdata;
   # Keep dev parity with the wrapped binary: torch.compile needs runtime
   # codegen tools the production sandbox lacks (see `backend/default.nix`).
   DOCLING_INFERENCE_COMPILE_TORCH_MODELS = "0";
 
-  # === Frontend (Vite) ===
-  VITE_FEATURE_ALL = "false";
-
-  # === Bridge (web-adapter debug against the auth-disabled backend; no OIDC/Teams) ===
-  HIVEGENT_URL = "http://127.0.0.1:8000";
-  BOT_USERNAME = "hivegent";
-  ENABLE_TEAMS = "false";
-  ENABLE_WEB = "true";
+  # === Bridge (web-adapter debug against `hivegent dev`; no OIDC/Teams) ===
+  BRIDGE_CONFIG_FILE = (formats.json { }).generate "bridge-config.json" {
+    backendUrl = "http://127.0.0.1:8000";
+    adapters = {
+      teams = false;
+      web = true;
+    };
+  };
 
   packages = [
     nodejs
     i18next-cli
-    python313
+    backend.python
     treefmt
     uv
     hivegent

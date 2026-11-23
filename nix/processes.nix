@@ -52,7 +52,7 @@
             command = ''
               exec ${lib.getExe pkgs.uv} \
                 --project backend \
-                run hivegent serve --host 127.0.0.1 --reload
+                run hivegent dev --reload
             '';
             # The dev stack owns the proxy port, so it also states the URL
             # rather than relying on the backend's compiled-in default.
@@ -66,7 +66,7 @@
             # Cadence mirrors the NixOS deployment's `/api/v1/health` check (Caddy's
             # `health_interval 10s` / `health_timeout 3s` in `nix/vhost.nix`), and
             # the 60 * 10s failure window matches the unit's `TimeoutStartSec = 600`
-            # (`nix/nixos/service.nix`) — keeping dev in line with prod also stops
+            # (`nix/nixos/service.nix`), keeping dev in line with prod also stops
             # the probe from flooding the logs with a request every second.
             readiness_probe = {
               http_get = {

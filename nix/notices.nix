@@ -18,8 +18,10 @@ linkFarm "hivegent-notices-${version}" {
   "usr/share/licenses" = "${spdx-license-list-data.text}/text";
   "${doc}/NOTICE" = writeText "NOTICE" ''
     Hivegent ${version} is licensed under the ${license.fullName} in LICENSE, with additional terms in TERMS.
-    Third-party components and their licenses are listed in the SBOM:
-      ${repo}/releases/download/v${version}/hivegent-${version}.cdx.json
+    Third-party components and their licenses are listed in the SBOM attested to this image:
+      cosign download attestation --platform linux/${stdenv.hostPlatform.go.GOARCH} \
+        --predicate-type https://cyclonedx.org/bom ghcr.io/dfki-ebls/hivegent:${version}
+    The SBOM of an image built locally is `nix build '${installable}.sbom'`.
     License texts are in /usr/share/licenses, the *.dist-info directories, and the web app at /licenses.txt.
 
     Corresponding source per GPL-3.0 section 6(d) is the repository at tag v${version}, whose lockfiles pin every component:

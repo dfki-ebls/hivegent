@@ -16,10 +16,8 @@
     perSystem@{ config }:
     { lib, config, ... }:
     let
-      caddy = config.services.hivegent.caddy;
-      # Slash-terminated handbook URL feeding both the book's `site-url` and the
-      # SPA's link, tracked from `caddy.docsPath`.
-      docsSite = "${caddy.docsPath}/";
+      # The book's `site-url`, tracked from `caddy.docsPath`.
+      docsSite = "${config.services.hivegent.caddy.docsPath}/";
     in
     {
       imports = [ ./nixos ];
@@ -27,24 +25,31 @@
         package = lib.mkDefault perSystem.config.packages.backend;
         bridge.package = lib.mkDefault perSystem.config.packages.bridge;
         egressProxy.package = lib.mkDefault perSystem.config.packages.smokescreen;
-        # Blank the URL when `caddy.docs` is null so the SPA hides the link.
-        caddy.frontend = lib.mkDefault (
-          perSystem.config.packages.frontend.override {
-            docsUrl = lib.optionalString (caddy.docs != null) docsSite;
-          }
-        );
+        caddy.frontend = lib.mkDefault perSystem.config.packages.frontend;
         caddy.docs = lib.mkDefault (perSystem.config.packages.docs.override { sitePath = docsSite; });
       };
     }
   );
+
+  # Independent instances on one host, each in a container running the module above.
+  flake.nixosModules.instances = import ./nixos/instances.nix inputs.self.nixosModules.default;
 
   perSystem =
     {
       lib,
       pkgs,
       config,
+      inputs',
       ...
     }:
+    let
+      mkSbom = pkgs.callPackage ./sbom.nix {
+        # bombon's own entry point, not its flake `lib`, which would evaluate a
+        # second nixpkgs instead of the one everything else here is built from.
+        bombon = import inputs.bombon { inherit pkgs; };
+        inherit (inputs) cyclonedx-spec;
+      };
+    in
     {
       devShells.default = pkgs.callPackage ./shell.nix {
         treefmt = config.treefmt.build.wrapper;
@@ -52,11 +57,22 @@
       };
       # Everything the flake builds is checked, derived from `packages` rather
       # than listed beside it so the two cannot drift: a package added below is
-      # built by CI without anyone remembering to name it here.  That covers
-      # `sbom`, whose build is the release's, so the closure a release needs is
-      # already in the binary cache by the time it runs.
+      # built by CI without anyone remembering to name it here.  Outputs CI must
+      # not build go to `legacyPackages` instead.
       checks = config.packages // {
         inherit (config.packages.backend.passthru.tests) pytest;
+      };
+      legacyPackages = {
+        # Pushes and signs the multi-platform image index, with each platform's
+        # SBOM attested to its image.  It spans systems, so it is no package.
+        docker-manifest = inputs'.flocken.legacyPackages.mkDockerManifest {
+          github.enable = true;
+          # Every system's image, each carrying its SBOM as `passthru.sbom`.
+          images = lib.catAttrs "docker" (lib.attrValues inputs.self.packages);
+          # `latest` and the version tags cover the release branch.
+          autoTags.branch = false;
+          cosign.enable = true;
+        };
       };
       packages = {
         backend = pkgs.callPackage ../backend {
@@ -65,14 +81,14 @@
         };
         frontend = pkgs.callPackage ../frontend { };
         bridge = pkgs.callPackage ../bridge { };
-        docs = pkgs.callPackage ../docs { };
+        docs = pkgs.callPackage ../docs {
+          inherit ((lib.importTOML ../backend/pyproject.toml).project) version;
+        };
         smokescreen = pkgs.callPackage ./smokescreen.nix { };
         tessdata = pkgs.callPackage ./tessdata.nix { };
-        sbom = pkgs.callPackage ./sbom.nix {
-          # bombon's own entry point, not its flake `lib`, which would evaluate a
-          # second nixpkgs instead of the one everything else here is built from.
-          bombon = import inputs.bombon { inherit pkgs; };
-          inherit (inputs) cyclonedx-spec;
+        # The release's SBOM, which describes the app, while each image carries
+        # its own as `passthru.sbom`.
+        sbom = mkSbom {
           inherit (config.packages)
             backend
             frontend
@@ -80,14 +96,15 @@
             smokescreen
             docs
             ;
-          docker = config.packages.docker or null;
         };
+        # The handbook as GitHub Pages serves it, under the repository's name.
+        docs-pages = config.packages.docs.override { sitePath = "/hivegent/"; };
         release-env = pkgs.buildEnv {
           name = "release-env";
-          paths = with pkgs; [
-            nodejs
-            python313
-            uv
+          paths = [
+            pkgs.nodejs
+            config.packages.backend.python
+            pkgs.uv
           ];
         };
       }
@@ -99,15 +116,27 @@
         # (`nix build .#packages.x86_64-linux.docker`).
         # `bridge` is threaded in but off by default; build the bridge-enabled
         # variant with `docker.override { enableBridge = true; }`.
-        docker = pkgs.callPackage ./docker.nix {
-          inherit (config.packages)
-            backend
-            frontend
-            docs
-            bridge
-            smokescreen
-            ;
-        };
+        # The SBOM is attached here, where `.override` re-applies it, so a
+        # variant such as the bridge-enabled one describes what it contains.
+        docker =
+          (pkgs.callPackage ./docker.nix {
+            inherit (config.packages)
+              backend
+              frontend
+              docs
+              bridge
+              smokescreen
+              ;
+          }).overrideAttrs
+            (
+              finalAttrs: prev: {
+                passthru = prev.passthru // {
+                  sbom = "${
+                    mkSbom (prev.passthru.components // { image = finalAttrs.finalPackage; })
+                  }/hivegent.cdx.json";
+                };
+              }
+            );
       };
     };
 }

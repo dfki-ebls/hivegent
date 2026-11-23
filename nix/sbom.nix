@@ -1,5 +1,6 @@
-# CycloneDX SBOMs for the artifacts this repo ships, one document per package,
-# since a bill of materials describes one product.
+# CycloneDX SBOM of a shipped artifact, merged from one document per package.
+# Each artifact builds its own from the packages it ships, as `passthru.sbom`,
+# so an override of the artifact describes what it actually contains.
 {
   lib,
   bombon,
@@ -9,13 +10,15 @@
   runCommand,
   cyclonedx-gomod,
   cyclonedx-python,
+}:
+{
   backend,
   frontend,
-  bridge,
   smokescreen,
-  docs,
-  # The Linux-only image, or `null` where it cannot be built.
-  docker,
+  docs ? null,
+  bridge ? null,
+  # An image whose own contents are described as well.
+  image ? null,
 }:
 let
   buildSbom = pkgs.callPackage ./sbom { inherit cyclonedx-spec; };
@@ -154,17 +157,21 @@ let
     # The frontend declares what its bundle inlines as runtime dependencies,
     # Tailwind's CSS imports included. The bridge runs from its pruned `node_modules`.
     "components/frontend.cdx.json" = bombon.buildBom (npmSbom frontend) { };
-    "components/bridge.cdx.json" = bombon.buildBom (npmSbom bridge) { };
     "components/smokescreen.cdx.json" = bombon.buildBom (goSbom smokescreen) { };
+  }
+  // lib.optionalAttrs (docs != null) {
     "components/docs.cdx.json" = bombon.buildBom docs { };
   }
-  // lib.optionalAttrs (docker != null) {
+  // lib.optionalAttrs (bridge != null) {
+    "components/bridge.cdx.json" = bombon.buildBom (npmSbom bridge) { };
+  }
+  // lib.optionalAttrs (image != null) {
     # The image itself, whose runtime closure bombon reads from the derivation.
     # It describes only the store paths it can reach through `drvAttrs`, which
     # leaves out the components above with documents of their own and the
     # packages the image names only by store path, its `runtimeInputs`.
-    "components/image.cdx.json" = bombon.buildBom docker {
-      extraPaths = docker.runtimeInputs;
+    "components/image.cdx.json" = bombon.buildBom image {
+      extraPaths = image.runtimeInputs;
     };
   };
 in

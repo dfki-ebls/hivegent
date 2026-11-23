@@ -1,8 +1,7 @@
 # Shared systemd sandboxing baseline for the Hivegent units (backend, bridge).
 # Merge into a unit's `serviceConfig` with `//` and override the few knobs a
-# specific service needs (e.g. the backend sets `PrivateDevices = false` for its
-# CUDA models). Runtime/identity settings — `Type`, `Restart`, timeouts,
-# `DynamicUser`, `StateDirectory`, `ExecStart`, `SocketBindAllow` — stay per-unit.
+# specific service needs. Runtime/identity settings (`Type`, `Restart`, timeouts,
+# `DynamicUser`, `StateDirectory`, `ExecStart`, `SocketBindAllow`) stay per-unit.
 #
 # Deliberately no `MemoryDenyWriteExecute`: both services run interpreters/JITs
 # (CPython C extensions, the V8 JIT) that need writable+executable pages.
@@ -13,7 +12,6 @@
   AmbientCapabilities = "";
   NoNewPrivileges = true;
 
-  # Secure default; the backend overrides to `false` for GPU character devices.
   PrivateDevices = true;
   PrivateIPC = true;
   PrivateMounts = true;

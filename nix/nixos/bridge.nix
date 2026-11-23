@@ -1,7 +1,7 @@
 # Native NixOS deployment of the Hivegent chat bridge: a hardened systemd unit
 # running the Vercel Chat SDK service that relays between hivegent and external
-# chat platforms (Teams, Slack, ...). Optional and independent of the backend
-# unit; both share the Postgres server but not each other's schema.
+# chat platforms (Teams, Slack, ...). Optional, and ordered after the backend
+# unit when both run on one host, sharing its Postgres server but not its schema.
 {
   lib,
   pkgs,
@@ -19,6 +19,7 @@ let
 
   hardening = import ./hardening.nix;
   credentials = import ./credentials.nix lib "hivegent-bridge";
+  backendUnit = lib.optional config.services.hivegent.enable "hivegent.service";
 in
 {
   options.services.hivegent.bridge = {
@@ -56,23 +57,33 @@ in
       default = { };
       example = lib.literalExpression ''
         {
-          hivegentUrl = "http://127.0.0.1:8000";
+          backendUrl = "http://127.0.0.1:8000";
           oidc = {
             issuer = "https://auth.example.com";
             clientId = "hivegent-bot";
           };
           botUserName = "hivegent";
           adapters.teams = true;
+          teams = {
+            appId = "00000000-0000-0000-0000-000000000000";
+            tenantId = "00000000-0000-0000-0000-000000000000";
+            allowedTenants = [ "00000000-0000-0000-0000-000000000000" ];
+          };
         }
       '';
       description = ''
         Non-secret bridge configuration rendered to JSON in the Nix store and
-        passed via `BRIDGE_CONFIG_FILE`. Environment variables (see
-        `environment`) and `credentials` override individual keys.
+        passed via `BRIDGE_CONFIG_FILE`, which the bridge validates strictly.
+        `backendUrl` and `adapters.teams` are required, and `host` and `port`
+        come from the options of the same name.
 
-        Do NOT put secrets here — anything in this attrset lands in
-        `/nix/store`. Pass `OIDC_CLIENT_SECRET`, `POSTGRES_URL`, and the
-        `TEAMS_APP_*` values as `credentials`.
+        The Teams adapter refuses to start without `oidc` and a `teams`
+        section with a nonempty `allowedTenants`, the Entra tenant ids whose
+        activities it answers.
+
+        Do NOT put secrets here, anything in this attrset lands in
+        `/nix/store`. Pass `POSTGRES_URL`, `OIDC_CLIENT_SECRET`, and
+        `TEAMS_APP_PASSWORD` as `credentials`.
       '';
     };
 
@@ -80,8 +91,8 @@ in
       type = lib.types.attrsOf lib.types.str;
       default = { };
       description = ''
-        Plain environment variables set on the unit — non-secret overrides of
-        settings keys (e.g. `ENABLE_TEAMS`) or unrelated vars.
+        Plain environment variables set on the unit, the bridge reading none
+        but its secrets.
       '';
     };
 
@@ -91,13 +102,14 @@ in
       example = "/etc/hivegent/bridge.env";
       description = ''
         Shortcut for the unit's `EnvironmentFile=`, a `KEY=VALUE` file read at
-        start that overrides `environment` and `settings`.
+        start that overrides `environment`.
         Prefer `credentials` for secrets.
       '';
     };
 
     credentials = credentials.option ''
       {
+        POSTGRES_URL = "/run/secrets/hivegent-bridge-postgres-url";
         OIDC_CLIENT_SECRET = "/run/secrets/hivegent-bridge-oidc-client-secret";
         TEAMS_APP_PASSWORD = "/run/secrets/hivegent-bridge-teams-app-password";
       }
@@ -105,16 +117,23 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = lib.hasAttrByPath [ "adapters" "teams" ] cfg.settings;
+        message = "services.hivegent.bridge.settings.adapters.teams must be set.";
+      }
+    ];
+
     systemd.services.hivegent-bridge = {
       description = "Hivegent chat bridge";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      # The bridge checks its principal with the backend at startup, retrying while it boots.
+      after = [ "network.target" ] ++ backendUnit;
+      wants = backendUnit;
 
       environment = cfg.environment // {
         HOME = "/var/lib/hivegent-bridge";
         NODE_ENV = "production";
-        HOST = cfg.host;
-        PORT = toString cfg.port;
         BRIDGE_CONFIG_FILE = "${configFile}";
       };
 

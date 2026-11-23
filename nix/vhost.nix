@@ -1,6 +1,6 @@
 # Caddy site body shared by the NixOS vhost module (`nixos/caddy.nix`) and the
 # proxy Docker image (`docker.nix`).  It carries only what Hivegent itself
-# needs — reverse proxying the API, serving the SPA, and the security headers
+# needs, reverse proxying the API, serving the SPA, and the security headers
 # its OIDC/speech flows require.  Site-wide hardening such as geoblocking or
 # scanner honeypots is deployment policy and is injected verbatim through
 # `extraConfig`, so the same body backs both a hardened production vhost and a
@@ -21,38 +21,67 @@
   docs ? null,
   # URL prefix the handbook is mounted at, without a trailing slash.
   docsPath ? "/docs",
-  # Whether to expose the `/mcp` endpoint or answer it with 404.
-  enableMcp ? false,
   # Whether to emit HSTS (only meaningful when the vhost is served over TLS).
   enableHsts ? false,
+  # Origins (`scheme://host[:port]`) of the OIDC provider the SPA signs in with,
+  # which its Content-Security-Policy lets it fetch from and frame for silent
+  # session restoration. Required, since the backend always authenticates, and
+  # an entry may be a Caddy placeholder expanding to several.
+  idpOrigins,
   # Backend upload limits in bytes; the edge body caps are sized just above
   # them. Mirror the backend `limits.max_file_size_bytes` and
-  # `limits.max_collection_size_bytes` — the NixOS module passes
+  # `limits.max_collection_size_bytes`, the NixOS module passes
   # `services.hivegent.limits.*` so the enforcer and the cap always move
   # together; the defaults match the backend's own.
   maxFileSizeBytes ? 50 * 1024 * 1024,
   maxCollectionSizeBytes ? 512 * 1024 * 1024,
-  # Operator snippet placed before the route handlers — geoblocking, IP
+  # Operator snippet placed before the route handlers, geoblocking, IP
   # allow-lists, honeypots.  A blocked `handle` here wins over the API/SPA
   # handlers below because Caddy evaluates mutually-exclusive `handle` groups
   # in source order.
   extraConfig ? "",
 }:
+assert lib.assertMsg (idpOrigins != [ ]) "vhost.nix needs the identity provider's origins";
+assert lib.assertMsg (
+  lib.match "(/[^/]+)+" docsPath != null
+) "docsPath ${docsPath} must start with a slash and end without one";
 let
   # Edge body cap for a backend limit: 10% headroom absorbs multipart/form-data
   # framing (boundaries, headers, other form fields) so a legitimately sized
   # upload is never rejected at the edge, while an egregiously oversized one is
   # still refused before it spools. `request_body` reads a bare integer as bytes.
   edgeCap = limit: toString (limit + limit / 10);
+
+  # The SPA's policy: the one its build carries as a meta tag, plus what only a
+  # header can carry or only the deployment knows.
+  spaPolicy = lib.importJSON ../frontend/csp.json // {
+    default-src = [ "'self'" ];
+    connect-src = [ "'self'" ] ++ idpOrigins;
+    # oidc-spa restores sessions in a frame of the provider that returns to the
+    # app, and PDF previews are blob frames.
+    frame-src = [
+      "'self'"
+      "blob:"
+    ]
+    ++ idpOrigins;
+    frame-ancestors = [ "'self'" ];
+  };
+  spaCsp = lib.concatStringsSep "; " (
+    lib.mapAttrsToList (
+      directive: sources: lib.concatStringsSep " " ([ directive ] ++ sources)
+    ) spaPolicy
+  );
 in
 ''
   # oidc-spa restores sessions through a hidden same-origin iframe, so this
   # vhost must permit framing by itself for silent session restoration.
+  # Deleting `Server` defers this block until the response is written, so the
+  # policy is a fallback (`?`) that leaves those of the API and SPA in place.
   header {
     X-Content-Type-Options nosniff
     X-Frame-Options SAMEORIGIN
-    Referrer-Policy strict-origin-when-cross-origin
-    Content-Security-Policy "frame-ancestors 'self'"
+    Referrer-Policy no-referrer
+    ?Content-Security-Policy "frame-ancestors 'self'"
     -Server
     ${lib.optionalString enableHsts ''
       Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -114,7 +143,7 @@ in
     # Collections upload a ZIP (`maxCollectionSizeBytes`); every other API call
     # sits near the per-file limit (`maxFileSizeBytes`). The matchers are
     # mutually exclusive on purpose: `request_body` stacks MaxBytesReaders, so
-    # overlapping matchers would let the smaller cap shadow the larger — a later
+    # overlapping matchers would let the smaller cap shadow the larger, a later
     # directive cannot raise it. The backend stays the precise enforcer (exact
     # file size, and the collection's decompressed size, file count, and path
     # safety Caddy cannot see).
@@ -135,22 +164,13 @@ in
     }
   }
 
-  ${
-    if enableMcp then
-      ''
-        handle /mcp* {
-          reverse_proxy ${upstream} {
-            flush_interval -1
-          }
-        }
-      ''
-    else
-      ''
-        @mcp path /mcp /mcp/*
-        handle @mcp {
-          respond 404
-        }
-      ''
+  # The backend serves `/mcp` only with `mcp.base_url` set, and answers 404 otherwise,
+  # with the discovery documents of its OAuth resource and proxy at the root (RFC 9728, RFC 8414).
+  @mcp path /mcp /mcp/* /.well-known/oauth-protected-resource/mcp /.well-known/oauth-authorization-server/mcp /.well-known/openid-configuration/mcp
+  handle @mcp {
+    reverse_proxy ${upstream} {
+      flush_interval -1
+    }
   }
 
   ${
@@ -165,6 +185,7 @@ in
       ''
         handle /assets/* {
           root * ${frontend}
+          header Content-Security-Policy "${spaCsp}"
           header Cache-Control "public, max-age=31536000, immutable"
           header {
             -ETag
@@ -175,6 +196,7 @@ in
 
         handle {
           root * ${frontend}
+          header Content-Security-Policy "${spaCsp}"
           header Cache-Control "no-store"
           header {
             -ETag
