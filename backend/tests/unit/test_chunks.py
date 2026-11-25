@@ -6,9 +6,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from hivegent import chunks
-from hivegent.chunkers import ChunkingPipeline, ChunkingSpec
-from hivegent.chunkers.base import DocumentMetadata, EntryMetadata
-from hivegent.store import Casebase
+from hivegent.metadata import DocumentMetadata, EntryMetadata
+from hivegent.store import Workspace
 
 
 def _entry_metadata() -> EntryMetadata:
@@ -35,12 +34,12 @@ def _document_metadata(pipeline: str) -> DocumentMetadata:
 
 
 async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
-    user_store: Casebase, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stamped: list[UUID] = []
 
     async def upsert_document(
-        store: Casebase, entry: EntryMetadata, pipeline: str, line_count: int
+        store: Workspace, entry: EntryMetadata, pipeline: str, line_count: int
     ) -> DocumentMetadata:
         _ = store, entry, line_count
         return _document_metadata(pipeline)
@@ -54,7 +53,7 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
         stamped.append(document_id)
 
     monkeypatch.setattr(chunks.db_documents, "upsert_document", upsert_document)
-    monkeypatch.setattr(chunks, "index_document", index_document)
+    monkeypatch.setattr(chunks.retrieval, "index_document", index_document)
     monkeypatch.setattr(chunks.db_documents, "set_content_state", set_content_state)
 
     with pytest.raises(RuntimeError, match="index failed"):
@@ -62,9 +61,38 @@ async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
             user_store,
             "doc.md",
             "body",
-            ChunkingSpec(pipeline=ChunkingPipeline.NONE),
             stat=None,
             entry_metadata=_entry_metadata(),
         )
 
     assert not stamped
+
+
+async def test_a_failing_chunker_leaves_the_document_row_untouched(
+    user_store: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upserted: list[str] = []
+
+    async def upsert_document(
+        store: Workspace, entry: EntryMetadata, pipeline: str, line_count: int
+    ) -> DocumentMetadata:
+        _ = store, entry, line_count
+        upserted.append(pipeline)
+        return _document_metadata(pipeline)
+
+    async def chunk(text: str) -> list[object]:
+        raise RuntimeError(f"cannot chunk {text}")
+
+    monkeypatch.setattr(chunks.db_documents, "upsert_document", upsert_document)
+    monkeypatch.setattr(chunks, "get_chunker", lambda _pipeline: chunk)
+
+    with pytest.raises(RuntimeError, match="cannot chunk"):
+        await chunks.chunk_and_index_document(
+            user_store,
+            "doc.md",
+            "body",
+            stat=None,
+            entry_metadata=_entry_metadata(),
+        )
+
+    assert not upserted

@@ -8,7 +8,7 @@ for the conversation like ``/tmp`` lives for a container session, and is never
 indexed, searched, or announced.
 
 Its changes commit through the one changeset gateway as a
-:class:`~hivegent.workspace.operations.Folder`, written directly with no
+:class:`~hivegent.workspace.operations.Root` of plain files, written directly with no
 approval, while this module keeps what is ``/tmp``'s own: its size cap and the
 saved tool results only the host writes and the cap may evict.
 
@@ -24,32 +24,33 @@ import asyncio
 from collections.abc import Iterable
 from pathlib import Path
 
-from .changes import Changeset, Write
+from exar.memory.mounts import render
+from exar.tools import Retry
+
 from .config import settings
 from .db.conversations import OwnedConversation
 from .files import remove_paths
-from .tools.base import Direct, SearchPath, ToolRetry
+from .tools.base import Direct, SearchPath
+from .tools.changes import Changeset, Write
 from .tools.mutations import mutation_errors
-from .tools.scope import PrefixScope
 from .workspace import Gateway
-from .workspace.operations import Folder, Quota
+from .workspace.operations import Quota, Root
 
 __all__ = [
     "RESULTS_DIR",
     "TMP_FOLDER",
-    "TMP_SCOPE",
+    "TMP_PREFIX",
     "clear_tmp",
     "open_tmp",
     "save_result",
     "tmp_dir",
     "tmp_root",
-    "tmp_search_path",
 ]
 
 TMP_FOLDER = "tmp"
 """The folder below a conversation's own that ``/tmp`` names."""
 
-TMP_SCOPE = PrefixScope("/tmp")
+TMP_PREFIX = "/tmp"
 """How every agent surface spells a conversation's folder."""
 
 RESULTS_DIR = ".tool-results"
@@ -77,22 +78,16 @@ def open_tmp(conversation: OwnedConversation) -> None:
     tmp_dir(settings.data_dir, conversation).mkdir(parents=True, exist_ok=True)
 
 
-def tmp_search_path(data_dir: Path, conversation: OwnedConversation) -> SearchPath:
-    """The ``/tmp`` root a conversation's run resolves against, written directly."""
-    return SearchPath(
-        path=tmp_dir(data_dir, conversation), scope=TMP_SCOPE, policy=_POLICY
-    )
-
-
-def tmp_root(folder: Path) -> Folder:
-    """The gateway root that writes *folder* directly, within ``tmp.max_bytes``.
+def tmp_root(folder: Path) -> Root:
+    """The ``/tmp`` root of *folder*, which tools resolve against and the gateway writes directly, within ``tmp.max_bytes``.
 
     The host saving a tool result may write the saved results and evict the
     oldest to make room, since a result can be asked for again while the
     run's own state cannot.
     """
-    return Folder(
-        folder, TMP_SCOPE, _POLICY, Quota(settings.tmp.max_bytes, RESULTS_DIR)
+    return Root(
+        SearchPath.of(folder, TMP_PREFIX, policy=_POLICY),
+        Quota(settings.tmp.max_bytes, RESULTS_DIR),
     )
 
 
@@ -104,15 +99,15 @@ async def save_result(folder: Path, name: str, content: str) -> str:
     would not fit beside.
 
     Raises:
-        ToolRetry: When *name* is no single filename, or the result does not
+        Retry: When *name* is no single filename, or the result does not
             fit even beside no other saved one.
     """
     if name in {"", ".."} or Path(name).name != name:
-        raise ToolRetry("A saved result must have a single filename.")
+        raise Retry("A saved result must have a single filename.")
 
-    target = TMP_SCOPE.render(f"{RESULTS_DIR}/{name}")
+    target = render(TMP_PREFIX, f"{RESULTS_DIR}/{name}")
 
-    with mutation_errors(ToolRetry):
+    with mutation_errors(Retry):
         _ = await Gateway((tmp_root(folder),), host=True).apply(
             Changeset((Write(target, content),))
         )

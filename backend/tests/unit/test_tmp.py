@@ -3,36 +3,50 @@
 import asyncio
 import os
 import time
-from dataclasses import replace
 from pathlib import Path
+from unittest.mock import ANY
 from uuid import UUID
 
 import pytest
+from exar.tools import Retry
+from exar.tools.batch import unpack
+from exar.tools.files import DocumentRead
 from fastapi import HTTPException
 from pydantic_monty import AsyncMonty
 
 from hivegent import staging
+from hivegent.agents import invoke_agent_tool
 from hivegent.agents.common import UserDeps
-from hivegent.agents.tools.write import changeset_committer, program_paths
-from hivegent.changes import Changeset, ChangesetSummary, Delete, Move, Write
+from hivegent.agents.tools.explore import (
+    grep,
+    jq,
+    list_documents,
+    query_table,
+    read_document,
+)
+from hivegent.agents.tools.write import program_writes
 from hivegent.config import settings
 from hivegent.conversation_files import reset_conversation_files, sweep_conversations
-from hivegent.db.conversations import OwnedConversation
+from hivegent.db.conversations import OwnedConversation, claim_conversation
 from hivegent.server.operations import reads
 from hivegent.server.routes import documents
 from hivegent.store import User
-from hivegent.text import DecodedText
-from hivegent.tmp import save_result, tmp_dir, tmp_root, tmp_search_path
-from hivegent.tools.base import ToolRetry
+from hivegent.tmp import save_result, tmp_dir, tmp_root
+from hivegent.tools.base import mounts_of
+from hivegent.tools.changes import (
+    ChangeRefused,
+    Changeset,
+    ChangesetSummary,
+    Delete,
+    Move,
+    Write,
+)
 from hivegent.tools.changeset import PendingChanges
-from hivegent.tools.documents import DocumentRead, ListDocumentsTool, ReadDocumentTool
-from hivegent.tools.grep import GrepTool
-from hivegent.tools.jq import JqTool
-from hivegent.tools.python import RunPythonTool
-from hivegent.tools.table import QueryTableTool
+from hivegent.tools.python import run_python
 from hivegent.tools.workspace_os import ChangesetLimits
 from hivegent.workspace import Gateway, Location, PlannedChangeset
-from hivegent.workspace import changeset as gateway
+from hivegent.workspace.changeset import apply as changeset_apply
+from hivegent.workspace.changeset import gateway
 from tests.helpers import LIMITS, label_id, owned
 
 
@@ -87,6 +101,17 @@ async def test_the_document_route_reads_an_owned_conversations_tmp(
     assert response.body == b"print('c1')"
 
 
+async def test_the_agent_tools_bind_the_mounts_of_the_run(data_dir: Path) -> None:
+    folder = tmp_dir(data_dir, owned("c1"))
+    folder.mkdir(parents=True)
+    (folder / "notes.md").write_text("needle\n")
+    deps = UserDeps(User("u"), "interactive", owned("c1"))
+
+    output = unpack(await invoke_agent_tool("grep", {"pattern": "needle"}, deps))
+
+    assert output.text == "/tmp/notes.md\n1:needle"
+
+
 async def test_the_read_tools_reach_tmp(data_dir: Path) -> None:
     folder = tmp_dir(data_dir, owned("c1"))
     folder.mkdir(parents=True)
@@ -95,36 +120,40 @@ async def test_the_read_tools_reach_tmp(data_dir: Path) -> None:
     (folder / "rows.csv").write_text("x,y\n1,2\n")
     paths = UserDeps(User("u"), "interactive", owned("c1")).search_paths()
 
-    read = await ReadDocumentTool(paths=paths)([DocumentRead("/tmp/notes.md")])
-    grep = await GrepTool(paths=paths)("needle")
-    listing = await ListDocumentsTool(paths=paths)("/tmp")
-    jq = await JqTool(paths=paths)(["/tmp/data.json"], ".total + 1")
-    table = await QueryTableTool(paths=paths)(
+    read = await read_document(mounts_of(paths))([DocumentRead("/tmp/notes.md")])
+    found = await grep(mounts_of(paths))("needle")
+    listing = await list_documents(mounts_of(paths))("/tmp")
+    filtered = await jq(mounts_of(paths))(["/tmp/data.json"], ".total + 1")
+    table = await query_table(mounts_of(paths))(
         ["/tmp/rows.csv"], ["SELECT x + y AS s FROM t"]
     )
 
-    assert "needle" in read.text
-    assert "/tmp/notes.md" in grep.text
-    assert all(f"/tmp/{name}" in listing.text for name in ("data.json", "rows.csv"))
-    assert "42" in jq.text
-    assert "3" in table.text
+    assert "needle" in read.return_value
+    assert "/tmp/notes.md" in found.return_value
+    assert all(
+        f"/tmp/{name}" in listing.return_value for name in ("data.json", "rows.csv")
+    )
+    assert "42" in filtered.return_value
+    assert "3" in table.return_value
 
 
 async def test_a_write_past_the_quota_is_refused_unless_it_frees_room(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings.tmp, "max_bytes", 10)
-    (tmp_path / "a.txt").write_text("x" * 8)
+    folder = data_dir / "tmp"
+    folder.mkdir()
+    (folder / "a.txt").write_text("x" * 8)
 
-    with pytest.raises(HTTPException, match="over the 10 B"):
-        _ = await _gateway(tmp_path).plan(Changeset((Write("/tmp/b.txt", "x" * 8),)))
+    with pytest.raises(ChangeRefused, match="over the 10 B"):
+        _ = await _gateway(folder).plan(Changeset((Write("/tmp/b.txt", "x" * 8),)))
 
-    assert not (tmp_path / "b.txt").exists()
+    assert not (folder / "b.txt").exists()
 
-    _ = await _gateway(tmp_path).apply(
+    _ = await _gateway(folder).apply(
         Changeset((Delete("/tmp/a.txt"), Write("/tmp/b.txt", "y" * 8)))
     )
-    assert [path.name for path in tmp_path.iterdir()] == ["b.txt"]
+    assert [path.name for path in folder.iterdir()] == ["b.txt"]
 
 
 async def test_concurrent_spills_check_and_write_under_one_lock(
@@ -132,14 +161,14 @@ async def test_concurrent_spills_check_and_write_under_one_lock(
 ) -> None:
     monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
     folder = tmp_dir(data_dir, owned("c1"))
-    write = gateway._write_workspace_file
+    write = changeset_apply._write_workspace_file
 
     def slow_write(staging: Path, name: str, data: bytes) -> Path:
         time.sleep(0.02)
 
         return write(staging, name, data)
 
-    monkeypatch.setattr(gateway, "_write_workspace_file", slow_write)
+    monkeypatch.setattr(changeset_apply, "_write_workspace_file", slow_write)
     _ = await asyncio.gather(
         *(save_result(folder, f"result-{index}.txt", "x" * 4_000) for index in range(2))
     )
@@ -169,7 +198,7 @@ async def test_spills_preserve_working_files_and_recheck_planned_write_quotas(
     assert not (folder / ".tool-results" / "first.txt").exists()
     assert (folder / ".tool-results" / "second.txt").read_bytes() == b"b" * 4_000
 
-    with pytest.raises(HTTPException, match="over the"):
+    with pytest.raises(ChangeRefused, match="over the"):
         _ = await _gateway(folder).apply(state)
 
     assert not (folder / "state.txt").exists()
@@ -190,7 +219,7 @@ async def test_ordinary_changes_cannot_modify_the_spill_cache(
     _ = await save_result(folder, "saved.txt", "saved")
     _ = (folder / "state.txt").write_text("state")
 
-    with pytest.raises(HTTPException, match="can be read but not changed"):
+    with pytest.raises(ChangeRefused, match="can be read but not changed"):
         _ = await _gateway(folder).plan(Changeset((operation,)))
 
     assert (folder / ".tool-results" / "saved.txt").read_text() == "saved"
@@ -199,12 +228,12 @@ async def test_ordinary_changes_cannot_modify_the_spill_cache(
 async def test_a_program_can_read_but_cannot_write_the_spill_cache(
     data_dir: Path,
 ) -> None:
-    root = tmp_search_path(data_dir, owned("c1"))
+    root = tmp_root(tmp_dir(data_dir, owned("c1"))).search_path
     _ = await save_result(root.path, "saved.txt", "saved")
 
     async with AsyncMonty(min_processes=1) as pool:
-        result = await RunPythonTool(
-            pool=pool, paths=(root,), writable=(root,), changeset_limits=LIMITS
+        result = await run_python(
+            (root,), pool=lambda: pool, writable=(root,), changeset_limits=LIMITS
         )("""
 from pathlib import Path
 cached = Path('/tmp/.tool-results/saved.txt')
@@ -215,7 +244,7 @@ except Exception:
 cached.read_text()
 """)
 
-    assert result.data.result == "'saved'"
+    assert result.metadata.result == "'saved'"
     assert (root.path / ".tool-results" / "saved.txt").read_text() == "saved"
 
 
@@ -228,11 +257,11 @@ async def test_a_program_renames_within_tmp_without_rewriting(data_dir: Path) ->
     (folder / "old.bin").write_bytes(b"\x00\xff")
 
     async with AsyncMonty(min_processes=1) as pool:
-        tool = RunPythonTool(
-            pool=pool,
-            paths=deps.search_paths(),
-            writable=program_paths(deps),
-            commit=changeset_committer(deps),
+        tool = run_python(
+            deps.search_paths(),
+            pool=lambda: pool,
+            writable=program_writes(deps).paths,
+            commit=program_writes(deps).commit,
             changeset_limits=LIMITS,
         )
         await tool(
@@ -246,7 +275,7 @@ async def test_a_program_renames_within_tmp_without_rewriting(data_dir: Path) ->
     assert sorted(path.name for path in folder.iterdir()) == ["figures"]
 
 
-async def test_a_program_writes_tmp_once_it_succeeds_and_stages_the_workspace(
+async def test_a_program_stages_its_tmp_changes_with_the_workspace_s(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     planned: list[Changeset[Location]] = []
@@ -272,34 +301,30 @@ async def test_a_program_writes_tmp_once_it_succeeds_and_stages_the_workspace(
     limits = ChangesetLimits(max_operations=10, max_deletes=10, max_chars=1_000)
 
     async with AsyncMonty(min_processes=1) as pool:
-        tool = RunPythonTool(
-            pool=pool,
-            paths=deps.search_paths(),
-            writable=program_paths(deps),
-            commit=changeset_committer(deps),
+        tool = run_python(
+            deps.search_paths(),
+            pool=lambda: pool,
+            writable=program_writes(deps).paths,
+            commit=program_writes(deps).commit,
             changeset_limits=limits,
         )
         result = await tool(program)
 
-        with pytest.raises(ToolRetry, match="ZeroDivisionError"):
+        with pytest.raises(Retry, match="ZeroDivisionError"):
             await tool(program + "1 / 0")
 
-        monkeypatch.setattr(settings.tmp, "max_bytes", 1)
-
-        with pytest.raises(ToolRetry, match="over the"):
-            await replace(tool, commit=changeset_committer(deps))(
-                f"{program}Path('/tmp/more.txt').write_text('xx')"
-            )
-
-    assert (folder / "state.json").read_text() == "2"
-    changeset = result.data.changeset
+    # The `/tmp` half is staged with the workspace's, against the stat it read.
+    assert (folder / "state.json").read_text() == "1"
+    changeset = result.metadata.changeset
     assert isinstance(changeset, PendingChanges)
     assert await staging.load_staged(owned("c1"), changeset.changeset_id) == Changeset(
-        (Write("~/report.md", "run 2", "create"),)
+        (
+            Write("~/report.md", "run 2", "create"),
+            Write("/tmp/state.json", "2", "replace", ANY),
+        )
     )
-    # The run past the cap was planned too, and refused once its `/tmp` half applied.
-    assert len(planned) == 2
-    assert not (deps.user.store.workspace_path(data_dir) / "report.md").exists()
+    assert len(planned) == 1
+    assert not (deps.user.home.path / "report.md").exists()
 
 
 def _age(*paths: Path, touched: float) -> None:
@@ -311,6 +336,7 @@ def _stale() -> float:
     return time.time() - settings.conversations.ttl_hours * 3600 - 60
 
 
+@pytest.mark.usefixtures("memory_store")
 async def test_the_sweep_removes_a_folder_only_once_all_of_it_is_idle(
     data_dir: Path,
 ) -> None:
@@ -335,6 +361,7 @@ async def test_the_sweep_removes_a_folder_only_once_all_of_it_is_idle(
     )
 
 
+@pytest.mark.usefixtures("memory_store")
 async def test_each_user_has_their_own_folder_and_the_sweep_drops_an_empty_one(
     data_dir: Path,
 ) -> None:
@@ -350,6 +377,25 @@ async def test_each_user_has_their_own_folder_and_the_sweep_drops_an_empty_one(
     assert not OwnedConversation.user_root(data_dir, alice.owner).exists()
 
 
+@pytest.mark.usefixtures("memory_store")
+async def test_the_sweep_keeps_the_staged_changesets_of_an_existing_conversation(
+    data_dir: Path,
+) -> None:
+    """Only `/tmp` goes, since a pending approval can still apply its changeset."""
+    conversation = owned("kept")
+    assert await claim_conversation(conversation) is not None
+    tmp = tmp_dir(data_dir, conversation)
+    tmp.mkdir(parents=True)
+    (tmp / "state.json").write_text("{}")
+    changeset_id = await staging.stage(conversation, Changeset(()))
+    folder = conversation.folder(data_dir)
+    _age(*folder.rglob("*"), folder, touched=_stale())
+
+    assert await sweep_conversations() == 1
+    assert not tmp.exists()
+    assert await staging.load_staged(conversation, changeset_id) == Changeset(())
+
+
 async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:
     tmp_dir(data_dir, owned("c1")).mkdir(parents=True)
     _ = await staging.stage(owned("c2"), Changeset(()))
@@ -359,6 +405,7 @@ async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:
     assert not (data_dir / "conversations").exists()
 
 
+@pytest.mark.usefixtures("memory_store")
 async def test_the_sweep_keeps_a_folder_written_while_it_waits_on_the_lock(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -385,9 +432,9 @@ async def test_a_file_replaced_during_a_read_returns_its_http_error(
 ) -> None:
     target = tmp_path / "document.md"
     target.write_text("hello")
-    read = reads.read_text_file
+    read = Path.read_bytes
 
-    def concurrent_read(path: Path) -> DecodedText | None:
+    def concurrent_read(path: Path) -> bytes:
         path.unlink()
 
         if directory:
@@ -395,7 +442,7 @@ async def test_a_file_replaced_during_a_read_returns_its_http_error(
 
         return read(path)
 
-    monkeypatch.setattr(reads, "read_text_file", concurrent_read)
+    monkeypatch.setattr(Path, "read_bytes", concurrent_read)
 
     with pytest.raises(HTTPException) as exc:
         await reads.get_file_response(lambda: target, "~/document.md")

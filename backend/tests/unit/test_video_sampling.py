@@ -1,20 +1,17 @@
-"""Tests for frame sampling and the binary tool's animated-media support."""
+"""Tests for the binary tool's animated-media support."""
 
 from io import BytesIO
 from pathlib import Path
 
-import cv2
-import numpy as np
 import PIL.Image
 import pytest
+from exar.tools import Retry
+from exar.tools.batch import unpack
+from exar.tools.media import BinaryRead
+from pydantic_ai import BinaryContent
 
-from hivegent.converters.video import (
-    animation_frame_count,
-    sample_animated_image,
-    sample_video,
-)
-from hivegent.tools.base import SearchPath, ToolRetry
-from hivegent.tools.binary import BinaryRead, ReadBinaryDocumentTool
+from hivegent.agents.tools.explore import read_binary_document
+from hivegent.tools.base import SearchPath, mounts_of
 from tests.helpers import single
 
 
@@ -33,74 +30,34 @@ def _animated_gif(frame_count: int, duration_ms: int = 100) -> bytes:
     return buf.getvalue()
 
 
-def test_frame_count_static_and_animated() -> None:
-    assert animation_frame_count(_animated_gif(6), "image/gif") == 6
-    static = BytesIO()
-    PIL.Image.new("RGB", (32, 32)).save(static, format="PNG")
-    assert animation_frame_count(static.getvalue(), "image/png") == 1
-    assert animation_frame_count(b"not an image", "image/gif") == 1
-
-
-def test_sample_animated_image_spans_timeline() -> None:
-    sample = sample_animated_image(_animated_gif(12, duration_ms=100), max_frames=4)
-    assert len(sample.frames) == 4
-    assert sample.duration == pytest.approx(1.2)
-    timestamps = [f.timestamp for f in sample.frames]
-    assert timestamps == sorted(timestamps)
-    assert timestamps[0] < timestamps[-1]
-    for frame in sample.frames:
-        with PIL.Image.open(BytesIO(frame.data)) as img:
-            assert img.format == "PNG"
-
-
-async def test_sample_video(tmp_path: Path) -> None:
-    video = tmp_path / "clip.avi"
-    writer = cv2.VideoWriter(str(video), cv2.VideoWriter.fourcc(*"MJPG"), 4, (64, 64))
-    for i in range(12):
-        writer.write(np.full((64, 64, 3), i * 20, dtype=np.uint8))
-    writer.release()
-
-    sample = await sample_video(video, max_frames=8, max_dimension=48)
-    assert sample.duration == pytest.approx(3.0)
-    assert len(sample.frames) == 3
-    for frame in sample.frames:
-        with PIL.Image.open(BytesIO(frame.data)) as img:
-            assert img.format == "PNG"
-            assert max(img.size) <= 48
-
-
-async def test_sample_video_rejects_undecodable_file(tmp_path: Path) -> None:
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(b"\x00" * 16)
-    with pytest.raises(ValueError, match="duration"):
-        await sample_video(video)
-
-
 async def test_binary_tool_samples_animated_gif(tmp_path: Path) -> None:
     (tmp_path / "anim.gif").write_bytes(_animated_gif(10))
-    tool = ReadBinaryDocumentTool(paths=SearchPath(path=tmp_path), max_frames=4)
+    tool = read_binary_document(
+        mounts_of((SearchPath.of(path=tmp_path),)), max_frames=4
+    )
     output = await tool([BinaryRead("anim.gif")])
-    assert single(output.data).frames == 4
-    assert single(output.data).duration == pytest.approx(1.0)
-    assert len(output.attachments) == 4
-    assert all(a.media_type == "image/png" for a in output.attachments)
-    assert "#t=" in (output.attachments[-1].identifier or "")
+    files = [a for a in unpack(output).files if isinstance(a, BinaryContent)]
+    assert single(output.metadata).frames == 4
+    assert single(output.metadata).duration == pytest.approx(1.0)
+    assert len(files) == 4
+    assert all(a.media_type == "image/png" for a in files)
+    assert "#t=" in files[-1].identifier
 
 
 async def test_binary_tool_clamps_frames_to_the_image_cap(tmp_path: Path) -> None:
     # A run picks PDF pages but never frames, so the serving gateway's
     # per-request image cap shrinks the sample instead of refusing the call.
     (tmp_path / "anim.gif").write_bytes(_animated_gif(10))
-    tool = ReadBinaryDocumentTool(
-        paths=SearchPath(path=tmp_path), max_frames=4, max_images=2
+    tool = read_binary_document(
+        mounts_of((SearchPath.of(path=tmp_path),)), max_frames=4, max_images=2
     )
     output = await tool([BinaryRead("anim.gif")])
-    assert single(output.data).frames == 2
-    assert len(output.attachments) == 2
+    assert single(output.metadata).frames == 2
+    assert len(unpack(output).files) == 2
 
 
 async def test_binary_tool_rejects_pages_for_video(tmp_path: Path) -> None:
     (tmp_path / "clip.mp4").write_bytes(b"\x00" * 16)
-    tool = ReadBinaryDocumentTool(paths=SearchPath(path=tmp_path))
-    with pytest.raises(ToolRetry, match="pages="):
+    tool = read_binary_document(mounts_of((SearchPath.of(path=tmp_path),)))
+    with pytest.raises(Retry, match="pages="):
         await tool([BinaryRead("clip.mp4", pages="1")])

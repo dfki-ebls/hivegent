@@ -11,13 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from hivegent.config import settings
-from hivegent.llm_config import LlmConfig
-from hivegent.store import Casebase
+from hivegent.shared.zips import extended_timestamp
+from hivegent.store import Workspace
+from hivegent.tools.entries import Part
 from hivegent.types import (
     CollectionCompleteEvent,
     CollectionProgressEvent,
-    PipelineSpec,
 )
 from hivegent.workspace import collections
 
@@ -37,11 +36,9 @@ def _make_zip(directory: Path, files: dict[str, bytes]) -> Path:
     return archive
 
 
-async def _run(store: Casebase, archive: Path) -> CollectionCompleteEvent:
+async def _run(store: Workspace, archive: Path) -> CollectionCompleteEvent:
     complete: CollectionCompleteEvent | None = None
-    async for event in collections.process_collection(
-        store, archive, PipelineSpec(), LlmConfig()
-    ):
+    async for event in collections.process_collection(store, archive):
         if isinstance(event, CollectionCompleteEvent):
             complete = event
     assert complete is not None
@@ -53,8 +50,34 @@ def _failures(complete: CollectionCompleteEvent) -> dict[str, str]:
     return {f.path: f.reason for f in complete.failed_files}
 
 
+@pytest.fixture()
+def uploaded(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the path of every upload instead of running it."""
+    paths: list[str] = []
+
+    async def record_upload(
+        _store: Workspace, safe: str, _content: bytes, **_kwargs: object
+    ) -> None:
+        paths.append(safe)
+
+    monkeypatch.setattr(collections, "upload", record_upload)
+
+    return paths
+
+
+async def test_cbrkit_companions_stay_out(
+    user_store: Workspace, tmp_path: Path, uploaded: list[str]
+) -> None:
+    sidecar, cache = (Part("cars", kind, ".csv").path for kind in ("sidecar", "cache"))
+    archive = _make_zip(tmp_path, {"cars.csv": b"a\n1\n", sidecar: b"{}", cache: b""})
+
+    complete = await _run(user_store, archive)
+
+    assert (uploaded, complete.failed_files) == (["cars.csv"], [])
+
+
 async def test_progress_seeds_zero_before_first_conversion(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def ok_upload(*_args: object, **_kwargs: object) -> None:
         return None
@@ -65,7 +88,7 @@ async def test_progress_seeds_zero_before_first_conversion(
     currents = [
         event.current
         async for event in collections.process_collection(
-            user_store, archive, PipelineSpec(), LlmConfig()
+            user_store, archive
         )
         if isinstance(event, CollectionProgressEvent)
     ]
@@ -76,9 +99,9 @@ async def test_progress_seeds_zero_before_first_conversion(
 
 
 async def test_companion_original_dropped_when_owning_markdown_fails(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    workspace_dir = user_store.workspace_dir()
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     async def failing_upload(*_args: object, **_kwargs: object) -> None:
@@ -99,13 +122,13 @@ async def test_companion_original_dropped_when_owning_markdown_fails(
 
 
 async def test_companion_original_written_when_owning_markdown_succeeds(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    workspace_dir = user_store.workspace_dir()
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     async def ok_upload(
-        _store: Casebase,
+        _store: Workspace,
         safe: str,
         content: bytes,
         **kwargs: object,
@@ -127,7 +150,7 @@ async def test_companion_original_written_when_owning_markdown_succeeds(
 
 
 async def test_second_non_markdown_for_a_stem_is_rejected(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def ok_upload(*_args: object, **_kwargs: object) -> None:
         return None
@@ -135,7 +158,7 @@ async def test_second_non_markdown_for_a_stem_is_rejected(
     monkeypatch.setattr(collections, "upload", ok_upload)
 
     # An attachment already IS the stem's original, so a second non-markdown
-    # file for the same stem cannot be folded in — it must fail, not orphan a
+    # file for the same stem cannot be folded in, it must fail, not orphan a
     # second original.
     archive = _make_zip(tmp_path, {"A.docx": b"doc", "A.pdf": b"%PDF-1.4"})
     complete = await _run(user_store, archive)
@@ -146,13 +169,13 @@ async def test_second_non_markdown_for_a_stem_is_rejected(
 
 
 async def test_markdown_adopts_one_original_and_rejects_the_rest(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    workspace_dir = user_store.workspace_dir()
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     async def ok_upload(
-        _store: Casebase, _safe: str, _content: bytes, **kwargs: object
+        _store: Workspace, _safe: str, _content: bytes, **kwargs: object
     ) -> None:
         match kwargs.get("companion"):
             case (str(path), bytes(data)):
@@ -175,13 +198,13 @@ async def test_markdown_adopts_one_original_and_rejects_the_rest(
 
 
 async def test_markdown_owns_stem_when_original_sorts_before_md(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    workspace_dir = user_store.workspace_dir(settings.data_dir)
+    workspace_dir = user_store.workspace_dir()
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     async def ok_upload(
-        _store: Casebase, _safe: str, _content: bytes, **kwargs: object
+        _store: Workspace, _safe: str, _content: bytes, **kwargs: object
     ) -> None:
         match kwargs.get("companion"):
             case (str(path), bytes(data)):
@@ -204,17 +227,8 @@ async def test_markdown_owns_stem_when_original_sorts_before_md(
 
 
 async def test_os_junk_files_are_skipped_entirely(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, tmp_path: Path, uploaded: list[str]
 ) -> None:
-    uploaded: list[str] = []
-
-    async def record_upload(
-        _store: Casebase, safe: str, _content: bytes, **_kwargs: object
-    ) -> None:
-        uploaded.append(safe)
-
-    monkeypatch.setattr(collections, "upload", record_upload)
-
     # Finder/Explorer metadata and AppleDouble forks ride along with directory
     # uploads; they must neither convert nor count as failures.
     archive = _make_zip(
@@ -233,8 +247,30 @@ async def test_os_junk_files_are_skipped_entirely(
     assert complete.markdown_files == 1
 
 
+async def test_top_level_directory_is_kept(
+    user_store: Workspace, tmp_path: Path, uploaded: list[str]
+) -> None:
+    # A dropped directory lands as itself, not as its loose contents.
+    archive = _make_zip(tmp_path, {"docs/a.md": b"# a"})
+    await _run(user_store, archive)
+
+    assert uploaded == ["docs/a.md"]
+
+
+@pytest.mark.parametrize(
+    ("dos_hour", "extra"),
+    [
+        (12, b""),
+        # A DOS date in local time defers to the exact extended timestamp.
+        (14, extended_timestamp(datetime(2020, 5, 17, 12, 30, tzinfo=UTC).timestamp())),
+    ],
+)
 async def test_member_date_reaches_the_upload(
-    user_store: Casebase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dos_hour: int,
+    extra: bytes,
 ) -> None:
     dates: list[object] = []
 
@@ -244,7 +280,8 @@ async def test_member_date_reaches_the_upload(
     monkeypatch.setattr(collections, "upload", record_upload)
 
     archive = tmp_path / "collection.zip"
-    info = zipfile.ZipInfo("doc.md", date_time=(2020, 5, 17, 12, 30, 0))
+    info = zipfile.ZipInfo("doc.md", date_time=(2020, 5, 17, dos_hour, 30, 0))
+    info.extra = extra
     info.external_attr = (stat.S_IFREG | 0o644) << 16
 
     with zipfile.ZipFile(archive, "w") as zf:
