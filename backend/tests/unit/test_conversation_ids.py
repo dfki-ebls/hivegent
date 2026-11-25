@@ -3,92 +3,65 @@
 A client mints a conversation id and the id of every new user message, so
 these pin what makes that safe: an absent id is claimed by one insert, only
 once a request passed every check, another user's conversation answers exactly
-like an id that is no UUID, and a taken message id is refused before the run.
+like an id that is no UUID, and a message id the history holds is refused
+before the run.
 """
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
-from sqlalchemy.dialects import postgresql
-from sqlalchemy.exc import NoResultFound
-from sqlalchemy.sql import ClauseElement
+from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from starlette.requests import Request
 
 from hivegent.agents import RunPrefix
 from hivegent.db import conversations as db
-from hivegent.db.conversations import OwnedConversation
-from hivegent.db.models import Conversation, Message
-from hivegent.server.routes import conversations as routes
+from hivegent.db.conversations import OwnedConversation, queries
+from hivegent.server.routes.conversations import deps, history, turn
+from hivegent.server.turns import stamp
 from hivegent.store import User
 from hivegent.tmp import tmp_dir
 from hivegent.types import ChatRequest
-from tests.helpers import label_id, owned
+from tests.helpers import owned
 
 _ID = UUID("0b6c4c9e-4f9a-4f0e-9d7a-3f6e2b1c8a90")
 _ALICE = User("alice")
 _BOB = User("bob")
 
 
-@dataclass(slots=True)
-class _Result:
-    value: object
+async def _claimed(user: User, *texts: str) -> OwnedConversation:
+    """*user*'s conversation at :data:`_ID`, holding a prompt for each of *texts* under its text."""
+    conversation = owned(str(_ID), user)
+    loaded = await db.claim_conversation(conversation)
+    assert loaded is not None
 
-    def one(self) -> object:
-        if self.value is None:
-            raise NoResultFound
+    if texts:
+        prompts: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(text)]) for text in texts
+        ]
 
-        return self.value
+        for prompt, text in zip(prompts, texts, strict=True):
+            stamp([prompt], text)
 
+        loaded.messages = prompts
+        await queries.store.save(loaded, scope=user.id)
 
-@dataclass(slots=True)
-class _Session:
-    """A transaction answering *scalars* in turn and keeping its writes."""
-
-    scalars_: list[object] = field(default_factory=list)
-    executed: list[ClauseElement] = field(default_factory=list)
-    added: list[object] = field(default_factory=list)
-
-    async def execute(self, statement: ClauseElement) -> None:
-        self.executed.append(statement)
-
-    async def scalar(self, statement: ClauseElement) -> object:
-        self.executed.append(statement)
-
-        return self.scalars_.pop(0)
-
-    async def scalars(self, _statement: object) -> _Result:
-        return _Result(self.scalars_.pop(0))
-
-    def add(self, row: object) -> None:
-        self.added.append(row)
-
-
-def _stub_session(monkeypatch: pytest.MonkeyPatch, fake: _Session) -> _Session:
-    @asynccontextmanager
-    async def session() -> AsyncGenerator[_Session]:
-        yield fake
-
-    monkeypatch.setattr(db, "session", session)
-
-    return fake
+    return conversation
 
 
 @pytest.mark.parametrize(
     ("owner", "opened"),
-    [("alice", True), (None, True), ("bob", False)],
+    [(_ALICE, True), (None, True), (_BOB, False)],
     ids=["owned", "absent", "foreign"],
 )
 async def test_only_an_owned_or_an_absent_id_opens(
-    monkeypatch: pytest.MonkeyPatch, owner: str | None, opened: bool
+    memory_store: InMemoryConversationStore, owner: User | None, opened: bool
 ) -> None:
-    _ = _stub_session(monkeypatch, _Session(scalars_=[owner]))
+    if owner is not None:
+        await _claimed(owner)
 
     result = await db.open_conversation(_ALICE, _ID)
 
@@ -105,72 +78,45 @@ async def test_only_an_owned_or_an_absent_id_opens(
     ids=["uppercase", "other-form", "unsafe"],
 )
 async def test_a_path_id_opens_by_its_canonical_uuid(
-    monkeypatch: pytest.MonkeyPatch, conversation_id: str, opened: bool
+    memory_store: InMemoryConversationStore, conversation_id: str, opened: bool
 ) -> None:
     """Another spelling of a UUID names its folder canonically, anything else answers 404."""
-    _ = _stub_session(monkeypatch, _Session(scalars_=[None]))
-
     if not opened:
         with pytest.raises(HTTPException) as raised:
-            await routes._opened_conversation(conversation_id, _ALICE)
+            await deps._opened_conversation(conversation_id, _ALICE)
 
         assert raised.value.status_code == 404
         return
 
-    conversation, _ = await routes._opened_conversation(conversation_id, _ALICE)
+    conversation, _ = await deps._opened_conversation(conversation_id, _ALICE)
     assert conversation.folder(Path("data")).name == str(_ID)
 
 
-async def test_a_taken_prompt_id_is_looked_up_in_its_own_conversation_only(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_a_claim_answers_by_its_owner(
+    memory_store: InMemoryConversationStore,
 ) -> None:
-    """Node ids are keyed per conversation, so another conversation's ids are never probed."""
-    fake = _stub_session(monkeypatch, _Session(scalars_=[True]))
-
-    with pytest.raises(db.MessageIdTaken):
-        _ = await db.resolve_fork(
-            owned("c1", _ALICE), regenerate=False, message_id=None, prompt_id=_ID
-        )
-
-    lookup = fake.executed[0].compile(dialect=postgresql.dialect())
-    assert "messages.conversation_id" in str(lookup)
-    assert set((lookup.params or {}).values()) == {label_id("c1"), _ID}
+    """The store's insert decides a race, and a lost one only fails the owner check."""
+    assert await db.claim_conversation(owned(str(_ID), _ALICE)) is not None
+    assert await db.claim_conversation(owned(str(_ID), _ALICE)) is not None
+    assert await db.claim_conversation(owned(str(_ID), _BOB)) is None
 
 
-@pytest.mark.parametrize("claimed", [True, False], ids=["first-or-own", "taken"])
-async def test_a_claim_skips_a_taken_id_and_answers_by_its_owner(
-    monkeypatch: pytest.MonkeyPatch, claimed: bool
+async def test_an_absent_id_has_no_messages_yet(
+    memory_store: InMemoryConversationStore,
 ) -> None:
-    """The insert never touches another user's row, a lost race only fails the check."""
-    fake = _stub_session(monkeypatch, _Session(scalars_=[_ID if claimed else None]))
-
-    assert await db.claim_conversation(owned(str(_ID), _ALICE)) is claimed
-
-    insert = next(
-        compiled
-        for statement in fake.executed
-        if "INSERT INTO conversations"
-        in str(compiled := statement.compile(dialect=postgresql.dialect()))
-    )
-    assert "ON CONFLICT DO NOTHING" in str(insert)
-    params = insert.params or {}
-    assert (params["id"], params["user_id"]) == (_ID, "alice")
-
-
-async def test_an_absent_id_has_no_messages_yet() -> None:
     assert (
-        await routes.get_conversation_messages((owned(str(_ID), _ALICE), False)) == []
+        await history.get_conversation_messages((owned(str(_ID), _ALICE), False)) == []
     )
 
 
 async def test_another_users_id_answers_404(
-    monkeypatch: pytest.MonkeyPatch,
+    memory_store: InMemoryConversationStore,
 ) -> None:
     """The messages route included, so its URL shows as not found."""
-    _ = _stub_session(monkeypatch, _Session(scalars_=["bob"]))
+    await _claimed(_BOB)
 
     with pytest.raises(HTTPException) as raised:
-        await routes._opened_conversation(str(_ID), _ALICE)
+        await deps._opened_conversation(str(_ID), _ALICE)
 
     assert raised.value.status_code == 404
 
@@ -194,99 +140,80 @@ class _Reached(Exception):
     """Raised where the turn would start its run."""
 
 
+_TAKEN = "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+
+
 @pytest.mark.parametrize(
-    ("message_id", "taken", "exists", "claimable", "status"),
+    ("message_id", "exists", "foreign", "status"),
     [
-        ("msg-1", False, False, True, 422),
-        (str(_ID), True, False, True, 409),
-        (str(_ID), False, False, False, 404),
-        (str(_ID), False, False, True, None),
-        (str(_ID), False, True, False, None),
+        ("msg-1", False, False, 422),
+        (_TAKEN, True, False, 409),
+        (str(_ID), False, True, 404),
+        (str(_ID), False, False, None),
+        (str(_ID), True, False, None),
     ],
     ids=["no-uuid", "message-taken", "conversation-taken", "free", "existing"],
 )
 async def test_a_turn_claims_its_id_only_once_every_check_passed(
+    memory_store: InMemoryConversationStore,
     monkeypatch: pytest.MonkeyPatch,
     data_dir: Path,
     run_prefix: RunPrefix,
     message_id: str,
-    taken: bool,
     exists: bool,
-    claimable: bool,
+    foreign: bool,
     status: int | None,
 ) -> None:
-    """A taken message id would lose the turn at its write, so it is refused up front.
+    """A message id the history holds is refused up front, and a refused request claims nothing.
 
-    A refused request also leaves no `/tmp` for a conversation without a row.
+    A refused request also leaves no `/tmp` for a conversation without a record.
     """
-    claims: list[OwnedConversation] = []
-
-    async def history(*_args: object, **_kwargs: object) -> tuple[list[Any], None]:
-        if taken:
-            raise db.MessageIdTaken
-
-        return [], None
-
-    async def claim(conversation: OwnedConversation) -> bool:
-        claims.append(conversation)
-
-        return claimable
 
     def run(*_args: object, **_kwargs: object) -> None:
         raise _Reached
 
-    monkeypatch.setattr(routes, "build_run_prefix", lambda *_args: run_prefix)
-    monkeypatch.setattr(routes, "resolve_fork", history)
-    monkeypatch.setattr(routes, "claim_conversation", claim)
-    monkeypatch.setattr(routes, "run_and_persist", run)
+    if exists:
+        await _claimed(User("u"), _TAKEN)
+
+    if foreign:
+        # Claimed by another user since the request opened the id.
+        await _claimed(_BOB)
+
+    async def build_run_prefix(*_args: object) -> RunPrefix:
+        return run_prefix
+
+    monkeypatch.setattr(turn, "build_run_prefix", build_run_prefix)
+    monkeypatch.setattr(turn, "run_and_persist", run)
 
     with pytest.raises(HTTPException if status else _Reached) as raised:
-        await routes.create_conversation_chat(
+        await turn.create_conversation_chat(
             (owned(str(_ID)), exists),
             User("u"),
             _chat_request(message_id),
             Request({"type": "http", "headers": []}),
+            None,
         )
 
     if isinstance(raised.value, HTTPException):
         assert raised.value.status_code == status
 
-    claimed = not exists and status in {404, None}
-    assert claims == ([owned(str(_ID))] if claimed else [])
+    record = await memory_store.read_record(str(_ID))
+    assert (record is not None) is (exists or foreign or status is None)
     assert tmp_dir(data_dir, owned(str(_ID))).exists() is (status is None)
 
 
-async def test_a_turn_appends_under_the_clients_message_id_and_titles_the_row(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_the_store_refuses_a_call_naming_no_owner(
+    memory_store: db.OwnedConversationStore,
 ) -> None:
-    row = Conversation(id=label_id("c1"), user_id="bob")
-    fake = _stub_session(monkeypatch, _Session(scalars_=[row]))
-    fork = label_id("fork")
+    """pydantic-ai reads no scope as every owner's, so only the ownership check names none."""
+    await _claimed(_ALICE)
 
-    _ = await db.append_branch(
-        owned("c1", _BOB),
-        fork,
-        [
-            ModelRequest(parts=[UserPromptPart("hi")]),
-            ModelResponse(parts=[TextPart("hello")]),
-        ],
-        prompt_id=_ID,
-    )
+    for call in (
+        memory_store.load(str(_ID)),
+        memory_store.list_conversations(),
+        memory_store.delete(str(_ID)),
+    ):
+        with pytest.raises(UserError):
+            await call
 
-    prompt, answer = fake.added
-    assert isinstance(prompt, Message) and isinstance(answer, Message)
-    assert (prompt.id, prompt.parent_id) == (_ID, fork)
-    assert answer.parent_id == _ID and answer.id != _ID
-    assert row.title == "hi"
-
-
-async def test_a_turn_never_creates_a_row(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A conversation its user does not own, claimed or not, takes no write."""
-    fake = _stub_session(monkeypatch, _Session(scalars_=[None]))
-
-    with pytest.raises(NoResultFound):
-        await db.append_branch(
-            owned("c1", _BOB), None, [ModelRequest(parts=[UserPromptPart("hi")])]
-        )
-
-    assert fake.added == []
+    assert await memory_store.owner_of(str(_ID)) == _ALICE.id

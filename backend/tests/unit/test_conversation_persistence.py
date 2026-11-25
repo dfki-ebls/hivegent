@@ -1,24 +1,28 @@
-"""Tests for the stateless surface of DB-first chat persistence.
+"""Tests for the stateless surface of chat persistence.
 
-The conversation store is a server-authoritative message tree: each turn loads
-the active-path prefix from SQL, runs the agent on it, and appends the turn's
-new messages (``captured[len(prefix):]``) as a branch.  The tree writes
-(``resolve_fork`` / ``append_branch``) touch PostgreSQL and are covered by
-manual smoke tests; these exercise the parts that need no database:
-``run_and_persist`` (what the persist callback receives on clean, errored, and
-interrupted finishes, and the hard-fail error chunk) and
-``dump_messages_with_ids`` (anchoring ``UIMessage`` ids to tree-node ids).
+A turn loads its conversation from the store, runs on its history, and saves
+the turn's messages after it.  These exercise the parts that need no
+database: ``run_and_persist`` (what the persist callback receives on clean,
+errored, and interrupted finishes, and the hard-fail error chunk),
+``kept_before`` (what an edit or a regenerate runs on), and
+``dump_transcript`` (one ``UIMessage`` per UI message id the stored messages carry).
 """
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from types import SimpleNamespace
-from uuid import UUID
 
 import pytest
+from exar.agents import RunConfig
+from exar.policy import allow_all
+from exar.pydantic_ai import traced_events
+from exar.pydantic_ai.compaction import Compacted, is_compaction
+from fastapi import HTTPException
 from pydantic import ValidationError
-from pydantic_ai import Agent, DeferredToolRequests, RunContext
+from pydantic_ai import Agent, BinaryContent, DeferredToolRequests, RunContext
+from pydantic_ai.conversation import Conversation as RunConversation
+from pydantic_ai.conversation_store import ConversationRecord
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     CompactionPart,
@@ -26,6 +30,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     ModelSettingsDeltaPart,
+    PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
     TextPart,
@@ -43,7 +48,10 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputSpec
+from pydantic_ai.ui import NativeEvent
 from pydantic_ai.ui.vercel_ai.request_types import (
+    FileUIPart,
+    RegenerateMessage,
     SubmitMessage,
     TextUIPart,
     ToolApprovalRequestedPart,
@@ -56,29 +64,42 @@ from pydantic_ai.ui.vercel_ai.request_types import (
 )
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
 
-import hivegent.server.vercel as vercel_module
-from hivegent.agents.approval import ApprovalNotes, approval_note_text
-from hivegent.agents.compaction import Compacted, is_compaction
+import hivegent.server.vercel.adapter as vercel_module
+from hivegent.agents.approval import (
+    APPROVED_CHANGES,
+    ApprovalNotes,
+    approval_note_text,
+    changes_digest,
+)
 from hivegent.agents.tools.ask import DISMISSED_QUESTIONS, ask_user
+from hivegent.config import settings
 from hivegent.db.conversations import (
     CHAT_ERROR_KEY,
-    ActiveNode,
-    MessagePair,
-    _fork_for_path,
     import_conversation,
     is_user_request,
+    store,
 )
-from hivegent.server.routes.conversations import _instruction_snapshots
-from hivegent.server.turns import Replay, abandon_pending_calls, pending_requests
+from hivegent.server.routes.conversations.attachments import accept_imported
+from hivegent.server.routes.conversations.history import _instruction_snapshots
+from hivegent.server.turns import (
+    INTERRUPTED_TOOL_ERROR,
+    Replay,
+    abandon_pending_calls,
+    close_orphan_tool_calls,
+    kept_before,
+    stamp,
+    ui_id,
+)
 from hivegent.server.vercel import (
     APPROVAL_METADATA_KEY,
     REASONING_DURATIONS_KEY,
     SDK_VERSION,
     ChatAdapter,
     PersistTurn,
+    StaleAnswers,
     agent_events,
     denial_message,
-    dump_messages_with_ids,
+    dump_transcript,
     load_archived,
     run_and_persist,
     stream_response,
@@ -88,7 +109,7 @@ from hivegent.types import (
     ConversationArchive,
     ServerConversation,
 )
-from tests.helpers import label_id, owned
+from tests.helpers import owned, sse_chunks
 
 
 def _texts(messages: Sequence[ModelMessage]) -> list[str]:
@@ -101,11 +122,38 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
     ]
 
 
-def _ui_messages(messages: Sequence[ModelMessage]) -> list[UIMessage]:
-    """Project *messages* the way a reload does, with placeholder node ids."""
-    return dump_messages_with_ids(
-        [(label_id(f"n{i}"), m) for i, m in enumerate(messages)]
+def pending_requests(messages: Sequence[ModelMessage]) -> DeferredToolRequests | None:
+    """The calls the last response of *messages* awaits, as a paused run's record keeps them.
+
+    A question awaits an answer, any other call an approval.
+    """
+    answered = {
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    response = next(
+        (m for m in reversed(messages) if isinstance(m, ModelResponse)), None
     )
+    dangling = [
+        call
+        for call in (response.tool_calls if response else [])
+        if call.tool_call_id not in answered
+    ]
+
+    if not dangling:
+        return None
+
+    return DeferredToolRequests(
+        calls=[c for c in dangling if c.tool_name == "ask_user"],
+        approvals=[c for c in dangling if c.tool_name != "ask_user"],
+    )
+
+
+def _ui_messages(messages: Sequence[ModelMessage]) -> list[UIMessage]:
+    """Project *messages* the way a reload does."""
+    return dump_transcript(messages, pending_requests(messages))
 
 
 def _parts[T](messages: Sequence[ModelMessage], kind: type[T]) -> list[T]:
@@ -146,6 +194,7 @@ def _adapter(
     tool_needs_approval: bool = False,
     tool_runs: bool = False,
     asks_user: bool = False,
+    regenerate: bool = False,
 ) -> ChatAdapter[None, str | DeferredToolRequests]:
     output_type: OutputSpec[str | DeferredToolRequests] = (
         [str, DeferredToolRequests] if tool_needs_approval or asks_user else str
@@ -183,9 +232,11 @@ def _adapter(
 
     return ChatAdapter[None, str | DeferredToolRequests](
         agent=agent,
-        run_input=SubmitMessage(
-            id="c1", messages=ui_messages, trigger="submit-message"
-        ),
+        run_input=RegenerateMessage(
+            id="c1", messages=ui_messages, trigger="regenerate-message", message_id=None
+        )
+        if regenerate
+        else SubmitMessage(id="c1", messages=ui_messages, trigger="submit-message"),
         sdk_version=SDK_VERSION,
     )
 
@@ -199,6 +250,7 @@ async def _run_turn(
     tool_needs_approval: bool = False,
     tool_runs: bool = False,
     asks_user: bool = False,
+    regenerate: bool = False,
     persist: PersistTurn | None = None,
 ) -> tuple[list[list[ModelMessage]], str]:
     """Run one turn through ``run_and_persist``; return recorded turns + body."""
@@ -209,6 +261,7 @@ async def _run_turn(
         tool_needs_approval=tool_needs_approval,
         tool_runs=tool_runs,
         asks_user=asks_user,
+        regenerate=regenerate,
     )
     history = list(message_history or [])
     recorded: list[list[ModelMessage]] = []
@@ -220,12 +273,19 @@ async def _run_turn(
         run_and_persist(
             adapter,
             adapter.transform_stream(
-                agent_events(
-                    adapter.agent.run_stream_events(
-                        adapter.prompt,
-                        message_history=history,
-                        deferred_tool_results=adapter.resume(pending_requests(history)),
-                    )
+                traced_events(
+                    agent_events(
+                        adapter.agent.run_stream_events(
+                            adapter.prompt,
+                            message_history=history,
+                            deferred_tool_results=adapter.resume(
+                                pending_requests(history), history
+                            ),
+                        )
+                    ),
+                    "q",
+                    RunConfig(policy=allow_all),
+                    name="chat",
                 )
             ),
             persist=persist or _record,
@@ -236,6 +296,35 @@ async def _run_turn(
         chunk.decode() if isinstance(chunk, bytes) else str(chunk) for chunk in chunks
     )
     return recorded, body
+
+
+async def test_closing_a_turn_closes_its_events_in_the_same_task() -> None:
+    """A turn closed early leaves no generator of its run to the garbage collector."""
+    log: list[str] = []
+
+    async def events() -> AsyncGenerator[NativeEvent]:
+        try:
+            log.append("started")
+            yield PartStartEvent(index=0, part=TextPart("a"))
+            yield PartStartEvent(index=1, part=TextPart("b"))
+        finally:
+            log.append("closed")
+
+    async def persist(_messages: Sequence[ModelMessage]) -> None:
+        log.append("persisted")
+
+    adapter = _adapter([UIMessage(id="m1", role="user", parts=[TextUIPart(text="q")])])
+    chunks = run_and_persist(
+        adapter, adapter.transform_stream(events()), persist=persist
+    )
+    assert isinstance(chunks, AsyncGenerator)
+
+    while not log:
+        _ = await anext(chunks)
+
+    await chunks.aclose()
+
+    assert log == ["started", "closed", "persisted"]
 
 
 async def test_clean_turn_persists_only_the_new_tail() -> None:
@@ -294,12 +383,12 @@ async def test_a_prompt_merged_into_the_replay_is_its_own_node(
         [UIMessage(id="m2", role="user", parts=[TextUIPart(text="q2")])],
         message_history=prefix,
     )
-    above, delta = Replay.of(prefix).turn(recorded[0])
+    turn = Replay.of(prefix).turn(recorded[0])
 
-    assert above is None
-    assert _texts(delta) == ["q2", "ANSWER"]
-    assert not _parts(delta, CompactionPart)
-    assert not _parts(delta, ToolReturnPart)
+    assert turn.above is None
+    assert _texts(turn.messages) == ["q2", "ANSWER"]
+    assert not _parts(turn.messages, CompactionPart)
+    assert not _parts(turn.messages, ToolReturnPart)
 
 
 async def test_regenerate_reruns_from_history_without_a_new_message() -> None:
@@ -310,7 +399,7 @@ async def test_regenerate_reruns_from_history_without_a_new_message() -> None:
     response.
     """
     prefix: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="q1")])]
-    recorded, _ = await _run_turn([], message_history=prefix)
+    recorded, _ = await _run_turn([], message_history=prefix, regenerate=True)
 
     delta = recorded[0][len(prefix) :]
     assert any(isinstance(msg, ModelResponse) for msg in delta)
@@ -323,8 +412,8 @@ async def test_errored_turn_closes_its_dangling_tool_call() -> None:
     The raised tool aborts the run, leaving a ``ToolCallPart`` with no return in
     ``capture_run_messages``.  Persisting that verbatim would make the reload
     projection read it as an approval request and the history invalid to replay,
-    so ``run_and_persist`` closes it with a failed return carrying the error
-    text.  The round-trip then reloads the tool card as an error, not an
+    so ``run_and_persist`` closes it with the failed return the stream closed
+    it with, so the tool card reloads as failed, as it streamed, not as an
     approval prompt.
     """
     recorded, _ = await _run_turn(
@@ -349,7 +438,7 @@ async def test_approval_pending_turn_keeps_its_dangling_call() -> None:
     """A clean finish awaiting approval leaves its call open, not error-closed.
 
     An approval-required tool ends the run cleanly with ``DeferredToolRequests``,
-    leaving a ``ToolCallPart`` with no return — the same shape as an error
+    leaving a ``ToolCallPart`` with no return, the same shape as an error
     orphan.  Since no error streamed, the turn is persisted untouched so it
     reloads as an approval request, not a failed tool.
     """
@@ -374,10 +463,8 @@ async def test_approval_metadata_reaches_the_stream_and_the_reload() -> None:
 
     streamed = [
         chunk["messageMetadata"]
-        for line in body.splitlines()
-        if line.startswith("data: {")
-        and (chunk := json.loads(line.removeprefix("data: ")))["type"]
-        == "message-metadata"
+        for chunk in sse_chunks(body)
+        if chunk["type"] == "message-metadata"
     ]
     reloaded = _ui_messages(recorded[0])[-1].metadata
 
@@ -519,8 +606,8 @@ async def test_abandoned_approval_is_declined_for_the_next_turn() -> None:
     returns = _parts([declined], ToolReturnPart)
     assert [r.outcome for r in returns] == ["denied"]
     assert returns[0].tool_call_id == _parts(pending[0], ToolCallPart)[0].tool_call_id
-    # The card reloads as a refusal rather than asking for approval all over again,
-    # with no note, since nobody typed one.
+    # The card reloads as a refusal rather than asking for approval all over
+    # again, with no note, since nobody typed one.
     assert _tool_states([*pending[0], declined]) == ["output-denied"]
     assert _tool_approvals([*pending[0], declined]) == [(False, None)]
 
@@ -533,6 +620,41 @@ async def test_a_settled_turn_has_no_approval_to_decline() -> None:
 
     assert abandon_pending_calls(pending_requests(settled[0])) is None
     assert abandon_pending_calls(pending_requests([])) is None
+
+
+@pytest.mark.parametrize("stopped", [False, True])
+async def test_a_call_a_stop_closed_is_no_longer_pending(
+    monkeypatch: pytest.MonkeyPatch, stopped: bool
+) -> None:
+    """A stop after a run paused closes its call, so no later request resolves it again."""
+    pending, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    requests = pending_requests(pending[0])
+    messages = list(pending[0])
+    written: list[ConversationRecord] = []
+
+    async def read_record(_id: str) -> None:
+        return None
+
+    async def write_record(record: ConversationRecord, **_kwargs: object) -> None:
+        written.append(record)
+
+    monkeypatch.setattr(store, "read_record", read_record)
+    monkeypatch.setattr(store, "write_record", write_record)
+
+    if stopped:
+        messages = close_orphan_tool_calls(
+            messages, INTERRUPTED_TOOL_ERROR, "interrupted"
+        )
+
+    await store.save(
+        RunConversation(messages=messages, deferred_tool_requests=requests), scope="u"
+    )
+
+    assert requests is not None
+    assert written[0].deferred_tool_requests == (None if stopped else requests)
 
 
 _QUESTIONS = {
@@ -637,7 +759,46 @@ async def test_an_invalid_answer_is_rejected() -> None:
     adapter = _adapter([_reply(pending, [{"selected": []}])], asks_user=True)
 
     with pytest.raises(ValidationError):
-        adapter.resume(pending_requests(pending))
+        adapter.resume(pending_requests(pending), pending)
+
+
+async def test_a_decision_for_a_call_no_longer_pending_is_refused() -> None:
+    """A client behind the store is told so, rather than its decision being dropped."""
+    pending, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    adapter = _adapter(
+        [_answer_approval(pending[0], approved=True)], tool_needs_approval=True
+    )
+
+    with pytest.raises(StaleAnswers):
+        adapter.resume(None, pending[0])
+
+
+async def test_an_approval_is_bound_to_the_changes_it_was_asked_with() -> None:
+    """The gate replans an approved write and refuses it once the changes differ."""
+    pending, _ = await _run_turn(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        tool_needs_approval=True,
+    )
+    requests = pending_requests(pending[0])
+    assert requests is not None
+    call_id = requests.approvals[0].tool_call_id
+    *_, asked = pending[0]
+    assert isinstance(asked, ModelResponse)
+    asked.metadata = {
+        APPROVAL_METADATA_KEY: {call_id: {"items": [{"path": "~/a.md"}], "added": 1}}
+    }
+    adapter = _adapter(
+        [_answer_approval(pending[0], approved=True)], tool_needs_approval=True
+    )
+    results = adapter.resume(requests, pending[0])
+
+    assert results is not None
+    assert results.metadata[call_id][APPROVED_CHANGES] == changes_digest(
+        {"added": 1, "items": [{"path": "~/a.md"}]}
+    )
 
 
 async def test_an_approval_answered_like_a_question_is_rejected() -> None:
@@ -660,7 +821,7 @@ async def test_an_approval_answered_like_a_question_is_rejected() -> None:
     adapter = _adapter([message], tool_needs_approval=True, asks_user=True)
 
     with pytest.raises(ValueError, match="DeferredToolRequests.calls"):
-        adapter.resume(pending_requests(pending[0]))
+        adapter.resume(pending_requests(pending[0]), pending[0])
 
 
 async def test_a_call_run_beside_an_approval_leaves_it_to_abandon() -> None:
@@ -707,7 +868,7 @@ async def test_generic_run_error_is_recorded_for_reload() -> None:
 
     The stream error is transient, so without this the banner is lost on reload.
     With no assistant response to attach to, the error rides on the last
-    projecting message — the user prompt — under ``CHAT_ERROR_KEY``.
+    projecting message, the user prompt, under ``CHAT_ERROR_KEY``.
     """
 
     async def fail_immediately(
@@ -793,7 +954,12 @@ async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
         run_and_persist(
             adapter,
             adapter.transform_stream(
-                agent_events(adapter.agent.run_stream_events(adapter.prompt))
+                traced_events(
+                    agent_events(adapter.agent.run_stream_events(adapter.prompt)),
+                    "q1",
+                    RunConfig(policy=allow_all),
+                    name="chat",
+                )
             ),
             persist=persist,
         ),
@@ -850,7 +1016,7 @@ async def test_reasoning_duration_is_persisted_as_message_metadata(
     assert response.metadata == {REASONING_DURATIONS_KEY: durations}
     assert "reasoningDurationsMs" in body
 
-    ui = dump_messages_with_ids([(label_id("n1"), response)])
+    ui = dump_transcript([response], None)
 
     assert isinstance(ui[0].metadata, dict)
     assert ui[0].metadata[REASONING_DURATIONS_KEY] == durations
@@ -880,9 +1046,7 @@ def test_an_export_imports_as_the_messages_it_stores() -> None:
         ModelRequest(parts=[UserPromptPart(content="q2")]),
         ModelResponse(parts=[call], model_name="m"),
     ]
-    shown = dump_messages_with_ids(
-        [(label_id(f"n{i}"), m) for i, m in enumerate(stored)]
-    )
+    shown = dump_transcript(stored, pending_requests(stored))
 
     loaded = load_archived(shown)
 
@@ -912,44 +1076,37 @@ async def test_import_conversation_rejects_empty_export() -> None:
 class TestInstructionSnapshots:
     """The system prompts an export reads back out of the stored history."""
 
-    def _pairs(self, *instructions: str | None) -> list[MessagePair]:
-        pairs: list[MessagePair] = []
+    def _pairs(self, *instructions: str | None) -> list[ModelMessage]:
+        messages: list[ModelMessage] = []
         for i, text in enumerate(instructions):
-            pairs.append(
-                (
-                    label_id(f"n{i}"),
-                    ModelRequest(
-                        parts=[UserPromptPart(content=f"q{i}")], instructions=text
-                    ),
-                )
+            request = ModelRequest(
+                parts=[UserPromptPart(content=f"q{i}")], instructions=text
             )
-        return pairs
+            stamp([request], f"n{i}")
+            messages.append(request)
+        return messages
 
     def test_consecutive_identical_prompts_collapse(self) -> None:
         """A prompt that never changed is one snapshot, not one per turn."""
         snapshots = _instruction_snapshots(self._pairs("SYS", "SYS", "SYS"))
 
         assert len(snapshots) == 1
-        assert snapshots[0].message_ids == _ids("n0", "n1", "n2")
+        assert snapshots[0].message_ids == ["n0", "n1", "n2"]
 
     def test_a_changed_prompt_starts_a_new_snapshot(self) -> None:
         """Narrowing the document scope mid-conversation stays visible."""
         snapshots = _instruction_snapshots(self._pairs("SYS", "SYS scoped", "SYS"))
 
         assert [s.text for s in snapshots] == ["SYS", "SYS scoped", "SYS"]
-        assert [s.message_ids for s in snapshots] == [
-            _ids("n0"),
-            _ids("n1"),
-            _ids("n2"),
-        ]
+        assert [s.message_ids for s in snapshots] == [["n0"], ["n1"], ["n2"]]
 
     def test_messages_carrying_no_prompt_are_skipped(self) -> None:
         """Responses hold none, and an imported turn may have lost its own."""
-        pairs: list[MessagePair] = [
-            (label_id("n0"), ModelResponse(parts=[TextPart(content="a")])),
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[TextPart(content="a")]),
             *self._pairs(None),
         ]
-        assert _instruction_snapshots(pairs) == []
+        assert _instruction_snapshots(messages) == []
 
 
 class TestConversationArchive:
@@ -1005,85 +1162,146 @@ class TestConversationArchive:
         """Neither half present is rejected by the import guard, not persisted."""
         assert ConversationArchive().active_path() == ([], None)
 
+    async def test_an_attached_url_is_rejected(self) -> None:
+        """An import admits inline images alone, so no URL is ever fetched for it."""
+        part = FileUIPart(
+            url="http://127.0.0.1:5432/secret.pdf",
+            media_type="application/pdf",
+            provider_metadata={"pydantic_ai": {"force_download": "allow-local"}},
+        )
+        messages = load_archived(
+            [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q"), part])]
+        )
 
-def _ids(*labels: str) -> list[UUID]:
-    return [label_id(label) for label in labels]
+        with pytest.raises(HTTPException):
+            await accept_imported(messages)
+
+    async def test_an_import_is_held_to_the_caps_of_a_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A tool result is cut as a run cuts one, and no message carries more images than the gateway takes."""
+        monkeypatch.setattr(settings.llm, "tool_output_max_chars", 100)
+        monkeypatch.setattr(settings.multimodal, "max_images", 1)
+        returned = ToolReturnPart("grep", "x" * 500, "c1")
+        image = BinaryContent(b"png", media_type="image/png")
+
+        await accept_imported([ModelRequest(parts=[returned])])
+
+        assert isinstance(returned.content, str) and len(returned.content) == 100
+        assert returned.content.endswith("[Cut short of its 500 characters.]")
+
+        with pytest.raises(HTTPException):
+            await accept_imported(
+                [ModelRequest(parts=[UserPromptPart(["q", image, image])])]
+            )
 
 
-def _path() -> list[ActiveNode]:
-    """A two-turn active path: user, answer, user, answer."""
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content="q1")]),
-        ModelResponse(parts=[TextPart(content="a1")]),
-        ModelRequest(parts=[UserPromptPart(content="q2")]),
-        ModelResponse(parts=[TextPart(content="a2")]),
+def _stamped(*turns: tuple[str, ModelMessage]) -> list[ModelMessage]:
+    """*turns* as a history stores them, each message under its UI message id."""
+    for ui_message_id, message in turns:
+        stamp([message], ui_message_id)
+
+    return [message for _, message in turns]
+
+
+def _history() -> list[ModelMessage]:
+    """A two-turn history: user, answer, user, answer."""
+    return _stamped(
+        ("q1", ModelRequest(parts=[UserPromptPart(content="q1")])),
+        ("a1", ModelResponse(parts=[TextPart(content="a1")])),
+        ("q2", ModelRequest(parts=[UserPromptPart(content="q2")])),
+        ("a2", ModelResponse(parts=[TextPart(content="a2")])),
+    )
+
+
+def test_an_edit_keeps_what_shows_before_the_edited_message() -> None:
+    kept = kept_before(_history(), "q2", regenerate=False, reply_id="new")
+
+    assert kept is not None and _texts(kept) == ["q1", "a1"]
+
+
+def test_a_regenerate_keeps_the_prompt_of_the_reply() -> None:
+    """The reply or its prompt is the target, or the last prompt for a reply the history lacks."""
+    for target in ["a2", "q2", "local-42", None]:
+        kept = kept_before(_history(), target, regenerate=True, reply_id="new")
+
+        assert kept is not None and _texts(kept) == ["q1", "a1", "q2"]
+
+
+def test_a_message_sent_after_a_reply_is_no_edit() -> None:
+    for target in ["a2", "local-42"]:
+        assert kept_before(_history(), target, regenerate=False, reply_id="new") is None
+
+
+def test_a_reply_a_compaction_opens_shows_it_after_its_prompt() -> None:
+    """A compaction stored ahead of its prompt shows in the reply, and stays for the reply that replaces it."""
+    history = _stamped(
+        ("q1", ModelRequest(parts=[UserPromptPart(content="q1")])),
+        ("a1", ModelResponse(parts=[TextPart(content="a1")])),
+        ("a2", ModelResponse(parts=[CompactionPart(content="the gist")])),
+        ("q2", ModelRequest(parts=[UserPromptPart(content="q2")])),
+        ("a2", ModelResponse(parts=[TextPart(content="a2")])),
+    )
+
+    *_, prompt, reply = dump_transcript(history, None)
+
+    assert (prompt.id, reply.id) == ("q2", "a2")
+    assert [part.type for part in reply.parts] == [
+        "data-compaction",
+        "step-start",
+        "text",
     ]
-    return [
-        ActiveNode(label_id(f"n{i}"), label_id(f"n{i - 1}") if i else None, msg)
-        for i, msg in enumerate(messages)
+
+    kept = kept_before(history, "a2", regenerate=True, reply_id="new")
+
+    assert kept is not None and _texts(kept) == ["q1", "a1", "q2"]
+    assert [ui_id(m) for m in kept if is_compaction(m)] == ["new"]
+    assert ui_id(history[2]) == "a2"
+
+
+def test_a_compaction_of_a_finished_reply_stays_in_it() -> None:
+    """The compact button's summary belongs to the reply it compacted, whatever prompt follows."""
+    history = _stamped(
+        ("q1", ModelRequest(parts=[UserPromptPart(content="q1")])),
+        ("a1", ModelResponse(parts=[TextPart(content="a1")])),
+        ("a1", ModelResponse(parts=[CompactionPart(content="the gist")])),
+        ("q2", ModelRequest(parts=[UserPromptPart(content="q2")])),
+        ("a2", ModelResponse(parts=[TextPart(content="a2")])),
+    )
+
+    transcript = dump_transcript(history, None)
+
+    assert [m.id for m in transcript] == ["q1", "a1", "q2", "a2"]
+    assert [part.type for part in transcript[1].parts] == [
+        "step-start",
+        "text",
+        "data-compaction",
     ]
 
 
-def test_edit_forks_under_the_edited_message() -> None:
-    """An edited user turn is replayed up to (not including) itself."""
-    prefix, fork_id = _fork_for_path(
-        _path(), regenerate=False, message_id=label_id("n2")
-    )
-
-    assert _texts(prefix) == ["q1", "a1"]
-    assert fork_id == label_id("n1")
-
-
-@pytest.mark.parametrize("message_id", ["local-42", "n3"])
-def test_submit_not_addressing_a_user_turn_continues_the_conversation(
-    message_id: str,
-) -> None:
-    """Only a user turn is editable; anything else continues at the leaf.
-
-    A turn that failed before its first write leaves the client holding an id
-    no node carries, and the AI SDK auto-continues an approved tool call with
-    the *assistant* message's id — forking there would drop the very response
-    holding the approved call.
-    """
-    prefix, fork_id = _fork_for_path(
-        _path(), regenerate=False, message_id=label_id(message_id)
-    )
-
-    assert _texts(prefix) == ["q1", "a1", "q2", "a2"]
-    assert fork_id == label_id("n3")
-
-
-def test_regenerate_forks_at_the_nearest_user_turn() -> None:
-    """Regenerating an answer replays through the user turn that asked for it."""
-    prefix, fork_id = _fork_for_path(
-        _path(), regenerate=True, message_id=label_id("n3")
-    )
-
-    assert _texts(prefix) == ["q1", "a1", "q2"]
-    assert fork_id == label_id("n2")
-
-
-def test_dump_messages_with_ids_anchors_node_ids() -> None:
-    """Each ``UIMessage.id`` is its head node id, and a turn is one message."""
-    pairs: list[MessagePair] = [
+def test_a_turn_is_one_message_under_its_ui_id() -> None:
+    """Every response of a reply folds into one message, each opening a step, its metadata merged."""
+    history = _stamped(
         (
-            label_id("n1"),
+            "q",
             ModelRequest(
                 parts=[
-                    ModelSettingsDeltaPart(settings={"thinking": "medium"}, top_level=True),
+                    ModelSettingsDeltaPart(
+                        settings={"thinking": "medium"}, top_level=True
+                    ),
                     UserPromptPart(content="q"),
                 ]
             ),
         ),
         (
-            label_id("n2"),
+            "r",
             ModelResponse(
                 parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c1")],
                 metadata={REASONING_DURATIONS_KEY: {"r1": [1000]}},
             ),
         ),
         (
-            label_id("n3"),
+            "r",
             ModelRequest(
                 parts=[
                     ToolReturnPart(
@@ -1092,48 +1310,44 @@ def test_dump_messages_with_ids_anchors_node_ids() -> None:
                         tool_call_id="c1",
                         metadata=DataChunk(type="data-undeclared", data={}),
                     ),
-                    ModelSettingsDeltaPart(settings={"thinking": "medium"}, top_level=True),
+                    ModelSettingsDeltaPart(
+                        settings={"thinking": "medium"}, top_level=True
+                    ),
                     RetryFeedbackPart("Answer.", retry=RetryInfo(cause="no_output")),
                 ]
             ),
         ),
         (
-            label_id("n4"),
+            "r",
             ModelResponse(
                 parts=[TextPart(content="answer")],
                 metadata={REASONING_DURATIONS_KEY: {"r2": [2400]}},
             ),
         ),
-    ]
-
-    ui = dump_messages_with_ids(
-        pairs, siblings={label_id("n2"): [label_id("n2"), label_id("n5")]}
     )
 
-    # The turn folds into its first response, as it streamed, and the request
-    # holding only a tool return and harness feedback emits no UIMessage.
-    assert [msg.id for msg in ui] == [str(label_id("n1")), str(label_id("n2"))]
+    ui = dump_transcript(history, None)
+
+    assert [msg.id for msg in ui] == ["q", "r"]
     assert [part.type for part in ui[0].parts] == ["text"]
 
     answer = ui[1]
-    assert [part.type for part in answer.parts] == ["tool-t", "text"]
+    assert [part.type for part in answer.parts] == [
+        "step-start",
+        "tool-t",
+        "step-start",
+        "text",
+    ]
     # Metadata merges as the client merges a continuation's.
     assert isinstance(answer.metadata, dict)
     assert answer.metadata[REASONING_DURATIONS_KEY] == {"r1": [1000], "r2": [2400]}
-    # branchCount / branchIndex are derived from the sibling list.
-    assert answer.metadata["branch"]["branchCount"] == 2
-    assert answer.metadata["branch"]["branchIndex"] == 0
-    assert answer.metadata["branch"]["siblingIds"] == [
-        str(label_id("n2")),
-        str(label_id("n5")),
-    ]
 
 
 async def test_a_compaction_streams_as_the_part_a_reload_shows() -> None:
     """A run's compaction reaches the client as it reloads."""
     adapter = _adapter([])
     part = CompactionPart(content="the gist")
-    reloaded = dump_messages_with_ids([(label_id("n1"), ModelResponse(parts=[part]))])
+    reloaded = dump_transcript([ModelResponse(parts=[part])], None)
     shown = reloaded[0].parts[-1].model_dump(mode="json", by_alias=True)
 
     live = [
