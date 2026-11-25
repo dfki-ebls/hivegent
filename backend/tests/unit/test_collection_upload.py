@@ -87,9 +87,7 @@ async def test_progress_seeds_zero_before_first_conversion(
     archive = _make_zip(tmp_path, {"A.md": b"# a", "B.md": b"# b"})
     currents = [
         event.current
-        async for event in collections.process_collection(
-            user_store, archive
-        )
+        async for event in collections.process_collection(user_store, archive)
         if isinstance(event, CollectionProgressEvent)
     ]
 

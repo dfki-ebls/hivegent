@@ -22,6 +22,7 @@ __all__ = ["router"]
 
 router = APIRouter()
 
+
 @router.get("/settings")
 async def get_settings(
     user: CurrentUser,

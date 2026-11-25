@@ -150,7 +150,9 @@ def _references(workspace: Path, mirrored: Collection[str] | None = None) -> set
         Part(stem_path_from_reference(rel), "description").path
         for dir_path, _dir_names, file_names in _walk(workspace)
         for name in file_names
-        if is_description_file(rel := (dir_path / name).relative_to(workspace).as_posix())
+        if is_description_file(
+            rel := (dir_path / name).relative_to(workspace).as_posix()
+        )
     }
 
 

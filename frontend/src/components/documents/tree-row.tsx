@@ -1,13 +1,5 @@
 import type { ItemInstance, ItemMeta } from "@headless-tree/core";
-import {
-  FileText,
-  Folder,
-  FolderOpen,
-  type LucideIcon,
-  Pencil,
-  Scale,
-  Trash2,
-} from "lucide-react";
+import { FileText, Folder, FolderOpen, type LucideIcon, Pencil, Scale, Trash2 } from "lucide-react";
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 

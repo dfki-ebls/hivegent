@@ -232,7 +232,9 @@ class Preferences(BaseModel):
             if info.context != _STORED or info.field_name is None:
                 raise
 
-            return cls.model_fields[info.field_name].get_default(call_default_factory=True)
+            return cls.model_fields[info.field_name].get_default(
+                call_default_factory=True
+            )
 
     @classmethod
     def stored(cls, values: Mapping[str, Any]) -> Self:
@@ -241,7 +243,9 @@ class Preferences(BaseModel):
         A stored choice outlives what it names, such as a model the catalog
         dropped or a mode that was renamed, which must not fail every turn.
         """
-        known = {name: value for name, value in values.items() if name in cls.model_fields}
+        known = {
+            name: value for name, value in values.items() if name in cls.model_fields
+        }
 
         return cls.model_validate(known, context=_STORED)
 

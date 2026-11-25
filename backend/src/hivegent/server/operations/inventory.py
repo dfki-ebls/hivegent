@@ -192,9 +192,7 @@ def _build_tree(
     chunk_counts: dict[str, int],
 ) -> DirectoryTreeResponse:
     """Walk *workspace_dir* into a tree response.  Blocking; runs off the loop."""
-    root = _build_directory_tree(
-        workspace_dir, workspace_dir, chunk_counts
-    )
+    root = _build_directory_tree(workspace_dir, workspace_dir, chunk_counts)
     total_files, total_directories = _count(root)
     return DirectoryTreeResponse(
         root=root,

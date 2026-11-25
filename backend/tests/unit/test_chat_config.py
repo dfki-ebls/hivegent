@@ -75,7 +75,10 @@ def test_a_message_names_the_documents_it_is_about() -> None:
     selection = {"included": [{"path": "~/handbook", "directory": True}]}
 
     def post(documents: object) -> int:
-        body = {"id": "c", "messages": [{**message, "metadata": {"documents": documents}}]}
+        body = {
+            "id": "c",
+            "messages": [{**message, "metadata": {"documents": documents}}],
+        }
 
         return _client().post("/chat", json=body).status_code
 
@@ -91,5 +94,7 @@ def test_a_turn_runs_with_the_documents_of_its_question() -> None:
     )
     answer = ModelResponse(parts=[TextPart("a")])
 
-    assert DocumentSelection.of([asked, answer]).excluded == [FilterEntry("~/secret", True)]
+    assert DocumentSelection.of([asked, answer]).excluded == [
+        FilterEntry("~/secret", True)
+    ]
     assert DocumentSelection.of([answer]) == DocumentSelection()

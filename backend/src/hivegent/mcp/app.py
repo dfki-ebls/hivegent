@@ -55,7 +55,9 @@ class HivegentVerifier(TokenVerifier):
             token=token,
             client_id=credential.client,
             scopes=scope.split() if isinstance(scope, str) else [],
-            expires_at=None if (end := credential.user.expires_at) is None else int(end),
+            expires_at=None
+            if (end := credential.user.expires_at) is None
+            else int(end),
             subject=credential.user.id,
             claims=dict(claims),
         )

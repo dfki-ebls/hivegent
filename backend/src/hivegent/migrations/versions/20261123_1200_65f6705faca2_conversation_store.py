@@ -300,9 +300,7 @@ def _rewrite() -> None:
             {"c": conversation_id},
         ).mappings()
         try:
-            stored = record(
-                [Node(r["id"], r["parent_id"], r["payload"]) for r in rows]
-            )
+            stored = record([Node(r["id"], r["parent_id"], r["payload"]) for r in rows])
         except (KeyError, TypeError, AttributeError, ValueError) as error:
             error.add_note(f"in conversation {conversation_id}")
             raise
@@ -363,7 +361,9 @@ def upgrade() -> None:
     )
     op.add_column("conversations", sa.Column("forked_from", sa.Uuid(), nullable=True))
     op.add_column("conversations", sa.Column("forked_at", sa.Uuid(), nullable=True))
-    op.add_column("conversations", sa.Column("instructions", sa.String(), nullable=True))
+    op.add_column(
+        "conversations", sa.Column("instructions", sa.String(), nullable=True)
+    )
 
     op.drop_constraint(
         op.f("fk_messages_conversation_id_parent_id_messages"),

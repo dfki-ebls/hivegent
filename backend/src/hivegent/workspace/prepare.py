@@ -420,7 +420,8 @@ def _build_converter(pipeline: str, basename: str) -> AsyncParser:
         return get_converter(
             pipeline,
             filename=basename,
-            detect_asset_roles=settings.conversion.assets is AssetProcessingMode.DESCRIBE,
+            detect_asset_roles=settings.conversion.assets
+            is AssetProcessingMode.DESCRIBE,
         )
     except ValidationError:
         # Operator options the converter refuses fail loudly, never as a fallback.

@@ -373,7 +373,12 @@ async function deleteAssetDescription(filename: string, assetName: string): Prom
 
 /** Rechunk documents with new settings as a background job. */
 function rechunkDocuments(files: string[]): Promise<JobView> {
-  return requestJson(apiUrl("/documents/rechunk"), "rechunk", JobViewSchema, jsonRequest("POST", { files }));
+  return requestJson(
+    apiUrl("/documents/rechunk"),
+    "rechunk",
+    JobViewSchema,
+    jsonRequest("POST", { files }),
+  );
 }
 
 /** Reconvert documents from their originals as a background job. */

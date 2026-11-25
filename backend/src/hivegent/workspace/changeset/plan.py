@@ -383,7 +383,6 @@ def _source(
             status_code=403, detail=_carries_hidden(_shown(root, path)).current
         )
 
-
     return location, is_dir
 
 

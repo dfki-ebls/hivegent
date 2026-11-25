@@ -209,7 +209,11 @@ def test_a_plan_skips_sidecars_and_deletes_a_mirrored_one() -> None:
 
     plan = sync.plan_sync(known, Delta(items=known, listed=True))
 
-    assert (plan.downloads, plan.skipped, plan.deletes) == ((), (sidecar.path,), (sidecar,))
+    assert (plan.downloads, plan.skipped, plan.deletes) == (
+        (),
+        (sidecar.path,),
+        (sidecar,),
+    )
 
 
 class Memory:

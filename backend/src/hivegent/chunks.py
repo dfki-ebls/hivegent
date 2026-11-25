@@ -79,6 +79,7 @@ def chunking(store: Workspace, entry: EntryMetadata) -> str:
 
     return DEFAULT_CHUNKING if pipeline == AUTO else pipeline
 
+
 async def chunk_and_index_document(
     store: Workspace,
     filename: str,

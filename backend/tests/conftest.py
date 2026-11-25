@@ -112,6 +112,7 @@ def memory_store(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(queries, "store", store)
     monkeypatch.setattr(compaction, "store", store)
+
     async def unchosen(_user_id: str) -> dict[str, object]:
         return {}
 

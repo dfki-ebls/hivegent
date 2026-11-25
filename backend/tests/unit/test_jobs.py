@@ -44,7 +44,9 @@ async def test_job_runs_reports_stage_and_succeeds() -> None:
         stages.append("ran")
         ctx.set_progress(1, 1)
 
-    view = manager.submit(kind="document.upload", title="a.pdf", owner=User("u1"), work=work)
+    view = manager.submit(
+        kind="document.upload", title="a.pdf", owner=User("u1"), work=work
+    )
     assert view.status == "queued"
 
     final = await _run_to_terminal(manager, "u1", view.id)
@@ -142,7 +144,9 @@ async def test_a_job_queued_past_its_deadline_never_starts() -> None:
     async def work(_ctx: JobContext) -> None:
         ran.append("ran")
 
-    view = manager.submit(kind="x", title="f", owner=User("u1", expires_at=0), work=work)
+    view = manager.submit(
+        kind="x", title="f", owner=User("u1", expires_at=0), work=work
+    )
     final = await _run_to_terminal(manager, "u1", view.id)
 
     assert final.status == "failed" and ran == []

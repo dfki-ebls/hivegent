@@ -635,10 +635,9 @@ def _is_access_token(header: Mapping[str, Any], claims: Mapping[str, Any]) -> bo
     False
     """
     typ = header.get("typ")
+    declared = isinstance(typ, str) and typ.lower() in _ACCESS_TOKEN_TYPES
 
-    return (
-        isinstance(typ, str) and typ.lower() in _ACCESS_TOKEN_TYPES
-    ) or claims.get("typ") == "Bearer"
+    return declared or claims.get("typ") == "Bearer"
 
 
 def _client(claims: Mapping[str, Any]) -> str | None:

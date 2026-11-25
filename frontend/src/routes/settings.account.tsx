@@ -1,11 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  BrainIcon,
-  EraserIcon,
-  FileX2Icon,
-  MessageSquareXIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { BrainIcon, EraserIcon, FileX2Icon, MessageSquareXIcon, Trash2Icon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { clearMemory, clearTmp, deleteAllUserData } from "@/api/account";

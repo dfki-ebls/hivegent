@@ -1,11 +1,7 @@
 import { create } from "zustand";
 
 import { honoringRateLimits } from "@/api/client";
-import {
-  canonicalPath,
-  uploadCollection,
-  uploadDocument,
-} from "@/api/documents";
+import { canonicalPath, uploadCollection, uploadDocument } from "@/api/documents";
 import { errorMessage, fileStem, isAbortError } from "@/lib/utils";
 import { useJobsStore } from "@/stores/jobs-store";
 

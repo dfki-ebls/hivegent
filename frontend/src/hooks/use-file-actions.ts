@@ -18,8 +18,7 @@ export function useFileActions() {
 
   return {
     rechunk: (files: readonly FileNode[]) => rechunk({ paths: idsOf(files) }),
-    reconvert: (files: readonly FileNode[]) =>
-      reconvert({ paths: idsOf(files) }),
+    reconvert: (files: readonly FileNode[]) => reconvert({ paths: idsOf(files) }),
     download: (files: readonly FileNode[]) =>
       download(
         files.map((file) => ({

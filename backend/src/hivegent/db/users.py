@@ -51,7 +51,11 @@ async def update_preferences(
         stored = await s.scalar(
             insert.on_conflict_do_update(
                 index_elements=[User.id],
-                set_={"preferences": User.preferences.op("||")(insert.excluded.preferences)},
+                set_={
+                    "preferences": User.preferences.op("||")(
+                        insert.excluded.preferences
+                    )
+                },
             ).returning(User.preferences)
         )
 

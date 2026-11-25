@@ -151,9 +151,7 @@ export function DocumentTreeView({ docTree }: DocumentTreeViewProps) {
         // download), only the write actions below are gated on the workspace.
         showMetadata
         editable={openFile?.writable ?? false}
-        onSave={(filename, content) =>
-          write({ paths: [filename], content })
-        }
+        onSave={(filename, content) => write({ paths: [filename], content })}
         onRechunk={openFile?.writable ? () => actions.rechunk([openFile]) : undefined}
         rechunking={openPath !== null && mutatingPaths.has(openPath)}
         onReconvert={

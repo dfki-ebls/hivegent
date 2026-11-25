@@ -33,7 +33,10 @@ async def get_preferences(user: CurrentUser) -> Preferences:
 @router.patch("/preferences")
 async def patch_preferences(changes: Preferences, user: CurrentUser) -> Preferences:
     """Store the choices *changes* sets, keeping the others, so clients changing different ones never undo each other."""
-    if changes.assistant is not None and await resolve_assistant(user, changes.assistant) is None:
+    if (
+        changes.assistant is not None
+        and await resolve_assistant(user, changes.assistant) is None
+    ):
         raise HTTPException(
             status_code=422, detail=_unknown_assistant(changes.assistant).current
         )

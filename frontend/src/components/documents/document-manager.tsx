@@ -14,10 +14,7 @@ import {
 } from "@/lib/collection-upload";
 import { useDocumentTree } from "@/hooks/use-document-tree";
 import { useWorkspaces } from "@/hooks/use-workspaces";
-import {
-  selectHasPendingUploads,
-  useUploadQueue,
-} from "@/stores/upload-queue-store";
+import { selectHasPendingUploads, useUploadQueue } from "@/stores/upload-queue-store";
 import { DocumentDialog } from "@/components/document-dialog";
 import { TooltipButton } from "@/components/common/tooltip-button";
 import { SearchInput } from "@/components/search-input";
@@ -80,10 +77,8 @@ export function DocumentManager() {
         classification.directories.length > 0 || classification.zipFiles.length > 0;
       if (hasCollection) {
         const name = collectionName(classification);
-        enqueueCollection(
-          target,
-          name,
-          (signal) => buildCollectionZip(classification, name, signal),
+        enqueueCollection(target, name, (signal) =>
+          buildCollectionZip(classification, name, signal),
         );
       } else {
         enqueueFiles(target, classification.looseFiles);
@@ -125,10 +120,8 @@ export function DocumentManager() {
     e.target.value = "";
     if (captured.length > 0) {
       const name = directoryInputName(captured);
-      enqueueCollection(
-        targetDir,
-        name,
-        () => buildCollectionZipFromDirectoryInput(captured, name),
+      enqueueCollection(targetDir, name, () =>
+        buildCollectionZipFromDirectoryInput(captured, name),
       );
     }
   };
@@ -174,7 +167,6 @@ export function DocumentManager() {
           onNewDocument={() => setNewDocOpen(true)}
           onNewFolder={() => setShowCreateDir(true)}
         />
-
 
         {/* A selection swaps its actions in for the search, one row of the
             same height, so the tree below never shifts. */}

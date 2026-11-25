@@ -264,7 +264,9 @@ async def due(source_id: str, *, interval: timedelta) -> Due | None:
             )
         ).one_or_none()
 
-    return None if row is None else Due(_request(row.requested) or "sync", row.request_seq)
+    return (
+        None if row is None else Due(_request(row.requested) or "sync", row.request_seq)
+    )
 
 
 async def finish_sync(

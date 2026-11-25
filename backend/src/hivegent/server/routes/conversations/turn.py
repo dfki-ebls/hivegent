@@ -308,7 +308,9 @@ async def _prepare_turn(
     kept, pending, reply_id = (
         _resolve_history((), None, config, prompt)
         if loaded is None
-        else _resolve_history(loaded.messages, loaded.deferred_tool_requests, config, prompt)
+        else _resolve_history(
+            loaded.messages, loaded.deferred_tool_requests, config, prompt
+        )
     )
     # The documents of the question the turn answers, the new one's or the one a
     # regenerate, a resumed turn, or a compaction answers again.
@@ -540,9 +542,7 @@ async def create_conversation_chat(
     response_class=StreamingResponse,
     responses=_RESUME_RESPONSES,
 )
-async def follow_conversation_turn(
-    opened: Opened, user: CurrentPrincipal
-) -> Response:
+async def follow_conversation_turn(opened: Opened, user: CurrentPrincipal) -> Response:
     """Follow the running turn of a conversation from its first chunk.
 
     The AI SDK's resumable stream: ``204`` while no turn runs, so a client

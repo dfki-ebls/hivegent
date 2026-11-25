@@ -38,7 +38,8 @@ export const documents = {
     inferred: "Inferred from the data whenever the case base is read, it is not saved.",
     off: "Off",
     decisions: "Measures",
-    decisionsHint: "Each row is one decision of the configuration inferred from the data, with its reason.",
+    decisionsHint:
+      "Each row is one decision of the configuration inferred from the data, with its reason.",
     element: "Element",
     measure: "Measure",
     weight: "Weight",
