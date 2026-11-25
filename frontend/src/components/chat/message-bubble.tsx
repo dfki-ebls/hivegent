@@ -64,9 +64,13 @@ function AssistantMessage({ message, processing }: AssistantMessageProps) {
   const toolData = indexToolData(message.parts);
   // The backend times each reasoning part in order, and the parts render in order.
   const reasoningDurations = Object.values(message.metadata?.reasoningDurationsMs ?? {}).flat();
-  let reasoningRank = 0;
+  const reasoningDurationOf = new Map<ChatPart, number | undefined>(
+    message.parts
+      .filter((part) => part.type === "reasoning")
+      .map((part, rank) => [part, reasoningDurations[rank]]),
+  );
   const renderPart = (part: ChatPart, key: number, prompt: boolean) => {
-    const durationMs = part.type === "reasoning" ? reasoningDurations[reasoningRank++] : undefined;
+    const durationMs = reasoningDurationOf.get(part);
 
     return (
       <MessagePart
@@ -92,7 +96,10 @@ function AssistantMessage({ message, processing }: AssistantMessageProps) {
           {/* Only the last message holds requests that are still answerable. */}
           <ApprovalScope
             pending={live === "stale" ? [] : pendingApprovalIds(message)}
-            metadata={message.metadata?.approvalMetadata}
+            details={{
+              metadata: message.metadata?.approvalMetadata,
+              args: message.metadata?.approvalArgs,
+            }}
           >
             {blocks.map((block, index) =>
               block.kind === "steps" ? (

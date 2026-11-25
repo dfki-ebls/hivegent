@@ -1,34 +1,15 @@
-import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { LockIcon } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { createFileRoute, notFound, Outlet } from "@tanstack/react-router";
 
-import { keyPrefix } from "@/i18n";
-import { useIsAdmin } from "@/api/settings";
-import { StatusPanel } from "@/components/common/status-panel";
+import { settingsQueries } from "@/api/settings";
 import { enforceLogin } from "@/oidc";
 
-const T_OPTIONS = keyPrefix(($) => $.app.adminOnly);
-
-/** The debugging consoles, for admins only, which everyone else sees locked. */
+/** The debugging consoles, which exist only where the operator enabled them for admins. */
 export const Route = createFileRoute("/debug")({
-  beforeLoad: enforceLogin,
-  component: DebugLayout,
+  beforeLoad: async (options) => {
+    await enforceLogin(options);
+    const settings = await options.context.queryClient.query(settingsQueries.server());
+
+    if (!settings.debug) throw notFound();
+  },
+  component: Outlet,
 });
-
-function DebugLayout() {
-  const { t } = useTranslation(undefined, T_OPTIONS);
-  const isAdmin = useIsAdmin();
-
-  if (!isAdmin) {
-    return (
-      <StatusPanel
-        icon={LockIcon}
-        title={t(($) => $.title)}
-        description={t(($) => $.description)}
-        className="h-full"
-      />
-    );
-  }
-
-  return <Outlet />;
-}

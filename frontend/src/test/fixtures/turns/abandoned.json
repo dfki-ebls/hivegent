@@ -1,0 +1,218 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "metadata": {
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Write x.",
+          "state": "done"
+        }
+      ]
+    },
+    {
+      "id": "id-1",
+      "role": "assistant",
+      "metadata": {
+        "approvalMetadata": {
+          "w1": {
+            "value": "x"
+          }
+        },
+        "approvalArgs": {
+          "w1": {
+            "value": "x"
+          }
+        },
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "text",
+          "text": "Writing it.",
+          "state": "done"
+        },
+        {
+          "type": "tool-write",
+          "toolCallId": "w1",
+          "state": "approval-requested",
+          "input": {
+            "value": "x"
+          },
+          "providerExecuted": false,
+          "approval": {
+            "id": "w1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "id-2",
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Never mind."
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-3"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "reasoning-start",
+      "id": "id-4"
+    },
+    {
+      "type": "reasoning-delta",
+      "id": "id-4",
+      "delta": "weighing options"
+    },
+    {
+      "type": "reasoning-end",
+      "id": "id-4"
+    },
+    {
+      "type": "text-start",
+      "id": "id-5"
+    },
+    {
+      "type": "text-delta",
+      "delta": "Hello there.",
+      "id": "id-5"
+    },
+    {
+      "type": "text-end",
+      "id": "id-5"
+    },
+    {
+      "type": "message-metadata",
+      "messageMetadata": {
+        "reasoningDurationsMs": {
+          "id-6": [
+            0
+          ]
+        },
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      }
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "finish"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-1",
+          "role": "assistant",
+          "metadata": {
+            "approvalMetadata": {
+              "w1": {
+                "value": "x"
+              }
+            },
+            "approvalArgs": {
+              "w1": {
+                "value": "x"
+              }
+            },
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "text",
+              "text": "Writing it.",
+              "state": "done"
+            },
+            {
+              "type": "tool-write",
+              "toolCallId": "w1",
+              "state": "output-denied",
+              "input": {
+                "value": "x"
+              },
+              "providerExecuted": false,
+              "approval": {
+                "id": "w1",
+                "approved": false
+              }
+            }
+          ]
+        },
+        {
+          "id": "id-2",
+          "role": "user",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "Never mind.",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "id-3",
+          "role": "assistant",
+          "metadata": {
+            "reasoningDurationsMs": {
+              "id-6": [
+                0
+              ]
+            },
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "reasoning",
+              "text": "weighing options",
+              "state": "done"
+            },
+            {
+              "type": "text",
+              "text": "Hello there.",
+              "state": "done"
+            }
+          ]
+        }
+      ],
+      "transient": true
+    }
+  ]
+}

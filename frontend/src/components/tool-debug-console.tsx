@@ -8,7 +8,7 @@
  */
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
@@ -129,12 +129,8 @@ export function ToolDebugConsole() {
     meta: { inlineError: true },
   });
 
-  const selectedTool = useMemo(
-    () => tools.find((tool) => tool.name === selected),
-    [tools, selected],
-  );
-
-  const grouped = useMemo(() => [...Map.groupBy(tools, (tool) => tool.group)], [tools]);
+  const selectedTool = tools.find((tool) => tool.name === selected);
+  const grouped = [...Map.groupBy(tools, (tool) => tool.group)];
 
   // Reset the form to the selected tool's schema defaults whenever it changes.
   function handleSelect(name: string | null) {
@@ -186,6 +182,7 @@ export function ToolDebugConsole() {
               <CardContent className="flex flex-col gap-4">
                 {isJsonSchema(selectedTool.parameters) && (
                   <SchemaForm
+                    key={selectedTool.name}
                     schema={selectedTool.parameters}
                     values={values}
                     onChange={setValues}

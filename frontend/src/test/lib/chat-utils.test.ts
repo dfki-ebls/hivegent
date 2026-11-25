@@ -4,8 +4,8 @@ import {
   activeChatError,
   isProcessing,
   liveOf,
-  placeCompactions,
   resendOf,
+  settleTurn,
   shouldContinueRun,
 } from "@/lib/chat/chat-utils";
 import type { ChatMessage } from "@/lib/chat/message";
@@ -106,35 +106,25 @@ describe("resendOf", () => {
   });
 });
 
-describe("placeCompactions", () => {
-  const compaction: ChatMessage["parts"][number] = {
-    type: "data-compaction",
-    data: { content: "the gist" },
-  };
-  const reply = (id: string, parts: ChatMessage["parts"]): ChatMessage => ({
-    id,
-    role: "assistant",
-    parts,
-  });
+describe("settleTurn", () => {
+  const stored = [
+    { ...msg("user", "q"), metadata: { chatError: "failed" } },
+    msg("assistant", "stored"),
+  ];
 
-  it("shows a compaction made for a prompt ahead of it, as a reload does", () => {
-    const answered = [
+  it("replaces the streamed turn with its stored version, keeping what was sent after it", () => {
+    const steering = msg("user", "next");
+    const messages = [msg("assistant", "a"), msg("user", "q"), msg("assistant", "live"), steering];
+
+    expect(settleTurn(messages, stored, "assistant-live")).toEqual([
       msg("assistant", "a"),
-      msg("user", "q"),
-      reply("r", [{ type: "step-start" }, compaction, { type: "text", text: "b" }]),
-    ];
-    const placed = placeCompactions(answered);
-
-    expect(placed[0]?.parts.at(-1)).toBe(compaction);
-    expect(placed[2]?.parts).not.toContain(compaction);
-    // A reply that held only the compaction goes, as it never reloads.
-    expect(placeCompactions([...answered.slice(0, 2), reply("r", [compaction])])).toHaveLength(2);
+      ...stored,
+      steering,
+    ]);
   });
 
-  it("leaves a compaction the reply streamed after its own content", () => {
-    const messages = [msg("user", "q"), reply("r", [{ type: "text", text: "b" }, compaction])];
-
-    expect(placeCompactions(messages)).toBe(messages);
+  it("gives up on a transcript that lacks the turn", () => {
+    expect(settleTurn([msg("user", "other")], stored, "assistant-live")).toBeUndefined();
   });
 });
 

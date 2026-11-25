@@ -43,16 +43,15 @@ export const chat = {
   compaction: {
     compacted: "Konversation komprimiert",
   },
-  navGuard: {
-    title: "Aktuelle Antwort stoppen?",
-    description:
-      "Dieser Chat erzeugt noch eine Antwort. Wenn du ihn jetzt verlässt, wird sie gestoppt. Eine unvollständige Antwort wird gesichert, sodass du später zurückkehren und diese Konversation fortsetzen kannst.",
-    stay: "Bleiben",
-    leave: "Verlassen und stoppen",
-  },
   steering: {
     queued_one: "{{count}} Nachricht in der Warteschlange",
     queued_other: "{{count}} Nachrichten in der Warteschlange",
+    leaveTitle: "Wartende Nachrichten verwerfen?",
+    leaveDescription_one:
+      "Die für den Assistenten wartende Nachricht wurde noch nicht gesendet und geht beim Verlassen verloren.",
+    leaveDescription_other:
+      "Die {{count}} für den Assistenten wartenden Nachrichten wurden noch nicht gesendet und gehen beim Verlassen verloren.",
+    leave: "Verlassen",
   },
   composer: {
     placeholder: "Frag zu deinen Dokumenten …",
@@ -64,7 +63,10 @@ export const chat = {
     removeAttachment: "{{name}} entfernen",
     removeImage: "Bild entfernen",
     removeFilter: "{{name}} aus dem Filter entfernen",
+    noAssistant: "Kein Assistent",
+    skillSuggestions: "Skills",
     attachmentErrors: {
+      vision: "Das gewählte Modell nimmt keine Bilder an.",
       accept:
         "Du kannst nur Bilder anhängen. Lade andere Dokumente in deinen Arbeitsbereich hoch, dort kann der Assistent sie durchsuchen.",
       maxFileSize: "Bilder müssen kleiner als {{size}} sein.",
@@ -209,24 +211,35 @@ export const chat = {
   },
   tools: {
     names: {
+      answer_task: "Aufgabe beantworten",
       apply_changes: "Änderungen anwenden",
       ask_user: "Rückfragen",
+      cancel_task: "Aufgabe abbrechen",
+      check_task: "Aufgabe prüfen",
+      complete: "Modell fragen",
+      delegate_task: "Aufgabe delegieren",
       delete_documents: "Dokumente löschen",
       edit_document: "Dokument bearbeiten",
-      explore: "Erkunden",
       get_conversation: "Konversation lesen",
       grep: "Text suchen",
       jq: "JSON abfragen",
       list_conversations: "Konversationen auflisten",
       list_documents: "Dokumente auflisten",
+      list_tasks: "Aufgaben auflisten",
+      load_skill: "Skill laden",
+      maintain_case_base: "Fallbasis pflegen",
+      message_task: "Aufgabe anweisen",
       move_documents: "Dokumente verschieben",
       query_table: "Tabellen abfragen",
+      read_assistant: "Assistenten lesen",
       read_binary_document: "Binärdateien lesen",
       read_document: "Dokumente lesen",
       read_memory: "Gedächtnis lesen",
+      retain_cases: "Fälle übernehmen",
       run_python: "Python ausführen",
       search: "Semantische Suche",
       search_conversation: "Konversation durchsuchen",
+      similar_cases: "Ähnliche Fälle",
       web_fetch: "Webseiten abrufen",
       web_search: "Websuche",
       write_document: "Dokument schreiben",
@@ -324,6 +337,12 @@ export const chat = {
       deleted: "{{path}} gelöscht",
       mkdir: "Ordner {{path}} erstellt",
       replaces: "ersetzt",
+      reasons: {
+        add: "Fall {{key}} hinzufügen",
+        addNew: "Neuen Fall hinzufügen",
+        update: "Fall {{key}} aktualisieren",
+        remove: "Fall {{key}} entfernen",
+      },
       question_one: "Darf der Assistent diese Änderung an deinem Arbeitsbereich anwenden?",
       question_other:
         "Darf der Assistent diese {{count}} Änderungen an deinem Arbeitsbereich anwenden?",

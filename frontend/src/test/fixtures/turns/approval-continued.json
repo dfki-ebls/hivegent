@@ -1,0 +1,168 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "metadata": {
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Write x.",
+          "state": "done"
+        }
+      ]
+    },
+    {
+      "id": "id-1",
+      "role": "assistant",
+      "metadata": {
+        "approvalMetadata": {
+          "w1": {
+            "value": "x"
+          }
+        },
+        "approvalArgs": {
+          "w1": {
+            "value": "x"
+          }
+        },
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "text",
+          "text": "Writing it.",
+          "state": "done"
+        },
+        {
+          "type": "tool-write",
+          "toolCallId": "w1",
+          "state": "approval-responded",
+          "input": {
+            "value": "x"
+          },
+          "providerExecuted": false,
+          "approval": {
+            "id": "w1",
+            "approved": true
+          }
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-1"
+    },
+    {
+      "type": "tool-input-available",
+      "toolCallId": "w1",
+      "toolName": "write",
+      "input": {
+        "value": "x"
+      }
+    },
+    {
+      "type": "tool-output-available",
+      "toolCallId": "w1",
+      "output": "written"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "text-start",
+      "id": "id-2"
+    },
+    {
+      "type": "text-delta",
+      "delta": "Written.",
+      "id": "id-2"
+    },
+    {
+      "type": "text-end",
+      "id": "id-2"
+    },
+    {
+      "type": "message-metadata",
+      "messageMetadata": {
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      }
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "finish"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-1",
+          "role": "assistant",
+          "metadata": {
+            "approvalMetadata": {
+              "w1": {
+                "value": "x"
+              }
+            },
+            "approvalArgs": {
+              "w1": {
+                "value": "x"
+              }
+            },
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "text",
+              "text": "Writing it.",
+              "state": "done"
+            },
+            {
+              "type": "tool-write",
+              "toolCallId": "w1",
+              "state": "output-available",
+              "input": {
+                "value": "x"
+              },
+              "output": "written",
+              "providerExecuted": false,
+              "approval": {
+                "id": "w1",
+                "approved": true
+              }
+            },
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "text",
+              "text": "Written.",
+              "state": "done"
+            }
+          ]
+        }
+      ],
+      "transient": true
+    }
+  ]
+}

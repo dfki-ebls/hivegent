@@ -6,7 +6,7 @@ import { ChangesetSummarySchema, ChangesetView } from "@/components/chat/tools/c
 import { ToolError, ToolParameters } from "@/components/chat/tools/display";
 import { ToolIcon } from "@/components/chat/tools/icons";
 import { useMessageLive } from "@/components/chat/chat-context";
-import { useApprovalMetadata } from "@/hooks/chat/use-tool-approval";
+import { useApprovalArgs, useApprovalMetadata } from "@/hooks/chat/use-tool-approval";
 import { type ToolPart, toolDisplayName, toolInput, toolLineState } from "@/lib/chat/tool-part";
 
 interface ToolCardProps {
@@ -28,6 +28,7 @@ interface ToolCardProps {
  * One tool call as a trace line that expands to its input, the user's decision, and its output.
  * A call that waits for approval asks with its input instead, along with the changeset
  * summary that every call changing the workspace sends as approval metadata.
+ * The input of a call that asked is the one its tool runs with, as validated by the backend.
  */
 export function ToolCard({
   toolName,
@@ -41,7 +42,7 @@ export function ToolCard({
   const { t } = useTranslation();
   const live = useMessageLive();
   const summary = useApprovalMetadata(part, ChangesetSummarySchema);
-  const input = toolInput<Record<string, unknown>>(part);
+  const input = useApprovalArgs(part) ?? toolInput(part);
   const name = title ?? toolDisplayName(t, toolName);
   const icon = <ToolIcon name={toolName} />;
   const details =

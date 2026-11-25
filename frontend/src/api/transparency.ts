@@ -3,7 +3,7 @@ import { z } from "zod";
 import { jsonRequest, requestJson } from "@/api/client";
 import { apiUrl } from "@/lib/health";
 
-const TransparencyDetectionResponseSchema = z.object({
+export const TransparencyDetectionResponseSchema = z.object({
   status: z.enum(["detected", "not_detected", "inconclusive"]),
   method: z.literal("watermark"),
   message: z.string(),

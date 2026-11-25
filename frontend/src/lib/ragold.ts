@@ -21,7 +21,7 @@ type QuestionType = (typeof QUESTION_TYPES)[number];
 
 /** MTRAG answerability (Katsis et al. 2025, arXiv 2501.03468). */
 export const ANSWERABILITIES = ["answerable", "partial", "unanswerable"] as const;
-export type Answerability = (typeof ANSWERABILITIES)[number];
+type Answerability = (typeof ANSWERABILITIES)[number];
 
 export const PASSAGE_GRADES = ["needed", "helpful", "misleading"] as const;
 export type PassageGrade = (typeof PASSAGE_GRADES)[number];
@@ -112,14 +112,16 @@ export function withKeyFact(draft: RagoldDraft, fact: RagoldKeyFact): RagoldDraf
 
 /**
  * The entry a reply prefills: its text without tags, and as passages the lines
- * each of its citations names, resolved from the captured tool outputs like a
- * citation chip resolves them, dropping citations without supporting output.
+ * each of its citations of a document of *workspaces* names, resolved from the
+ * captured tool outputs like a citation chip resolves them, dropping citations
+ * without supporting output.
  */
 export function draftFromTurn(
   query: string,
   reply: string,
   documents: ReadonlyMap<string, FetchedDocument>,
   chunks: ReadonlyMap<string, FetchedChunk>,
+  workspaces: readonly { scope: string }[],
 ): RagoldDraft {
   let draft: RagoldDraft = {
     query: query.trim(),
@@ -135,7 +137,7 @@ export function draftFromTurn(
   const cites = Map.groupBy(parseCitations(reply), ({ src }) => src);
 
   for (const [src, group] of cites) {
-    const document = src && isWorkspacePath(src) ? documents.get(src) : undefined;
+    const document = src && isWorkspacePath(src, workspaces) ? documents.get(src) : undefined;
     if (!src || !document) continue;
 
     const documentChunks = chunksForDocument(document, chunks);

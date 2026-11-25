@@ -16,7 +16,6 @@ import { Composer } from "@/components/chat/composer/composer";
 import { ConversationsList } from "@/components/chat/conversations-list";
 import { MessageList } from "@/components/chat/message-list";
 import { SteeringQueue } from "@/components/chat/steering-queue";
-import { StreamingNavGuard } from "@/components/chat/streaming-nav-guard";
 import { ChatSuggestions } from "@/components/chat/suggestions";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/toast";
@@ -26,14 +25,14 @@ import { useSteeringQueue } from "@/hooks/chat/use-steering-queue";
 import { isOpenPrompt } from "@/lib/chat/layout";
 import { downloadJson } from "@/lib/download";
 import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
-import { useDocumentFilterStore } from "@/stores/document-filter-store";
+import { selectionMetadata, useDocumentFilterStore } from "@/stores/document-filter-store";
 
 /** The chat of one conversation with its composer, and the list of every conversation in a tab beside it. */
 export function ChatSidebar() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { chat, conversationId } = useChatContext();
-  const { compact, stop } = useChatActions();
+  const { compact } = useChatActions();
   const busy = useChatBusy();
   const hasMessages = useChatSelector((chat) => chat.messages.length > 0);
   // Compaction summarizes a stored conversation, so an empty one has nothing to compact.
@@ -64,10 +63,10 @@ export function ChatSidebar() {
     // The first turn reveals the Context panel as documents are pulled, later turns leave the tab alone.
     if (chat.messages.length === 0) setDocumentTab("context");
 
-    void chat.sendMessage({ text, files });
+    void chat.sendMessage({ text, files, metadata: selectionMetadata() });
   };
 
-  const { queue: steeringQueue, enqueue: enqueueSteering } = useSteeringQueue(busy, send);
+  const { queue: steeringQueue, enqueue: enqueueSteering, leaving } = useSteeringQueue(busy, send);
 
   const resetView = () => {
     clearFilter();
@@ -138,7 +137,6 @@ export function ChatSidebar() {
       onValueChange={(value) => setActiveTab(value as ChatTab)}
       className="flex h-full flex-col"
     >
-      <StreamingNavGuard isStreaming={busy} onStop={stop} />
       <ChatHeader
         activeTab={activeTab}
         hasMessages={hasMessages}
@@ -157,12 +155,13 @@ export function ChatSidebar() {
         onChange={importFile}
       />
 
-      <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
+      {/* Kept mounted so the draft, its attachments, and the scroll position survive a visit to the history. */}
+      <TabsContent value="chat" keepMounted className="flex min-h-0 flex-1 flex-col">
         <MessageList />
 
         <div className="flex flex-col gap-3 border-t p-4">
           {!hasMessages && <ChatSuggestions onSelect={(prompt) => send(prompt, [])} />}
-          <SteeringQueue queue={steeringQueue} />
+          <SteeringQueue queue={steeringQueue} leaving={leaving} />
           <Composer
             onSubmit={(text, files) => {
               if (busy) enqueueSteering(text, files);

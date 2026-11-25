@@ -41,7 +41,7 @@ describe("getToolPartInfo", () => {
 
   it("matches the data part for parallel calls by id, not adjacency", () => {
     // Three tool parts clustered first, then their data parts at the end
-    // in a *different* order — exactly the parallel streaming layout.
+    // in a *different* order, exactly the parallel streaming layout.
     const parts = [
       toolPart("call-a", "a.md"),
       toolPart("call-b", "b.md"),
@@ -79,8 +79,19 @@ describe("toolLineState", () => {
     expect(toolLineState(running, "waiting")).toEqual({ failed: true, label: "stopped" });
   });
 
-  it("awaits an approval until a later message abandons it", () => {
+  it("awaits an approval until a later message abandons it as denied", () => {
     expect(toolLineState(asking, "waiting")).toEqual({ label: "awaitingApproval" });
-    expect(toolLineState(asking, "stale")).toEqual({ failed: true, label: "stopped" });
+    expect(toolLineState(asking, "stale")).toEqual({ label: "denied" });
+  });
+
+  it("reads a call a stop interrupted as stopped", () => {
+    const interrupted: ToolPart = {
+      ...call,
+      state: "output-available",
+      output: "ended early",
+      callProviderMetadata: { pydantic_ai: { outcome: "interrupted" } },
+    };
+
+    expect(toolLineState(interrupted, "stale")).toEqual({ failed: true, label: "stopped" });
   });
 });

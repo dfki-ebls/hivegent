@@ -11,7 +11,7 @@ interface DebugChatDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Asks for the ID of any user's conversation and opens it in the chat debugger. */
+/** Asks for the ID of one of the user's conversations and opens it in the chat debugger. */
 export function DebugChatDialog({ open, onOpenChange }: DebugChatDialogProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const navigate = useNavigate();

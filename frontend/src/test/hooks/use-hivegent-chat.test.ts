@@ -29,14 +29,12 @@ it.each<[UIMessageChunk, boolean]>([
       headers: { "Content-Type": "text/event-stream" },
     }),
   );
-  const { result } = renderHook(() => useHivegentChat("c1", []), {
+  const { result } = renderHook(() => useHivegentChat("00000000-0000-4000-8000-0000000000c1", []), {
     wrapper: createQueryWrapper(),
   });
 
   await act(() => result.current.chat.sendMessage({ text: "Hi" }));
 
   expect(result.current.chat.status).toBe(valid ? "ready" : "error");
-  expect(result.current.chat.error?.message ?? "").toMatch(
-    valid ? /^$/ : /Type validation failed/,
-  );
+  expect(result.current.chat.error?.message ?? "").toMatch(valid ? /^$/ : /Type validation failed/);
 });

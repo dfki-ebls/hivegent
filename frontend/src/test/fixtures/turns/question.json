@@ -1,0 +1,125 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Go."
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-1"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "tool-input-start",
+      "toolCallId": "q1",
+      "toolName": "ask_user"
+    },
+    {
+      "type": "tool-input-delta",
+      "toolCallId": "q1",
+      "inputTextDelta": "{\"questions\": [{\"header\": \"Scope\", \"question\": \"Which?\", \"options\": [{\"label\": \"All\"}, {\"label\": \"Some\"}]}]}"
+    },
+    {
+      "type": "tool-input-available",
+      "toolCallId": "q1",
+      "toolName": "ask_user",
+      "input": {
+        "questions": [
+          {
+            "header": "Scope",
+            "question": "Which?",
+            "options": [
+              {
+                "label": "All"
+              },
+              {
+                "label": "Some"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "message-metadata",
+      "messageMetadata": {
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      }
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "finish"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-0",
+          "role": "user",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "Go.",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "id-1",
+          "role": "assistant",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "tool-ask_user",
+              "toolCallId": "q1",
+              "state": "input-available",
+              "input": {
+                "questions": [
+                  {
+                    "header": "Scope",
+                    "question": "Which?",
+                    "options": [
+                      {
+                        "label": "All"
+                      },
+                      {
+                        "label": "Some"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "transient": true
+    }
+  ]
+}

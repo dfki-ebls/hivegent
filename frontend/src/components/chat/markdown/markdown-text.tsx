@@ -1,4 +1,4 @@
-import { type ComponentProps, useMemo } from "react";
+import type { ComponentProps } from "react";
 import {
   type Components,
   defaultComponents,
@@ -9,7 +9,7 @@ import {
 import { Citation } from "@/components/citation";
 import { HighlightedCode } from "@/components/common/highlighted-code";
 import { ImageRef } from "@/components/image-ref";
-import { STREAMDOWN_PLUGINS } from "@/components/chat/markdown/config";
+import { rehypePlugins, STREAMDOWN_PLUGINS } from "@/components/chat/markdown/config";
 import { useMessageLive } from "@/components/chat/chat-context";
 import { normalizeDisplayMath, normalizeMath } from "@/lib/normalize-math";
 import { normalizeVoidTags } from "@/lib/normalize-void-tags";
@@ -80,17 +80,18 @@ const TEXT_COMPONENTS: Components = {
   cite: Citation,
   imgref: ImageRef,
 };
-const TEXT_ALLOWED_TAGS = { cite: ["src", "line"], imgref: ["src", "alt"] };
+const TEXT_REHYPE_PLUGINS = rehypePlugins({ cite: ["src", "line"], imgref: ["src", "alt"] });
+const REASONING_REHYPE_PLUGINS = rehypePlugins();
 
 /** An assistant reply, with its citations and image references rendered inline. */
 export function MarkdownText({ children }: { children: string }) {
-  const normalized = useMemo(() => normalizeVoidTags(normalizeMath(children)), [children]);
+  const normalized = normalizeVoidTags(normalizeMath(children));
 
   return (
     <Streamdown
       isAnimating={useMessageLive() === "streaming"}
       className={CLASS_NAME}
-      allowedTags={TEXT_ALLOWED_TAGS}
+      rehypePlugins={TEXT_REHYPE_PLUGINS}
       components={TEXT_COMPONENTS}
       plugins={STREAMDOWN_PLUGINS}
     >
@@ -101,12 +102,13 @@ export function MarkdownText({ children }: { children: string }) {
 
 /** The model's reasoning, which cites nothing. */
 export function ReasoningMarkdown({ children }: { children: string }) {
-  const normalized = useMemo(() => normalizeDisplayMath(children), [children]);
+  const normalized = normalizeDisplayMath(children);
 
   return (
     <Streamdown
       isAnimating={useMessageLive() === "streaming"}
       className={CLASS_NAME}
+      rehypePlugins={REASONING_REHYPE_PLUGINS}
       components={REASONING_COMPONENTS}
       plugins={STREAMDOWN_PLUGINS}
     >

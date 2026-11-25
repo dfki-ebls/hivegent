@@ -13,4 +13,19 @@ describe("MarkdownText", () => {
     expect(block?.querySelector('[data-slot="code-block-content"]')?.textContent).toBe("run()");
     expect(container.querySelector('[data-streamdown="inline-code"]')?.textContent).toBe("run()");
   });
+
+  it("loads no remote image and renders raw HTML as markdown only", () => {
+    const { container } = render(
+      <MarkdownText>
+        {
+          '![chart](https://evil.example/a.png?d=1) <img src="https://evil.example/b.png"> <details><summary>more</summary>text</details>'
+        }
+      </MarkdownText>,
+    );
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.textContent).toContain("chart");
+    expect(container.textContent).toContain("more");
+  });
 });

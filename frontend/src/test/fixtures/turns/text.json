@@ -1,0 +1,119 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Go."
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-1"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "reasoning-start",
+      "id": "id-2"
+    },
+    {
+      "type": "reasoning-delta",
+      "id": "id-2",
+      "delta": "weighing options"
+    },
+    {
+      "type": "reasoning-end",
+      "id": "id-2"
+    },
+    {
+      "type": "text-start",
+      "id": "id-3"
+    },
+    {
+      "type": "text-delta",
+      "delta": "Hello there.",
+      "id": "id-3"
+    },
+    {
+      "type": "text-end",
+      "id": "id-3"
+    },
+    {
+      "type": "message-metadata",
+      "messageMetadata": {
+        "reasoningDurationsMs": {
+          "id-4": [
+            0
+          ]
+        },
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      }
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "finish"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-0",
+          "role": "user",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "Go.",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "id-1",
+          "role": "assistant",
+          "metadata": {
+            "reasoningDurationsMs": {
+              "id-4": [
+                0
+              ]
+            },
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "reasoning",
+              "text": "weighing options",
+              "state": "done"
+            },
+            {
+              "type": "text",
+              "text": "Hello there.",
+              "state": "done"
+            }
+          ]
+        }
+      ],
+      "transient": true
+    }
+  ]
+}

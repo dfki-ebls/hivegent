@@ -1,5 +1,5 @@
 /**
- * Chat with an agent about any user's conversation, to find what went wrong in it.
+ * Chat with an agent about one of the user's conversations, to find what went wrong in it.
  *
  * Stateless like the backend route: the whole session lives in this chat and
  * is sent with every request, and nothing is stored. The report condenses the
@@ -8,7 +8,7 @@
  */
 
 import { Chat, useChat } from "@ai-sdk/react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DefaultChatTransport } from "ai";
 import { FileTextIcon, MessageSquareTextIcon } from "lucide-react";
 import { type SubmitEvent, useRef, useState } from "react";
@@ -16,7 +16,6 @@ import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
 import { formatDateTime } from "@/i18n/format";
-import { buildLlmConfig } from "@/api/settings";
 import { chatFetch } from "@/api/client";
 import {
   debugChatUrl,
@@ -28,8 +27,8 @@ import {
 import { ChatProvider, useChatInstance } from "@/components/chat/chat-context";
 import { isChatBusy } from "@/lib/chat/chat-utils";
 import type { ChatMessage } from "@/lib/chat/message";
-import { useComposerStore } from "@/stores/composer-store";
-import { useSettingsStore } from "@/stores/settings-store";
+import { cachedPreferences, usePreferences, useSetPreferences } from "@/api/preferences";
+import { useChatModel } from "@/hooks/use-chat-model";
 import { ChatTextarea } from "@/components/chat/composer/chat-textarea";
 import { ReasoningEffortSelector } from "@/components/chat/composer/reasoning-effort-selector";
 import { SubmitStopButton } from "@/components/chat/composer/submit-stop-button";
@@ -50,13 +49,12 @@ const T_OPTIONS = keyPrefix(($) => $.app.chatDebugger);
 
 /**
  * The run configuration of every debugger request, read when it goes out:
- * the model overrides of the chat settings and the composer's reasoning effort.
+ * the chat model and reasoning effort of the user's preferences.
  */
-function debugRequestConfig(): DebugRequestConfig {
-  return {
-    llm: buildLlmConfig(useSettingsStore.getState().overrides),
-    reasoning_effort: useComposerStore.getState().reasoningEffort,
-  };
+function debugRequestConfig(client: QueryClient): DebugRequestConfig {
+  const { model, reasoning_effort } = cachedPreferences(client);
+
+  return { model, reasoning_effort };
 }
 
 function ReportDialog({
@@ -94,6 +92,7 @@ function ReportDialog({
 function DebugChat({ conversationId }: { conversationId: string }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const summary = useQuery(debugQueries.conversation(conversationId));
+  const client = useQueryClient();
   const chat = useChatInstance(
     () =>
       new Chat<ChatMessage>({
@@ -101,16 +100,17 @@ function DebugChat({ conversationId }: { conversationId: string }) {
         transport: new DefaultChatTransport<ChatMessage>({
           api: debugChatUrl(conversationId),
           fetch: chatFetch,
-          body: debugRequestConfig,
+          body: () => debugRequestConfig(client),
         }),
       }),
   );
   const { messages, status, sendMessage, stop } = useChat({ chat });
-  const reasoningEffort = useComposerStore((state) => state.reasoningEffort);
-  const setReasoningEffort = useComposerStore((state) => state.setReasoningEffort);
+  const reasoningEffort = usePreferences().reasoning_effort;
+  const model = useChatModel();
+  const setPreferences = useSetPreferences();
   const textRef = useRef<HTMLTextAreaElement>(null);
   const report = useMutation({
-    mutationFn: () => writeDebugReport(conversationId, messages, debugRequestConfig()),
+    mutationFn: () => writeDebugReport(conversationId, messages, debugRequestConfig(client)),
     meta: { inlineError: true },
   });
   const busy = isChatBusy(status);
@@ -176,10 +176,11 @@ function DebugChat({ conversationId }: { conversationId: string }) {
             placeholder={t(($) => $.placeholder)}
           />
           <InputGroupAddon align="block-end">
+            <div className="ml-auto" />
             <ReasoningEffortSelector
               value={reasoningEffort}
-              onChange={setReasoningEffort}
-              className="ml-auto"
+              levels={model?.reasoning ?? []}
+              onChange={(effort) => setPreferences({ reasoning_effort: effort })}
             />
             <SubmitStopButton status={status} onStop={() => void stop()} />
           </InputGroupAddon>

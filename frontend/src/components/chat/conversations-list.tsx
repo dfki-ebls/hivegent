@@ -11,10 +11,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { type KeyboardEvent, type Ref, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { keyPrefix } from "@/i18n";
-import { buildAuxLlmConfig } from "@/api/settings";
 import { conversationMutations, conversationQueries } from "@/api/conversations";
 import { centerInScroller, cn, errorMessage } from "@/lib/utils";
-import { useSettingsStore } from "@/stores/settings-store";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
 import { REVEAL_ON_HOVER } from "@/components/row-buttons";
@@ -111,7 +109,6 @@ function ConversationItem({
   onDelete,
 }: ConversationItemProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
-  const overrides = useSettingsStore((state) => state.overrides);
   const rename = useMutation(conversationMutations.rename());
   const generate = useMutation(conversationMutations.generateTitle());
   const [isEditing, setIsEditing] = useState(false);
@@ -171,7 +168,7 @@ function ConversationItem({
             label={t(($) => $.generateTitle)}
             size="icon-xs"
             disabled={generate.isPending}
-            onClick={() => generate.mutate({ id, llm: buildAuxLlmConfig(overrides) })}
+            onClick={() => generate.mutate(id)}
           >
             {generate.isPending ? <Spinner /> : <SparklesIcon />}
           </TooltipButton>

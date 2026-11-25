@@ -1,0 +1,118 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Go."
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-1"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "text-start",
+      "id": "id-2"
+    },
+    {
+      "type": "text-delta",
+      "delta": "Trying.",
+      "id": "id-2"
+    },
+    {
+      "type": "text-end",
+      "id": "id-2"
+    },
+    {
+      "type": "tool-input-start",
+      "toolCallId": "b1",
+      "toolName": "boom"
+    },
+    {
+      "type": "tool-input-delta",
+      "toolCallId": "b1",
+      "inputTextDelta": "{}"
+    },
+    {
+      "type": "tool-input-available",
+      "toolCallId": "b1",
+      "toolName": "boom",
+      "input": {}
+    },
+    {
+      "type": "tool-output-error",
+      "toolCallId": "b1",
+      "errorText": "Tool execution was interrupted by an error."
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "finish",
+      "finishReason": "error"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-0",
+          "role": "user",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "Go.",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "id-1",
+          "role": "assistant",
+          "metadata": {
+            "chatError": "The response failed. Please try again.",
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "text",
+              "text": "Trying.",
+              "state": "done"
+            },
+            {
+              "type": "tool-boom",
+              "toolCallId": "b1",
+              "state": "output-error",
+              "input": {},
+              "errorText": "Tool execution was interrupted by an error.",
+              "providerExecuted": false
+            }
+          ]
+        }
+      ],
+      "transient": true
+    },
+    {
+      "type": "error",
+      "errorText": "The response failed. Please try again."
+    }
+  ]
+}

@@ -1,9 +1,16 @@
-import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "ai";
+import {
+  type DynamicToolUIPart,
+  getToolName,
+  isToolUIPart,
+  type ToolUIPart,
+  type UIMessage,
+} from "ai";
 import type { TFunction } from "i18next";
-import type { z } from "zod";
+import { z } from "zod";
 import { isCatalogKey } from "@/i18n";
+import { ASK_USER_PART } from "@/lib/chat/ask-user";
 import { chat } from "@/i18n/locales/en/chat";
-import { snakeCaseToTitleCase } from "@/lib/utils";
+import { parseJson, snakeCaseToTitleCase } from "@/lib/utils";
 import type { AddChunk, AddImage, MarkFullDocument } from "@/stores/fetched-documents-store";
 
 /**
@@ -32,10 +39,19 @@ interface LineState {
 const RUNNING: LineState = { label: "running" };
 const STOPPED: LineState = { failed: true, label: "stopped" };
 
+const FAILED: LineState = { failed: true, label: "failed" };
+const DENIED: LineState = { label: "denied" };
+
+/** Whether *part* is a call a stop cut off, which the backend closes as interrupted. */
+function isInterrupted(part: ToolPart): boolean {
+  return part.callProviderMetadata?.pydantic_ai?.outcome === "interrupted";
+}
+
 /**
  * How a call's line reads, where a call that never finished was stopped once
- * the chat stops streaming. An open approval or question on a stale message
- * reads as stopped, since a later message abandoned it.
+ * the chat stops streaming. A later message abandons an open request on a stale
+ * message, which the backend closes as a denial or, for a question, a dismissal,
+ * so it reads as that before the stored turn arrives too.
  */
 export function toolLineState(part: ToolPart, live: Live): LineState {
   const streaming = live === "streaming";
@@ -43,19 +59,23 @@ export function toolLineState(part: ToolPart, live: Live): LineState {
   switch (part.state) {
     case "input-streaming":
     case "input-available":
-      return streaming ? RUNNING : STOPPED;
+      if (streaming) return RUNNING;
+
+      return part.type === ASK_USER_PART && live === "stale" ? FAILED : STOPPED;
     case "approval-requested":
-      return live === "stale" ? STOPPED : { label: "awaitingApproval" };
+      return live === "stale" ? DENIED : { label: "awaitingApproval" };
     case "approval-responded":
       if (!part.approval.approved) return { label: "denied" };
 
       return streaming ? RUNNING : { label: "approved" };
     case "output-available":
+      if (isInterrupted(part)) return STOPPED;
+
       return part.preliminary && streaming ? RUNNING : {};
     case "output-error":
-      return { failed: true, label: "failed" };
+      return FAILED;
     case "output-denied":
-      return { label: "denied" };
+      return DENIED;
   }
 }
 
@@ -80,7 +100,7 @@ interface ToolPartInfo {
   input: Record<string, unknown> | undefined;
   /**
    * Plain-string tool output.  Set only for tools whose canonical
-   * payload is a string — these never emit a ``data-tool-output``
+   * payload is a string, these never emit a ``data-tool-output``
    * DataUIPart.
    */
   text: string | null;
@@ -93,31 +113,18 @@ interface ToolPartInfo {
   metadata: unknown;
 }
 
-function getToolName(part: { type?: string; toolName?: string }): string | null {
-  if (!part.type) return null;
-  if (part.type === "dynamic-tool" && part.toolName) return part.toolName;
-  if (part.type.startsWith("tool-")) return part.type.replace("tool-", "");
-  return null;
-}
-
-export function parseJson<T>(value: unknown): T | undefined {
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return undefined;
-    }
-  }
-  return value as T;
-}
+const ToolArgsSchema = z.record(z.string(), z.unknown());
 
 /**
  * Read a tool call's arguments in every state.
  * A call rejected before it ran streams as ``tool-input-error``,
  * which the AI SDK stores under ``rawInput`` and leaves ``input`` empty.
  */
-export function toolInput<T>(part: { input?: unknown; rawInput?: unknown }): T | undefined {
-  return parseJson<T>(part.input ?? part.rawInput);
+export function toolInput(part: {
+  input?: unknown;
+  rawInput?: unknown;
+}): Record<string, unknown> | undefined {
+  return toolInputAs(part, ToolArgsSchema);
 }
 
 /** A tool call's arguments when they match *schema*, which they may not while streaming. */
@@ -125,7 +132,7 @@ export function toolInputAs<T>(
   part: { input?: unknown; rawInput?: unknown },
   schema: z.ZodType<T>,
 ): T | undefined {
-  return schema.safeParse(toolInput<unknown>(part)).data;
+  return schema.safeParse(parseJson(part.input ?? part.rawInput)).data;
 }
 
 /** Check whether a message part is a ``data-tool-output`` DataUIPart. */
@@ -147,7 +154,7 @@ function isToolDataPart(
  * The backend stamps each ``data-tool-output`` DataUIPart with the
  * originating tool-call id.  The AI SDK appends these to the end of
  * ``message.parts`` in arrival order, so a tool's payload is not
- * adjacent to its tool part — resolve the correlation once per message
+ * adjacent to its tool part, resolve the correlation once per message
  * instead of rescanning the parts for every tool call.
  */
 export function indexToolData(parts: UIMessage["parts"]): Map<string, unknown> {
@@ -177,32 +184,22 @@ export function getToolPartInfo(
   part: UIMessage["parts"][number],
   toolData: ReadonlyMap<string, unknown>,
 ): ToolPartInfo | null {
-  const typed = part as {
-    type: string;
-    toolName?: string;
-    toolCallId?: string;
-    state?: ToolPart["state"];
-    input?: unknown;
-    rawInput?: unknown;
-    output?: unknown;
-  };
-  const toolName = getToolName(typed);
-  if (!toolName) return null;
+  if (!isToolUIPart(part)) return null;
 
-  const raw = parseJson<unknown>(typed.output) ?? typed.output;
+  const raw = parseJson(part.output) ?? part.output;
   const text = typeof raw === "string" ? raw : null;
 
   // A tool is either ``plain-string`` (no ``data-tool-output`` ever
   // arrives) or ``structured`` (a DataUIPart carries the canonical
   // payload, correlated by tool-call id).  We never parse ``text`` as a
   // stand-in for structured data.
-  const metadata = typed.toolCallId != null ? (toolData.get(typed.toolCallId) ?? null) : null;
+  const metadata = toolData.get(part.toolCallId) ?? null;
 
   return {
-    toolName,
-    toolCallId: typed.toolCallId,
-    state: typed.state ?? "output-available",
-    input: toolInput<Record<string, unknown>>(typed),
+    toolName: getToolName(part),
+    toolCallId: part.toolCallId,
+    state: part.state,
+    input: toolInput(part),
     text,
     metadata,
   };

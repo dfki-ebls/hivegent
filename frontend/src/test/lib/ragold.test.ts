@@ -33,7 +33,7 @@ describe("draftFromTurn", () => {
     const reply =
       'Bees fly <cite src="~/report.md" line="2-3" />. Unread <cite src="~/other.md" line="1"/>, web <cite src="https://example.com" line="1"></cite>.';
 
-    const draft = draftFromTurn(" What do bees do? ", reply, documents, chunks);
+    const draft = draftFromTurn(" What do bees do? ", reply, documents, chunks, [{ scope: "~" }]);
 
     expect(draft.query).toBe("What do bees do?");
     expect(draft.response).toBe("Bees fly. Unread, web.");

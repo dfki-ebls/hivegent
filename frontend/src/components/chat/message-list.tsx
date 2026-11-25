@@ -1,6 +1,6 @@
 import { useChat } from "@ai-sdk/react";
 import { ArrowDownIcon, MessagesSquareIcon, RefreshCcwIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   MessageScroller,
@@ -19,13 +19,7 @@ import { Button } from "@/components/ui/button";
 import { useChatActions } from "@/hooks/chat/use-chat-actions";
 import { useToolOutputSync } from "@/hooks/chat/use-tool-output-sync";
 import { keyPrefix } from "@/i18n";
-import {
-  activeChatError,
-  isChatBusy,
-  isProcessing,
-  lastUserIndex,
-  placeCompactions,
-} from "@/lib/chat/chat-utils";
+import { activeChatError, isChatBusy, isProcessing, lastUserIndex } from "@/lib/chat/chat-utils";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.messages);
 
@@ -35,19 +29,12 @@ export function MessageList() {
   const { t: tRoot } = useTranslation();
   const { chat, conversationId } = useChatContext();
   // A stored conversation follows the turn still running at the server after a reload.
-  const {
-    messages: streamed,
-    status,
-    error,
-    clearError,
-  } = useChat({
+  const { messages, status, error, clearError } = useChat({
     chat,
     throttle: 50,
     resume: conversationId !== null,
   });
   const { retry } = useChatActions();
-  // A compaction shows where the server stores it, as after a reload.
-  const messages = useMemo(() => placeCompactions(streamed), [streamed]);
   const processing = isProcessing(messages, status);
   // Only the turn the user sent last anchors: when one item swaps for another, the scroller
   // jumps to the first anchor it never scrolled to, the oldest message of a loaded conversation.

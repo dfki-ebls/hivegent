@@ -10,6 +10,7 @@ import { ASK_USER_PART } from "@/lib/chat/ask-user";
 import type { ChatPart } from "@/lib/chat/layout";
 import type { ChatMessage } from "@/lib/chat/message";
 import { type Live, toolLineState } from "@/lib/chat/tool-part";
+import { selectionMetadata } from "@/stores/document-filter-store";
 
 /** Whether a chat request is waiting for or receiving model output. */
 export function isChatBusy(status: ChatStatus): boolean {
@@ -79,6 +80,7 @@ export function resendOf(message: ChatMessage, text: string) {
     messageId: message.id,
     role: "user" as const,
     parts: [...files, ...(text ? [{ type: "text" as const, text }] : [])],
+    metadata: selectionMetadata(),
   };
 }
 
@@ -87,7 +89,7 @@ export function resendOf(message: ChatMessage, text: string) {
  *
  * A stream error is transient SDK state that a reload would lose, so the
  * backend stores it on the last turn's message metadata (see `record_turn_error`
- * in `backend/src/hivegent/server/vercel.py`). Reading the last message means a
+ * in `backend/src/hivegent/server/turns.py`). Reading the last message means a
  * later successful turn retires the error on its own.
  */
 export function activeChatError(
@@ -114,48 +116,29 @@ export function pendingApprovalIds(message: ChatMessage): string[] {
   return message.parts.filter(isPendingApproval).map((part) => part.approval.id);
 }
 
-/** Whether a part carries content, unlike the `step-start` marker between steps. */
-function isContentPart(part: ChatPart): boolean {
-  return part.type !== "step-start";
-}
-
 /**
- * Move a compaction that opens a reply to the end of the reply before its prompt.
+ * *messages* with the turn the stream wrote replaced by its *stored* version, or undefined
+ * when *messages* do not hold the turn's first message, which the client then reads anew.
  *
- * A compaction made for a prompt summarizes the history ahead of that prompt,
- * so the backend stores it there and a reload shows it at the end of the
- * previous reply. Live, it streams into the reply after the prompt instead. A
- * reply that held nothing else goes, as it does on reload.
- *
- * Returns *messages* itself when nothing moves, allocating nothing, so the
- * common case re-renders nothing on a transcript that grows with every chunk.
+ * The stored turn starts at its user message and ends with the reply the stream wrote,
+ * *replyId*, so a message sent after it, such as a queued steering message, stays.
  */
-export function placeCompactions(messages: ChatMessage[]): ChatMessage[] {
-  let placed: ChatMessage[] | undefined;
+export function settleTurn(
+  messages: ChatMessage[],
+  stored: ChatMessage[],
+  replyId: string,
+): ChatMessage[] | undefined {
+  const start = messages.findIndex((message) => message.id === stored[0]?.id);
 
-  messages.forEach((message, index) => {
-    const opening = message.parts.find(isContentPart);
-    const previous = messages[index - 2];
+  if (start === -1) return undefined;
 
-    if (
-      opening?.type !== "data-compaction" ||
-      message.role !== "assistant" ||
-      messages[index - 1]?.role !== "user" ||
-      previous?.role !== "assistant"
-    ) {
-      return;
-    }
+  const reply = messages.findIndex((message, index) => index >= start && message.id === replyId);
 
-    placed ??= [...messages];
-    placed[index - 2] = { ...previous, parts: [...previous.parts, opening] };
-    placed[index] = { ...message, parts: message.parts.filter((part) => part !== opening) };
-  });
-
-  return (
-    placed?.filter(
-      (message, index) => message === messages[index] || message.parts.some(isContentPart),
-    ) ?? messages
-  );
+  return [
+    ...messages.slice(0, start),
+    ...stored,
+    ...(reply === -1 ? [] : messages.slice(reply + 1)),
+  ];
 }
 
 /** Whether a call is done, or decided and waiting for the continuation to run it. */

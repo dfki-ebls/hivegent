@@ -1,5 +1,4 @@
 import { FileTextIcon, FileVideoIcon, ImageOffIcon } from "lucide-react";
-import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { parseBatch } from "@/components/chat/tools/batch";
@@ -13,17 +12,15 @@ import {
   AttachmentTitle,
 } from "@/components/ui/attachment";
 import { Spinner } from "@/components/common/spinner";
-import { useConversationId } from "@/components/chat/chat-context";
-import { useObjectUrl } from "@/hooks/use-object-url";
+import { useWorkspaceAsset } from "@/hooks/use-workspace-asset";
 import { keyPrefix } from "@/i18n";
-import { fetchDocumentAsset } from "@/api/documents";
 import { basename, fileStem } from "@/lib/utils";
 import type { SyncOutput, ToolRenderProps } from "@/lib/chat/tool-part";
 import { formatDecimal, formatFileSize, formatNumber } from "@/i18n/format";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.binary);
 
-/** Mirrors `BinaryReadResult` in `backend/src/hivegent/tools/binary.py`. */
+/** Mirrors `BinaryReadResult` in `exar/tools/media.py` of exar. */
 const BinaryReadResultSchema = z.object({
   file_path: z.string(),
   media_type: z.string(),
@@ -52,34 +49,30 @@ function BinaryMeta({ result }: { result: BinaryReadResult }) {
   return <AttachmentDescription>{parts.filter(Boolean).join(" · ")}</AttachmentDescription>;
 }
 
-/** An image's pixels, fetched once the line opens since the content only mounts then. */
-function ImagePreview({ result }: { result: BinaryReadResult }) {
+/** An image's pixels once loaded, else why not or that they are on the way. */
+function ImagePreview({ path, url, error }: { path: string; url: string | null; error: boolean }) {
   const { t } = useTranslation();
-  const conversationId = useConversationId();
-  const fetch = useCallback(
-    (signal: AbortSignal) => fetchDocumentAsset(result.file_path, signal, conversationId),
-    [result.file_path, conversationId],
-  );
-  const { url, error } = useObjectUrl(fetch);
 
-  if (url) return <img src={url} alt={result.file_path} />;
+  if (url) return <img src={url} alt={path} />;
 
-  return error ? (
-    <ImageOffIcon aria-label={t(($) => $.chat.tools.binary.previewUnavailable)} />
-  ) : (
-    <Spinner />
-  );
+  if (error) return <ImageOffIcon aria-label={t(($) => $.chat.tools.binary.previewUnavailable)} />;
+
+  return <Spinner />;
 }
 
-/** A file the call attached to the model, an image with its preview and any other file with its kind. */
+/**
+ * A file the call attached to the model, an image with its preview and any other file with its kind.
+ * The preview loads once its box nears the viewport, since the content only mounts when the line opens.
+ */
 function BinaryAttachment({ result }: { result: BinaryReadResult }) {
   const image = result.media_type.startsWith("image/");
+  const { ref, url, error } = useWorkspaceAsset(image ? result.file_path : null);
 
   return (
     <Attachment orientation={image ? "vertical" : "horizontal"} title={result.file_path}>
-      <AttachmentMedia variant={image ? "image" : "icon"}>
+      <AttachmentMedia ref={ref} variant={image ? "image" : "icon"}>
         {image ? (
-          <ImagePreview result={result} />
+          <ImagePreview path={result.file_path} url={url} error={error} />
         ) : result.media_type.startsWith("video/") ? (
           <FileVideoIcon />
         ) : (
@@ -102,7 +95,7 @@ function descriptionPath(filePath: string): string {
 /**
  * Surface image binaries in the context panel, keyed by their description
  * path so they merge with the caption document (same stem) when both are read.
- * Non-image binaries (PDFs, videos) are skipped — they have no inline preview yet.
+ * Non-image binaries (PDFs, videos) are skipped, they have no inline preview yet.
  *
  * Deliberately, a thumbnail appears only when the image was read *as a binary*
  * (its pixels entered the model's context). A caption retrieved by search that

@@ -33,11 +33,11 @@ import {
 } from "@/lib/chat/ask-user";
 import {
   type ToolRenderProps,
-  parseJson,
   toolDisplayName,
   toolInputAs,
   toolLineState,
 } from "@/lib/chat/tool-part";
+import { parseJson } from "@/lib/utils";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.ask);
 

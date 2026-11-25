@@ -25,7 +25,7 @@ export function MessagePart({ part, toolData, prompt, reasoningDuration }: Messa
       return <MarkdownText>{part.text}</MarkdownText>;
     case "reasoning":
       return <ReasoningPart part={part} duration={reasoningDuration} />;
-    // A tool that returns binary content lands here too (pydantic-ai extracts it into a trailing user message).
+    // A file the model generated itself (pydantic-ai's `FilePart`), since a tool's binary output stays in its tool part.
     case "file":
       return <ImagePart url={part.url} filename={part.filename} />;
     case "data-compaction":

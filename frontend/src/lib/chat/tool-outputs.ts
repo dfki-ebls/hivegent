@@ -13,7 +13,6 @@ export const DocumentRangeSchema = LineRangeSchema.extend({
   file_path: z.string(),
   content_hash: z.string(),
 });
-export type DocumentRange = z.infer<typeof DocumentRangeSchema>;
 
 const GrepLineSchema = z.object({
   line_number: z.number(),
@@ -21,7 +20,7 @@ const GrepLineSchema = z.object({
   is_match: z.boolean(),
 });
 export const GrepMatchSchema = z.object({
-  filename: z.string(),
+  file_path: z.string(),
   lines: z.array(GrepLineSchema),
 });
 
@@ -31,7 +30,6 @@ export const RetrievedChunkSchema = z.object({
   chunk_index: z.number(),
   text: z.string(),
   token_count: z.number(),
-  score: z.number(),
   start_line: z.number(),
   end_line: z.number(),
   start_index: z.number(),

@@ -1,0 +1,108 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "metadata": {
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Hi.",
+          "state": "done"
+        }
+      ]
+    },
+    {
+      "id": "id-1",
+      "role": "assistant",
+      "metadata": {
+        "reasoningDurationsMs": {
+          "id-2": [
+            0
+          ]
+        },
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "reasoning",
+          "text": "weighing options",
+          "state": "done"
+        },
+        {
+          "type": "text",
+          "text": "Hello there.",
+          "state": "done"
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-1"
+    },
+    {
+      "type": "data-compaction",
+      "data": {
+        "content": "the gist"
+      }
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "finish"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-1",
+          "role": "assistant",
+          "metadata": {
+            "reasoningDurationsMs": {
+              "id-2": [
+                0
+              ]
+            },
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "reasoning",
+              "text": "weighing options",
+              "state": "done"
+            },
+            {
+              "type": "text",
+              "text": "Hello there.",
+              "state": "done"
+            },
+            {
+              "type": "data-compaction",
+              "data": {
+                "content": "the gist"
+              }
+            }
+          ]
+        }
+      ],
+      "transient": true
+    }
+  ]
+}

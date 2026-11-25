@@ -6,8 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { type ToolRenderProps, toolDisplayName, toolInputAs } from "@/lib/chat/tool-part";
 import { basename } from "@/lib/utils";
 
-/** Mirrors `WriteDocumentTool` in `backend/src/hivegent/tools/mutations.py`. */
-const WriteInputSchema = z.object({
+/** Mirrors the arguments of the `write_document` tool in `backend/src/hivegent/tools/mutations.py`. */
+export const WriteInputSchema = z.object({
   file_path: z.string(),
   content: z.string(),
   mode: z.enum(["replace", "create", "append", "prepend"]).default("replace"),

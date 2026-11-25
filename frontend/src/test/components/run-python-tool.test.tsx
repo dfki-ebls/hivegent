@@ -5,25 +5,22 @@ import { DocumentDialog } from "@/components/document-dialog";
 import { ImageRef } from "@/components/image-ref";
 import { WorkspaceImage } from "@/components/workspace-image";
 import { AssetMedia } from "@/components/documents/asset-media";
-import { fetchDocumentAsset } from "@/api/documents";
 import type { ToolPart } from "@/lib/chat/tool-part";
 import { createTestChat, renderWithChat } from "@/test/chat";
 
-const { requestText } = vi.hoisted(() => ({
+const { requestBlob, requestText } = vi.hoisted(() => ({
+  requestBlob: vi.fn<(url: string) => Promise<Blob>>(),
   requestText: vi.fn<(url: string) => Promise<string>>(),
 }));
 
 vi.mock("@/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/client")>()),
+  requestBlob,
   requestText,
 }));
 
-vi.mock("@/api/documents", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/api/documents")>()),
-  fetchDocumentAsset: vi.fn<typeof fetchDocumentAsset>(),
-}));
-
 vi.mock("@/hooks/use-in-view", () => ({ useInView: () => [() => {}, true] }));
+vi.mock("@/hooks/use-workspaces", () => ({ useWorkspaces: () => [] }));
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -71,7 +68,9 @@ describe("RunPythonTool", () => {
         moves: [{ source: "~/inbox", destination: "~/archive", is_dir: true, replaces: false }],
         deletes: ["~/stale.md"],
         mkdirs: [],
+        reasons: [],
       },
+      held: 0,
     });
 
     expect(screen.getByText(/Staged 3 changes/)).toBeTruthy();
@@ -132,19 +131,19 @@ describe("temporary document previews", () => {
     vi.stubGlobal(
       "URL",
       class extends URL {
+        static override createObjectURL = vi.fn<typeof URL.createObjectURL>(() => "blob:preview");
         static override revokeObjectURL = vi.fn<typeof URL.revokeObjectURL>();
       },
     );
-    vi.mocked(fetchDocumentAsset).mockResolvedValue("blob:preview");
-    vi.mocked(fetchDocumentAsset).mockClear();
+    requestBlob.mockClear().mockResolvedValue(new Blob());
 
     renderWithChat(preview, createTestChat());
 
     await waitFor(() =>
-      expect(fetchDocumentAsset).toHaveBeenLastCalledWith(
-        "/tmp/image.png",
-        expect.any(AbortSignal),
-        "c1",
+      expect(requestBlob).toHaveBeenLastCalledWith(
+        "/api/v1/documents/%2Ftmp/image.png?conversation_id=c1",
+        "fetchDocumentAsset",
+        { signal: expect.any(AbortSignal) },
       ),
     );
     expect((await screen.findByRole("img", { name: "Preview" })).getAttribute("src")).toBe(

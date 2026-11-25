@@ -2,36 +2,54 @@ import { CircleIcon, ListTodoIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { TraceStep, TraceStepCollapsible } from "@/components/chat/trace-step";
 import { Trace } from "@/components/ui/trace";
-import type { SteeringMessage } from "@/hooks/chat/use-steering-queue";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import type { SteeringLeave, SteeringMessage } from "@/hooks/chat/use-steering-queue";
 
-/** The messages sent while the assistant works, waiting for its next step. */
-export function SteeringQueue({ queue }: { queue: SteeringMessage[] }) {
+interface SteeringQueueProps {
+  queue: SteeringMessage[];
+  leaving: SteeringLeave;
+}
+
+/** The messages sent while the assistant works, waiting for its next step, and the question before leaving them. */
+export function SteeringQueue({ queue, leaving }: SteeringQueueProps) {
   const { t } = useTranslation();
 
-  if (queue.length === 0) return null;
-
   return (
-    <Trace>
-      <TraceStepCollapsible
-        icon={<ListTodoIcon />}
-        title={t(($) => $.chat.steering.queued, { count: queue.length })}
-        autoOpen
-      >
+    <>
+      <ConfirmDialog
+        open={leaving.status === "blocked"}
+        onOpenChange={(open) => {
+          if (!open) leaving.reset?.();
+        }}
+        title={t(($) => $.chat.steering.leaveTitle)}
+        description={t(($) => $.chat.steering.leaveDescription, { count: queue.length })}
+        confirmLabel={t(($) => $.chat.steering.leave)}
+        onConfirm={() => leaving.proceed?.()}
+      />
+      {queue.length > 0 && (
         <Trace>
-          {queue.map((msg) => (
-            <TraceStep
-              key={msg.id}
-              icon={<CircleIcon />}
-              title={
-                msg.text ||
-                msg.files
-                  .map((file) => file.filename ?? t(($) => $.chat.messages.attachedImage))
-                  .join(", ")
-              }
-            />
-          ))}
+          <TraceStepCollapsible
+            icon={<ListTodoIcon />}
+            title={t(($) => $.chat.steering.queued, { count: queue.length })}
+            autoOpen
+          >
+            <Trace>
+              {queue.map((msg) => (
+                <TraceStep
+                  key={msg.id}
+                  icon={<CircleIcon />}
+                  title={
+                    msg.text ||
+                    msg.files
+                      .map((file) => file.filename ?? t(($) => $.chat.messages.attachedImage))
+                      .join(", ")
+                  }
+                />
+              ))}
+            </Trace>
+          </TraceStepCollapsible>
         </Trace>
-      </TraceStepCollapsible>
-    </Trace>
+      )}
+    </>
   );
 }

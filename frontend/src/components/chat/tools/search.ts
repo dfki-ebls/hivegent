@@ -4,7 +4,7 @@ import type { ChunkPosition } from "@/lib/chunks";
 import { RetrievedChunkSchema } from "@/lib/chat/tool-outputs";
 import type { SyncOutput } from "@/lib/chat/tool-part";
 
-/** Mirrors the `queries` argument of `VectorSearchTool` in `backend/src/hivegent/tools/retrieval.py`. */
+/** Mirrors the `queries` argument (`SearchQueriesArg`) of the `search` tool in `backend/src/hivegent/tools/retrieval.py`. */
 const SearchInputSchema = z.object({ queries: listArgument(z.string()) });
 
 /** The queries of a search call, whose rankings were fused into one list. */

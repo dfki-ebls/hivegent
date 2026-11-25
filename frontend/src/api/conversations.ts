@@ -1,13 +1,12 @@
-import { mutationOptions, queryOptions } from "@tanstack/react-query";
+import { mutationOptions, type QueryClient, queryOptions } from "@tanstack/react-query";
 import { validateUIMessages } from "ai";
 import { z } from "zod";
 
 import { jsonRequest, requestBlob, requestJson, requestVoid } from "@/api/client";
 import { apiUrl } from "@/lib/health";
-import type { LlmConfig } from "@/api/settings";
-import type { ToolsPayload } from "@/api/tools";
 import { type ChatMessage, messageSchemas } from "@/lib/chat/message";
 import type { RagoldRequest } from "@/lib/ragold";
+import { onConversationsStale } from "@/stores/jobs-store";
 
 /** Summary information for listing conversations. */
 export const ConversationSummarySchema = z.object({
@@ -57,10 +56,6 @@ export interface ConversationArchive {
   frontend: ClientConversation | null;
 }
 
-/** Available assistant personalities. */
-export const PersonalitySchema = z.enum(["default", "concise", "detailed", "structured", "custom"]);
-export type Personality = z.infer<typeof PersonalitySchema>;
-
 /** Every agent mode, in display order. Labels live in the `options.mode` catalog section. */
 export const AGENT_MODES = ["interactive", "read", "write"] as const;
 
@@ -78,37 +73,50 @@ export const REASONING_EFFORTS = ["low", "medium", "high"] as const;
 
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
-/** Mirrors the server default of `ChatRequestConfig.reasoning_effort`. */
+/** Mirrors the server default of `Preferences.reasoning_effort`. */
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
 
+/** The level of *levels* nearest *effort*, the lower on a tie, as the server clamps it. */
+export function clampReasoningEffort(
+  effort: ReasoningEffort,
+  levels: readonly ReasoningEffort[],
+): ReasoningEffort | undefined {
+  const rank = (level: ReasoningEffort) => REASONING_EFFORTS.indexOf(level);
+  const distance = (level: ReasoningEffort) => Math.abs(rank(level) - rank(effort));
+
+  return [...levels].sort((a, b) => distance(a) - distance(b) || rank(a) - rank(b))[0];
+}
+
 /**
- * The settings of a chat request, mirroring `ChatRequestConfig` on the backend.
- *
- * The backend's `ChatRequest` adds the AI SDK's own fields, `id`, `messages`,
- * `trigger`, and `messageId`, which address a turn rather than configure it, and
- * the transport splices them into the body itself. It refuses any other field.
+ * What a chat request may add to the AI SDK's own body, `id`, `messages`,
+ * `trigger`, and `messageId`, mirroring the backend's `ChatRequest`, which
+ * refuses any other field: a user message names its documents in its metadata,
+ * and everything else a run applies is the user's preferences the server keeps.
  */
-export interface ChatRequestConfig {
-  personality: Personality;
-  system_message?: string;
-  mode: AgentMode;
-  llm: LlmConfig;
-  included_documents: string[];
-  excluded_documents: string[];
-  tools: ToolsPayload;
-  reasoning_effort: ReasoningEffort;
+export interface ChatRequestBody {
   /** Summarize the conversation instead of answering, sent only by the compact action. */
   compact?: boolean;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The API URL of *conversationId*'s route *rest*, refusing an id that is no UUID and so names none. */
+function conversationUrl(conversationId: string, rest = ""): string {
+  if (!UUID.test(conversationId)) {
+    throw new Error(`Not a conversation id: ${conversationId}`);
+  }
+
+  return apiUrl(`/conversations/${conversationId}${rest}`);
+}
+
 /** The route every turn of a conversation is sent to, its first one creates the conversation. */
 export function chatUrl(conversationId: string): string {
-  return apiUrl(`/conversations/${conversationId}/chat`);
+  return conversationUrl(conversationId, "/chat");
 }
 
 /** The running turn of a conversation, which a reload follows again and a stop ends. */
 export function turnUrl(conversationId: string): string {
-  return apiUrl(`/conversations/${conversationId}/stream`);
+  return conversationUrl(conversationId, "/stream");
 }
 
 /** Stop the running turn on the server, where it runs on after the client stopped reading. */
@@ -124,21 +132,26 @@ function listConversations(): Promise<ConversationSummary[]> {
   ).then(({ conversations }) => conversations);
 }
 
+/** Stored *messages*, validated like the ones the chat streams. */
+export function parseMessages(messages: unknown[]): Promise<ChatMessage[]> {
+  // The validation rejects an empty list.
+  return messages.length === 0
+    ? Promise.resolve([])
+    : validateUIMessages<ChatMessage>({ messages, ...messageSchemas });
+}
+
 /**
- * The stored messages of a conversation, validated like the ones the chat streams.
+ * The stored messages of a conversation.
  * None for an id that names no conversation yet, which is how a new chat starts.
  */
 export async function getConversationMessages(conversationId: string): Promise<ChatMessage[]> {
-  const stored = await requestJson(
-    apiUrl(`/conversations/${conversationId}/messages`),
-    "fetchMessages",
-    z.array(z.unknown()),
+  return parseMessages(
+    await requestJson(
+      conversationUrl(conversationId, "/messages"),
+      "fetchMessages",
+      z.array(z.unknown()),
+    ),
   );
-
-  // The validation rejects an empty list.
-  return stored.length === 0
-    ? []
-    : validateUIMessages<ChatMessage>({ messages: stored, ...messageSchemas });
 }
 
 function updateConversationTitle(
@@ -146,22 +159,19 @@ function updateConversationTitle(
   title: string,
 ): Promise<ConversationSummary> {
   return requestJson(
-    apiUrl(`/conversations/${conversationId}`),
+    conversationUrl(conversationId),
     "update",
     ConversationSummarySchema,
     jsonRequest("PATCH", { title }),
   );
 }
 
-function generateConversationTitle(
-  conversationId: string,
-  llm: LlmConfig,
-): Promise<GenerateTitleResponse> {
+function generateConversationTitle(conversationId: string): Promise<GenerateTitleResponse> {
   return requestJson(
-    apiUrl(`/conversations/${conversationId}/title/generation`),
+    conversationUrl(conversationId, "/title/generation"),
     "generateTitle",
     GenerateTitleResponseSchema,
-    jsonRequest("POST", { llm }),
+    { method: "POST" },
   );
 }
 
@@ -183,7 +193,7 @@ async function importConversation(file: File): Promise<ConversationSummary> {
 }
 
 function deleteConversation(conversationId: string): Promise<void> {
-  return requestVoid(apiUrl(`/conversations/${conversationId}`), "delete", { method: "DELETE" });
+  return requestVoid(conversationUrl(conversationId), "delete", { method: "DELETE" });
 }
 
 /** Delete all conversations for the authenticated user. */
@@ -203,7 +213,7 @@ export async function getServerConversation(
 ): Promise<ServerConversation | null> {
   try {
     const { backend } = await requestJson(
-      apiUrl(`/conversations/${conversationId}/archive`),
+      conversationUrl(conversationId, "/archive"),
       "fetchMessages",
       z.object({ backend: ServerConversationSchema.nullable() }),
     );
@@ -217,7 +227,7 @@ export async function getServerConversation(
 /** Build the RAGold archive of one turn: its gold entry and the original documents. */
 export function exportRagold(conversationId: string, request: RagoldRequest): Promise<Blob> {
   return requestBlob(
-    apiUrl(`/conversations/${conversationId}/ragold`),
+    conversationUrl(conversationId, "/ragold"),
     "exportRagold",
     jsonRequest("POST", request),
   );
@@ -228,28 +238,76 @@ const all = ["conversations"] as const;
 export const conversationQueries = {
   /** The user's conversations, newest first. */
   list: () => queryOptions({ queryKey: [...all, "list"], queryFn: listConversations }),
+  /**
+   * The stored messages of a conversation, read afresh on every visit and
+   * dropped right after, since the chat owns them from then on.
+   */
+  messages: (id: string) =>
+    queryOptions({
+      queryKey: [...all, "messages", id],
+      queryFn: () => getConversationMessages(id),
+      gcTime: 0,
+    }),
 };
 
-// Every conversation mutation can change the list, so each refetches it.
-const meta = { invalidates: [conversationQueries.list().queryKey] };
+// Coalesces a burst of feed events, such as a turn's title and its end, into one read.
+const FEED_REFETCH_DELAY_MS = 250;
+
+/**
+ * Refetch the conversation list of *client* whenever the feed says it may have
+ * changed, which every mutation, run, and import does, from any tab or device,
+ * once for a burst of changes. Returns the unsubscribe.
+ */
+export function syncConversationQueries(client: QueryClient): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const unsubscribe = onConversationsStale(() => {
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => void client.invalidateQueries({ queryKey: conversationQueries.list().queryKey }),
+      FEED_REFETCH_DELAY_MS,
+    );
+  });
+
+  return () => {
+    clearTimeout(timer);
+    unsubscribe();
+  };
+}
+
+// A mutation refetches the list itself, since the feed may be reconnecting.
+const changesList = { invalidates: [conversationQueries.list().queryKey] };
 
 export const conversationMutations = {
   delete: () =>
-    mutationOptions({ mutationKey: [...all, "delete"], mutationFn: deleteConversation, meta }),
+    mutationOptions({
+      mutationKey: [...all, "delete"],
+      mutationFn: deleteConversation,
+      meta: changesList,
+    }),
+  /** Rename a conversation, its new summary shown in the list at once. */
   rename: () =>
     mutationOptions({
       mutationKey: [...all, "rename"],
-      mutationFn: ({ id, title }: { id: string; title: string }) =>
-        updateConversationTitle(id, title),
-      meta,
+      mutationFn: async ({ id, title }: { id: string; title: string }, { client }) => {
+        const renamed = await updateConversationTitle(id, title);
+        client.setQueryData(conversationQueries.list().queryKey, (list) =>
+          list?.map((summary) => (summary.id === id ? renamed : summary)),
+        );
+
+        return renamed;
+      },
+      meta: changesList,
     }),
   generateTitle: () =>
     mutationOptions({
       mutationKey: [...all, "generate-title"],
-      mutationFn: ({ id, llm }: { id: string; llm: LlmConfig }) =>
-        generateConversationTitle(id, llm),
-      meta,
+      mutationFn: generateConversationTitle,
+      meta: changesList,
     }),
   import: () =>
-    mutationOptions({ mutationKey: [...all, "import"], mutationFn: importConversation, meta }),
+    mutationOptions({
+      mutationKey: [...all, "import"],
+      mutationFn: importConversation,
+      meta: changesList,
+    }),
 };

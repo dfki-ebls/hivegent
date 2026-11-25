@@ -27,11 +27,11 @@ function describeStep(t: TFunction, step: SubagentStep): { icon: ReactNode; labe
   }
 }
 
-/** The task every subagent tool hands to `run_subagent`, beside its own arguments such as a scope. */
-type SubagentInput = { task?: string } & Record<string, unknown>;
-
-/** The task handed to the subagent, under badges for the other arguments it was given. */
-function SubagentTask({ task, ...args }: SubagentInput) {
+/**
+ * The task handed to the subagent, under badges for the other arguments it was given,
+ * those of the `delegate_task` tool of pydantic-ai-harness, such as the agent's name.
+ */
+function SubagentTask({ input: { task, ...args } }: { input: Record<string, unknown> }) {
   const values = Object.values(args).filter((value) => typeof value === "string");
 
   return (
@@ -45,7 +45,7 @@ function SubagentTask({ task, ...args }: SubagentInput) {
           ))}
         </div>
       )}
-      {task && <p>{task}</p>}
+      {typeof task === "string" && task && <p>{task}</p>}
     </>
   );
 }
@@ -66,14 +66,14 @@ interface SubagentToolProps {
 export function SubagentTool({ toolName, part, prompt, steps }: SubagentToolProps) {
   const { t } = useTranslation();
   const running = toolLineState(part, useMessageLive()).label === "running";
-  const input = toolInput<SubagentInput>(part);
+  const input = toolInput(part);
 
   return (
     <ToolCard
       toolName={toolName}
       part={part}
       prompt={prompt}
-      parameters={input && <SubagentTask {...input} />}
+      parameters={input && <SubagentTask input={input} />}
       autoOpen={running}
     >
       {(steps.length > 0 || running) && (

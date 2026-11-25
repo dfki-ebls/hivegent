@@ -40,16 +40,15 @@ export const chat = {
   compaction: {
     compacted: "Conversation compacted",
   },
-  navGuard: {
-    title: "Stop the current response?",
-    description:
-      "This chat is still generating a response. Leaving now stops it. Any partial answer is saved, so you can return and continue this conversation later.",
-    stay: "Stay",
-    leave: "Leave and stop",
-  },
   steering: {
     queued_one: "{{count}} queued message",
     queued_other: "{{count}} queued messages",
+    leaveTitle: "Discard queued messages?",
+    leaveDescription_one:
+      "The message queued for the assistant has not been sent yet and is lost on leaving.",
+    leaveDescription_other:
+      "The {{count}} messages queued for the assistant have not been sent yet and are lost on leaving.",
+    leave: "Leave",
   },
   composer: {
     placeholder: "Ask about your documents …",
@@ -61,7 +60,10 @@ export const chat = {
     removeAttachment: "Remove {{name}}",
     removeImage: "Remove image",
     removeFilter: "Remove {{name}} from the filter",
+    noAssistant: "No assistant",
+    skillSuggestions: "Skills",
     attachmentErrors: {
+      vision: "The selected model does not accept images.",
       accept:
         "Only images can be attached. Upload other documents to your workspace, where the assistant can search them.",
       maxFileSize: "Images must be under {{size}}.",
@@ -205,24 +207,35 @@ export const chat = {
   },
   tools: {
     names: {
+      answer_task: "Answer Task",
       apply_changes: "Apply Changes",
       ask_user: "Questions",
+      cancel_task: "Cancel Task",
+      check_task: "Check Task",
+      complete: "Ask the Model",
+      delegate_task: "Delegate Task",
       delete_documents: "Delete Documents",
       edit_document: "Edit Document",
-      explore: "Explore",
       get_conversation: "Read Conversation",
       grep: "Search Text",
       jq: "Query JSON",
       list_conversations: "List Conversations",
       list_documents: "List Documents",
+      list_tasks: "List Tasks",
+      load_skill: "Load Skill",
+      maintain_case_base: "Maintain Case Base",
+      message_task: "Message Task",
       move_documents: "Move Documents",
       query_table: "Query Tables",
+      read_assistant: "Read Assistant",
       read_binary_document: "Read Binary Files",
       read_document: "Read Documents",
       read_memory: "Read Memory",
+      retain_cases: "Retain Cases",
       run_python: "Run Python",
       search: "Semantic Search",
       search_conversation: "Search Conversation",
+      similar_cases: "Similar Cases",
       web_fetch: "Fetch Web Pages",
       web_search: "Web Search",
       write_document: "Write Document",
@@ -320,6 +333,12 @@ export const chat = {
       deleted: "Deleted {{path}}",
       mkdir: "Created folder {{path}}",
       replaces: "replaces",
+      reasons: {
+        add: "Add case {{key}}",
+        addNew: "Add a new case",
+        update: "Update case {{key}}",
+        remove: "Remove case {{key}}",
+      },
       question_one: "Allow the assistant to apply this change to your workspace?",
       question_other: "Allow the assistant to apply these {{count}} changes to your workspace?",
     },

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/item";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  type ApprovalDetails,
   ApprovalMetadataProvider,
   type ApprovalRound,
   ApprovalRoundProvider,
@@ -82,7 +83,7 @@ interface ApprovalScopeProps {
   /** The ids of the requests still open for an answer, in transcript order. */
   pending: readonly string[];
   /** What each gated call asked with, by tool call id. */
-  metadata?: Readonly<Record<string, unknown>>;
+  details: ApprovalDetails;
   /** The message's parts, whose prompts and lines read the round and the metadata. */
   children: ReactNode;
 }
@@ -92,12 +93,12 @@ interface ApprovalScopeProps {
  * Staging a choice re-renders only the scope and the prompts reading the round,
  * since the parts arrive as elements the message already built.
  */
-export function ApprovalScope({ pending, metadata, children }: ApprovalScopeProps) {
+export function ApprovalScope({ pending, details, children }: ApprovalScopeProps) {
   const round = useApprovalRoundState(pending);
 
   return (
     <>
-      <ApprovalMetadataProvider value={metadata}>
+      <ApprovalMetadataProvider value={details}>
         <ApprovalRoundProvider value={round}>{children}</ApprovalRoundProvider>
       </ApprovalMetadataProvider>
       <ApprovalBar round={round} />

@@ -1,5 +1,4 @@
 import { FileTextIcon } from "lucide-react";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { ExtraProps } from "streamdown";
 import { DocumentDialog } from "@/components/document-dialog";
@@ -83,11 +82,8 @@ export function Citation({ src, line }: CitationProps) {
     src ? state.documents.get(src) : undefined,
   );
 
-  const documentChunks = useMemo(
-    () => (document ? chunksForDocument(document, chunks) : []),
-    [document, chunks],
-  );
-  const positions = useMemo(() => resolveCitation(documentChunks, line), [documentChunks, line]);
+  const documentChunks = document ? chunksForDocument(document, chunks) : [];
+  const positions = resolveCitation(documentChunks, line);
   const resolved = typeof target === "number" ? positions[target] : undefined;
 
   if (!src) return null;

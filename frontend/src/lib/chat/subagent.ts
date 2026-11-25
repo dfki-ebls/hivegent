@@ -3,7 +3,7 @@
  * subagent did, that it reasoned, replied, or called a tool, without the contents.
  *
  * The backend surfaces this two ways onto one shape (see
- * `backend/.../agents/subagent_events.py`):
+ * `backend/src/hivegent/agents/transcripts.py`):
  *
  * - live, as transient `data-subagent` parts carrying a whole {@link SubagentUpdate}
  *   snapshot streamed while the subagent runs, so a long run never looks stuck.

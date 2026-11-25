@@ -1,7 +1,8 @@
-import { type ComponentProps, useMemo } from "react";
+import type { ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 import { HighlightedCode, ValueCode } from "@/components/common/highlighted-code";
-import { parseJson, type ToolPart } from "@/lib/chat/tool-part";
+import type { ToolPart } from "@/lib/chat/tool-part";
+import { parseJson } from "@/lib/utils";
 
 type ToolCodeProps = Pick<
   ComponentProps<typeof HighlightedCode>,
@@ -15,7 +16,7 @@ export function ToolCode({ language = "text", ...props }: ToolCodeProps) {
 
 /** A value that is or holds JSON, parsed once into its pretty text and the language that highlights it. */
 function codeOf(value: unknown): { code: string; language: string } {
-  const parsed = typeof value === "string" ? parseJson<unknown>(value) : value;
+  const parsed = parseJson(value);
 
   if (typeof parsed === "object" && parsed !== null) {
     return { code: JSON.stringify(parsed, null, 2), language: "json" };
@@ -40,13 +41,9 @@ function yamlValue(value: unknown): string {
 /** The arguments of a call, one per line. */
 export function ToolParameters({ params }: { params: Record<string, unknown> }) {
   const { t } = useTranslation();
-  const code = useMemo(
-    () =>
-      Object.entries(params)
-        .map(([key, value]) => `${key}:${yamlValue(value)}`)
-        .join("\n"),
-    [params],
-  );
+  const code = Object.entries(params)
+    .map(([key, value]) => `${key}:${yamlValue(value)}`)
+    .join("\n");
 
   if (!code) return null;
 
@@ -63,10 +60,7 @@ export function ToolValue({
   value,
   ...props
 }: Omit<ToolCodeProps, "code" | "language"> & { value: unknown }) {
-  const parsed = useMemo(
-    () => (typeof value === "string" ? (parseJson<unknown>(value) ?? value) : value),
-    [value],
-  );
+  const parsed = parseJson(value) ?? value;
 
   return <ValueCode value={parsed} wrap contentClassName="max-h-64" {...props} />;
 }

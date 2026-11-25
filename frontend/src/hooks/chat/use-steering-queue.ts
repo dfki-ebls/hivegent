@@ -1,5 +1,9 @@
+import { useBlocker } from "@tanstack/react-router";
 import type { FileUIPart } from "ai";
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+
+/** Whether a navigation waits for the user to leave the queued messages behind. */
+export type SteeringLeave = ReturnType<typeof useSteeringQueue>["leaving"];
 
 export interface SteeringMessage {
   id: string;
@@ -7,6 +11,11 @@ export interface SteeringMessage {
   files: FileUIPart[];
 }
 
+/**
+ * The messages sent while the assistant works, sent as one once it stops.
+ * They live only in this tab, so leaving the conversation or the page asks
+ * first while any wait, through `leaving` for a navigation in the app.
+ */
 export function useSteeringQueue(
   isStreaming: boolean,
   onDrain: (text: string, files: FileUIPart[]) => void,
@@ -32,11 +41,18 @@ export function useSteeringQueue(
     if (wasStreaming && !isStreaming) drain();
   }, [isStreaming]);
 
-  const enqueue = useCallback((text: string, files: FileUIPart[]) => {
+  const enqueue = (text: string, files: FileUIPart[]) => {
     const trimmed = text.trim();
     if (!trimmed && files.length === 0) return;
     setQueue((prev) => [...prev, { id: crypto.randomUUID(), text: trimmed, files }]);
-  }, []);
+  };
 
-  return { queue, enqueue };
+  const leaving = useBlocker({
+    shouldBlockFn: ({ current, next }) => current.pathname !== next.pathname,
+    disabled: queue.length === 0,
+    enableBeforeUnload: queue.length > 0,
+    withResolver: true,
+  });
+
+  return { queue, enqueue, leaving };
 }

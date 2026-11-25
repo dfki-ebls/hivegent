@@ -1,39 +1,31 @@
 import { EyeOffIcon, FileTextIcon, FolderIcon, type LucideIcon, XIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { FilterEntry } from "@/api/filters";
 import { Badge } from "@/components/ui/badge";
 import { InputGroupAddon } from "@/components/ui/input-group";
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 
-/** Directory entries end with `/`; a bare scope (`~`, `@team`) is a whole workspace. */
-function isDirEntry(entry: string): boolean {
-  return entry.endsWith("/") || !entry.includes("/");
-}
-
-function entryDisplayName(entry: string): string {
-  return entry.replace(/\/$/, "").split("/").pop() ?? entry;
-}
-
 interface FilterBadgeProps {
-  entry: string;
+  entry: FilterEntry;
   variant: "secondary" | "destructive";
   icon: LucideIcon;
-  onRemove: (filename: string) => void;
+  onRemove: (path: string) => void;
 }
 
 /** One entry of the chat's document filter, which removes itself when pressed. */
 function FilterBadge({ entry, variant, icon: Icon, onRemove }: FilterBadgeProps) {
   const { t } = useTranslation();
-  const name = entryDisplayName(entry);
+  const name = entry.path.split("/").pop() ?? entry.path;
 
   return (
     <Badge
       variant={variant}
-      title={entry}
+      title={entry.path}
       render={
         <button
           type="button"
           aria-label={t(($) => $.chat.composer.removeFilter, { name })}
-          onClick={() => onRemove(entry)}
+          onClick={() => onRemove(entry.path)}
         />
       }
     >
@@ -55,19 +47,19 @@ export function DocumentFilterBadges() {
     <InputGroupAddon align="block-start" className="flex-wrap">
       {included.map((entry) => (
         <FilterBadge
-          key={`inc-${entry}`}
+          key={`inc-${entry.path}`}
           entry={entry}
           variant="secondary"
-          icon={isDirEntry(entry) ? FolderIcon : FileTextIcon}
+          icon={entry.directory ? FolderIcon : FileTextIcon}
           onRemove={onRemove}
         />
       ))}
       {excluded.map((entry) => (
         <FilterBadge
-          key={`exc-${entry}`}
+          key={`exc-${entry.path}`}
           entry={entry}
           variant="destructive"
-          icon={isDirEntry(entry) ? FolderIcon : EyeOffIcon}
+          icon={entry.directory ? FolderIcon : EyeOffIcon}
           onRemove={onRemove}
         />
       ))}

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { getConversationMessages } from "@/api/conversations";
+import { conversationQueries } from "@/api/conversations";
 import { ChatLayout } from "@/components/chat-layout";
 import { LoadingPanel } from "@/components/common/status-panel";
 import { orNotFound } from "@/lib/not-found";
@@ -11,7 +11,8 @@ export const Route = createFileRoute("/conversations/$id")({
   // Each visit waits for the stored messages afresh, the chat owns them from then on.
   // Another user's id shows the not-found screen.
   loader: {
-    handler: ({ params }) => orNotFound(getConversationMessages(params.id)),
+    handler: ({ params, context }) =>
+      orNotFound(context.queryClient.query(conversationQueries.messages(params.id))),
     staleReloadMode: "blocking",
   },
   pendingComponent: () => <LoadingPanel className="h-full" />,

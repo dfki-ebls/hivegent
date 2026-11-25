@@ -1,0 +1,170 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "metadata": {
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Hi.",
+          "state": "done"
+        }
+      ]
+    },
+    {
+      "id": "id-1",
+      "role": "assistant",
+      "metadata": {
+        "reasoningDurationsMs": {
+          "id-2": [
+            0
+          ]
+        },
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "reasoning",
+          "text": "weighing options",
+          "state": "done"
+        },
+        {
+          "type": "text",
+          "text": "Hello there.",
+          "state": "done"
+        },
+        {
+          "type": "data-compaction",
+          "data": {
+            "content": "the gist"
+          }
+        }
+      ]
+    },
+    {
+      "id": "id-3",
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Again."
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-4"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "reasoning-start",
+      "id": "id-5"
+    },
+    {
+      "type": "reasoning-delta",
+      "id": "id-5",
+      "delta": "weighing options"
+    },
+    {
+      "type": "reasoning-end",
+      "id": "id-5"
+    },
+    {
+      "type": "text-start",
+      "id": "id-6"
+    },
+    {
+      "type": "text-delta",
+      "delta": "Hello there.",
+      "id": "id-6"
+    },
+    {
+      "type": "text-end",
+      "id": "id-6"
+    },
+    {
+      "type": "message-metadata",
+      "messageMetadata": {
+        "reasoningDurationsMs": {
+          "id-7": [
+            0
+          ]
+        },
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      }
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "finish"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-3",
+          "role": "user",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "Again.",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "id-4",
+          "role": "assistant",
+          "metadata": {
+            "reasoningDurationsMs": {
+              "id-7": [
+                0
+              ]
+            },
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "reasoning",
+              "text": "weighing options",
+              "state": "done"
+            },
+            {
+              "type": "text",
+              "text": "Hello there.",
+              "state": "done"
+            }
+          ]
+        }
+      ],
+      "transient": true
+    }
+  ]
+}

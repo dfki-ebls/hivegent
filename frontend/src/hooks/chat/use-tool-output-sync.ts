@@ -4,6 +4,15 @@ import { getToolHandler } from "@/components/chat/tools/registry";
 import { getToolPartInfo, indexToolData } from "@/lib/chat/tool-part";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
+/** Whether *before* holds a message that *after* lacks, the append-only case checked without a set. */
+function droppedMessage(before: UIMessage[], after: UIMessage[]): boolean {
+  if (before.every((message, i) => message.id === after[i]?.id)) return false;
+
+  const ids = new Set(after.map((message) => message.id));
+
+  return before.some((message) => !ids.has(message.id));
+}
+
 /**
  * Sync every finished tool output of a transcript into the fetched-documents store, each payload once.
  * The store starts empty for every transcript and once a rewrite drops a message,
@@ -11,22 +20,28 @@ import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
  *
  * The SDK snapshots a streaming message shallowly, so a payload keeps its identity
  * across updates and one already synced is skipped rather than parsed again on every tick.
+ * A settled message keeps its identity too, so only the streaming one is scanned per tick.
  */
 export function useToolOutputSync(messages: UIMessage[]) {
   const previous = useRef<UIMessage[] | null>(null);
+  const scanned = useRef(new WeakSet<UIMessage>());
 
   useEffect(() => {
     const { addChunk, markFullDocument, addImage, claimOutput, clearAll } =
       useFetchedDocumentsStore.getState();
-    const ids = new Set(messages.map((message) => message.id));
 
-    if (!previous.current || previous.current.some((message) => !ids.has(message.id))) {
+    if (!previous.current || droppedMessage(previous.current, messages)) {
       clearAll();
+      scanned.current = new WeakSet();
     }
 
     previous.current = messages;
 
     for (const message of messages) {
+      if (scanned.current.has(message)) continue;
+
+      scanned.current.add(message);
+
       const toolData = indexToolData(message.parts);
 
       for (const part of message.parts) {

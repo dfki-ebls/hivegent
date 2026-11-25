@@ -1,0 +1,73 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Go."
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-1"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "text-start",
+      "id": "id-2"
+    },
+    {
+      "type": "text-delta",
+      "delta": "Partial",
+      "id": "id-2"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-0",
+          "role": "user",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "Go.",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "id-1",
+          "role": "assistant",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "text",
+              "text": "Partial",
+              "state": "done"
+            }
+          ]
+        }
+      ],
+      "transient": true
+    }
+  ]
+}

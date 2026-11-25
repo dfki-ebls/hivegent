@@ -1,53 +1,28 @@
 import { Chat } from "@ai-sdk/react";
-import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { DefaultChatTransport } from "ai";
 import { useState } from "react";
 import { useChatInstance } from "@/components/chat/chat-context";
 import { chatFetch } from "@/api/client";
 import {
-  type ChatRequestConfig,
   chatUrl,
-  conversationQueries,
   getConversationMessages,
+  parseMessages,
   turnUrl,
 } from "@/api/conversations";
-import { buildLlmConfig } from "@/api/settings";
-import { buildToolsPayload } from "@/api/tools";
-import { placeCompactions, shouldContinueRun } from "@/lib/chat/chat-utils";
+import { settleTurn, shouldContinueRun } from "@/lib/chat/chat-utils";
 import { type ChatMessage, messageSchemas } from "@/lib/chat/message";
 import { SubagentLive } from "@/lib/chat/subagent";
-import { useComposerStore } from "@/stores/composer-store";
-import { useDocumentFilterStore } from "@/stores/document-filter-store";
-import { useSettingsStore } from "@/stores/settings-store";
-
-/** The current chat settings, read afresh for every request. */
-export function chatSettings(): ChatRequestConfig {
-  const { overrides, personality, customSystemMessage, toolsSpec } = useSettingsStore.getState();
-  const { included, excluded } = useDocumentFilterStore.getState();
-  const { agentMode, reasoningEffort } = useComposerStore.getState();
-
-  return {
-    personality,
-    system_message: personality === "custom" ? customSystemMessage : undefined,
-    reasoning_effort: reasoningEffort,
-    mode: agentMode,
-    llm: buildLlmConfig(overrides),
-    included_documents: included,
-    excluded_documents: excluded,
-    tools: buildToolsPayload(toolsSpec),
-  };
-}
-
 /**
  * The transport of a conversation, which sends only the new message (none for
  * a regenerate or a compaction) plus the operation, since the server loads the
  * history from its store and forks or appends at the message `messageId` addresses.
  *
- * The settings are stamped on here rather than at the call sites: the SDK
- * issues the post-approval continuation itself, so a per-call body would leave
- * that request settingless and the turn would resume with the server's
- * defaults. A per-call body only adds a flag to its own request, such as
- * `compact`, which addresses no message since it compacts the active path.
+ * The body is the SDK's own: a new user message names its documents in its
+ * metadata, and the server runs everything else, a regenerate, the
+ * post-approval continuation the SDK issues itself, and a compaction included,
+ * with the user's preferences and the documents of the question it answers.
+ * A per-call body only adds a flag to its own request, such as `compact`,
+ * which addresses no message since it compacts the active path.
  *
  * A turn runs on at the server when the client stops reading, so a reload
  * follows it again at its own route, from its first chunk. The replay
@@ -76,7 +51,6 @@ function transportOf(conversationId: string, onNoTurn: () => void) {
       return {
         body: {
           ...body,
-          ...chatSettings(),
           id,
           messages: message ? [message] : [],
           trigger,
@@ -98,24 +72,31 @@ function transportOf(conversationId: string, onNoTurn: () => void) {
   return transport;
 }
 
-/** The chat of one conversation, which starts from its stored *messages*. */
+/**
+ * The chat of one conversation, which starts from its stored *messages*.
+ *
+ * Every turn ends on its stored version, which replaces what streamed, so the
+ * transcript is the one a reload shows, ids included.
+ */
 function createChat(
   id: string,
   messages: ChatMessage[],
-  queryClient: QueryClient,
   subagents: SubagentLive,
 ): Chat<ChatMessage> {
+  // The stored version of the turn streaming now once it arrived, undefined when invalid.
+  let stored: Promise<ChatMessage[] | undefined> | undefined;
+  const reload = () => {
+    const read = chat.messages;
+
+    void getConversationMessages(id).then((loaded) => {
+      // Unless the user moved on meanwhile.
+      if (chat.messages === read) chat.messages = loaded;
+    });
+  };
   const chat: Chat<ChatMessage> = new Chat<ChatMessage>({
     id,
     messages,
-    transport: transportOf(id, () => {
-      const read = chat.messages;
-
-      void getConversationMessages(id).then((stored) => {
-        // Unless the user moved on meanwhile.
-        if (chat.messages === read) chat.messages = stored;
-      });
-    }),
+    transport: transportOf(id, reload),
     // The server stores every user message under the id it was sent with.
     generateId: () => crypto.randomUUID(),
     // Streamed messages are validated like stored ones.
@@ -124,15 +105,36 @@ function createChat(
     sendAutomaticallyWhen: shouldContinueRun,
     onData: (part) => {
       if (part.type === "data-subagent") subagents.update(part.data);
+
+      if (part.type === "data-turn") {
+        stored = parseMessages(part.data).catch(() => undefined);
+      }
     },
-    onFinish: () => {
-      // Keep a compaction where it shows, so a regenerate dropping its reply keeps it too.
-      const placed = placeCompactions(chat.messages);
+    onFinish: ({ message, isAbort, isError }) => {
+      const turn = stored;
 
-      if (placed !== chat.messages) chat.messages = placed;
+      stored = undefined;
 
-      // A turn creates the conversation, names it, and moves it to the top.
-      void queryClient.invalidateQueries({ queryKey: conversationQueries.list().queryKey });
+      // The server ends a stream without the turn when its token expires, so
+      // it is followed again as a reload would, with a fresh token.
+      if (turn === undefined) {
+        if (!isAbort && !isError) {
+          void getConversationMessages(id).then((loaded) => {
+            chat.messages = loaded;
+
+            return chat.resumeStream();
+          });
+        }
+
+        return;
+      }
+
+      void turn.then((settled) => {
+        const next = settled && settleTurn(chat.messages, settled, message.id);
+
+        if (next) chat.messages = next;
+        else reload();
+      });
     },
   });
 
@@ -141,9 +143,8 @@ function createChat(
 
 /** One chat per conversation, created once for the component keyed by its id. */
 export function useHivegentChat(id: string, messages: ChatMessage[]) {
-  const queryClient = useQueryClient();
   const [subagents] = useState(() => new SubagentLive());
-  const chat = useChatInstance(() => createChat(id, messages, queryClient, subagents));
+  const chat = useChatInstance(() => createChat(id, messages, subagents));
 
   return { chat, subagents };
 }

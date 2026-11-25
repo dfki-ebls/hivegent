@@ -4,9 +4,7 @@ import {
   createContext,
   type ReactNode,
   use,
-  useCallback,
   useEffect,
-  useMemo,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -43,12 +41,7 @@ interface ChatProviderProps extends ChatContextValue {
 
 /** The chat the messages and their calls belong to, which stays the same while it streams. */
 export function ChatProvider({ chat, conversationId, subagents, children }: ChatProviderProps) {
-  const value = useMemo(
-    () => ({ chat, conversationId, subagents }),
-    [chat, conversationId, subagents],
-  );
-
-  return <ChatContext value={value}>{children}</ChatContext>;
+  return <ChatContext value={{ chat, conversationId, subagents }}>{children}</ChatContext>;
 }
 
 export function useChatContext(): ChatContextValue {
@@ -72,18 +65,15 @@ export function useConversationId(): string | null {
 export function useChatSelector<T>(select: (chat: Chat<ChatMessage>) => T): T {
   const { chat } = useChatContext();
   // The callbacks `useChat` itself subscribes with, the Chat has no public ones.
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const unsubscribes = [
-        chat["~registerMessagesCallback"](onChange),
-        chat["~registerStatusCallback"](onChange),
-        chat["~registerErrorCallback"](onChange),
-      ];
+  const subscribe = (onChange: () => void) => {
+    const unsubscribes = [
+      chat["~registerMessagesCallback"](onChange),
+      chat["~registerStatusCallback"](onChange),
+      chat["~registerErrorCallback"](onChange),
+    ];
 
-      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-    },
-    [chat],
-  );
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  };
 
   return useSyncExternalStore(subscribe, () => select(chat));
 }

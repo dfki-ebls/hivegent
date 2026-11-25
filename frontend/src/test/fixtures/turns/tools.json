@@ -1,0 +1,166 @@
+{
+  "initial": [
+    {
+      "id": "id-0",
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Go."
+        }
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "type": "start",
+      "messageId": "id-1"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "tool-input-start",
+      "toolCallId": "c1",
+      "toolName": "lookup"
+    },
+    {
+      "type": "tool-input-delta",
+      "toolCallId": "c1",
+      "inputTextDelta": "{\"term\": \"a\"}"
+    },
+    {
+      "type": "tool-input-start",
+      "toolCallId": "c2",
+      "toolName": "lookup"
+    },
+    {
+      "type": "tool-input-delta",
+      "toolCallId": "c2",
+      "inputTextDelta": "{\"term\": \"b\"}"
+    },
+    {
+      "type": "tool-input-available",
+      "toolCallId": "c1",
+      "toolName": "lookup",
+      "input": {
+        "term": "a"
+      }
+    },
+    {
+      "type": "tool-input-available",
+      "toolCallId": "c2",
+      "toolName": "lookup",
+      "input": {
+        "term": "b"
+      }
+    },
+    {
+      "type": "tool-output-available",
+      "toolCallId": "c2",
+      "output": "found b"
+    },
+    {
+      "type": "tool-output-available",
+      "toolCallId": "c1",
+      "output": "found a"
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "start-step"
+    },
+    {
+      "type": "text-start",
+      "id": "id-2"
+    },
+    {
+      "type": "text-delta",
+      "delta": "Both found.",
+      "id": "id-2"
+    },
+    {
+      "type": "text-end",
+      "id": "id-2"
+    },
+    {
+      "type": "message-metadata",
+      "messageMetadata": {
+        "pydantic_ai": {
+          "timestamp": "<time>"
+        }
+      }
+    },
+    {
+      "type": "finish-step"
+    },
+    {
+      "type": "finish"
+    },
+    {
+      "type": "data-turn",
+      "data": [
+        {
+          "id": "id-0",
+          "role": "user",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "Go.",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "id": "id-1",
+          "role": "assistant",
+          "metadata": {
+            "pydantic_ai": {
+              "timestamp": "<time>"
+            }
+          },
+          "parts": [
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "tool-lookup",
+              "toolCallId": "c1",
+              "state": "output-available",
+              "input": {
+                "term": "a"
+              },
+              "output": "found a",
+              "providerExecuted": false
+            },
+            {
+              "type": "tool-lookup",
+              "toolCallId": "c2",
+              "state": "output-available",
+              "input": {
+                "term": "b"
+              },
+              "output": "found b",
+              "providerExecuted": false
+            },
+            {
+              "type": "step-start"
+            },
+            {
+              "type": "text",
+              "text": "Both found.",
+              "state": "done"
+            }
+          ]
+        }
+      ],
+      "transient": true
+    }
+  ]
+}

@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { FileCodeIcon, SquareFunctionIcon } from "lucide-react";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { HighlightedCode } from "@/components/common/highlighted-code";
@@ -32,17 +31,13 @@ import { type ToolRenderProps, toolDisplayName, toolInput } from "@/lib/chat/too
 
 const T_OPTIONS = keyPrefix(($) => $.chat.tools.runPython);
 
-interface RunPythonInput {
-  code?: string | null;
-  script_path?: string | null;
-}
-
 /** Mirrors `ChangesetOutcome` in `backend/src/hivegent/tools/changeset.py`. */
-const ChangesetOutcomeSchema = z.discriminatedUnion("status", [
+export const ChangesetOutcomeSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("pending"),
     changeset_id: z.string(),
     summary: ChangesetSummarySchema,
+    held: z.number().default(0),
   }),
   z.object({ status: z.literal("applied"), reports: z.array(z.string()) }),
 ]);
@@ -68,8 +63,8 @@ const PythonResultSchema = z.object({
 type PythonResult = z.infer<typeof PythonResultSchema>;
 
 /** A blank argument is one the model did not use, as the backend reads it. */
-function given(value: string | null | undefined): string | undefined {
-  return value?.trim() ? value : undefined;
+function given(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function ScriptSourceView({
@@ -211,8 +206,8 @@ function Output({ result }: { result: PythonResult }) {
 
 export function RunPythonTool({ part, metadata, prompt }: ToolRenderProps) {
   const { t } = useTranslation();
-  const input = toolInput<RunPythonInput>(part);
-  const result = useMemo(() => PythonResultSchema.safeParse(metadata).data, [metadata]);
+  const input = toolInput(part);
+  const result = PythonResultSchema.safeParse(metadata).data;
   const code = given(input?.code);
   const scriptPath = result?.script_path ?? given(input?.script_path);
   const tool = toolDisplayName(t, "run_python");

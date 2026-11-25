@@ -29,16 +29,20 @@ function approved(id: string): ChatMessage["parts"][number] {
 
 interface RenderOptions {
   approvalMetadata?: Record<string, unknown>;
+  approvalArgs?: Record<string, Record<string, unknown>>;
   part?: (id: string) => ChatMessage["parts"][number];
 }
 
 /** The last message of a chat that waits for the user, with a call of *ids* each. */
-function renderMessage(ids: string[], { approvalMetadata, part = request }: RenderOptions = {}) {
+function renderMessage(
+  ids: string[],
+  { approvalMetadata, approvalArgs, part = request }: RenderOptions = {},
+) {
   const messageOf = (requests: string[]): ChatMessage => ({
     id: "m1",
     role: "assistant",
     parts: requests.map(part),
-    metadata: { approvalMetadata },
+    metadata: { approvalMetadata, approvalArgs },
   });
   const chat = createTestChat([messageOf(ids)]);
   const decide = vi.spyOn(chat, "addToolApprovalResponse").mockResolvedValue();
@@ -154,13 +158,14 @@ describe("tool approval", () => {
     ]);
   });
 
-  it("asks with the changeset summary of any tool", () => {
+  it("asks with the changeset summary of any tool and the reasons of its planner", () => {
     const summary = {
       creates: [{ path: "~/out.md", diff: "" }],
       updates: [],
       moves: [],
       deletes: [],
       mkdirs: [],
+      reasons: [{ action: "remove", key: 2, reason: "A duplicate of case 1." }],
     };
     const { card } = renderMessage(["call-1"], { approvalMetadata: { "call-1": summary } });
 
@@ -168,6 +173,16 @@ describe("tool approval", () => {
       card(0).getByText("Allow the assistant to apply this change to your workspace?"),
     ).toBeTruthy();
     expect(card(0).getByText("Created ~/out.md")).toBeTruthy();
+    expect(card(0).getByText("Remove case 2")).toBeTruthy();
+    expect(card(0).getByText("A duplicate of case 1.")).toBeTruthy();
+  });
+
+  it("asks with the arguments the call runs with, not those the model sent", () => {
+    renderMessage(["call-1"], { approvalArgs: { "call-1": { to: "repaired@example.org" } } });
+    const { textContent: text } = screen.getByRole("group", { name: /^Allow the assistant/ });
+
+    expect(text).toContain("repaired@example.org");
+    expect(text).not.toContain("call-1");
   });
 
   it("keeps showing the changes once the call is resolved", () => {
@@ -177,6 +192,7 @@ describe("tool approval", () => {
       moves: [],
       deletes: ["~/old.md"],
       mkdirs: [],
+      reasons: [],
     };
     renderMessage(["call-1"], {
       approvalMetadata: { "call-1": summary },
