@@ -1,26 +1,28 @@
 import { create } from "zustand";
 
+import type { DocumentSelection, FilterEntry } from "@/api/filters";
 import type { WorkspaceChanged } from "@/api/jobs";
 import { followEach, followPath } from "@/lib/utils";
 import { onWorkspaceChanged } from "@/stores/jobs-store";
 
 /**
- * Per-conversation document selection for the chat agent. Entries are
- * canonical paths (`~/docs/report.md`, `@team/notes/`): a trailing slash marks
- * a directory, a bare scope (`~`, `@team`) a whole workspace. The two halves
+ * Per-conversation document selection for the chat agent. Entries name
+ * canonical paths (`~/docs/report.md`, `@team/notes`) and whether each is a
+ * directory, a bare scope (`~`, `@team`) being a whole workspace. The two halves
  * are not symmetric: `included` points the agent at the documents a question
  * is about and restricts nothing, while `excluded` is the only half its tools
- * enforce. The selection rides along with every request and survives between
- * messages of the same conversation; starting or switching conversations
- * clears it.
+ * enforce. Every message the user sends carries the selection in its metadata
+ * (`selectionMetadata`), which the server stores with it, and the selection survives
+ * between messages of the same conversation; starting or switching
+ * conversations clears it.
  */
 interface DocumentFilterState {
-  included: string[];
-  excluded: string[];
+  included: FilterEntry[];
+  excluded: FilterEntry[];
   /** Add to the relevant list, or remove when already there (toggle). */
-  toggleInclude: (path: string) => void;
+  toggleInclude: (entry: FilterEntry) => void;
   /** Add to the hidden list, or remove when already there (toggle). */
-  toggleExclude: (path: string) => void;
+  toggleExclude: (entry: FilterEntry) => void;
   /** Drop the entry from both lists (badge dismissal). */
   remove: (path: string) => void;
   /**
@@ -33,31 +35,41 @@ interface DocumentFilterState {
   clear: () => void;
 }
 
-function without(paths: string[], path: string): string[] {
-  return paths.filter((p) => p !== path);
+function has(entries: FilterEntry[], path: string): boolean {
+  return entries.some((entry) => entry.path === path);
+}
+
+function without(entries: FilterEntry[], path: string): FilterEntry[] {
+  return entries.filter((entry) => entry.path !== path);
 }
 
 export const useDocumentFilterStore = create<DocumentFilterState>((set) => ({
   included: [],
   excluded: [],
-  toggleInclude: (path) =>
+  toggleInclude: (entry) =>
     set((s) =>
-      s.included.includes(path)
-        ? { included: without(s.included, path) }
-        : { included: [...s.included, path], excluded: without(s.excluded, path) },
+      has(s.included, entry.path)
+        ? { included: without(s.included, entry.path) }
+        : { included: [...s.included, entry], excluded: without(s.excluded, entry.path) },
     ),
-  toggleExclude: (path) =>
+  toggleExclude: (entry) =>
     set((s) =>
-      s.excluded.includes(path)
-        ? { excluded: without(s.excluded, path) }
-        : { excluded: [...s.excluded, path], included: without(s.included, path) },
+      has(s.excluded, entry.path)
+        ? { excluded: without(s.excluded, entry.path) }
+        : { excluded: [...s.excluded, entry], included: without(s.included, entry.path) },
     ),
   remove: (path) =>
     set((s) => ({ included: without(s.included, path), excluded: without(s.excluded, path) })),
   follow: (changed) => {
     if (changed.moves.length === 0 && changed.deletes.length === 0) return;
 
-    const follow = (path: string) => followPath(path, changed);
+    const follow = (entry: FilterEntry): FilterEntry | null => {
+      const path = followPath(entry.path, changed);
+
+      if (path === null) return null;
+
+      return path === entry.path ? entry : { ...entry, path };
+    };
 
     set((s) => {
       const included = followEach(s.included, follow);
@@ -73,3 +85,10 @@ export const useDocumentFilterStore = create<DocumentFilterState>((set) => ({
 // tab, another one, the agent, an MCP client), and an entry left at a stale
 // path would silently stop hiding its document from the agent.
 onWorkspaceChanged((changed) => useDocumentFilterStore.getState().follow(changed));
+
+/** The metadata of a message the user sends now, naming the documents it is about. */
+export function selectionMetadata(): { documents: DocumentSelection } {
+  const { included, excluded } = useDocumentFilterStore.getState();
+
+  return { documents: { included, excluded } };
+}

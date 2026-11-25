@@ -1,72 +1,25 @@
-import {
-  Download,
-  ExternalLink,
-  FileText,
-  ImageIcon,
-  Pencil,
-  RefreshCw,
-  RotateCcw,
-  Sparkles,
-  Trash2,
-  FileQuestionIcon,
-  TextSelectIcon,
-  CircleAlertIcon,
-} from "lucide-react";
+import { TextSelectIcon } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { type ReactNode, startTransition, useCallback, useMemo, useRef, useState } from "react";
+import { startTransition, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { useConversationId } from "@/components/chat/chat-context";
-import { formatDateTime, formatFileSize } from "@/i18n/format";
-import { downloadBlob } from "@/lib/download";
-import { buildAuxLlmConfig } from "@/api/settings";
-import {
-  canonicalPath,
-  formatTarget,
-  isWorkspacePath,
-  splitScopePath,
-  documentMutations,
-  documentQueries,
-  type ChunkedDocumentResponse,
-} from "@/api/documents";
-import {
-  type FetchedChunk,
-  type FetchedImage,
-  chunkOriginLabel,
-  chunkPositionLabel,
-  isLinePosition,
-  lineBounds,
-  sortChunks,
-} from "@/lib/chunks";
-import { basename, centerInScroller, cn, errorMessage, isWebUrl, previewText } from "@/lib/utils";
-import { type DocumentPreview, previewKind } from "@/lib/original-preview";
-import { useSettingsStore } from "@/stores/settings-store";
-import { type PreviewTab, PreviewTabs } from "@/components/documents/preview-tabs";
+import { canonicalPath, splitScopePath, documentMutations, documentQueries } from "@/api/documents";
+import { type FetchedChunk, type FetchedImage } from "@/lib/chunks";
+import { centerInScroller, isWebUrl } from "@/lib/utils";
+import { type DocumentPreview } from "@/lib/original-preview";
+import { AssetPane } from "@/components/documents/dialog/asset-pane";
+import { EditPane } from "@/components/documents/dialog/edit-pane";
+import { DocumentHeader } from "@/components/documents/dialog/header";
+import { type SidebarTab, type View, defaultTab } from "@/components/documents/dialog/model";
+import { ChunkBadges } from "@/components/documents/dialog/parts";
+import { DocumentSidebar } from "@/components/documents/dialog/sidebar";
+import { ChunkText, FullDocumentText } from "@/components/documents/dialog/text-views";
+import { useDocumentContent } from "@/components/documents/dialog/use-document-content";
+import { PreviewTabs } from "@/components/documents/preview-tabs";
+import { SimilarityView } from "@/components/documents/similarity-view";
 import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
-import { ItemButton } from "@/components/row-buttons";
 import { ScrollDialogContent } from "@/components/scroll-dialog-content";
-import { TooltipButton } from "@/components/common/tooltip-button";
-import { WorkspaceMarkdown } from "@/components/workspace-markdown";
-import { chunksForDocument, useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { CodeBlock, CodeBlockContent, CodeBlockHeader } from "@/components/ui/code-block";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/common/spinner";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
+import { Dialog } from "@/components/ui/dialog";
 
 interface DocumentDialogProps {
   open: boolean;
@@ -98,227 +51,6 @@ interface DocumentDialogProps {
   target?: string;
   /** Save handler for edit mode. */
   onSave?: (filename: string, content: string) => Promise<void>;
-}
-
-/** What the main pane shows. */
-type View =
-  | { mode: "full-doc" }
-  | { mode: "chunk"; id: string }
-  | { mode: "asset"; index: number }
-  | { mode: "edit" };
-type SidebarTab = "chunks" | "assets";
-
-interface ContentChunk {
-  id: string;
-  content: string;
-  badge: string;
-  detail?: string;
-  isFullDocument?: boolean;
-  range: { start: number; end: number } | null;
-  originLabel?: string;
-}
-
-interface ContentModel {
-  content: string | null;
-  chunks: ContentChunk[];
-  loading: boolean;
-  error: string | null;
-  assetsDir: string | null;
-  /** The original, when the browser can render it in the preview tab. */
-  preview: DocumentPreview | null;
-  metadata: ChunkedDocumentResponse | null;
-}
-
-/** Read-only markdown description with an empty-state fallback. */
-function DescriptionBody({ markdown }: { markdown: string | null }) {
-  const { t } = useTranslation();
-
-  return markdown ? (
-    <WorkspaceMarkdown>{markdown}</WorkspaceMarkdown>
-  ) : (
-    <p className="text-sm text-muted-foreground italic">
-      {t(($) => $.documents.dialog.noDescription)}
-    </p>
-  );
-}
-
-/** Outline badges describing a file's name, media type, and size. */
-function FileMetaBadges({
-  name,
-  mediaType,
-  sizeBytes,
-}: {
-  name: string;
-  mediaType?: string | null;
-  sizeBytes?: number | null;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      <Badge variant="outline">{name}</Badge>
-      {mediaType && <Badge variant="outline">{mediaType}</Badge>}
-      {sizeBytes != null && <Badge variant="outline">{formatFileSize(sizeBytes)}</Badge>}
-    </div>
-  );
-}
-
-/** The origin and position badges of a fetched chunk, where a long search query wraps. */
-function ChunkBadges({ chunk }: { chunk: ContentChunk }) {
-  return (
-    <>
-      <Badge variant="outline" className="h-auto justify-start whitespace-normal wrap-anywhere">
-        {chunk.originLabel}
-      </Badge>
-      <Badge variant="secondary">{chunk.badge}</Badge>
-    </>
-  );
-}
-
-/** The index each line of *content* starts at, so line positions resolve without splitting it per chunk. */
-function lineStarts(content: string): number[] {
-  const starts = [0];
-
-  for (let i = content.indexOf("\n"); i !== -1; i = content.indexOf("\n", i + 1)) {
-    starts.push(i + 1);
-  }
-
-  return starts;
-}
-
-/** A scrolling pane with the description of an image or video and its file metadata. */
-function DescriptionPane({ children }: { children: ReactNode }) {
-  return (
-    <ScrollArea className="min-h-0 flex-1">
-      <div className="flex flex-col gap-2 p-4">{children}</div>
-    </ScrollArea>
-  );
-}
-
-/** The preview of the original behind the entry at *documentPath*, if the browser can render it. */
-function entryPreview(
-  documentPath: string,
-  metadata: ChunkedDocumentResponse | null,
-): DocumentPreview | null {
-  const originalPath = metadata?.original_path;
-  const kind = originalPath ? previewKind(metadata.mime, originalPath) : null;
-
-  if (!originalPath || !kind) return null;
-
-  return kind === "media"
-    ? {
-        kind,
-        path: canonicalPath(splitScopePath(documentPath).scope, originalPath),
-        mediaType: metadata.mime,
-        alt: documentPath,
-      }
-    : { kind, documentPath };
-}
-
-/** A highlighted chunk opens on its text, anything else on the rendered original. */
-function defaultTab(view: View): PreviewTab {
-  return view.mode === "chunk" ? "text" : "preview";
-}
-
-/** The document text as one wrapped, scrolling code block filling the pane. */
-function TextPane({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col p-4">
-      <CodeBlock className="min-h-0 flex-1">
-        <CodeBlockContent wrap>
-          <span>{children}</span>
-        </CodeBlockContent>
-      </CodeBlock>
-    </div>
-  );
-}
-
-/** A selectable sidebar entry, highlighted while its view is shown. */
-function SidebarItem({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <ItemButton
-      size="xs"
-      aria-current={active}
-      onClick={onClick}
-      className={cn(active && "bg-muted")}
-    >
-      {children}
-    </ItemButton>
-  );
-}
-
-/** Media views (an uploaded image or video, an extracted asset) title their description alike. */
-function DescriptionHeading({ actions }: { actions?: ReactNode }) {
-  const { t } = useTranslation();
-
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <h3 className="text-sm font-medium">{t(($) => $.documents.dialog.descriptionHeading)}</h3>
-      {actions}
-    </div>
-  );
-}
-
-type RangeResolver = (chunk: FetchedChunk) => { start: number; end: number } | null;
-
-/**
- * Resolve chunk character ranges within ``fullContent``, indexing its lines once for every chunk.
- *
- * Prefers exact character offsets from the backend (semantic-search
- * chunks carry these) so highlights don't round up to whole lines.
- * Falls back to line numbers, then to a text search.
- */
-function chunkRangeResolver(fullContent: string): RangeResolver {
-  const starts = lineStarts(fullContent);
-
-  return (chunk) => {
-    if (
-      chunk.startIndex !== undefined &&
-      chunk.endIndex !== undefined &&
-      chunk.endIndex > chunk.startIndex &&
-      chunk.endIndex <= fullContent.length
-    ) {
-      return { start: chunk.startIndex, end: chunk.endIndex };
-    }
-
-    const position = chunk.position;
-    const [startLine, endLine] = isLinePosition(position) ? lineBounds(position) : [0, 0];
-
-    const start = starts[startLine - 1];
-
-    if (startLine >= 1) {
-      if (start === undefined) return null;
-
-      const next = starts[Math.min(endLine, starts.length)];
-
-      return { start, end: next === undefined ? fullContent.length : next - 1 };
-    }
-
-    if (!chunk.content) return null;
-    const idx = fullContent.indexOf(chunk.content);
-
-    return idx >= 0 ? { start: idx, end: idx + chunk.content.length } : null;
-  };
-}
-
-function fetchedContentChunk(
-  chunk: FetchedChunk,
-  resolveRange: RangeResolver | null,
-): ContentChunk {
-  return {
-    id: chunk.id,
-    content: chunk.content,
-    badge: chunkPositionLabel(chunk.position),
-    isFullDocument: chunk.position.type === "full_document",
-    range: resolveRange?.(chunk) ?? null,
-    originLabel: chunkOriginLabel(chunk),
-  };
 }
 
 export function DocumentDialog({ open, onOpenChange, ...props }: DocumentDialogProps) {
@@ -354,7 +86,6 @@ function DocumentDialogBody({
   onSave,
 }: Omit<DocumentDialogProps, "open">) {
   const { t } = useTranslation();
-  const conversationId = useConversationId();
   const [view, setView] = useState<View>(() => {
     if (isNew) return { mode: "edit" };
     if (!chunk || initialFullDoc || chunk.position.type === "full_document") {
@@ -362,9 +93,6 @@ function DocumentDialogBody({
     }
     return { mode: "chunk", id: chunk.id };
   });
-
-  const [editFilename, setEditFilename] = useState(filename);
-  const [editContent, setEditContent] = useState("");
 
   const [tab, setTab] = useState(() => defaultTab(view));
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chunks");
@@ -374,34 +102,13 @@ function DocumentDialogBody({
   // When true, the next scroll-into-view uses "instant" instead of "smooth".
   const isInitialScrollRef = useRef(true);
 
-  // Fetched-mode store access
-  const chunks = useFetchedDocumentsStore((state) => state.chunks);
-  const documents = useFetchedDocumentsStore((state) => state.documents);
-  const overrides = useSettingsStore((state) => state.overrides);
-
   const isManagedMode = showMetadata || onRechunk != null;
-
-  // Content a tool output already delivered, the only source of a web page.
-  const storedFullContent = useFetchedDocumentsStore((state) =>
-    filename ? state.documents.get(filename)?.fullContent : undefined,
-  );
-
-  const isWeb = isWebUrl(filename);
-  // The entry metadata names the original, which a fetched image already shows.
-  const wantsMetadata =
-    !!filename && !isNew && isWorkspacePath(filename) && (isManagedMode || !image);
-  const needsContent =
-    !!filename && !isNew && !isWeb && (isManagedMode || storedFullContent == null);
-
-  // The workspace queries refetch whenever the workspace changes, so an open
-  // dialog follows a reconvert, a rechunk, or an edit by the agent.
-  const contentQuery = useQuery({
-    ...documentQueries.content(filename, conversationId),
-    enabled: needsContent,
-  });
-  const chunksQuery = useQuery({
-    ...documentQueries.chunks(filename),
-    enabled: wantsMetadata,
+  const { contentModel, isLoading, managedLoading } = useDocumentContent({
+    filename,
+    chunk,
+    image,
+    isNew,
+    isManagedMode,
   });
   // Loaded on the first switch to the assets tab
   // (404 when the document has none → tab stays hidden via assets_dir)
@@ -409,71 +116,17 @@ function DocumentDialogBody({
     ...documentQueries.assets(filename),
     enabled: sidebarTab === "assets",
   });
+  // One request on the shown asset's description, after which the list refetches.
+  const assetAction = useMutation({
+    ...documentMutations.assetDescription(filename),
+    onSuccess: () => setIsEditingAssetDescription(false),
+  });
+
+  const isWeb = isWebUrl(filename);
   const assetsData = assetsQuery.data;
-  const metadata = chunksQuery.data ?? null;
   // Both responses name their files relative to the workspace of *filename*.
   const { scope } = splitScopePath(filename);
-  const managedLoading = chunksQuery.isLoading;
-  const isLoading = contentQuery.isLoading;
-
-  const fetchedContent = isManagedMode ? null : (storedFullContent ?? contentQuery.data ?? null);
-  // Indexed once per document text, since every tool output reruns the content model below.
-  const resolveRange = useMemo(
-    () => (fetchedContent ? chunkRangeResolver(fetchedContent) : null),
-    [fetchedContent],
-  );
-
-  const contentModel = useMemo<ContentModel>(() => {
-    if (isManagedMode) {
-      return {
-        content: contentQuery.data ?? null,
-        chunks:
-          metadata?.chunks.map((item, index) => ({
-            id: `managed:${index}`,
-            content: item.text,
-            badge: t(($) => $.documents.dialog.chunkNumber, { index }),
-            detail: t(($) => $.documents.dialog.tokens, { count: item.token_count }),
-            range: { start: item.start_index, end: item.end_index },
-          })) ?? [],
-        loading: isLoading || managedLoading,
-        error: chunksQuery.error && errorMessage(chunksQuery.error),
-        assetsDir: metadata?.assets_dir ?? null,
-        preview: entryPreview(filename, metadata),
-        metadata,
-      };
-    }
-
-    const document = filename ? documents.get(filename) : undefined;
-    const fetched = document ? chunksForDocument(document, chunks) : [];
-    if (chunk && !fetched.some((item) => item.id === chunk.id)) fetched.push(chunk);
-
-    return {
-      content: fetchedContent,
-      chunks: sortChunks(fetched).map((item) => fetchedContentChunk(item, resolveRange)),
-      loading: isLoading,
-      error: null,
-      assetsDir: null,
-      preview: image
-        ? { kind: "media", path: image.filePath, mediaType: image.mediaType, alt: filename }
-        : entryPreview(filename, metadata),
-      metadata: null,
-    };
-  }, [
-    chunk,
-    image,
-    isLoading,
-    isManagedMode,
-    contentQuery.data,
-    metadata,
-    chunksQuery.error,
-    managedLoading,
-    chunks,
-    documents,
-    filename,
-    fetchedContent,
-    resolveRange,
-    t,
-  ]);
+  const pendingAssetAction = assetAction.isPending ? assetAction.variables.action : null;
 
   const fullContent = contentModel.content;
   const activeChunk =
@@ -485,7 +138,7 @@ function DocumentDialogBody({
   // Scroll the highlight into view when its DOM element mounts. The mark
   // is keyed by the active chunk identifier, so each chunk switch remounts
   // it and re-fires this callback.
-  const highlightRef = useCallback((node: HTMLElement | null) => {
+  const highlightRef = (node: HTMLElement | null) => {
     if (!node) return;
     const behavior = isInitialScrollRef.current ? "instant" : "smooth";
     isInitialScrollRef.current = false;
@@ -494,32 +147,17 @@ function DocumentDialogBody({
       const viewport = node.closest<HTMLElement>('[data-slot="code-block-content"]');
       if (viewport) centerInScroller(node, viewport, behavior);
     });
-  }, []);
-
-  // Download the markdown description shown in the dialog under its on-disk name.
-  const handleDownloadMarkdown = useCallback(() => {
-    if (fullContent == null) return;
-    const name = basename(filename) || "document.md";
-    downloadBlob(new Blob([fullContent], { type: "text/markdown" }), name);
-  }, [fullContent, filename]);
-
-  // One request on the shown asset's description, after which the list refetches.
-  const assetAction = useMutation({
-    ...documentMutations.assetDescription(filename),
-    onSuccess: () => setIsEditingAssetDescription(false),
-  });
-  const pendingAssetAction = assetAction.isPending ? assetAction.variables.action : null;
-
-  const save = useMutation({
-    mutationFn: async ({ name, content }: { name: string; content: string }) =>
-      onSave?.(name, content),
-    meta: { inlineError: true },
-    onSuccess: () => onOpenChange(false),
-  });
+  };
 
   // An uploaded image or video is shown like an extracted asset (the media, its
   // description, and file metadata), which drops the chunk/asset sidebar entirely.
   const preview = contentModel.preview;
+  // A case base original gets the similarity tab, its path canonical in the workspace of *filename*.
+  const originalPath = contentModel.metadata?.original_path;
+  const caseBasePath =
+    originalPath && contentModel.metadata?.case_base_candidate
+      ? canonicalPath(scope, originalPath)
+      : null;
   const mediaEntry = isManagedMode && preview?.kind === "media" ? preview : null;
   const hasAssets = contentModel.assetsDir != null;
   const hasSidebar =
@@ -541,49 +179,15 @@ function DocumentDialogBody({
   const renderMainContent = () => {
     if (view.mode === "edit") {
       return (
-        <>
-          <div className="flex min-h-0 flex-1 flex-col gap-2 px-4 pt-2">
-            {isNew && (
-              <Field>
-                <Input
-                  value={editFilename}
-                  onChange={(e) => setEditFilename(e.target.value)}
-                  placeholder={t(($) => $.documents.dialog.filenamePlaceholder)}
-                  className="text-lg font-semibold"
-                />
-                {target && (
-                  <FieldDescription>
-                    {t(($) => $.documents.dialog.creatingIn, { target: formatTarget(target) })}
-                  </FieldDescription>
-                )}
-              </Field>
-            )}
-            <Textarea
-              value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
-              placeholder={t(($) => $.documents.dialog.contentPlaceholder)}
-              className="min-h-0 flex-1 font-mono text-sm"
-            />
-          </div>
-          <DialogFooter className="p-4">
-            {save.error && (
-              <FieldError className="mr-auto self-center">{errorMessage(save.error)}</FieldError>
-            )}
-            <Button
-              variant="outline"
-              onClick={() => (isNew ? onOpenChange(false) : showView({ mode: "full-doc" }))}
-            >
-              {t(($) => $.common.actions.cancel)}
-            </Button>
-            <Button
-              onClick={() => save.mutate({ name: editFilename.trim(), content: editContent })}
-              disabled={save.isPending || !editFilename.trim()}
-            >
-              {save.isPending && <Spinner aria-hidden data-icon="inline-start" />}
-              {t(($) => $.common.actions.save)}
-            </Button>
-          </DialogFooter>
-        </>
+        <EditPane
+          filename={filename}
+          initialContent={fullContent ?? ""}
+          isNew={isNew}
+          target={target}
+          onSave={onSave}
+          onCancel={() => (isNew ? onOpenChange(false) : showView({ mode: "full-doc" }))}
+          onSaved={() => onOpenChange(false)}
+        />
       );
     }
 
@@ -598,7 +202,12 @@ function DocumentDialogBody({
       : preview;
 
     return (
-      <PreviewTabs preview={shownPreview} tab={tab} onTabChange={setTab}>
+      <PreviewTabs
+        preview={shownPreview}
+        similarity={caseBasePath && !activeAsset && <SimilarityView path={caseBasePath} />}
+        tab={tab}
+        onTabChange={setTab}
+      >
         {activeChunk?.originLabel && (
           <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
             <ChunkBadges chunk={activeChunk} />
@@ -612,172 +221,25 @@ function DocumentDialogBody({
   const renderText = () => {
     if (isLoading) return <LoadingPanel />;
 
-    // Full-doc markdown view
     if (view.mode === "full-doc") {
-      // An uploaded image or video mirrors the extracted-asset view, its description
-      // (the source for a markup image) and file metadata badges.
-      if (mediaEntry) {
-        return (
-          <DescriptionPane>
-            <DescriptionHeading />
-            <DescriptionBody markdown={fullContent} />
-            <FileMetaBadges name={basename(mediaEntry.path)} mediaType={mediaEntry.mediaType} />
-          </DescriptionPane>
-        );
-      }
-
-      if (!fullContent) {
-        // No full content fetched, so show the excerpts the model actually
-        // read (search snippets, grep hits) instead of a dead end.
-        if (contentModel.chunks.length > 0) {
-          return (
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="flex flex-col gap-4 p-4">
-                {contentModel.chunks.map((item) => (
-                  <CodeBlock key={item.id} size="sm">
-                    <CodeBlockHeader className="flex-wrap">
-                      <ChunkBadges chunk={item} />
-                    </CodeBlockHeader>
-                    <CodeBlockContent wrap>{item.content}</CodeBlockContent>
-                  </CodeBlock>
-                ))}
-              </div>
-            </ScrollArea>
-          );
-        }
-
-        return (
-          <StatusPanel
-            icon={FileQuestionIcon}
-            title={
-              isWeb
-                ? t(($) => $.documents.dialog.pageNotFetched)
-                : !preview && !filename.toLowerCase().endsWith(".md")
-                  ? t(($) => $.documents.dialog.binaryFile)
-                  : t(($) => $.documents.dialog.contentUnavailable)
-            }
-          />
-        );
-      }
-
       return (
-        <ScrollArea className="min-h-0 flex-1">
-          <WorkspaceMarkdown className="p-4" documentPath={filename}>
-            {fullContent}
-          </WorkspaceMarkdown>
-        </ScrollArea>
+        <FullDocumentText filename={filename} contentModel={contentModel} mediaEntry={mediaEntry} />
       );
     }
 
     // Asset view
     if (activeAsset) {
-      const assetActionPending = pendingAssetAction !== null;
-
       return (
-        <DescriptionPane>
-          <DescriptionHeading
-            actions={
-              editable &&
-              !isEditingAssetDescription && (
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabled={assetActionPending}
-                    // Alt-text uses the auxiliary model, like the import-time describe pipeline.
-                    onClick={() =>
-                      assetAction.mutate({
-                        action: "generate",
-                        name: activeAsset.name,
-                        llm: buildAuxLlmConfig(overrides),
-                      })
-                    }
-                  >
-                    {pendingAssetAction === "generate" ? (
-                      <Spinner aria-hidden data-icon="inline-start" />
-                    ) : (
-                      <Sparkles data-icon="inline-start" />
-                    )}
-                    {t(($) => $.documents.dialog.generate)}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabled={assetActionPending}
-                    onClick={() => {
-                      setAssetDescriptionDraft(activeAsset.description);
-                      setIsEditingAssetDescription(true);
-                    }}
-                  >
-                    <Pencil data-icon="inline-start" />
-                    {t(($) => $.common.actions.edit)}
-                  </Button>
-                  {activeAsset.description && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      disabled={assetActionPending}
-                      onClick={() =>
-                        assetAction.mutate({ action: "delete", name: activeAsset.name })
-                      }
-                    >
-                      {pendingAssetAction === "delete" ? (
-                        <Spinner aria-hidden data-icon="inline-start" />
-                      ) : (
-                        <Trash2 data-icon="inline-start" />
-                      )}
-                      {t(($) => $.common.actions.delete)}
-                    </Button>
-                  )}
-                </div>
-              )
-            }
-          />
-
-          {isEditingAssetDescription ? (
-            <>
-              <Textarea
-                aria-label={t(($) => $.documents.dialog.descriptionHeading)}
-                value={assetDescriptionDraft}
-                onChange={(e) => setAssetDescriptionDraft(e.target.value)}
-                className="min-h-36 font-mono text-sm"
-              />
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setIsEditingAssetDescription(false)}
-                >
-                  {t(($) => $.common.actions.cancel)}
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={assetActionPending}
-                  onClick={() =>
-                    assetAction.mutate({
-                      action: "save",
-                      name: activeAsset.name,
-                      description: assetDescriptionDraft,
-                    })
-                  }
-                >
-                  {pendingAssetAction === "save" && (
-                    <Spinner aria-hidden data-icon="inline-start" />
-                  )}
-                  {t(($) => $.common.actions.save)}
-                </Button>
-              </div>
-            </>
-          ) : (
-            <DescriptionBody markdown={activeAsset.description} />
-          )}
-
-          <FileMetaBadges
-            name={activeAsset.name}
-            mediaType={activeAsset.media_type}
-            sizeBytes={activeAsset.size_bytes}
-          />
-        </DescriptionPane>
+        <AssetPane
+          asset={activeAsset}
+          editable={editable}
+          editing={isEditingAssetDescription}
+          draft={assetDescriptionDraft}
+          pendingAction={pendingAssetAction}
+          onDraftChange={setAssetDescriptionDraft}
+          onEditingChange={setIsEditingAssetDescription}
+          onChange={assetAction.mutate}
+        />
       );
     }
 
@@ -785,262 +247,41 @@ function DocumentDialogBody({
       return <StatusPanel icon={TextSelectIcon} title={t(($) => $.documents.dialog.selectChunk)} />;
     }
 
-    if (!fullContent) {
-      return activeChunk.content ? (
-        <TextPane>{activeChunk.content}</TextPane>
-      ) : (
-        <StatusPanel
-          icon={FileQuestionIcon}
-          title={t(($) => $.documents.dialog.contentUnavailable)}
-        />
-      );
-    }
-
-    if (activeChunk.range) {
-      const { start, end } = activeChunk.range;
-      // Whole lines are marked as one block, which paints and measures as a single box
-      // however many thousand lines it spans, and whose own break replaces the newlines around it.
-      const wholeLines =
-        (start === 0 || fullContent[start - 1] === "\n") &&
-        (end === fullContent.length || fullContent[end] === "\n");
-      const gap = wholeLines ? 1 : 0;
-      const before = fullContent.slice(0, Math.max(0, start - gap));
-      const after = fullContent.slice(end + gap);
-
-      return (
-        <TextPane>
-          <span className="text-muted-foreground">{before}</span>
-          <mark
-            key={activeChunk.id}
-            ref={highlightRef}
-            className={cn(
-              "rounded-sm bg-primary/15 text-foreground",
-              wholeLines ? "block" : "box-decoration-clone",
-            )}
-          >
-            {fullContent.slice(start, end)}
-          </mark>
-          <span className="text-muted-foreground">{after}</span>
-        </TextPane>
-      );
-    }
-
-    return <TextPane>{fullContent}</TextPane>;
-  };
-
-  const renderSidebar = () => {
-    if (!hasSidebar) return null;
-
-    if (isManagedMode && managedLoading) {
-      return (
-        <aside className="flex w-56 shrink-0 border-r">
-          <LoadingPanel />
-        </aside>
-      );
-    }
-
-    if (contentModel.error) {
-      return (
-        <aside className="flex w-56 shrink-0 border-r">
-          <StatusPanel icon={CircleAlertIcon} title={contentModel.error} />
-        </aside>
-      );
-    }
-
-    if (isManagedMode && !contentModel.metadata && !hasAssets) return null;
-
-    return (
-      <aside className="flex min-h-0 w-56 shrink-0 flex-col gap-2 border-r p-2">
-        <SidebarItem
-          active={view.mode === "full-doc"}
-          onClick={() => showView({ mode: "full-doc" })}
-        >
-          <ItemMedia variant="icon">
-            <FileText />
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>{t(($) => $.options.chunkPosition.fullDocument)}</ItemTitle>
-          </ItemContent>
-        </SidebarItem>
-
-        {hasAssets ? (
-          <Tabs value={sidebarTab} onValueChange={(value) => setSidebarTab(value as SidebarTab)}>
-            <TabsList className="w-full">
-              <TabsTrigger value="chunks">{t(($) => $.documents.dialog.chunksTab)}</TabsTrigger>
-              <TabsTrigger value="assets">{t(($) => $.documents.dialog.assetsTab)}</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        ) : (
-          contentModel.chunks.length > 0 && <Separator />
-        )}
-
-        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-          {sidebarTab === "chunks" &&
-            contentModel.chunks
-              .filter((item) => !item.isFullDocument)
-              .map((item) => {
-                const active = view.mode === "chunk" && item.id === view.id;
-
-                return (
-                  <SidebarItem
-                    key={item.id}
-                    active={active}
-                    onClick={() => showView({ mode: "chunk", id: item.id })}
-                  >
-                    <ItemContent className="min-w-0">
-                      <ItemTitle>
-                        <Badge variant={active ? "default" : "outline"}>{item.badge}</Badge>
-                        {item.detail && (
-                          <span className="text-xs font-normal text-muted-foreground">
-                            {item.detail}
-                          </span>
-                        )}
-                      </ItemTitle>
-                      <ItemDescription className="line-clamp-1 text-xs">
-                        {previewText(item.content)}
-                      </ItemDescription>
-                    </ItemContent>
-                  </SidebarItem>
-                );
-              })}
-
-          {sidebarTab === "assets" &&
-            (assetsQuery.isLoading ? (
-              <Skeleton className="h-12" />
-            ) : (
-              assetsData?.assets.map((asset, index) => (
-                <SidebarItem
-                  key={asset.path}
-                  active={view.mode === "asset" && view.index === index}
-                  onClick={() => showView({ mode: "asset", index })}
-                >
-                  <ItemMedia variant="icon">
-                    <ImageIcon />
-                  </ItemMedia>
-                  <ItemContent className="min-w-0">
-                    <ItemTitle className="max-w-full">{asset.name}</ItemTitle>
-                    <ItemDescription className="line-clamp-1 text-xs">
-                      {asset.description || t(($) => $.documents.dialog.noDescription)}
-                    </ItemDescription>
-                  </ItemContent>
-                </SidebarItem>
-              ))
-            ))}
-        </div>
-      </aside>
-    );
+    return <ChunkText chunk={activeChunk} fullContent={fullContent} highlightRef={highlightRef} />;
   };
 
   return (
     <>
-      <DialogHeader className="px-6 pt-6 pb-4">
-        <DialogTitle className="flex min-w-0 items-center gap-2 pr-8 leading-normal">
-          <span className="truncate">{filename}</span>
-          {isWeb && (
-            <TooltipButton
-              size="icon-xs"
-              label={t(($) => $.documents.dialog.openInBrowser)}
-              nativeButton={false}
-              // oxlint-disable-next-line jsx-a11y/control-has-associated-label -- the button renders its label into the link
-              render={<a href={filename} target="_blank" rel="noreferrer" />}
-            >
-              <ExternalLink />
-            </TooltipButton>
-          )}
-        </DialogTitle>
-        <DialogDescription className="sr-only">
-          {t(($) => $.documents.dialog.description, { filename })}
-        </DialogDescription>
-
-        {/* Metadata badges, then the document actions on their own line below. */}
-        {(showMetadata || editable) && (
-          <div className="flex flex-col gap-2 pt-1">
-            {showMetadata && contentModel.metadata && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">
-                  {t(($) => $.documents.dialog.chunking, {
-                    pipeline: contentModel.metadata.pipeline,
-                  })}
-                </Badge>
-                <Badge variant="secondary">
-                  {t(($) => $.documents.chunks, { count: contentModel.chunks.length })}
-                </Badge>
-                {contentModel.metadata.size_bytes != null && (
-                  <Badge variant="outline">
-                    {formatFileSize(contentModel.metadata.size_bytes)}
-                  </Badge>
-                )}
-                <Badge variant="outline">
-                  {t(($) => $.documents.dialog.created, {
-                    date: formatDateTime(contentModel.metadata.created_at),
-                  })}
-                </Badge>
-              </div>
-            )}
-            {view.mode !== "edit" && (
-              <div className="flex flex-wrap items-center gap-2">
-                {editable && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setEditContent(fullContent ?? "");
-                      setEditFilename(filename);
-                      save.reset();
-                      setView({ mode: "edit" });
-                    }}
-                  >
-                    <Pencil data-icon="inline-start" />
-                    {t(($) => $.common.actions.edit)}
-                  </Button>
-                )}
-                {onRechunk && (
-                  <Button variant="outline" size="sm" onClick={onRechunk} disabled={rechunking}>
-                    {rechunking ? (
-                      <Spinner aria-hidden data-icon="inline-start" />
-                    ) : (
-                      <RefreshCw data-icon="inline-start" />
-                    )}
-                    {t(($) => $.documents.actions.rechunk)}
-                  </Button>
-                )}
-                {onReconvert && (
-                  <Button variant="outline" size="sm" onClick={onReconvert}>
-                    <RotateCcw data-icon="inline-start" />
-                    {t(($) => $.documents.actions.reconvert)}
-                  </Button>
-                )}
-                {onDownloadOriginal && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onDownloadOriginal}
-                    title={t(($) => $.documents.dialog.downloadOriginal)}
-                  >
-                    <Download data-icon="inline-start" />
-                    {t(($) => $.documents.dialog.original)}
-                  </Button>
-                )}
-                {isManagedMode && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleDownloadMarkdown}
-                    disabled={fullContent == null}
-                    title={t(($) => $.documents.dialog.downloadMarkdown)}
-                  >
-                    <Download data-icon="inline-start" />
-                    {t(($) => $.documents.dialog.markdown)}
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </DialogHeader>
+      <DocumentHeader
+        filename={filename}
+        isWeb={isWeb}
+        isManagedMode={isManagedMode}
+        showMetadata={showMetadata}
+        editable={editable}
+        isEditing={view.mode === "edit"}
+        contentModel={contentModel}
+        rechunking={rechunking}
+        onEdit={() => setView({ mode: "edit" })}
+        onRechunk={onRechunk}
+        onReconvert={onReconvert}
+        onDownloadOriginal={onDownloadOriginal}
+      />
 
       <div className="flex min-h-0 flex-1 border-t">
-        {renderSidebar()}
+        {hasSidebar && (
+          <DocumentSidebar
+            view={view}
+            onSelect={showView}
+            sidebarTab={sidebarTab}
+            onSidebarTabChange={setSidebarTab}
+            contentModel={contentModel}
+            isManagedMode={isManagedMode}
+            managedLoading={managedLoading}
+            hasAssets={hasAssets}
+            assets={assetsData?.assets}
+            assetsLoading={assetsQuery.isLoading}
+          />
+        )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">{renderMainContent()}</div>
       </div>

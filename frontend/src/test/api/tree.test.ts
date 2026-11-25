@@ -10,7 +10,7 @@ import {
   syncWorkspaceQueries,
 } from "@/api/documents";
 import type { WorkspaceChanged } from "@/api/jobs";
-import { useDocumentFilterStore } from "@/stores/document-filter-store";
+
 import { publishWorkspaceChanged } from "@/stores/jobs-store";
 import { createQueryWrapper, createTestQueryClient } from "@/test/render";
 
@@ -22,10 +22,8 @@ const { applyChanges, getDirectories } = vi.hoisted(() => ({
 
 vi.mock("@/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/client")>()),
-  requestJson: (url: string, _error: string, _schema: unknown, init?: RequestInit) => {
-    const [, scope] = url.split("/api/v1/directories/");
-
-    return scope === undefined
+  requestJson: (url: string, _error: string, _schema: unknown, init?: RequestInit) =>
+    url.endsWith("/changes")
       ? applyChanges(
           (
             JSON.parse(typeof init?.body === "string" ? init.body : "") as {
@@ -33,8 +31,10 @@ vi.mock("@/api/client", async (importOriginal) => ({
             }
           ).operations,
         )
-      : getDirectories(decodeURIComponent(scope), init?.signal ?? undefined);
-  },
+      : getDirectories(
+          decodeURIComponent(url.split("/api/v1/directories/")[1] ?? ""),
+          init?.signal ?? undefined,
+        ),
 }));
 
 const treeWith = (filename: string): DirectoryTreeResponse => ({
@@ -58,6 +58,7 @@ const treeWith = (filename: string): DirectoryTreeResponse => ({
 
 const changed = (scopes: string[]): WorkspaceChanged => ({
   type: "workspace-changed",
+  id: crypto.randomUUID(),
   scopes,
   moves: [],
   deletes: [],
@@ -84,7 +85,7 @@ beforeEach(() => {
   client.clear();
   vi.clearAllMocks();
   vi.mocked(getDirectories).mockResolvedValue(treeWith("a.md"));
-  vi.mocked(applyChanges).mockResolvedValue(changed(["~"]));
+  vi.mocked(applyChanges).mockImplementation(() => Promise.resolve(changed(["~"])));
   unsubscribe = syncWorkspaceQueries(client);
 });
 
@@ -113,7 +114,7 @@ describe("documentMutations", () => {
 
     const read = Promise.withResolvers<DirectoryTreeResponse>();
     vi.mocked(getDirectories).mockReturnValueOnce(read.promise);
-    act(() => result.current.mutation.mutate({ scope: "~", paths: ["reports"] }));
+    act(() => result.current.mutation.mutate({ paths: ["~/reports"] }));
 
     // Presence, not position: the tree view sorts children as it renders them.
     await waitFor(() =>
@@ -123,18 +124,22 @@ describe("documentMutations", () => {
     expect(applyChanges).toHaveBeenCalledExactlyOnceWith([{ kind: "mkdir", path: "~/reports" }]);
   });
 
-  it("sends a cross-workspace move as one request and refreshes each scope it names once", async () => {
+  it("sends a cross-workspace move as one request and refreshes each scope the feed names once", async () => {
     const { result } = renderTrees(["~", "@team"], documentMutations.move());
     await waitFor(() => expect(result.current.trees.every(Boolean)).toBe(true));
     vi.mocked(getDirectories).mockClear();
-    vi.mocked(applyChanges).mockResolvedValueOnce(changed(["@team", "~"]));
+    // The backend announces the commit on the feed before it answers with it.
+    vi.mocked(applyChanges).mockImplementationOnce(() => {
+      const commit = changed(["@team", "~"]);
+      publishWorkspaceChanged(commit);
+
+      return Promise.resolve(commit);
+    });
 
     await act(() =>
       result.current.mutation.mutateAsync({
-        scope: "~",
-        paths: ["a.md", "docs"],
-        destScope: "@team",
-        destination: (source) => (source === "a.md" ? "b.md" : source),
+        paths: ["~/a.md", "~/docs"],
+        destination: (source) => (source === "~/a.md" ? "@team/b.md" : "@team/docs"),
       }),
     );
 
@@ -154,7 +159,7 @@ describe("documentMutations", () => {
 
     await act(() =>
       result.current.mutation
-        .mutateAsync({ scope: "~", paths: ["a.md", "b.md"], expect: "entry" })
+        .mutateAsync({ paths: ["~/a.md", "~/b.md"], dirs: new Set() })
         .catch(() => {}),
     );
 
@@ -163,29 +168,5 @@ describe("documentMutations", () => {
       { kind: "delete", path: "~/b.md", expect: "entry" },
     ]);
     expect(getDirectories).toHaveBeenCalledExactlyOnceWith("~", expect.any(AbortSignal));
-  });
-
-  it("publishes the moves the server applied, not the ones it was sent", async () => {
-    useDocumentFilterStore.setState({ excluded: ["~/a.md", "~/b.md"] });
-    vi.mocked(applyChanges).mockResolvedValueOnce({
-      ...changed(["~"]),
-      moves: [
-        { source: "~/a.md", destination: "~/archive/a.md", is_dir: false, replaces: false },
-        { source: "~/a.pdf", destination: "~/archive/a.pdf", is_dir: false, replaces: false },
-      ],
-    });
-    const { result } = renderTrees(["~"], documentMutations.move());
-
-    // `archive` is an existing folder, which the server resolves to a move into it.
-    await act(() =>
-      result.current.mutation.mutateAsync({
-        scope: "~",
-        paths: ["a.md"],
-        destScope: "~",
-        destination: () => "archive",
-      }),
-    );
-
-    expect(useDocumentFilterStore.getState().excluded).toEqual(["~/archive/a.md", "~/b.md"]);
   });
 });

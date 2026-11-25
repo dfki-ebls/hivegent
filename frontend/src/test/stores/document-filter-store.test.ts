@@ -10,6 +10,9 @@ vi.mock("@/api/jobs", async (importOriginal) => ({
 import { useDocumentFilterStore } from "@/stores/document-filter-store";
 import { useJobsStore } from "@/stores/jobs-store";
 
+const doc = (path: string) => ({ path, directory: false });
+const folder = (path: string) => ({ path, directory: true });
+
 const move = (source: string, destination: string, is_dir = false) => ({
   source,
   destination,
@@ -20,11 +23,12 @@ const move = (source: string, destination: string, is_dir = false) => ({
 describe("the document filter and the feed", () => {
   it("follows a workspace change spanning two scopes at once", async () => {
     useDocumentFilterStore.setState({
-      included: ["~/docs/"],
-      excluded: ["~/a.md", "@team/a.md", "~/docs/x.md", "~/docs-old/x.md", "~/gone/y.md"],
+      included: [folder("~/docs")],
+      excluded: ["~/a.md", "@team/a.md", "~/docs/x.md", "~/docs-old/x.md", "~/gone/y.md"].map(doc),
     });
     const changed: WorkspaceChanged = {
       type: "workspace-changed",
+      id: "swap",
       scopes: ["@team", "~"],
       moves: [
         move("~/a.md", "@team/a.md"),
@@ -33,7 +37,7 @@ describe("the document filter and the feed", () => {
       ],
       deletes: ["~/gone"],
     };
-    vi.mocked(subscribeJobs).mockImplementation(async (_onJob, _onReady, onWorkspaceChanged) => {
+    vi.mocked(subscribeJobs).mockImplementation(async ({ onWorkspaceChanged }) => {
       onWorkspaceChanged(changed);
       await new Promise<never>(() => {});
     });
@@ -41,13 +45,10 @@ describe("the document filter and the feed", () => {
     useJobsStore.getState().start();
 
     await vi.waitFor(() =>
-      expect(useDocumentFilterStore.getState().included).toEqual(["~/kept/docs/"]),
+      expect(useDocumentFilterStore.getState().included).toEqual([folder("~/kept/docs")]),
     );
-    expect(useDocumentFilterStore.getState().excluded).toEqual([
-      "@team/a.md",
-      "~/a.md",
-      "~/kept/docs/x.md",
-      "~/docs-old/x.md",
-    ]);
+    expect(useDocumentFilterStore.getState().excluded).toEqual(
+      ["@team/a.md", "~/a.md", "~/kept/docs/x.md", "~/docs-old/x.md"].map(doc),
+    );
   });
 });

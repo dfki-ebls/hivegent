@@ -1,15 +1,34 @@
 import Markdown, { type MarkdownToJSX } from "markdown-to-jsx";
-import { type ComponentProps, useMemo } from "react";
+import type { ComponentProps } from "react";
 import { WorkspaceImage } from "@/components/workspace-image";
 import { cn } from "@/lib/utils";
 
-const BASE_OPTIONS = { disableParsingRawHTML: true } satisfies MarkdownToJSX.Options;
+/** A link of a document, opened in a new tab so the app stays, unless it points within the page. */
+function WorkspaceLink({ children, ...props }: ComponentProps<"a">) {
+  const inPage = props.href?.startsWith("#") ?? false;
+
+  return (
+    <a
+      {...props}
+      target={inPage ? undefined : "_blank"}
+      rel={inPage ? undefined : "noopener noreferrer"}
+    >
+      {children}
+    </a>
+  );
+}
+
+const BASE_OPTIONS = {
+  disableParsingRawHTML: true,
+  overrides: { a: { component: WorkspaceLink } },
+} satisfies MarkdownToJSX.Options;
 
 /** Options that resolve the images of the document at *documentPath* against the workspace. */
 function workspaceOptions(documentPath: string): MarkdownToJSX.Options {
   return {
     ...BASE_OPTIONS,
     overrides: {
+      ...BASE_OPTIONS.overrides,
       img: {
         component: ({ src, alt }: ComponentProps<"img">) => (
           <WorkspaceImage src={src} alt={alt} documentPath={documentPath} />
@@ -28,15 +47,10 @@ interface WorkspaceMarkdownProps {
 
 /**
  * Renders a workspace document as markdown, styled by typeset, and, when a document path is given,
- * resolves workspace-relative image sources. The options are memoized so image
- * overrides keep a stable identity and mounted `WorkspaceImage`s do not refetch
- * on every render.
+ * resolves workspace-relative image sources.
  */
 export function WorkspaceMarkdown({ children, documentPath, className }: WorkspaceMarkdownProps) {
-  const options = useMemo(
-    () => (documentPath ? workspaceOptions(documentPath) : BASE_OPTIONS),
-    [documentPath],
-  );
+  const options = documentPath ? workspaceOptions(documentPath) : BASE_OPTIONS;
 
   return (
     <div className={cn("typeset min-w-0", className)}>

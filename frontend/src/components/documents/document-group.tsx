@@ -1,5 +1,5 @@
 import { Globe } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { type FetchedChunk, type FetchedDocument, sortChunks } from "@/lib/chunks";
@@ -38,7 +38,7 @@ export function DocumentGroup({
   const titlePath = doc.image?.filePath ?? doc.filename;
 
   // Full documents appear as regular chunk cards, sorted first.
-  const contentChunks = useMemo(() => sortChunks(chunks), [chunks]);
+  const contentChunks = sortChunks(chunks);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>

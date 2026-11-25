@@ -1,9 +1,11 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 
 import {
   subscribeJobs,
   TERMINAL_JOB_STATUSES,
   type JobView,
+  type LibraryKind,
   type WorkspaceChanged,
 } from "@/api/jobs";
 
@@ -18,74 +20,133 @@ const AUTO_DISMISS_MS = 4_000;
 // awaitJobSettled safety net: resolve anyway if the feed never delivers a
 // terminal snapshot (a sustained outage); a healthy feed resolves far sooner.
 const SETTLE_TIMEOUT_MS = 120_000;
-// Remembered terminal-id cap (oldest-first eviction) bounding the dedup set.
-const SETTLED_IDS_CAP = 500;
+// Remembered id cap (oldest-first eviction) bounding each dedup set.
+const REMEMBERED_IDS_CAP = 500;
 
-type JobListener = (job: JobView) => void;
+/** Add *id* to *ids*, evicting the oldest beyond the cap. */
+function remember(ids: Set<string>, id: string): void {
+  ids.add(id);
 
-const settledListeners = new Set<JobListener>();
-const startedListeners = new Set<JobListener>();
-const workspaceChangedListeners = new Set<(changed: WorkspaceChanged) => void>();
-const feedReadyListeners = new Set<() => void>();
+  if (ids.size > REMEMBERED_IDS_CAP) {
+    const oldest = ids.values().next().value;
 
-/** Build a set's `on…` registrar: subscribe, and return the unsubscribe. */
-const register =
-  <L>(listeners: Set<L>) =>
-  (listener: L): (() => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  };
-
-/** Register a callback fired after the feed has replayed state on each connect. */
-const onFeedReady = register(feedReadyListeners);
-
-/**
- * Register a callback fired once per workspace change that never was a job,
- * whoever made it: this tab's own request through
- * {@link publishWorkspaceChanged}, or an inline mutation by another tab, the
- * agent, or an MCP client through the feed. Scopes a client holds refresh and
- * paths it keeps follow here. Returns an unsubscribe function.
- */
-export const onWorkspaceChanged = register(workspaceChangedListeners);
-
-/**
- * Tell every {@link onWorkspaceChanged} listener how the workspaces changed.
- * The tab that asked publishes its response, since its own feed skips the change.
- */
-export function publishWorkspaceChanged(changed: WorkspaceChanged): void {
-  workspaceChangedListeners.forEach((listener) => listener(changed));
+    if (oldest !== undefined) ids.delete(oldest);
+  }
 }
 
-/** Register a callback fired once when any job reaches a terminal state. */
-const onJobSettled = register(settledListeners);
+/** A set of listeners, with its `on…` registrar that returns the unsubscribe, and its emitter. */
+function channel<A extends unknown[]>() {
+  const listeners = new Set<(...args: A) => void>();
+
+  return {
+    on: (listener: (...args: A) => void): (() => void) => {
+      listeners.add(listener);
+
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    emit: (...args: A): void => listeners.forEach((listener) => listener(...args)),
+  };
+}
+
+/** Combine several unsubscribes into one. */
+const unsubscribeAll =
+  (...unsubscribes: (() => void)[]) =>
+  (): void =>
+    unsubscribes.forEach((unsubscribe) => unsubscribe());
+
+const jobSettled = channel<[JobView]>();
+const jobStarted = channel<[JobView]>();
+const workspaceChanged = channel<[WorkspaceChanged]>();
+const conversationsChanged = channel<[]>();
+const libraryChanged = channel<[LibraryKind]>();
+const sourcesChanged = channel<[]>();
+/** Fired after the feed has replayed state on each connect. */
+const feedReady = channel<[]>();
+
+/**
+ * Register a callback fired once per change to a workspace the user may read,
+ * whoever made it: this tab, from its answer or the feed, whichever comes first,
+ * another one, another group member, a job, the agent, or an MCP client.
+ * Scopes a client holds refresh and paths it keeps follow here.
+ * Returns an unsubscribe function.
+ */
+export const onWorkspaceChanged = workspaceChanged.on;
+
+// Ids of the changes already published, since this tab applies its own change from the
+// answer to `POST /changes` and the feed announces it too, in either order.
+const publishedChangeIds = new Set<string>();
+
+/**
+ * Tell every {@link onWorkspaceChanged} listener how the workspaces changed, once per change,
+ * since applying a change twice would carry paths on through a chain or swap.
+ */
+export function publishWorkspaceChanged(changed: WorkspaceChanged): void {
+  if (publishedChangeIds.has(changed.id)) return;
+
+  remember(publishedChangeIds, changed.id);
+  workspaceChanged.emit(changed);
+}
 
 /**
  * Register a callback fired once when a job first appears in an active
- * (non-terminal) state — i.e. its work just began. Mirrors {@link onJobSettled}
+ * (non-terminal) state, i.e. its work just began. Mirrors `jobSettled`
  * so a feature can react to a job's arrival (e.g. revealing the task tray).
  * Returns an unsubscribe function.
  */
-export const onJobStarted = register(startedListeners);
+export const onJobStarted = jobStarted.on;
 
 /**
  * Register a callback fired whenever the workspaces may have changed, with the
- * scopes that did, or `"all"` after a feed handshake that may have missed some.
- * The one rule for when workspace views are stale: a settled document job
- * (whatever its outcome, it may have added, reconverted, or dropped entries),
- * an inline mutation by anyone, or a reconnect. Returns an unsubscribe function.
+ * change, or `"all"` after a feed handshake that may have missed some.
+ * Returns an unsubscribe function.
  */
-export function onWorkspaceStale(listener: (scopes: readonly string[] | "all") => void) {
-  const unsubscribes = [
-    onJobSettled((job) => {
-      if (job.scope && job.kind.startsWith("document.")) listener([job.scope]);
-    }),
-    onWorkspaceChanged(({ scopes }) => listener(scopes)),
-    onFeedReady(() => listener("all")),
-  ];
+export function onWorkspaceStale(listener: (changed: WorkspaceChanged | "all") => void) {
+  return unsubscribeAll(
+    workspaceChanged.on(listener),
+    feedReady.on(() => listener("all")),
+  );
+}
 
-  return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+/**
+ * Register a callback fired whenever the user's conversations may have
+ * changed: a change by any tab, run, or import, or a feed handshake that may
+ * have missed some. Returns an unsubscribe function.
+ */
+export function onConversationsStale(listener: () => void) {
+  return unsubscribeAll(conversationsChanged.on(listener), feedReady.on(listener));
+}
+
+/**
+ * Register a callback fired whenever the sync state of a source may have
+ * changed (admins only), or after a feed handshake that may have missed some.
+ * Returns an unsubscribe function.
+ */
+export function onSourcesStale(listener: () => void) {
+  return unsubscribeAll(sourcesChanged.on(listener), feedReady.on(listener));
+}
+
+/**
+ * Refetch the library of *kind* in *client* whenever it may have changed:
+ * an install, edit, or removal by anyone in its scope, or a feed handshake
+ * that may have missed some, then call *onRefetched*. Unobserved queries
+ * refetch too, so the callback reads the fresh library. Returns the unsubscribe.
+ */
+export function syncLibraryQueries(
+  client: QueryClient,
+  kind: LibraryKind,
+  onRefetched?: () => void,
+): () => void {
+  const refetch = () =>
+    void client.invalidateQueries({ queryKey: [kind], refetchType: "all" }).then(onRefetched);
+
+  return unsubscribeAll(
+    libraryChanged.on((changed) => {
+      if (changed === kind) refetch();
+    }),
+    feedReady.on(refetch),
+  );
 }
 
 /**
@@ -104,7 +165,7 @@ export function awaitJobSettled(id: string): Promise<JobView | undefined> {
 
   // Already settled and dismissed before this subscribed: the terminal
   // transition fired once and is suppressed on re-seed, so a listener would
-  // never fire — resolve now instead of hanging forever.
+  // never fire, resolve now instead of hanging forever.
   if (settledJobIds.has(id)) return Promise.resolve(undefined);
 
   let off = () => {};
@@ -113,7 +174,7 @@ export function awaitJobSettled(id: string): Promise<JobView | undefined> {
   // the executor) so neither path calls back into the promise.
   return new Promise<JobView | undefined>((resolve) => {
     timer = setTimeout(() => resolve(useJobsStore.getState().jobs[id]), SETTLE_TIMEOUT_MS);
-    off = onJobSettled((job) => {
+    off = jobSettled.on((job) => {
       if (job.id === id) resolve(job);
     });
   }).finally(() => {
@@ -129,14 +190,7 @@ const isTerminal = (job: JobView) => TERMINAL_JOB_STATUSES.has(job.status);
 // makes terminal handling idempotent: a re-sent snapshot updates state without
 // re-firing handlers or resurrecting a job the user already dismissed.
 const settledJobIds = new Set<string>();
-
-function markSettled(id: string): void {
-  settledJobIds.add(id);
-  if (settledJobIds.size > SETTLED_IDS_CAP) {
-    const oldest = settledJobIds.values().next().value;
-    if (oldest !== undefined) settledJobIds.delete(oldest);
-  }
-}
+const markSettled = (id: string) => remember(settledJobIds, id);
 
 interface JobsStore {
   jobs: Record<string, JobView>;
@@ -175,14 +229,17 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
       // already-running jobs reappear in the tray without a "started" cue.
       let seeding = true;
       try {
-        await subscribeJobs(
-          (job) => get().upsert(job, { seeding }),
-          () => {
+        await subscribeJobs({
+          onJob: (job) => get().upsert(job, { seeding }),
+          onReady: () => {
             seeding = false;
-            feedReadyListeners.forEach((listener) => listener());
+            feedReady.emit();
           },
-          publishWorkspaceChanged,
-        );
+          onWorkspaceChanged: publishWorkspaceChanged,
+          onConversationsChanged: conversationsChanged.emit,
+          onLibraryChanged: libraryChanged.emit,
+          onSourcesChanged: sourcesChanged.emit,
+        });
       } catch {
         // A failed connect counts as a drop; the backoff below handles it.
       }
@@ -228,7 +285,7 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
       // A terminal job we were not already tracking is not a transition we
       // witnessed: on the initial replay it is history (a job that finished
       // before we connected), so record it as handled but keep it off the tray
-      // — no stale completion flash, no toast, no refresh. A terminal snapshot
+      // No stale completion flash, no toast, no refresh. A terminal snapshot
       // for a job we held as active (prev) is a real transition (e.g. one we
       // missed while briefly disconnected), so it falls through and settles.
       if (seeding && !prev) {
@@ -238,7 +295,7 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
 
       set((s) => ({ jobs: { ...s.jobs, [job.id]: job } }));
       markSettled(job.id);
-      settledListeners.forEach((listener) => listener(job));
+      jobSettled.emit(job);
       if (job.status !== "failed") {
         setTimeout(() => get().dismiss(job.id), AUTO_DISMISS_MS);
       }
@@ -248,11 +305,11 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
 
     set((s) => ({ jobs: { ...s.jobs, [job.id]: job } }));
 
-    // First snapshot of a job that is starting now — not one already running
+    // First snapshot of a job that is starting now, not one already running
     // when we connected (a seed) and not a re-seed of one we already track:
     // announce that work began.
     if (!prev && !seeding) {
-      startedListeners.forEach((listener) => listener(job));
+      jobStarted.emit(job);
     }
   },
 

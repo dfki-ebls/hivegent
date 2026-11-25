@@ -12,7 +12,8 @@ const DOCUMENT_KINDS: readonly DocumentKind[] = ["pdf", "docx", "xlsx"];
 
 /** The parsed original per kind, as the Preview tab renders it. */
 export interface OriginalContent {
-  pdf: Blob;
+  /** An object URL, which the query cache revokes with its entry. */
+  pdf: string;
   docx: string;
   xlsx: Sheet[];
 }
@@ -38,15 +39,29 @@ export const parseOriginal: {
   [K in DocumentKind]: (blob: Blob) => Promise<OriginalContent[K]>;
 } = {
   // Retyped so the frame showing it never renders other content.
-  pdf: async (blob) => new Blob([blob], { type: "application/pdf" }),
+  pdf: async (blob) => URL.createObjectURL(new Blob([blob], { type: "application/pdf" })),
   docx: async (blob) => {
     const [{ default: mammoth }, { default: DOMPurify }] = await Promise.all([
       import("mammoth"),
       import("dompurify"),
     ]);
     const { value } = await mammoth.convertToHtml({ arrayBuffer: await blob.arrayBuffer() });
+    // Neither styles, forms, nor ids reach the app's page, and links leave it in a new tab.
+    const html = DOMPurify.sanitize(value, {
+      FORBID_TAGS: ["style", "form"],
+      FORBID_ATTR: ["style", "id", "name"],
+      RETURN_DOM_FRAGMENT: true,
+    });
 
-    return DOMPurify.sanitize(value);
+    for (const link of html.querySelectorAll("a")) {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    }
+
+    const container = document.createElement("div");
+    container.append(html);
+
+    return container.innerHTML;
   },
   xlsx: async (blob) => (await import("read-excel-file/browser")).default(blob),
 };

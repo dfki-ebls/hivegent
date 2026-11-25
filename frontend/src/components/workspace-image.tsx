@@ -20,8 +20,8 @@ interface WorkspaceImageProps {
  * resolve outside the workspace, so all of those are rejected before fetching.
  *
  * This is a client-side fast-fail for UX only, NOT the validation boundary: the
- * backend is authoritative — it strips off-workspace image refs at ingestion
- * (`is_external_ref`) and sanitizes every `/api/documents/...` request
+ * backend is authoritative, it strips off-workspace image refs at ingestion
+ * (`is_external_ref`) and sanitizes every `/api/v1/documents/...` request
  * (`sanitize_document_path`). Keep that backend validation even if this guard
  * changes; it must never be relied upon as the security check.
  */

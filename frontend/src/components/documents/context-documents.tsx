@@ -1,5 +1,4 @@
 import { Search } from "lucide-react";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useDialogTarget } from "@/hooks/use-dialog-target";
@@ -36,12 +35,8 @@ export function ContextDocuments() {
   // breaks ties. `chunkIds` is the count itself, since the store only ever
   // appends an id alongside the chunk it names. Chunks within each group stay
   // line-ordered via sortChunks in DocumentGroup.
-  const sortedDocs = useMemo(
-    () =>
-      Array.from(documents.values()).sort(
-        (a, b) => b.chunkIds.length - a.chunkIds.length || a.filename.localeCompare(b.filename),
-      ),
-    [documents],
+  const sortedDocs = Array.from(documents.values()).sort(
+    (a, b) => b.chunkIds.length - a.chunkIds.length || a.filename.localeCompare(b.filename),
   );
 
   const handleChunkClick = (chunk: FetchedChunk) =>

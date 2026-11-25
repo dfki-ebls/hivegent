@@ -12,8 +12,8 @@ interface DocumentAction {
   icon: LucideIcon;
   /** Button variant for the batch bar. */
   variant: "secondary" | "destructive";
-  /** When true, the action only appears when a selected file has an original binary. */
-  requiresOriginal: boolean;
+  /** When true, the action only appears when every selected entry is in a writable workspace. */
+  requiresWrite: boolean;
 }
 
 /**
@@ -26,22 +26,27 @@ const DOCUMENT_ACTIONS: readonly DocumentAction[] = [
     id: "rechunk",
     icon: Scissors,
     variant: "secondary",
-    requiresOriginal: false,
+    requiresWrite: true,
   },
   {
     id: "reconvert",
     icon: RotateCcw,
     variant: "secondary",
-    requiresOriginal: true,
+    requiresWrite: true,
   },
   {
     id: "download",
     icon: Download,
     variant: "secondary",
-    requiresOriginal: true,
+    requiresWrite: false,
   },
-  { id: "delete", icon: Trash2, variant: "destructive", requiresOriginal: false },
+  {
+    id: "delete",
+    icon: Trash2,
+    variant: "destructive",
+    requiresWrite: true,
+  },
 ];
 
 export { DOCUMENT_ACTIONS };
-export type { DocumentAction, DocumentActionId };
+export type { DocumentActionId };

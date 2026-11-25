@@ -15,10 +15,10 @@
   },
   "dependencies": {
     "@ai-sdk/react": "^4",
-    "@atlaskit/pragmatic-drag-and-drop": "^4",
-    "@atlaskit/pragmatic-drag-and-drop-auto-scroll": "^3",
     "@base-ui/react": "^1",
     "@fontsource-variable/inter": "^5",
+    "@headless-tree/core": "^1",
+    "@headless-tree/react": "^1",
     "@shadcn/react": "^0.3",
     "@streamdown/cjk": "^1",
     "@streamdown/math": "^1",
@@ -58,6 +58,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
     "jsdom": "^31",
+    "oxc-transform-react": "^0.156",
     "typescript": "^7",
     "vite": "^8",
     "vitest": "^5"

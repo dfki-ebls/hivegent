@@ -1,22 +1,23 @@
-import { useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+
+import { documentQueries } from "@/api/documents";
 import { useConversationId } from "@/components/chat/chat-context";
 import { useInView } from "@/hooks/use-in-view";
-import { useObjectUrl } from "@/hooks/use-object-url";
-import { fetchDocumentAsset } from "@/api/documents";
+import { useWorkspaces } from "@/hooks/use-workspaces";
 
 /**
  * A workspace asset at *path* as an object URL, fetched once the element bound to `ref` nears
  * the viewport, with the conversation that owns a `/tmp` asset. `null` fetches nothing.
- * Bind `ref` to an element that stays mounted while loading, so the URL is not revoked early.
+ * Bind `ref` to an element that stays mounted while loading.
  */
 export function useWorkspaceAsset(path: string | null) {
   const conversationId = useConversationId();
-  const fetch = useCallback(
-    (signal: AbortSignal) => fetchDocumentAsset(path ?? "", signal, conversationId),
-    [path, conversationId],
-  );
+  const workspaces = useWorkspaces();
   const [ref, inView] = useInView();
-  const { url, error } = useObjectUrl(path && inView ? fetch : null);
+  const { data, isError } = useQuery({
+    ...documentQueries.asset(path ?? "", conversationId, workspaces),
+    enabled: path !== null && inView,
+  });
 
-  return { ref, url, error };
+  return { ref, url: data ?? null, error: isError };
 }

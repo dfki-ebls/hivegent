@@ -10,8 +10,15 @@ type DropClassification = {
 
 type CollectedFile = { path: string; file: File };
 
-const COLLECTION_FILENAME = "collection.zip";
 const COLLECTION_MIME = "application/zip";
+
+// JSZip writes an entry's DOS date in UTC, which the backend reads as such,
+// and a date before the DOS epoch would wrap around.
+const DOS_EPOCH = Date.UTC(1980, 0, 1);
+
+const entryOptions = (time: number): JSZip.JSZipFileOptions => ({
+  date: new Date(Math.max(time, DOS_EPOCH)),
+});
 
 const isZipFile = (file: File): boolean => file.name.toLowerCase().endsWith(".zip");
 
@@ -63,10 +70,20 @@ const walkEntry = async (
   return [];
 };
 
-const finalizeZip = async (zip: JSZip): Promise<File> => {
+// The archive is only the transport, so it carries the names the user picked,
+// which the queue and the backend job then show instead of a generic archive.
+const finalizeZip = async (zip: JSZip, name: string): Promise<File> => {
   const blob = await zip.generateAsync({ type: "blob" });
-  return new File([blob], COLLECTION_FILENAME, { type: COLLECTION_MIME });
+  return new File([blob], name, { type: COLLECTION_MIME });
 };
+
+/** The dropped directories, archives, and files a collection consists of, by name. */
+export const collectionName = ({ looseFiles, directories, zipFiles }: DropClassification): string =>
+  [...directories, ...zipFiles, ...looseFiles].map((item) => item.name).join(", ");
+
+/** The top-level directory a directory picker selection was made from. */
+export const directoryInputName = (files: readonly File[]): string =>
+  files[0]?.webkitRelativePath.split("/")[0] || (files[0]?.name ?? "");
 
 export const classifyDropItems = async (
   items: readonly DataTransferItem[],
@@ -105,13 +122,14 @@ export const classifyDropItems = async (
 
 export const buildCollectionZip = async (
   { looseFiles, directories, zipFiles }: DropClassification,
+  name: string,
   signal?: AbortSignal,
 ): Promise<File> => {
   signal?.throwIfAborted();
 
   // A lone dropped archive is already a collection: forward it untouched rather
   // than extract and recompress it, which is slower and flattens its layout.
-  // Only when it is the sole dropped item — several archives must fall through
+  // Only when it is the sole dropped item, several archives must fall through
   // to the merge path below, or all but the first would be silently dropped.
   const [onlyArchive] = zipFiles;
   if (zipFiles.length === 1 && onlyArchive && looseFiles.length === 0 && directories.length === 0) {
@@ -123,12 +141,16 @@ export const buildCollectionZip = async (
 
   // Same-name files silently overwrite: a user who drops conflicting names owns
   // that. The backend importer is what guards the DB and workspace.
-  for (const file of looseFiles) zip.file(file.name, file);
+  for (const file of looseFiles) zip.file(file.name, file, entryOptions(file.lastModified));
 
   const collectedPerDir = await Promise.all(directories.map((dir) => walkEntry(dir, "", signal)));
-  for (const { path, file } of collectedPerDir.flat()) zip.file(path, file);
+  for (const { path, file } of collectedPerDir.flat()) {
+    zip.file(path, file, entryOptions(file.lastModified));
+  }
 
   signal?.throwIfAborted();
+  // JSZip reads an entry's DOS date as UTC and drops its extended timestamp,
+  // so the date is carried over as the archive wrote it.
   const archives = await Promise.all(zipFiles.map((archive) => JSZip.loadAsync(archive)));
   await Promise.all(
     archives.flatMap((inner) =>
@@ -136,19 +158,22 @@ export const buildCollectionZip = async (
         .filter((entry) => !entry.dir)
         .map(async (entry) => {
           const blob = await entry.async("blob");
-          zip.file(entry.name, blob);
+          zip.file(entry.name, blob, entryOptions(entry.date.getTime()));
         }),
     ),
   );
 
-  return finalizeZip(zip);
+  return finalizeZip(zip, name);
 };
 
-export const buildCollectionZipFromDirectoryInput = async (files: File[]): Promise<File> => {
+export const buildCollectionZipFromDirectoryInput = async (
+  files: File[],
+  name: string,
+): Promise<File> => {
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   for (const file of files) {
-    zip.file(file.webkitRelativePath || file.name, file);
+    zip.file(file.webkitRelativePath || file.name, file, entryOptions(file.lastModified));
   }
-  return finalizeZip(zip);
+  return finalizeZip(zip, name);
 };

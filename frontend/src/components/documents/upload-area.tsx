@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { PERSONAL_SCOPE, formatTarget } from "@/api/documents";
+import { useWorkspaces } from "@/hooks/use-workspaces";
 import { cn } from "@/lib/utils";
 import { TooltipButton } from "@/components/common/tooltip-button";
 import { Button } from "@/components/ui/button";
@@ -99,6 +100,7 @@ export function UploadArea({
   onNewFolder,
 }: UploadAreaProps) {
   const { t } = useTranslation();
+  const workspaces = useWorkspaces();
 
   return (
     <div className="border-b p-4">
@@ -160,7 +162,7 @@ export function UploadArea({
             <span className="shrink-0 text-muted-foreground">
               {t(($) => $.documents.upload.workingIn)}
             </span>
-            <span className="min-w-0 truncate font-medium">{formatTarget(target)}</span>
+            <span className="min-w-0 truncate font-medium">{formatTarget(target, workspaces)}</span>
           </ButtonGroupText>
           {target !== PERSONAL_SCOPE && (
             <TooltipButton

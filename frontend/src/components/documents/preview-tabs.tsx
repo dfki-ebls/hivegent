@@ -1,8 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { useObjectUrl } from "@/hooks/use-object-url";
 import { formatDateTime } from "@/i18n/format";
 import {
   type DocumentKind,
@@ -18,41 +17,59 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileXIcon } from "lucide-react";
 
-export type PreviewTab = "preview" | "text";
+export type PreviewTab = "preview" | "text" | "similarity";
 
 /**
- * A document as two tabs, its original rendered by the browser and its text projection (*children*),
- * or only the text without a *preview*. Only the active tab mounts, so the original loads on demand.
+ * A document as tabs: its original rendered by the browser, its text projection (*children*),
+ * and the *similarity* of a case base, or only the text without either of the others.
+ * Only the active tab mounts, so the original loads on demand.
  */
 export function PreviewTabs({
   preview,
+  similarity,
   tab,
   onTabChange,
   children,
 }: {
   preview: DocumentPreview | null;
+  similarity?: ReactNode;
   tab: PreviewTab;
   onTabChange: (tab: PreviewTab) => void;
   children: ReactNode;
 }) {
   const { t } = useTranslation();
 
-  if (!preview) return children;
+  if (!preview && !similarity) return children;
+
+  const shown =
+    (tab === "preview" && !preview) || (tab === "similarity" && !similarity) ? "text" : tab;
 
   return (
-    <Tabs value={tab} onValueChange={onTabChange} className="min-h-0 flex-1 gap-0">
+    <Tabs value={shown} onValueChange={onTabChange} className="min-h-0 flex-1 gap-0">
       <div className="border-b px-4 py-2">
         <TabsList>
-          <TabsTrigger value="preview">{t(($) => $.documents.preview.previewTab)}</TabsTrigger>
+          {preview && (
+            <TabsTrigger value="preview">{t(($) => $.documents.preview.previewTab)}</TabsTrigger>
+          )}
           <TabsTrigger value="text">{t(($) => $.documents.preview.textTab)}</TabsTrigger>
+          {similarity && (
+            <TabsTrigger value="similarity">{t(($) => $.documents.similarity.tab)}</TabsTrigger>
+          )}
         </TabsList>
       </div>
-      <TabsContent value="preview" className="flex min-h-0 flex-col">
-        <OriginalPreview preview={preview} />
-      </TabsContent>
+      {preview && (
+        <TabsContent value="preview" className="flex min-h-0 flex-col">
+          <OriginalPreview preview={preview} />
+        </TabsContent>
+      )}
       <TabsContent value="text" className="flex min-h-0 flex-col">
         {children}
       </TabsContent>
+      {similarity && (
+        <TabsContent value="similarity" className="flex min-h-0 flex-col">
+          {similarity}
+        </TabsContent>
+      )}
     </Tabs>
   );
 }
@@ -77,7 +94,7 @@ function OriginalPreview({ preview }: { preview: DocumentPreview }) {
     case "pdf":
       return (
         <ParsedOriginal path={preview.documentPath} kind="pdf">
-          {(blob) => <PdfFrame blob={blob} title={preview.documentPath} />}
+          {(url) => <PdfFrame url={url} title={preview.documentPath} />}
         </ParsedOriginal>
       );
     case "docx":
@@ -121,11 +138,8 @@ function ParsedOriginal<K extends DocumentKind>({
 }
 
 /** The browser's own PDF viewer, unsandboxed since Chromium refuses PDFs in sandboxed frames. */
-function PdfFrame({ blob, title }: { blob: Blob; title: string }) {
-  const fetch = useCallback(async () => URL.createObjectURL(blob), [blob]);
-  const { url } = useObjectUrl(fetch);
-
-  return url ? <iframe src={url} title={title} className="min-h-0 flex-1" /> : <LoadingPanel />;
+function PdfFrame({ url, title }: { url: string; title: string }) {
+  return <iframe src={url} title={title} className="min-h-0 flex-1" />;
 }
 
 const MAX_ROWS = 500;

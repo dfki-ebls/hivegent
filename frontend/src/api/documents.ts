@@ -5,11 +5,9 @@ import {
   queryOptions,
   useMutationState,
 } from "@tanstack/react-query";
-import { useMemo } from "react";
 import { z } from "zod";
 
 import {
-  checkedResponse,
   encodeFilePath,
   jsonRequest,
   requestBlob,
@@ -24,10 +22,9 @@ import {
   type WorkspaceChanged,
   WorkspaceChangedSchema,
 } from "@/api/jobs";
-import type { PipelineSpec } from "@/api/pipelines";
-import type { LlmConfig } from "@/api/settings";
 import { type DocumentKind, parseOriginal } from "@/lib/original-preview";
-import { joinPath } from "@/lib/utils";
+import { downloadBlob } from "@/lib/download";
+import { below, followPath, joinPath } from "@/lib/utils";
 import {
   awaitJobSettled,
   onWorkspaceStale,
@@ -36,7 +33,7 @@ import {
 } from "@/stores/jobs-store";
 
 const EntryKindSchema = z.enum(["user_markdown", "image", "video", "convertible", "binary_stub"]);
-const EntryOriginSchema = z.enum(["upload", "collection", "extracted", "imported"]);
+const EntryOriginSchema = z.enum(["upload", "collection", "extracted", "imported", "synced"]);
 const EntryGeneratedBySchema = z.enum(["user", "converter", "vision", "stub"]);
 
 /** A single chunk within a chunked document. */
@@ -49,7 +46,7 @@ const ChunkInfoSchema = z.object({
   end_line: z.number(),
 });
 /** Response from the chunks endpoint. */
-const ChunkedDocumentResponseSchema = z.object({
+export const ChunkedDocumentResponseSchema = z.object({
   pipeline: z.string(),
   created_at: z.string(),
   size_bytes: z.number().nullable().optional(),
@@ -62,6 +59,7 @@ const ChunkedDocumentResponseSchema = z.object({
   origin: EntryOriginSchema.optional(),
   generated_by: EntryGeneratedBySchema.optional(),
   mime: z.string().nullable().optional(),
+  case_base_candidate: z.boolean().optional(),
 });
 export type ChunkedDocumentResponse = z.infer<typeof ChunkedDocumentResponseSchema>;
 
@@ -73,25 +71,13 @@ const AssetEntrySchema = z.object({
   size_bytes: z.number(),
   media_type: z.string().nullable().optional(),
 });
-type AssetEntry = z.infer<typeof AssetEntrySchema>;
+export type AssetEntry = z.infer<typeof AssetEntrySchema>;
 
 const AssetListResponseSchema = z.object({
   assets: z.array(AssetEntrySchema),
   assets_dir: z.string(),
 });
 type AssetListResponse = z.infer<typeof AssetListResponseSchema>;
-
-/** A flat view of a file entry of the directory tree, see `treeDocuments`. */
-export interface DocumentInfo {
-  filename: string;
-  display_name: string;
-  size_bytes: number;
-  modified_at: string;
-  chunk_count?: number | null;
-  has_original: boolean;
-  original_path?: string | null;
-  assets_dir?: string | null;
-}
 
 /** Batch document line counts, keyed by the requested workspace path. */
 const DocumentLineCountsResponseSchema = z.object({
@@ -109,6 +95,10 @@ export interface DirectoryEntry {
   has_original?: boolean;
   original_path?: string | null;
   assets_dir?: string | null;
+  /** Whether it is a case base with a saved similarity configuration. */
+  case_base?: boolean;
+  /** Whether it may be a case base by cbrkit's rule, which offers its similarity. */
+  case_base_candidate?: boolean;
   children?: DirectoryEntry[] | null;
 }
 
@@ -122,6 +112,8 @@ const DirectoryEntrySchema: z.ZodType<DirectoryEntry> = z.object({
   has_original: z.boolean().optional(),
   original_path: z.string().nullable().optional(),
   assets_dir: z.string().nullable().optional(),
+  case_base: z.boolean().optional(),
+  case_base_candidate: z.boolean().optional(),
   children: z
     .lazy(() => z.array(DirectoryEntrySchema))
     .nullable()
@@ -129,7 +121,7 @@ const DirectoryEntrySchema: z.ZodType<DirectoryEntry> = z.object({
 });
 
 /** Response from the directory tree endpoint. */
-const DirectoryTreeResponseSchema = z.object({
+export const DirectoryTreeResponseSchema = z.object({
   root: DirectoryEntrySchema,
   total_files: z.number(),
   total_directories: z.number(),
@@ -140,22 +132,16 @@ export type DirectoryTreeResponse = z.infer<typeof DirectoryTreeResponseSchema>;
  * Canonical scope of the caller's personal workspace.
  *
  * Scopes are the single source of truth for addressing a workspace: `~` for
- * the personal one, `@<group>` for a group (see {@link groupScope}). The same
- * string keys the document store, flows through the API, and is what the
- * backend resolves — there is no separate "personal vs group" representation.
+ * the personal one, `@<group>` for a group, and the prefixes the server names
+ * for the global one and the sources. The server lists the ones the user sees
+ * with their kinds, labels, and grants (`WorkspaceInfo`), and the same string
+ * keys the document store, flows through the API, and is what the backend
+ * resolves.
  */
 export const PERSONAL_SCOPE = "~";
 
-/**
- * Canonical scope of a group's workspace.
- *
- * Always built from `GroupInfo.id`, never the display name: the id is the
- * group's only identity, so a path keeps addressing the same workspace after
- * a rename. `GroupInfo.name` is for labels.
- */
-export function groupScope(groupId: string): string {
-  return `@${groupId}`;
-}
+/** Where every source's mirror is mounted as `/mnt/<id>`, the backend's `store.SOURCE_PREFIX`. */
+const SOURCE_PREFIX = "/mnt/";
 
 /**
  * Compose the canonical path of a document from its scope and local path
@@ -167,58 +153,63 @@ export function canonicalPath(scope: string, local: string): string {
 }
 
 /**
- * Split a canonical directory into its scope and workspace-relative subpath —
- * the inverse of {@link canonicalPath}. The scope root (`~`, `@group`) yields an
- * empty local; `~/a/b` yields `{ scope: "~", local: "a/b" }`.
+ * Split a canonical directory into its scope and workspace-relative subpath,
+ * the inverse of {@link canonicalPath}. The scope root (`~`, `@group`,
+ * `/srv`, `/mnt/<id>`) yields an empty local; `~/a/b` yields `{ scope: "~", local: "a/b" }`.
+ * A scope leading with a slash keeps it, so `/srv/a` splits after `/srv` and
+ * `/mnt/wiki/a` after `/mnt/wiki`.
  */
 export function splitScopePath(canonical: string): { scope: string; local: string } {
-  const slash = canonical.indexOf("/");
+  const start = canonical.startsWith(SOURCE_PREFIX)
+    ? SOURCE_PREFIX.length
+    : canonical.startsWith("/")
+      ? 1
+      : 0;
+  const slash = canonical.indexOf("/", start);
   return slash === -1
     ? { scope: canonical, local: "" }
     : { scope: canonical.slice(0, slash), local: canonical.slice(slash + 1) };
 }
 
-/** Whether *path* names a document of a user or group workspace, not a web page or a `/tmp` file. */
-export function isWorkspacePath(path: string): boolean {
+/** Whether *path* names a document of one of *workspaces*, not a web page or a `/tmp` file. */
+export function isWorkspacePath(path: string, workspaces: readonly { scope: string }[]): boolean {
   const { scope } = splitScopePath(path);
 
-  return scope === PERSONAL_SCOPE || (scope.startsWith("@") && scope.length > 1);
+  return workspaces.some((workspace) => workspace.scope === scope);
 }
 
 /**
- * Human-readable breadcrumb for a canonical directory, e.g. `~/a/b` becomes
- * "~ / a / b" and `@research` becomes "research". Shared by every surface
- * that names the active target (upload area, create dialogs).
+ * Human-readable breadcrumb for a canonical directory, its workspace named by
+ * its label among *workspaces*, e.g. `@research/a/b` becomes "Research / a / b".
+ * Shared by every surface that names the active target (upload area, create dialogs).
  */
-export function formatTarget(target: string): string {
+export function formatTarget(
+  target: string,
+  workspaces: readonly { scope: string; label: string }[],
+): string {
   const { scope, local } = splitScopePath(target);
-  const scopeLabel = scope.startsWith("@") ? scope.slice(1) : scope;
+  const scopeLabel = workspaces.find((workspace) => workspace.scope === scope)?.label ?? scope;
   return local ? `${scopeLabel} / ${local.replaceAll("/", " / ")}` : scopeLabel;
-}
-
-/** Check if a file requires conversion (anything that is not already markdown). */
-export function requiresConversion(filename: string): boolean {
-  const ext = `.${filename.split(".").pop()?.toLowerCase() ?? ""}`;
-  return ext !== ".md";
 }
 
 /** Options for document upload. */
 interface UploadDocumentOptions {
-  spec?: PipelineSpec;
-  llm?: LlmConfig;
   /** Replace a document at the path, which is refused with 412 otherwise. */
   overwrite?: boolean;
 }
 
-/** The multipart body of an upload, with the settings its processing runs with. */
-function uploadForm(file: File, spec?: PipelineSpec, llm?: LlmConfig): FormData {
+/** The multipart body of an upload, processed with the operator's pipelines. */
+function uploadForm(file: File): FormData {
   const form = new FormData();
   form.append("file", file);
+
+  return form;
+}
+
+/** An upload's body dated at the file's modification time, which the entry keeps. */
+function datedUploadForm(file: File): FormData {
+  const form = uploadForm(file);
   form.append("modified_at", new Date(file.lastModified).toISOString());
-
-  if (spec) form.append("pipeline_spec", JSON.stringify(spec));
-
-  if (llm) form.append("llm_config", JSON.stringify(llm));
 
   return form;
 }
@@ -226,7 +217,7 @@ function uploadForm(file: File, spec?: PipelineSpec, llm?: LlmConfig): FormData 
 /**
  * Upload or replace a document and start its background job; `filename` is a
  * canonical path (`~/…` or `@<group>/…`). Resolves once the bytes are received
- * with the job's initial snapshot — conversion and indexing then run off the
+ * with the job's initial snapshot, conversion and indexing then run off the
  * request and are observable through the `/jobs` feed.
  */
 export async function uploadDocument(
@@ -234,17 +225,11 @@ export async function uploadDocument(
   file: File,
   options?: UploadDocumentOptions & { signal?: AbortSignal },
 ): Promise<JobView> {
-  const body = uploadForm(
-    file,
-    options?.spec,
-    requiresConversion(filename) ? options?.llm : undefined,
-  );
-
   return requestJson(apiUrl(`/documents/${encodeFilePath(filename)}`), "upload", JobViewSchema, {
     method: "PUT",
     // A PUT replaces the document, unless it may only create one.
     headers: options?.overwrite ? undefined : { "If-None-Match": "*" },
-    body,
+    body: datedUploadForm(file),
     signal: options?.signal,
   });
 }
@@ -258,32 +243,25 @@ export async function uploadDocument(
 async function writeDocument(
   filename: string,
   content: string,
-  chunking?: PipelineSpec["chunking"],
   mode: "replace" | "create" = "replace",
 ): Promise<void> {
   return requestVoid(
     apiUrl(`/documents/${encodeFilePath(filename)}`),
     "save",
-    jsonRequest("PATCH", { content, mode, chunking: chunking ?? null }),
+    jsonRequest("PATCH", { content, mode }),
   );
-}
-
-/** Options for collection upload (ZIP or directory). */
-export interface UploadCollectionOptions {
-  spec?: PipelineSpec;
-  llm?: LlmConfig;
 }
 
 /**
  * Upload a collection ZIP and start its background job; `target` is the
- * canonical directory the archive lands under — a scope root (`~`, `@<group>`)
+ * canonical directory the archive lands under, a scope root (`~`, `@<group>`)
  * or a subdir (`~/projects`). Resolves with the job's initial snapshot; per-file
  * progress then arrives through the `/jobs` feed.
  */
 export async function uploadCollection(
   target: string,
   file: File,
-  options?: UploadCollectionOptions & { signal?: AbortSignal },
+  options?: { signal?: AbortSignal },
 ): Promise<JobView> {
   return requestJson(
     apiUrl(`/documents/collections/${encodeFilePath(target)}`),
@@ -291,7 +269,7 @@ export async function uploadCollection(
     JobViewSchema,
     {
       method: "POST",
-      body: uploadForm(file, options?.spec, options?.llm),
+      body: uploadForm(file),
       signal: options?.signal,
     },
   );
@@ -311,41 +289,20 @@ export async function getDocumentContent(
   return requestText(documentUrl(filename, conversationId), "fetchDocumentContent");
 }
 
-/** Fetch a workspace or `/tmp` asset (e.g. image) as a blob URL for display. */
-export async function fetchDocumentAsset(
+/** Fetch a workspace or `/tmp` asset (e.g. an image) of *conversationId*. */
+function fetchDocumentAsset(
   filepath: string,
+  conversationId: string | null,
   signal?: AbortSignal,
-  conversationId?: string | null,
-): Promise<string> {
-  const blob = await (
-    await checkedResponse(documentUrl(filepath, conversationId), "fetchDocumentAsset", { signal })
-  ).blob();
-  return URL.createObjectURL(blob);
+): Promise<Blob> {
+  return requestBlob(documentUrl(filepath, conversationId), "fetchDocumentAsset", { signal });
 }
 
 /** Download the original binary file for a document. */
-export async function downloadOriginal(filepath: string, signal?: AbortSignal): Promise<Blob> {
+async function downloadOriginal(filepath: string, signal?: AbortSignal): Promise<Blob> {
   return requestBlob(apiUrl(`/documents/original/${encodeFilePath(filepath)}`), "download", {
     signal,
   });
-}
-
-/**
- * Replace the original binary file and reconvert the document as a background
- * job; resolves with the job's initial snapshot. Progress arrives via the feed.
- */
-export async function replaceOriginal(
-  filepath: string,
-  file: File,
-  spec?: PipelineSpec,
-  llm?: LlmConfig,
-): Promise<JobView> {
-  return requestJson(
-    apiUrl(`/documents/original/${encodeFilePath(filepath)}`),
-    "replaceOriginal",
-    JobViewSchema,
-    { method: "PUT", body: uploadForm(file, spec, llm) },
-  );
 }
 
 async function getDocumentChunks(filename: string): Promise<ChunkedDocumentResponse> {
@@ -396,16 +353,12 @@ async function updateAssetDescription(
 }
 
 /** Generate an asset's companion .md description with the vision model. */
-async function generateAssetDescription(
-  filename: string,
-  assetName: string,
-  llm?: LlmConfig,
-): Promise<AssetEntry> {
+async function generateAssetDescription(filename: string, assetName: string): Promise<AssetEntry> {
   return requestJson(
     apiUrl(`/documents/assets/${encodeFilePath(filename)}`),
     "generateDescription",
     AssetEntrySchema,
-    jsonRequest("POST", { asset_name: assetName, llm: llm ?? {} }),
+    jsonRequest("POST", { asset_name: assetName }),
   );
 }
 
@@ -422,26 +375,17 @@ async function deleteAssetDescription(filename: string, assetName: string): Prom
 }
 
 /** Rechunk documents with new settings as a background job. */
-function rechunkDocuments(files: string[], spec?: PipelineSpec): Promise<JobView> {
-  return requestJson(
-    apiUrl("/documents/rechunk"),
-    "rechunk",
-    JobViewSchema,
-    jsonRequest("POST", { files, pipeline: spec ?? {} }),
-  );
+function rechunkDocuments(files: string[]): Promise<JobView> {
+  return requestJson(apiUrl("/documents/rechunk"), "rechunk", JobViewSchema, jsonRequest("POST", { files }));
 }
 
 /** Reconvert documents from their originals as a background job. */
-function reconvertDocuments(
-  files: string[],
-  spec?: PipelineSpec,
-  llm?: LlmConfig,
-): Promise<JobView> {
+function reconvertDocuments(files: string[]): Promise<JobView> {
   return requestJson(
     apiUrl("/documents/reconvert"),
     "reconvert",
     JobViewSchema,
-    jsonRequest("POST", { files, pipeline: spec ?? {}, llm: llm ?? {} }),
+    jsonRequest("POST", { files }),
   );
 }
 
@@ -459,22 +403,23 @@ export type ChangeOperation =
 /**
  * Move, delete, and create documents and directories as one changeset. All of
  * them land or none does, and a refusal rejects with the message naming its path.
- * Resolves with the scopes it changed and what moved and went as the backend
- * resolved it, which can differ from what was sent (a move into an existing
- * folder, an entry's original).
+ * What the backend applied is published here at once, since the feed may be
+ * reconnecting, and reaches every other tab through the feed.
  */
-export async function applyChanges(operations: ChangeOperation[]): Promise<WorkspaceChanged> {
-  return requestJson(
-    apiUrl("/changes"),
-    "applyChanges",
-    WorkspaceChangedSchema,
-    jsonRequest("POST", { operations }),
+async function applyChanges(operations: ChangeOperation[]): Promise<void> {
+  publishWorkspaceChanged(
+    await requestJson(
+      apiUrl("/changes"),
+      "applyChanges",
+      WorkspaceChangedSchema,
+      jsonRequest("POST", { operations }),
+    ),
   );
 }
 
 // Directory tree
 
-/** Fetch a workspace directory tree; `scope` is `~` (personal) or `@<group>`. */
+/** Fetch a workspace directory tree by its scope (`~`, `@<group>`, `/srv`). */
 export async function getDirectories(
   scope: string,
   signal?: AbortSignal,
@@ -487,48 +432,16 @@ export async function getDirectories(
   );
 }
 
-/**
- * Delete all documents, chunks, originals, and the search index in a workspace;
- * `scope` is `~` (personal) or `@<group>`.
- */
+/** Delete all documents, chunks, originals, and the search index in the workspace of *scope*. */
 export async function deleteAllDocuments(scope: string): Promise<void> {
-  return requestVoid(apiUrl(`/documents/${encodeFilePath(scope)}`), "deleteDocuments", {
+  return requestVoid(apiUrl(`/workspaces/${encodeFilePath(scope)}`), "deleteDocuments", {
     method: "DELETE",
   });
 }
 
-/** Collect all file entries under a directory entry (recursive). */
-export function collectFileEntries(
-  entry: DirectoryEntry,
-  out: DirectoryEntry[] = [],
-): DirectoryEntry[] {
-  if (entry.type === "file") {
-    out.push(entry);
-  } else {
-    for (const child of entry.children ?? []) {
-      collectFileEntries(child, out);
-    }
-  }
-  return out;
-}
-
 /** Collect all file paths under a directory entry (recursive). */
 export function collectFilePaths(entry: DirectoryEntry): string[] {
-  return collectFileEntries(entry).map((file) => file.path);
-}
-
-/** Derive the flat document listing from a directory tree's file entries. */
-export function treeDocuments(root: DirectoryEntry): DocumentInfo[] {
-  return collectFileEntries(root).map((file) => ({
-    filename: file.path,
-    display_name: file.name,
-    size_bytes: file.size_bytes ?? 0,
-    modified_at: file.modified_at ?? "",
-    chunk_count: file.chunk_count,
-    has_original: file.has_original ?? false,
-    original_path: file.original_path,
-    assets_dir: file.assets_dir,
-  }));
+  return entry.type === "file" ? [entry.path] : (entry.children ?? []).flatMap(collectFilePaths);
 }
 
 /** Return a copy of *root* with an empty directory at *path* (and any missing
@@ -646,11 +559,26 @@ export const documentQueries = {
       queryKey: [...all, "assets", path],
       queryFn: () => listDocumentAssets(path),
     }),
+  /**
+   * A workspace asset of one of *workspaces*, or a `/tmp` one of *conversationId*, such as an
+   * image, as an object URL. The feed keeps workspace assets fresh, while a `/tmp` one
+   * refetches when shown again, since `/tmp` changes unannounced.
+   */
+  asset: (path: string, conversationId: string | null, workspaces: readonly { scope: string }[]) =>
+    queryOptions({
+      queryKey: [...all, "asset", path, conversationId],
+      queryFn: async ({ signal }) =>
+        URL.createObjectURL(await fetchDocumentAsset(path, conversationId, signal)),
+      staleTime: isWorkspacePath(path, workspaces) ? Infinity : 0,
+      meta: { objectUrl: true },
+    }),
   /** The original of a workspace document, parsed for its *kind* of preview. */
   original: <K extends DocumentKind>(path: string, kind: K) =>
     queryOptions({
       queryKey: [...all, "original", path, kind],
-      queryFn: async ({ signal }) => parseOriginal[kind](await downloadOriginal(path, signal)),
+      queryFn: async ({ signal }) =>
+        parseOriginal[kind](await downloadOriginal(path, signal), signal),
+      meta: { objectUrl: kind === "pdf" },
     }),
   /**
    * The indexed line count of a document, `null` when the backend has none
@@ -665,9 +593,9 @@ export const documentQueries = {
 };
 
 /** One change to the description of an extracted asset. */
-type AssetDescriptionChange =
+export type AssetDescriptionChange =
   | { action: "save"; name: string; description: string }
-  | { action: "generate"; name: string; llm: LlmConfig }
+  | { action: "generate"; name: string }
   | { action: "delete"; name: string };
 
 /**
@@ -688,9 +616,8 @@ function refreshTrees(client: QueryClient, scopes: readonly string[] | "all") {
   );
 }
 
-/** A change to the tree of `scope`, whose rows at `paths` spin while it runs. */
+/** A change to the trees, whose rows at the canonical `paths` spin while it runs. */
 interface TreeChange {
-  scope: string;
   paths: readonly string[];
 }
 
@@ -698,18 +625,22 @@ function isTreeChange(variables: unknown): variables is TreeChange {
   return (
     typeof variables === "object" &&
     variables !== null &&
-    "scope" in variables &&
     "paths" in variables &&
     Array.isArray(variables.paths)
   );
 }
 
+/** The workspaces the canonical *paths* lie in, each once. */
+function scopesOf(paths: readonly string[]): string[] {
+  return [...new Set(paths.map((path) => splitScopePath(path).scope))];
+}
+
 /**
- * A mutation of the tree of its `scope`.  The change publishes what it did,
- * which refreshes every tree it touched, and the mutation stays pending until
- * this scope's read lands, so its rows spin until the tree shows the outcome.
- * A failure refreshes too, since the view may hold an entry the backend no
- * longer knows.
+ * A mutation of the trees its `paths` lie in.  This tab publishes what it did
+ * from the answer and the feed announces it to every other tab, which refreshes
+ * every tree it touched, and the mutation stays pending until those reads land, joining any in flight, so
+ * its rows spin until the trees show the outcome.  A failure refreshes too,
+ * since the view may hold an entry the backend no longer knows.
  */
 function treeMutation<V extends TreeChange>(
   action: string,
@@ -720,21 +651,15 @@ function treeMutation<V extends TreeChange>(
     mutationFn: async (variables: V, { client }) => {
       try {
         await change(variables, client);
-      } catch (error) {
-        await refreshTrees(client, [variables.scope]);
-        throw error;
+      } finally {
+        await Promise.all(
+          scopesOf(variables.paths).map((scope) =>
+            client.invalidateQueries({ queryKey: treeKey(scope) }, { cancelRefetch: false }),
+          ),
+        );
       }
-
-      await client.query(documentQueries.tree(variables.scope));
     },
   });
-}
-
-/** Apply workspace changes as one request and publish what the backend applied. */
-async function applyAndPublish(operations: ChangeOperation[]): Promise<void> {
-  // This tab's own feed skips the change, and what was sent is not what
-  // applied, so the response is what refreshes the scopes and moves kept paths.
-  publishWorkspaceChanged(await applyChanges(operations));
 }
 
 /** Submit a background job, show it in the tray, and wait for it to settle. */
@@ -744,78 +669,67 @@ async function runJob(submit: () => Promise<JobView>): Promise<void> {
   await awaitJobSettled(job.id);
 }
 
-/** Rows of *scope* that a pending mutation is changing, until its tree refreshes. */
-export function useMutatingPaths(scope: string): ReadonlySet<string> {
+/** Canonical paths that a pending mutation is changing, until their tree refreshes. */
+export function useMutatingPaths(): ReadonlySet<string> {
   const pending = useMutationState({
     filters: { mutationKey: [...all, "tree"], status: "pending" },
     select: ({ state }) => state.variables,
   });
 
-  return useMemo(
-    () =>
-      new Set(
-        pending.flatMap((variables) =>
-          isTreeChange(variables) && variables.scope === scope ? variables.paths : [],
-        ),
-      ),
-    [pending, scope],
-  );
+  return new Set(pending.flatMap((variables) => (isTreeChange(variables) ? variables.paths : [])));
 }
 
-const canonicalPaths = ({ scope, paths }: TreeChange) =>
-  paths.map((path) => canonicalPath(scope, path));
-
+/** Every mutation takes canonical paths, so one request may span workspaces. */
 export const documentMutations = {
-  /** Delete documents (`entry`) or directories (`dir`), refused for the other kind. */
+  /** Delete documents, and the directories among them as `dirs`, each refused for the other kind. */
   remove: () =>
-    treeMutation("remove", (change: TreeChange & { expect: DeleteKind }) =>
-      applyAndPublish(
-        canonicalPaths(change).map((path) => ({ kind: "delete", path, expect: change.expect })),
+    treeMutation("remove", ({ paths, dirs }: TreeChange & { dirs: ReadonlySet<string> }) =>
+      applyChanges(
+        paths.map((path) => ({ kind: "delete", path, expect: dirs.has(path) ? "dir" : "entry" })),
       ),
     ),
-  /**
-   * Move each path to its *destination* in `destScope`, which is the source
-   * scope for a rename or an in-place move.
-   */
+  /** Move each path to its canonical *destination*, in the same workspace or another one. */
   move: () =>
     treeMutation(
       "move",
-      ({
-        scope,
-        paths,
-        destScope,
-        destination,
-      }: TreeChange & { destScope: string; destination: (path: string) => string }) =>
-        applyAndPublish(
-          paths.map((source) => ({
-            kind: "move",
-            source: canonicalPath(scope, source),
-            destination: canonicalPath(destScope, destination(source)),
-          })),
+      ({ paths, destination }: TreeChange & { destination: (path: string) => string }) =>
+        applyChanges(
+          paths.map((source) => ({ kind: "move", source, destination: destination(source) })),
         ),
     ),
   /** Create the directories at `paths`, shown before the tree refresh lands. */
   createDir: () =>
-    treeMutation("create-dir", async (change: TreeChange, client) => {
-      await applyAndPublish(canonicalPaths(change).map((path) => ({ kind: "mkdir", path })));
-      client.setQueryData(
-        documentQueries.tree(change.scope).queryKey,
-        (tree) =>
-          tree && {
-            ...tree,
-            root: change.paths.reduce((root, path) => withDirectory(root, path), tree.root),
-          },
-      );
+    treeMutation("create-dir", async ({ paths }: TreeChange, client) => {
+      await applyChanges(paths.map((path) => ({ kind: "mkdir", path })));
+
+      const byScope = Map.groupBy(paths.map(splitScopePath), ({ scope }) => scope);
+
+      for (const [scope, dirs] of byScope) {
+        client.setQueryData(
+          documentQueries.tree(scope).queryKey,
+          (tree) =>
+            tree && {
+              ...tree,
+              root: dirs.reduce((root, { local }) => withDirectory(root, local), tree.root),
+            },
+        );
+      }
     }),
   /** Rechunk documents in a background job, their rows spinning until it settles. */
   rechunk: () =>
-    treeMutation("rechunk", (change: TreeChange & { spec?: PipelineSpec }) =>
-      runJob(() => rechunkDocuments(canonicalPaths(change), change.spec)),
-    ),
+    treeMutation("rechunk", ({ paths }: TreeChange) => runJob(() => rechunkDocuments([...paths]))),
+  /** Download originals, each at its canonical `path` under its `name`, one at a time so the browser sees no burst. */
+  downloadOriginals: () =>
+    mutationOptions({
+      mutationKey: [...all, "download-originals"],
+      mutationFn: async (originals: readonly { path: string; name: string }[]) => {
+        for (const { path, name } of originals) downloadBlob(await downloadOriginal(path), name);
+      },
+    }),
   /** Reconvert documents from their originals in a background job. */
   reconvert: () =>
-    treeMutation("reconvert", (change: TreeChange & { spec?: PipelineSpec; llm?: LlmConfig }) =>
-      runJob(() => reconvertDocuments(canonicalPaths(change), change.spec, change.llm)),
+    treeMutation("reconvert", ({ paths }: TreeChange) =>
+      runJob(() => reconvertDocuments([...paths])),
     ),
   /**
    * Write a document's markdown inline rather than as a job, `create` refusing
@@ -824,22 +738,12 @@ export const documentMutations = {
   write: () => ({
     ...treeMutation(
       "write",
-      async (
+      (
         change: TreeChange & {
           content: string;
-          chunking?: PipelineSpec["chunking"];
           mode?: "replace" | "create";
         },
-        client,
-      ) => {
-        await writeDocument(
-          canonicalPath(change.scope, change.paths[0] ?? ""),
-          change.content,
-          change.chunking,
-          change.mode,
-        );
-        await refreshTrees(client, [change.scope]);
-      },
+      ) => writeDocument(change.paths[0] ?? "", change.content, change.mode),
     ),
     meta: { inlineError: true },
   }),
@@ -851,7 +755,7 @@ export const documentMutations = {
           case "save":
             return updateAssetDescription(path, change.name, change.description);
           case "generate":
-            return generateAssetDescription(path, change.name, change.llm);
+            return generateAssetDescription(path, change.name);
           case "delete":
             return deleteAssetDescription(path, change.name);
         }
@@ -860,17 +764,34 @@ export const documentMutations = {
     }),
 };
 
+/** Whether *changed* moved, deleted, or replaced what lies at the canonical *path*. */
+function touches(changed: WorkspaceChanged, path: string): boolean {
+  return (
+    followPath(path, changed) !== path ||
+    changed.moves.some(({ destination }) => below(path, destination) !== null)
+  );
+}
+
 /**
  * Refetch the shown workspace queries of *client* whenever the workspace may
- * have changed: the trees of the scopes that did, and everything else.
+ * have changed: the trees of the scopes that did, and the queries of paths in
+ * them, so a burst of commits to one scope leaves the others' previews alone.
+ * Assets refetch only for a path a move or delete touched, since a change rarely
+ * rewrites an image in place and refetching every shown one is costly.
  * Returns the unsubscribe.
  */
 export function syncWorkspaceQueries(client: QueryClient): () => void {
-  return onWorkspaceStale((scopes) => {
-    void refreshTrees(client, scopes);
+  return onWorkspaceStale((changed) => {
+    void refreshTrees(client, changed === "all" ? "all" : changed.scopes);
     void client.invalidateQueries({
       queryKey: all,
-      predicate: ({ queryKey }) => queryKey[1] !== "tree",
+      predicate: ({ queryKey: [, kind, path] }) =>
+        kind !== "tree" &&
+        (changed === "all" ||
+          (typeof path === "string" &&
+            (kind === "asset"
+              ? touches(changed, path)
+              : changed.scopes.includes(splitScopePath(path).scope)))),
     });
   });
 }

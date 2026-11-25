@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, RotateCw, X } from "lucide-react";
 import type { TFunction } from "i18next";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ACTIVE_JOB_STATUSES, type JobView, jobMutations } from "@/api/jobs";
@@ -194,7 +194,7 @@ export function JobTray() {
   const uploadDismiss = useUploadQueue((s) => s.dismiss);
 
   // The tray is the only cue for background work, so it pops open the moment a
-  // new entry is added — an enqueued upload or a starting job — and the user
+  // new entry is added, an enqueued upload or a starting job, and the user
   // sees what is happening without hunting for the indicator. Both sources fire
   // a one-shot "added" event: onUploadAdded for the queue, and onJobStarted,
   // which already filters out the feed's reconnect re-seed so a page load with
@@ -214,16 +214,14 @@ export function JobTray() {
     };
   }, [start]);
 
-  const rows = useMemo(() => {
-    const uploadRows = Object.values(uploadMap).map((item) =>
+  const rows = [
+    ...Object.values(uploadMap).map((item) =>
       uploadRow(item, { retry, cancel: uploadCancel, dismiss: uploadDismiss }, t),
-    );
-    const jobRows = Object.values(jobsMap).map((job) =>
+    ),
+    ...Object.values(jobsMap).map((job) =>
       jobRow(job, { cancel: jobCancel, dismiss: jobDismiss }, t),
-    );
-
-    return [...uploadRows, ...jobRows].sort((a, b) => a.order - b.order);
-  }, [uploadMap, jobsMap, retry, uploadCancel, uploadDismiss, jobCancel, jobDismiss, t]);
+    ),
+  ].sort((a, b) => a.order - b.order);
 
   if (rows.length === 0) return null;
 
