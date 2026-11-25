@@ -6,21 +6,22 @@ pydantic-ai decides what a save appends, where a rewritten history branches,
 and which calls a paused run awaits.  A turn loads its conversation, runs on
 it, and saves it (:mod:`hivegent.server.routes.conversations`).
 
-pydantic-ai stamps the whole system prompt on every request it sends, so the
-conversation keeps the prompt its first request was sent under once, and a
-request sent under it is stored without it and read back with it.
+A request keeps its instructions in a column, only where they change
+(:class:`~..models.Message`), and a message travels as JSON text, which
+pydantic parses straight into the message.
 """
 
 import contextlib
+import sys
 from abc import ABC
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, override
+from typing import Annotated, Any, override
 from uuid import UUID
 
 from cachetools import LRUCache
-from pydantic import TypeAdapter
-from pydantic_ai import AgentRunResult, ModelMessagesTypeAdapter
+from pydantic import AfterValidator, ConfigDict, TypeAdapter
+from pydantic_ai import AgentRunResult
 from pydantic_ai.conversation import Conversation as RunConversation
 from pydantic_ai.conversation_store import (
     ConversationConflict,
@@ -33,9 +34,17 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
-from pydantic_ai.usage import RunUsage
-from pydantic_core import from_json, to_json
-from sqlalchemy import delete, event, func, literal, select, update
+from sqlalchemy import (
+    Nullable,
+    Select,
+    and_,
+    delete,
+    event,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
@@ -56,28 +65,6 @@ _NO_OWNER = "A conversation is stored with its owner as its scope."
 
 _TITLE_ONLY = "A conversation stores a title beside its record, no metadata."
 
-_USAGE = TypeAdapter(RunUsage)
-
-_DEFERRED = TypeAdapter(DeferredToolRequests)
-
-
-def _dump_message(message: ModelMessage, prompt: str | None = None) -> dict[str, Any]:
-    """The JSON of *message* as it is stored, a request sent under the conversation's *prompt* without it."""
-    payload = ModelMessagesTypeAdapter.dump_python([message], mode="json")[0]
-
-    if prompt is not None and payload.get("instructions") == prompt:
-        del payload["instructions"]
-
-    return payload
-
-
-def _load_message(payload: dict[str, Any], prompt: str | None = None) -> ModelMessage:
-    """A message from its stored JSON (:func:`_restored`), a request stored without instructions sent under *prompt*."""
-    if payload["kind"] == "request" and "instructions" not in payload:
-        payload = {**payload, "instructions": prompt}
-
-    return _restored(ModelMessagesTypeAdapter.validate_python([payload])[0])
-
 
 def _restored(message: ModelMessage) -> ModelMessage:
     """*message* decoded from JSON, its ``DataChunk`` tool output restored.
@@ -93,6 +80,28 @@ def _restored(message: ModelMessage) -> ModelMessage:
                     part.metadata = DataChunk.model_validate(part.metadata)
 
     return message
+
+
+# The config of `pydantic_ai.ModelMessagesTypeAdapter`, for one message rather than a list.
+_MESSAGE = TypeAdapter[ModelMessage](
+    Annotated[ModelMessage, AfterValidator(_restored)],
+    config=ConfigDict(
+        defer_build=True, ser_json_bytes="base64", val_json_bytes="base64"
+    ),
+)
+
+
+def _changes(message: ModelMessage, inherited: str | None) -> str | None:
+    """The instructions *message* stores, where it changes the *inherited* ones, ``''`` for none."""
+    if not isinstance(message, ModelRequest) or message.instructions == inherited:
+        return None
+
+    return sys.intern(message.instructions or "")
+
+
+def _in_effect(changes: str | None, inherited: str | None) -> str | None:
+    """The instructions in effect at a message storing *changes* below *inherited*."""
+    return inherited if changes is None else changes or None
 
 
 def _announce(s: AsyncSession, owner: str) -> None:
@@ -126,51 +135,128 @@ def _still_pending(
     return None if answered & awaited else pending
 
 
-def _uuid(value: str | None) -> UUID | None:
-    return None if value is None else UUID(value)
-
-
-def _uuid_text(value: UUID | None) -> str | None:
-    return None if value is None else str(value)
-
-
 def _record(row: Conversation) -> ConversationRecord:
     return ConversationRecord(
         conversation_id=str(row.id),
-        head_id=_uuid_text(row.head_id),
-        usage=_USAGE.validate_python(row.usage) if row.usage else RunUsage(),
-        deferred_tool_requests=None
-        if row.deferred_tool_requests is None
-        else _DEFERRED.validate_python(row.deferred_tool_requests),
+        head_id=row.head_id,
+        usage=row.usage,
+        deferred_tool_requests=row.deferred_tool_requests,
         scope=row.user_id,
         title=row.title,
-        forked_from=_uuid_text(row.forked_from),
-        forked_at=_uuid_text(row.forked_at),
+        forked_from=row.forked_from,
+        forked_at=row.forked_at,
         branches=list(row.branches),
         revision=row.revision,
         updated_at=row.updated_at,
     )
 
 
-def _entry(row: Message, prompt: str | None) -> ConversationEntry:
-    return ConversationEntry(
-        id=str(row.id),
-        parent_id=_uuid_text(row.parent_id),
-        message=_load_message(row.payload, prompt),
-    )
-
-
 @dataclass(frozen=True, slots=True)
-class _Cached:
-    """A stored message as the cache keeps it, its JSON as stored."""
+class _Stored:
+    """A stored message, with the instructions it changes and the ones in effect at it."""
 
-    conversation_id: UUID
+    id: str
     parent_id: str | None
-    payload: bytes
+    payload: str
+    changes: str | None
+    instructions: str | None
+
+    def entry(self) -> ConversationEntry:
+        message = _MESSAGE.validate_json(self.payload)
+
+        if isinstance(message, ModelRequest):
+            message.instructions = self.instructions
+
+        return ConversationEntry(id=self.id, parent_id=self.parent_id, message=message)
+
+    def row(self, conversation_id: UUID) -> Message:
+        return Message(
+            id=self.id,
+            conversation_id=conversation_id,
+            parent_id=self.parent_id,
+            payload=self.payload,
+            instructions=self.changes,
+        )
 
 
-type _Stored = tuple[str, str | None, dict[str, Any]]
-"""A stored message: its id, its parent's id, and its JSON as stored."""
+def _stored_entries(
+    entries: Iterable[ConversationEntry], in_effect: Mapping[str, str | None]
+) -> list[_Stored]:
+    """*entries* as stored, the instructions in effect at a parent outside them read from *in_effect*."""
+    in_effect = dict(in_effect)
+    stored: list[_Stored] = []
+
+    for entry in entries:
+        inherited = None if entry.parent_id is None else in_effect[entry.parent_id]
+        changes = _changes(entry.message, inherited)
+        in_effect[entry.id] = _in_effect(changes, inherited)
+        payload = _MESSAGE.dump_json(entry.message, exclude={"instructions"}).decode()
+        stored.append(
+            _Stored(entry.id, entry.parent_id, payload, changes, in_effect[entry.id])
+        )
+
+    return stored
+
+
+type _PathRow = tuple[str, str | None, str | None, str | None, int]
+"""A message on a path: its id, its parent's id, the instructions it changes, its JSON as text unless above the window, and its depth."""
+
+
+def _path_query(head_id: str, limit: int | None) -> Select[*_PathRow]:
+    """The messages up to *head_id*, or only the last *limit* of them, in one recursive query.
+
+    Above the last *limit*, the walk goes on to the nearest request changing
+    the instructions, which are in effect at the first of them, without its JSON.
+    """
+    anchor = (
+        select(
+            Message.id,
+            Message.parent_id,
+            Message.instructions,
+            literal(0).label("depth"),
+        )
+        .where(Message.id == head_id)
+        .cte(recursive=True)
+    )
+    parent = aliased(Message)
+    step = select(
+        parent.id, parent.parent_id, parent.instructions, anchor.c.depth + 1
+    ).where(parent.id == anchor.c.parent_id)
+
+    if limit is None:
+        path = anchor.union_all(step)
+        joined = Message.id == path.c.id
+    else:
+        path = anchor.union_all(
+            step.where(or_(anchor.c.depth + 1 < limit, anchor.c.instructions.is_(None)))
+        )
+        joined = and_(Message.id == path.c.id, path.c.depth < limit)
+
+    return select(
+        path.c.id,
+        path.c.parent_id,
+        path.c.instructions,
+        Nullable(Message.payload),
+        path.c.depth,
+    ).outerjoin(Message, joined)
+
+
+def _fold(path: Iterable[_PathRow]) -> list[_Stored]:
+    """The messages of *path* within its window, root first, with the instructions in effect at each."""
+    stored: list[_Stored] = []
+    inherited: str | None = None
+
+    for entry_id, parent_id, stored_changes, payload, _ in sorted(
+        path, key=lambda row: row[4], reverse=True
+    ):
+        # Interned, so the cache keeps one string per prompt.
+        changes = None if stored_changes is None else sys.intern(stored_changes)
+        inherited = _in_effect(changes, inherited)
+
+        if payload is not None:
+            stored.append(_Stored(entry_id, parent_id, payload, changes, inherited))
+
+    return stored
 
 
 def _owner(scope: str | None) -> str:
@@ -239,72 +325,71 @@ class PostgresConversationStore(OwnedConversationStore):
     record keeps the title it was claimed with or set to since
     (:meth:`write_details`).
 
-    The messages it reads or writes stay cached as stored, up to
-    *cache_bytes* of the least recently used, and the system prompts of their
-    conversations up to *prompt_cache_bytes*, so a history read again needs
-    no query.  A stored message never changes and its id is never reused, and
-    a conversation's prompt is set once by the save that first carries one,
-    so neither is ever stale.  A deleted conversation's messages may linger
-    there until dropped, reachable only through a record naming them, which
-    went with it.
+    The messages it reads or writes stay cached as stored, with the
+    instructions in effect at each, up to *cache_bytes* of the least recently
+    used, so a history read again needs no query.  A stored message never
+    changes and its id is never reused, so it is never stale.  A deleted
+    conversation's messages may linger there until dropped, reachable only
+    through a record naming them, which went with it.
     """
 
     cache_bytes: int = 64 * 2**20
-    prompt_cache_bytes: int = 8 * 2**20
-    _cache: LRUCache[str, _Cached] = field(init=False)
-    _prompts: LRUCache[UUID, str | None] = field(init=False)
+    _cache: LRUCache[str, _Stored] = field(init=False)
 
     def __post_init__(self) -> None:
         self._cache = LRUCache(
-            self.cache_bytes, getsizeof=lambda cached: len(cached.payload)
-        )
-        self._prompts = LRUCache(
-            self.prompt_cache_bytes, getsizeof=lambda prompt: 1 + len(prompt or "")
+            self.cache_bytes,
+            getsizeof=lambda stored: len(stored.payload) + len(stored.changes or ""),
         )
 
-    def _keep(
-        self, conversation_id: UUID, prompt: str | None, stored: Iterable[_Stored]
-    ) -> None:
-        """Cache the *stored* messages of *conversation_id* and its *prompt*, except one exceeding its budget alone."""
-        with contextlib.suppress(ValueError):
-            self._prompts[conversation_id] = prompt
-
-        for entry_id, parent_id, payload in stored:
+    def _keep(self, stored: Iterable[_Stored]) -> None:
+        """Cache the *stored* messages, except one exceeding the budget alone."""
+        for message in stored:
             with contextlib.suppress(ValueError):
-                self._cache[entry_id] = _Cached(
-                    conversation_id, parent_id, to_json(payload)
-                )
+                self._cache[message.id] = message
 
-    def _cached_history(
+    def _cached_path(
         self, head_id: str, limit: int | None
-    ) -> list[ConversationEntry] | None:
-        """:meth:`read_history` from the cache, ``None`` unless it holds every entry and their prompt.
-
-        Each entry is decoded afresh, so a caller may change its message.
-        """
-        path: list[tuple[str, _Cached]] = []
+    ) -> tuple[list[_Stored], str | None]:
+        """The cached messages up to *head_id*, newest first, or the last *limit* of them, and the id of the first one it misses."""
+        path: list[_Stored] = []
         entry_id: str | None = head_id
 
         while entry_id is not None and (limit is None or len(path) < limit):
             if (cached := self._cache.get(entry_id)) is None:
-                return None
+                return path, entry_id
 
-            path.append((entry_id, cached))
+            path.append(cached)
             entry_id = cached.parent_id
 
-        try:
-            prompt = self._prompts[path[0][1].conversation_id]
-        except KeyError:
-            return None
+        return path, None
 
-        return [
-            ConversationEntry(
-                id=entry_id,
-                parent_id=cached.parent_id,
-                message=_load_message(from_json(cached.payload), prompt),
-            )
-            for entry_id, cached in reversed(path)
-        ]
+    async def _read_path(self, head_id: str, limit: int | None) -> list[_Stored]:
+        """The stored messages up to *head_id*, root first, or only the last *limit* of them.
+
+        Raises:
+            LookupError: If no message is stored as *head_id*.
+        """
+        async with session() as s:
+            stored = _fold((await s.execute(_path_query(head_id, limit))).tuples())
+
+        if not stored or stored[-1].id != head_id:
+            raise LookupError(head_id)
+
+        self._keep(stored)
+
+        return stored
+
+    async def _instructions_at(self, entry_id: str) -> str | None:
+        """The instructions in effect at *entry_id*, which its children inherit.
+
+        Raises:
+            LookupError: If no message is stored as *entry_id*.
+        """
+        if (cached := self._cache.get(entry_id)) is not None:
+            return cached.instructions
+
+        return (await self._read_path(entry_id, 1))[-1].instructions
 
     @override
     async def save(
@@ -380,91 +465,71 @@ class PostgresConversationStore(OwnedConversationStore):
             raise UserError(_NO_OWNER)
 
         key = UUID(record.conversation_id)
-        # The prompt of the first request the conversation stores, kept once.
-        first = next(
-            (
-                message.instructions
-                for entry in new_entries
-                if isinstance(message := entry.message, ModelRequest)
-                and message.instructions is not None
-            ),
-            None,
-        )
+        new_ids = {entry.id for entry in new_entries}
+
+        try:
+            stored = _stored_entries(
+                new_entries,
+                {
+                    parent_id: await self._instructions_at(parent_id)
+                    for entry in new_entries
+                    if (parent_id := entry.parent_id) is not None
+                    and parent_id not in new_ids
+                },
+            )
+        except LookupError as error:
+            raise ConversationConflict(record.conversation_id) from error
+
         values = {
             "user_id": record.scope,
             "revision": record.revision,
-            "head_id": _uuid(record.head_id),
+            "head_id": record.head_id,
             "branches": list(record.branches),
-            "usage": _USAGE.dump_python(record.usage, mode="json"),
-            "deferred_tool_requests": None
-            if record.deferred_tool_requests is None
-            else _DEFERRED.dump_python(record.deferred_tool_requests, mode="json"),
-            "forked_from": _uuid(record.forked_from),
-            "forked_at": _uuid(record.forked_at),
+            "usage": record.usage,
+            "deferred_tool_requests": record.deferred_tool_requests,
+            "forked_from": record.forked_from,
+            "forked_at": record.forked_at,
             "updated_at": record.updated_at,
         }
-        new_ids = {entry.id for entry in new_entries}
 
         async with session() as s:
             if expected_revision is None:
                 await ensure_user(s, record.scope)
-                written = (
-                    await s.execute(
-                        pg_insert(Conversation)
-                        .values(
-                            id=key, title=record.title, instructions=first, **values
-                        )
-                        .on_conflict_do_nothing()
-                        .returning(Conversation.instructions)
-                    )
-                ).one_or_none()
+                written = await s.scalar(
+                    pg_insert(Conversation)
+                    .values(id=key, title=record.title, **values)
+                    .on_conflict_do_nothing()
+                    .returning(Conversation.id)
+                )
             else:
-                written = (
-                    await s.execute(
-                        update(Conversation)
-                        .where(
-                            Conversation.id == key,
-                            Conversation.revision == expected_revision,
-                        )
-                        .values(
-                            instructions=func.coalesce(
-                                Conversation.instructions, first
-                            ),
-                            **values,
-                        )
-                        .returning(Conversation.instructions)
+                written = await s.scalar(
+                    update(Conversation)
+                    .where(
+                        Conversation.id == key,
+                        Conversation.revision == expected_revision,
                     )
-                ).one_or_none()
+                    .values(**values)
+                    .returning(Conversation.id)
+                )
 
             if written is None:
                 raise ConversationConflict(record.conversation_id)
 
-            prompt = written.instructions
-            stored = [
-                (entry.id, entry.parent_id, _dump_message(entry.message, prompt))
-                for entry in new_entries
-            ]
-
-            for entry_id, parent_id, payload in stored:
-                s.add(
-                    Message(
-                        id=UUID(entry_id),
-                        conversation_id=key,
-                        parent_id=_uuid(parent_id),
-                        payload=payload,
-                    )
-                )
+            s.add_all(message.row(key) for message in stored)
 
             if (
                 record.head_id is not None
                 and record.head_id not in new_ids
-                and await s.get(Message, UUID(record.head_id)) is None
+                and await s.scalar(
+                    select(Message.id).where(Message.id == record.head_id)
+                )
+                is None
             ):
                 raise ConversationConflict(record.conversation_id)
 
             _announce(s, record.scope)
 
-        self._keep(key, prompt, stored)
+        self._keep(stored)
 
     @override
     async def write_details(
@@ -528,21 +593,7 @@ class PostgresConversationStore(OwnedConversationStore):
 
     @override
     async def read_entry(self, entry_id: str) -> ConversationEntry:
-        async with session() as s:
-            row = (
-                await s.execute(
-                    select(Message, Conversation.instructions)
-                    .join(Conversation, Conversation.id == Message.conversation_id)
-                    .where(Message.id == UUID(entry_id))
-                )
-            ).one_or_none()
-
-        if row is None:
-            raise LookupError(entry_id)
-
-        message, prompt = row.tuple()
-
-        return _entry(message, prompt)
+        return (await self.read_history(entry_id, limit=1))[0]
 
     @override
     async def read_history(
@@ -552,48 +603,16 @@ class PostgresConversationStore(OwnedConversationStore):
         if head_id is None or limit == 0:
             return []
 
-        if (cached := self._cached_history(head_id, limit)) is not None:
-            return cached
-
-        anchor = (
-            select(Message.id, Message.parent_id, literal(0).label("depth"))
-            .where(Message.id == UUID(head_id))
-            .cte(recursive=True)
-        )
-        parent = aliased(Message)
-        step = select(parent.id, parent.parent_id, anchor.c.depth + 1).where(
-            parent.id == anchor.c.parent_id
-        )
-        path = anchor.union_all(
-            step if limit is None else step.where(anchor.c.depth + 1 < limit)
-        )
-
-        async with session() as s:
-            rows = (
-                await s.scalars(
-                    select(Message)
-                    .join(path, path.c.id == Message.id)
-                    .order_by(path.c.depth.desc())
-                )
-            ).all()
-
-            if not rows or str(rows[-1].id) != head_id:
-                raise LookupError(head_id)
-
-            conversation_id = rows[0].conversation_id
-            prompt = await s.scalar(
-                select(Conversation.instructions).where(
-                    Conversation.id == conversation_id
-                )
+        path, missed = self._cached_path(head_id, limit)
+        older = (
+            []
+            if missed is None
+            else await self._read_path(
+                missed, None if limit is None else limit - len(path)
             )
-
-        self._keep(
-            conversation_id,
-            prompt,
-            ((str(row.id), _uuid_text(row.parent_id), row.payload) for row in rows),
         )
 
-        return [_entry(row, prompt) for row in rows]
+        return [message.entry() for message in (*older, *reversed(path))]
 
 
 store = PostgresConversationStore()

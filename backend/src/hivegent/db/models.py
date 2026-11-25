@@ -19,20 +19,27 @@ transaction (see :mod:`hivegent.retrieval`).
 
 import enum
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import Any, ClassVar, override
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from cbrkit.indexable import PGVECTOR, TSVECTOR, tsvector_computed
+from pydantic import TypeAdapter
+from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.usage import RunUsage
 from sqlalchemy import (
     CheckConstraint,
+    ColumnElement,
     Enum,
     ForeignKey,
     Index,
     MetaData,
+    Text,
     UniqueConstraint,
+    cast,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -40,7 +47,7 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
 )
-from sqlalchemy.types import DateTime, TypeEngine
+from sqlalchemy.types import DateTime, TypeDecorator, TypeEngine, Uuid
 
 from ..config import settings
 
@@ -53,12 +60,15 @@ __all__ = [
     "EntryKind",
     "GeneratedBy",
     "Group",
+    "JSONText",
     "McpConfirmation",
     "Memory",
     "Message",
     "Origin",
+    "PydanticJSONB",
     "Source",
     "SourceItem",
+    "StoreId",
     "Timestamped",
     "User",
     "Workspace",
@@ -81,6 +91,48 @@ type _TypeEngineArg = type[TypeEngine[Any]] | TypeEngine[Any]
 """What a ``type_annotation_map`` entry maps to: an engine class or instance."""
 
 
+class PydanticJSONB[T](TypeDecorator[T]):
+    """JSONB holding a value of a pydantic type, dumped on write and validated on read, ``None`` as SQL ``NULL``."""
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, adapter: TypeAdapter[T]) -> None:
+        super().__init__(none_as_null=True)
+        self.adapter = adapter
+
+    @override
+    def process_bind_param(self, value: T | None, dialect: Dialect) -> Any:
+        return None if value is None else self.adapter.dump_python(value, mode="json")
+
+    @override
+    def process_result_value(self, value: Any, dialect: Dialect) -> T | None:
+        return None if value is None else self.adapter.validate_python(value)
+
+
+class JSONText(TypeDecorator[str]):
+    """JSONB read and written as JSON text, so a caller parses it once and the driver never does."""
+
+    impl = JSONB
+    cache_ok = True
+
+    @override
+    def bind_processor(self, dialect: Dialect) -> None:
+        return None
+
+    @override
+    def result_processor(self, dialect: Dialect, coltype: object) -> None:
+        return None
+
+    @override
+    def column_expression(self, column: ColumnElement[str]) -> ColumnElement[str]:
+        return cast(column, Text)
+
+
+type StoreId = str
+"""An id pydantic-ai's conversation store names as text, a UUID stored as ``uuid``."""
+
+
 class Base(DeclarativeBase):
     """Typed declarative base with portable annotation map."""
 
@@ -89,6 +141,10 @@ class Base(DeclarativeBase):
         datetime: DateTime(timezone=True),
         dict[str, Any]: JSONB,
         list[str]: JSONB,
+        StoreId: Uuid(as_uuid=False),
+        list[StoreId]: ARRAY(Uuid(as_uuid=False)),
+        RunUsage: PydanticJSONB(TypeAdapter(RunUsage)),
+        DeferredToolRequests: PydanticJSONB(TypeAdapter(DeferredToolRequests)),
     }
 
 
@@ -266,14 +322,13 @@ class Memory(Timestamped, Base):
 class Conversation(Timestamped, Base):
     """A conversation, the record a :class:`~pydantic_ai.conversation_store.ConversationStore` keeps.
 
-    The record columns mirror ``ConversationRecord``: ``head_id`` is the
+    The record columns mirror ``ConversationRecord`` in its own types, so a
+    row and a record convert field by field: ``head_id`` is the
     newest message of the active history, ``branches`` the last messages of
     the histories it left, ``deferred_tool_requests`` the calls a paused run
     awaits, ``usage`` what every run spent, and ``revision`` the token a save
     checks, so a concurrent writer cannot overwrite it unnoticed.  The owner
-    is the store's ``scope``, and the title is the app's own, as are the
-    ``instructions`` its first request was sent under, stored once rather
-    than on every request sent under them, and loaded only with a history.  ``head_id``
+    is the store's ``scope``, and the title is the app's own.  ``head_id``
     carries no foreign key, so the two tables do not reference each other in
     a cycle, and the store checks it names a stored message.
     """
@@ -286,13 +341,12 @@ class Conversation(Timestamped, Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     revision: Mapped[str]
     title: Mapped[str | None]
-    head_id: Mapped[UUID | None]
-    branches: Mapped[list[str]] = mapped_column(default=list, server_default="[]")
-    usage: Mapped[dict[str, Any]] = mapped_column(default=dict, server_default="{}")
-    deferred_tool_requests: Mapped[dict[str, Any] | None]
-    instructions: Mapped[str | None] = mapped_column(deferred=True)
-    forked_from: Mapped[UUID | None]
-    forked_at: Mapped[UUID | None]
+    head_id: Mapped[StoreId | None]
+    branches: Mapped[list[StoreId]] = mapped_column(default=list, server_default="{}")
+    usage: Mapped[RunUsage] = mapped_column(server_default="{}")
+    deferred_tool_requests: Mapped[DeferredToolRequests | None]
+    forked_from: Mapped[StoreId | None]
+    forked_at: Mapped[StoreId | None]
 
     user: Mapped[User] = relationship(back_populates="conversations")
     messages: Mapped[list[Message]] = relationship(
@@ -309,20 +363,24 @@ class Message(Base):
     never changed or moved once stored: editing or regenerating a turn stores
     the new turn beside the old one, which stays a branch.  The id is minted
     by the store, apart from the id the client knows the message by, which
-    rides in the message's own metadata.
+    rides in the message's own metadata.  The payload never holds the
+    instructions a request was sent under: ``instructions`` does where they
+    differ from the ones in effect at its parent, ``''`` for none, which
+    pydantic-ai never sends as text, and every message below inherits them.
     """
 
     __tablename__ = "messages"
     __table_args__ = (Index(None, "conversation_id"), Index(None, "parent_id"))
 
-    id: Mapped[UUID] = mapped_column(primary_key=True)
+    id: Mapped[StoreId] = mapped_column(primary_key=True)
     conversation_id: Mapped[UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE")
     )
-    parent_id: Mapped[UUID | None] = mapped_column(
+    parent_id: Mapped[StoreId | None] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE")
     )
-    payload: Mapped[dict[str, Any]]
+    payload: Mapped[str] = mapped_column(JSONText)
+    instructions: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(
         default=_now, server_default=sa.func.now()
     )

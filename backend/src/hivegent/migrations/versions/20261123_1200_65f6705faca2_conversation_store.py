@@ -14,9 +14,9 @@ a reply the id of the reply's first message, and a compaction stored ahead of
 a prompt its own.  The paused requests a response carried move to the record.
 Conversations keep their ids, so links keep working.
 
-pydantic-ai stamps the whole system prompt on every request, so the record
-keeps the prompt of the conversation's first request once, as ``instructions``,
-and a request sent under it stores none.
+pydantic-ai stamps the whole system prompt on every request, so it moves out
+of the payload into ``messages.instructions``, kept only where it differs
+from the one in effect at the message's parent, ``''`` for none.
 
 The return of a call that delegated to a subagent stored the subagent's whole
 history as a ``data-subagent-history`` part, while the client renders only its
@@ -39,7 +39,7 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 revision: str = "65f6705faca2"
 down_revision: str | Sequence[str] | None = "e3f4a5b6c7d8"
@@ -69,6 +69,7 @@ class Entry:
     id: UUID
     parent_id: UUID | None
     payload: dict[str, Any]
+    instructions: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +79,6 @@ class Record:
     head_id: UUID | None
     branches: list[UUID]
     deferred_tool_requests: dict[str, Any] | None
-    instructions: str | None
     entries: list[Entry]
 
 
@@ -128,16 +128,27 @@ def _transcript(part: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _instructions(nodes: Sequence[Node]) -> str | None:
-    """The prompt of the first request, a root before any other, as creation times tie within a turn."""
-    requests = [
-        node.payload["instructions"]
-        for node in sorted(nodes, key=lambda node: node.parent_id is not None)
-        if node.payload["kind"] == "request"
-        and node.payload.get("instructions") is not None
-    ]
+def _in_effect(by_id: Mapping[UUID, Node]) -> dict[UUID, str | None]:
+    """The instructions in effect at each message, its own for a request, else its parent's."""
+    in_effect: dict[UUID, str | None] = {}
 
-    return requests[0] if requests else None
+    for node in by_id.values():
+        chain: list[Node] = []
+        walk: UUID | None = node.id
+
+        while walk is not None and walk not in in_effect:
+            chain.append(by_id[walk])
+            walk = by_id[walk].parent_id
+
+        inherited = None if walk is None else in_effect[walk]
+
+        for member in reversed(chain):
+            if member.payload["kind"] == "request":
+                inherited = member.payload.get("instructions")
+
+            in_effect[member.id] = inherited
+
+    return in_effect
 
 
 def _pending(path: Sequence[Node]) -> dict[str, Any] | None:
@@ -199,9 +210,8 @@ def record(nodes: Sequence[Node]) -> Record:
     own, and every other message that of the reply it opened or belongs to.
     A compaction stored ahead of a prompt showed at the end of the reply
     before it, so it keeps showing there.  The paused requests a response
-    carried move to the record, as does the prompt of the first request, which
-    the requests sent under it drop, and each subagent history becomes its
-    transcript.
+    carried move to the record, the instructions a request changes to move
+    to the entry, and each subagent history becomes its transcript.
 
     Raises:
         ValueError: If the messages' parents form a cycle.
@@ -210,7 +220,6 @@ def record(nodes: Sequence[Node]) -> Record:
     parents = {node.parent_id for node in nodes}
     leaves = [node.id for node in nodes if node.id not in parents]
     ids = {node.id: uuid4() for node in nodes}
-    instructions = _instructions(nodes)
     ui_ids: dict[UUID, str] = {}
 
     def opens(node: Node) -> bool:
@@ -219,6 +228,7 @@ def record(nodes: Sequence[Node]) -> Record:
         return _is_prompt(node.payload) or parent is None or _is_prompt(parent.payload)
 
     _check_rooted(by_id)
+    in_effect = _in_effect(by_id)
 
     # Each message walks up to the message opening its UI message, once.
     for node in nodes:
@@ -233,6 +243,14 @@ def record(nodes: Sequence[Node]) -> Record:
 
         for member in chain:
             ui_ids[member.id] = top
+
+    def changes(node: Node) -> str | None:
+        inherited = None if node.parent_id is None else in_effect[node.parent_id]
+
+        if node.payload["kind"] != "request" or in_effect[node.id] == inherited:
+            return None
+
+        return in_effect[node.id] or ""
 
     def path(leaf: UUID | None) -> list[Node]:
         chain: list[Node] = []
@@ -254,14 +272,8 @@ def record(nodes: Sequence[Node]) -> Record:
             _UI_MESSAGE_ID: ui_ids[node.id],
         }
 
-        stored = {
-            k: v
-            for k, v in node.payload.items()
-            if k != "instructions" or v != instructions
-        }
-
         return {
-            **stored,
+            **{k: v for k, v in node.payload.items() if k != "instructions"},
             "metadata": {**metadata, _NAMESPACE: namespace},
             "parts": [_transcript(part) for part in node.payload["parts"]],
         }
@@ -272,13 +284,13 @@ def record(nodes: Sequence[Node]) -> Record:
         head_id=None if head is None else ids[head],
         branches=[ids[leaf] for leaf in leaves[:-1]],
         deferred_tool_requests=_pending(path(head)),
-        instructions=instructions,
         entries=[
             Entry(
                 old_id=node.id,
                 id=ids[node.id],
                 parent_id=None if node.parent_id is None else ids[node.parent_id],
                 payload=payload(node),
+                instructions=changes(node),
             )
             for node in nodes
         ],
@@ -309,7 +321,7 @@ def _rewrite() -> None:
             bind.execute(
                 sa.text(
                     "UPDATE messages SET id = :id, parent_id = :parent_id, "
-                    "payload = CAST(:payload AS jsonb) "
+                    "payload = CAST(:payload AS jsonb), instructions = :instructions "
                     "WHERE conversation_id = :c AND id = :old_id"
                 ),
                 [
@@ -317,6 +329,7 @@ def _rewrite() -> None:
                         "id": entry.id,
                         "parent_id": entry.parent_id,
                         "payload": json.dumps(entry.payload),
+                        "instructions": entry.instructions,
                         "c": conversation_id,
                         "old_id": entry.old_id,
                     }
@@ -327,18 +340,17 @@ def _rewrite() -> None:
         bind.execute(
             sa.text(
                 "UPDATE conversations SET head_id = :head_id, "
-                "branches = CAST(:branches AS jsonb), "
+                "branches = :branches, "
                 "deferred_tool_requests = CAST(:deferred AS jsonb), "
-                "instructions = :instructions, revision = :revision "
+                "revision = :revision "
                 "WHERE id = :c"
-            ),
+            ).bindparams(sa.bindparam("branches", type_=ARRAY(sa.Uuid()))),
             {
                 "head_id": stored.head_id,
-                "branches": json.dumps([str(tip) for tip in stored.branches]),
+                "branches": stored.branches,
                 "deferred": None
                 if stored.deferred_tool_requests is None
                 else json.dumps(stored.deferred_tool_requests),
-                "instructions": stored.instructions,
                 "revision": str(uuid4()),
                 "c": conversation_id,
             },
@@ -350,7 +362,7 @@ def upgrade() -> None:
     op.add_column("conversations", sa.Column("head_id", sa.Uuid(), nullable=True))
     op.add_column(
         "conversations",
-        sa.Column("branches", JSONB(), nullable=False, server_default="[]"),
+        sa.Column("branches", ARRAY(sa.Uuid()), nullable=False, server_default="{}"),
     )
     op.add_column(
         "conversations",
@@ -361,9 +373,7 @@ def upgrade() -> None:
     )
     op.add_column("conversations", sa.Column("forked_from", sa.Uuid(), nullable=True))
     op.add_column("conversations", sa.Column("forked_at", sa.Uuid(), nullable=True))
-    op.add_column(
-        "conversations", sa.Column("instructions", sa.String(), nullable=True)
-    )
+    op.add_column("messages", sa.Column("instructions", sa.String(), nullable=True))
 
     op.drop_constraint(
         op.f("fk_messages_conversation_id_parent_id_messages"),

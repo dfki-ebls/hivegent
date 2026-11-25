@@ -147,8 +147,8 @@ The first boot rewrites every message id of the database, since the conversation
 Back up the database and the data directory together before starting the new version, the only way back is the backup, and restore them together, since the files on disk and the rows describe each other.
 Conversations keep their ids, so links keep working.
 Changes staged for approval and still pending across the upgrade are dropped and answer as expired, so ask for them again.
-Conversations now store their system prompt once, in `conversations.instructions`, and the requests sent under it are stored without it, which roughly halves the storage of conversations.
-Its migration moves the existing prompts and rewrites every request row.
+Requests now store their system prompt only where it differs from the one before them in their conversation, which roughly halves the storage of conversations.
+Its migration rewrites every request row.
 These one-time rewrites leave `messages` about twice its size until vacuumed.
 Run `VACUUM (ANALYZE) messages` once after the first boot to make the space reusable, which keeps conversations available.
 `VACUUM FULL messages` or pg_repack returns it to the system, but the first locks conversations while it runs, so plan downtime for it.

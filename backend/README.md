@@ -367,10 +367,13 @@ A conversation keeps no other `metadata`.
 pydantic-ai reads a missing `scope` as every owner's, so the store refuses one for every read, list, and save, and only `owner_of`, the ownership check's read, names none.
 Messages are never changed or moved once stored and their ids are minted by the store, while the id the client knows a message by rides in its metadata where pydantic-ai's UI adapters keep it (`turns.stamp`), so `dump_messages` gives it back and the adapter's server-held history matches a resubmitted message by it.
 A message names the conversation that stored it, so deleting a conversation deletes its messages, since nothing forks one.
-`read_history` walks a history up from its head in one recursive query.
-pydantic-ai stamps the whole system prompt on every request, about 21k characters, so a conversation keeps the prompt of its first request once, in `Conversation.instructions`, and a request sent under it is stored without its `instructions` key and read back with the prompt, while one sent under another prompt keeps its own (migration `65f6705faca2` converted the stored ones).
-Stored messages never change and a conversation's prompt is set once, so the store keeps the messages it reads or writes in a `cachetools.LRUCache` bounded to 64 MiB of stored JSON, and their prompts in one of 8 MiB, and a history it holds whole needs no query.
-The ownership check reads `user_id` alone, and the prompt is a deferred column, loaded only with a history.
+The columns hold the record's own types, the ids as text over `uuid` (`models.StoreId`) and `usage` and `deferred_tool_requests` through `models.PydanticJSONB`, so a row and a record convert field by field.
+A message travels as JSON text (`models.JSONText`), which pydantic parses straight into the message and the cache keeps as read.
+pydantic-ai stamps the whole system prompt on every request, about 21k characters, so the payload never holds it: `messages.instructions` does where a request changes it, `''` for none, and every message below inherits it, so a conversation stores each prompt once per change on each branch and stays self-contained.
+A prompt changes when pydantic-ai opens a new instruction window, at a compaction or a change of mode, assistant, or language, and pydantic-ai rebuilds a paused turn's prefix from the instructions its last request recorded, so they read back exactly as sent.
+`read_history` walks a history up from its head in one recursive query over ids and that column alone, joining the payloads of its window, and a window of the last messages walks on up to the nearest change, which its first one inherits.
+Stored messages never change, so the store keeps the messages it reads or writes, with the instructions in effect at each, in a `cachetools.LRUCache` bounded to 64 MiB of JSON and changed instructions, interned so a prompt is held once, and a read queries only the older messages the cache misses.
+The ownership check reads `user_id` alone.
 
 A turn loads its conversation, runs on its history, and saves it with the turn's messages appended (`routes.conversations.compaction._save`).
 The client sends only its new message plus `trigger` and `messageId`, and the history always comes from the store.

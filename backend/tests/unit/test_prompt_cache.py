@@ -12,7 +12,7 @@ from typing import Any
 import httpx2
 import pytest
 from pydantic_ai import FunctionToolset, ModelRetry, models
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.usage import UsageLimits
 
 import hivegent.llm as llm_module
@@ -21,14 +21,14 @@ from hivegent.agents.app import chat_agent, turn_usage_limits
 from hivegent.agents.capabilities import build_capabilities
 from hivegent.agents.common import UserDeps
 from hivegent.config.llm import InferenceProvider, LlmProviderSettings
-from hivegent.db.conversations.postgres import _dump_message, _load_message
+from hivegent.db.conversations.postgres import _stored_entries
 from hivegent.llm import create_openai_chat_model
 from hivegent.prompts import FENCE_TAG, compose_instructions
 from hivegent.security import OperatorUrl
 from hivegent.shared.l10n import Localized
 from hivegent.store import User
 from hivegent.types import Mode
-from tests.helpers import in_run, owned
+from tests.helpers import chain, in_run, owned
 
 type Payload = dict[str, Any]
 
@@ -122,7 +122,7 @@ async def test_each_request_extends_the_previous_one(
         raise ModelRetry("still broken")
 
     turns: list[int] = []
-    stored: list[Payload] = []
+    stored: list[str | None] = []
 
     async def turn(
         history: Sequence[ModelMessage],
@@ -154,13 +154,11 @@ async def test_each_request_extends_the_previous_one(
         assert not replies
 
         # Every turn starts from the stored conversation, as a chat turn does,
-        # which keeps the prompt of its first request once.
-        messages = result.all_messages()
-        prompt = next(m.instructions for m in messages if isinstance(m, ModelRequest))
-        payloads = [_dump_message(m, prompt) for m in messages]
-        stored.extend(payloads)
+        # where a request stores only instructions that changed.
+        written = _stored_entries(chain(*result.all_messages()), {})
+        stored[:] = [message.changes for message in written]
 
-        return [_load_message(payload, prompt) for payload in payloads]
+        return [message.entry().message for message in written]
 
     # The memory is reported, and a tool call follows within the turn.
     history = await turn(
@@ -199,8 +197,8 @@ async def test_each_request_extends_the_previous_one(
         prefix = _rendered(current["messages"])[: len(previous["messages"])]
         assert prefix == _rendered(previous["messages"])
 
-    # No request stores the prompt it was sent under.
-    assert not any("instructions" in payload for payload in stored)
+    # Only the first request stores the prompt, which every later one is sent under.
+    assert [i for i, changes in enumerate(stored) if changes is not None] == [0]
 
     # Only a turn's first request may carry a new user message.
     for index in set(range(1, len(requests))) - set(turns):

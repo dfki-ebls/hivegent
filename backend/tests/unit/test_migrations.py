@@ -190,19 +190,25 @@ def test_a_subagent_history_becomes_its_transcript() -> None:
     )
 
 
-def test_the_first_prompt_moves_to_the_record() -> None:
-    """A request under the root's prompt drops it, one under another prompt keeps its own."""
+def test_a_request_keeps_only_instructions_it_changes() -> None:
+    """They leave every payload, and a request keeps them where they differ from its parent's, ``''`` for none."""
     migration = _migration(_STORE)
-    root, reply, same, other = (UUID(int=i) for i in range(1, 5))
+    root, reply, same, other, unset = (UUID(int=i) for i in range(1, 6))
     nodes = [
         migration.Node(same, reply, _dump(replace(_PROMPT, instructions="p"))),
         migration.Node(other, reply, _dump(replace(_PROMPT, instructions="q"))),
+        migration.Node(unset, other, _dump(_PROMPT)),
         migration.Node(root, None, _dump(replace(_PROMPT, instructions="p"))),
         migration.Node(reply, root, _dump(ModelResponse(parts=[TextPart("a")]))),
     ]
 
-    record = migration.record(nodes)
-    kept = {entry.old_id: entry.payload.get("instructions") for entry in record.entries}
+    entries = migration.record(nodes).entries
 
-    assert record.instructions == "p"
-    assert kept == {root: None, reply: None, same: None, other: "q"}
+    assert not any("instructions" in entry.payload for entry in entries)
+    assert {entry.old_id: entry.instructions for entry in entries} == {
+        root: "p",
+        reply: None,
+        same: None,
+        other: "q",
+        unset: "",
+    }

@@ -60,7 +60,7 @@ flowchart LR
 - Plugins are Python packages advertising `hivegent.plugins` entry points, loaded only when `plugins.enabled` names them, which contribute features, converters, chunkers, and skill directories through the facade `plugins.api`, every id unique among Hivegent's and every plugin's and every tool declaring its `Effect`.
 - Run state that changes during a conversation, the date and the mode among it, is an instruction whose changes are appended to the history rather than rewriting the instructions, which keeps the provider's prompt cache valid, so the prompt prefix of a conversation survives midnight.
   Changing mode, tools, assistant, model, or language between turns changes it by design, and so does an outage of an external MCP server, which changes the tool list.
-  A conversation stores its system prompt once (`conversations.instructions`) and its requests without it.
+  A request stores its system prompt in `messages.instructions` only where it differs from the one in effect at its parent, so a conversation keeps each prompt once per change and stays self-contained.
 - PostgreSQL with `pgvector` and cbrkit 2 (its async `Pgvector` storage, embedders through Pydantic AI or sentence-transformers, and `Rerank`) provide dense, sparse, and hybrid retrieval, plus conversations and memory.
   The chunks a caller may read and each person's memory page are exar memories over cbrkit storages scoped by SQL to them (`retrieval.document_memory`, `db.memory.user_memory`).
 - A table, JSON, or BPMN file or folder is a case base that `similar_cases` and the document dialog rank by example with cbrkit, by attribute or by graph mapping, configured by what cbrkit infers from its data in memory (`tools.cases`, `cases.py`).

@@ -1,74 +1,62 @@
-"""Tests for the stored messages :class:`PostgresConversationStore` keeps in memory."""
+"""Tests for how :class:`PostgresConversationStore` stores, caches, and reads back messages."""
 
-from collections.abc import Sequence
-from dataclasses import replace
-from typing import Any
-from uuid import UUID
-
-from pydantic_ai.conversation_store import ConversationEntry
-from pydantic_ai.messages import ModelRequest, UserPromptPart
-from pydantic_core import to_json
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from sqlalchemy.dialects.postgresql import psycopg
 
 from hivegent.db.conversations.postgres import (
     PostgresConversationStore,
-    _dump_message,
-    _load_message,
+    _fold,
+    _path_query,
+    _stored_entries,
 )
-
-_PROMPT = "The system prompt."
-
-
-def _chain(*texts: str) -> list[ConversationEntry]:
-    entries: list[ConversationEntry] = []
-
-    for text in texts:
-        entries.append(
-            ConversationEntry(
-                parent_id=entries[-1].id if entries else None,
-                message=ModelRequest(
-                    parts=[UserPromptPart(text)], instructions=_PROMPT
-                ),
-            )
-        )
-
-    return entries
+from tests.helpers import chain
 
 
-def _stored(
-    entries: Sequence[ConversationEntry],
-) -> list[tuple[str, str | None, dict[str, Any]]]:
-    return [
-        (entry.id, entry.parent_id, _dump_message(entry.message, _PROMPT))
-        for entry in entries
-    ]
+def _request(text: str, instructions: str | None) -> ModelRequest:
+    return ModelRequest(parts=[UserPromptPart(text)], instructions=instructions)
 
 
-def test_a_history_is_cached_whole_or_not_at_all() -> None:
-    """The cache keeps its budget, and a caller changing a read message leaves it as it was."""
-    oldest, middle, head = _chain("a", "b", "c")
-    stored = _stored([oldest, middle, head])
+_ENTRIES = chain(
+    _request("a", "p"),
+    ModelResponse(parts=[TextPart("r")]),
+    _request("b", "p"),
+    _request("c", "q"),
+    _request("d", None),
+    _request("e", None),
+)
+_STORED = _stored_entries(_ENTRIES, {})
+
+
+def test_a_request_stores_only_instructions_it_changes() -> None:
+    """Every message reads back as it was sent, also past a response and back to none."""
+    assert [message.changes for message in _STORED] == ["p", None, None, "q", "", None]
+    assert [message.entry() for message in _STORED] == _ENTRIES
+
+
+def test_any_window_of_a_path_reads_back_as_stored() -> None:
+    """The rows the path query walks for a window, on up to the nearest change without their JSON, fold back into it."""
+    for limit in (None, *range(1, len(_STORED) + 1)):
+        start = 0 if limit is None else len(_STORED) - limit
+        top = start
+
+        while top > 0 and _STORED[top].changes is None:
+            top -= 1
+
+        rows = [
+            (m.id, m.parent_id, m.changes, m.payload if i >= start else None, -i)
+            for i, m in enumerate(_STORED[top:], start=top)
+        ]
+
+        assert _fold(rows) == _STORED[start:]
+        assert _path_query(_STORED[-1].id, limit).compile(dialect=psycopg.dialect())
+
+
+def test_a_cached_path_ends_at_the_first_message_it_misses() -> None:
+    """The cache keeps its budget, so a read takes the newest messages from it and the rest from the database."""
     store = PostgresConversationStore(
-        cache_bytes=sum(len(to_json(payload)) for *_, payload in stored[1:])
+        cache_bytes=sum(len(m.payload) + len(m.changes or "") for m in _STORED[2:])
     )
-    store._keep(UUID(int=1), _PROMPT, [*stored, *_stored(_chain("d" * 1000))])
-    history = store._cached_history(head.id, 2) or []
+    store._keep(_STORED)
 
-    assert history == [middle, head]
-    history[-1].message.metadata = {"changed": True}
-    assert store._cached_history(head.id, 2) == [middle, head]
-    assert store._cached_history(head.id, None) is None
-
-
-def test_a_request_stores_no_prompt_it_was_sent_under() -> None:
-    """Only a prompt other than the conversation's is stored, and every request reads back as it was sent."""
-    sent = ModelRequest(parts=[UserPromptPart("q")], instructions=_PROMPT)
-
-    for request in (
-        sent,
-        replace(sent, instructions="Another."),
-        replace(sent, instructions=None),
-    ):
-        payload = _dump_message(request, _PROMPT)
-
-        assert ("instructions" in payload) == (request.instructions != _PROMPT)
-        assert _load_message(payload, _PROMPT) == request
+    assert store._cached_path(_STORED[-1].id, None) == (_STORED[:1:-1], _STORED[1].id)
+    assert store._cached_path(_STORED[-1].id, 2) == (_STORED[:-3:-1], None)

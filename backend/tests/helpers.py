@@ -16,6 +16,7 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from pydantic import SecretStr
 from pydantic_ai import RunContext
+from pydantic_ai.conversation_store import ConversationEntry
 from pydantic_ai.exceptions import ModelContextWindowExceededError, ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -41,6 +42,7 @@ __all__ = [
     "LIMITS",
     "MEMORY_READ",
     "OVERFLOW",
+    "chain",
     "doc",
     "folder",
     "in_run",
@@ -66,6 +68,20 @@ MEMORY_READ: list[ModelMessage] = [
     ),
 ]
 """The read ``MEMORY_NOTE`` reports beside the first prompt of a window."""
+
+
+def chain(*messages: ModelMessage) -> list[ConversationEntry]:
+    """*messages* as the entries of one history, each the parent of the next."""
+    entries: list[ConversationEntry] = []
+
+    for message in messages:
+        entries.append(
+            ConversationEntry(
+                parent_id=entries[-1].id if entries else None, message=message
+            )
+        )
+
+    return entries
 
 
 def doc(path: str) -> FilterEntry:

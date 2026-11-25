@@ -148,8 +148,8 @@ Der erste Start schreibt jede Nachrichten-ID der Datenbank neu, da der Konversat
 Vor dem Start der neuen Version Datenbank und Datenverzeichnis gemeinsam sichern, der einzige Rückweg ist das Backup, und beide gemeinsam wiederherstellen, da die Dateien auf der Platte und die Zeilen einander beschreiben.
 Konversationen behalten ihre IDs, Links funktionieren also weiter.
 Zur Freigabe vorgemerkte Änderungen, die den Upgrade überdauern, werden verworfen und gelten als abgelaufen, sie müssen erneut angefordert werden.
-Konversationen speichern ihren System-Prompt nun einmal, in `conversations.instructions`, und die unter ihm gesendeten Anfragen werden ohne ihn gespeichert, was den Speicherbedarf der Konversationen etwa halbiert.
-Die Migration verschiebt die vorhandenen Prompts und schreibt jede Anfragezeile neu.
+Anfragen speichern ihren System-Prompt nun nur noch, wo er sich von dem vor ihnen in ihrer Konversation unterscheidet, was den Speicherbedarf der Konversationen etwa halbiert.
+Die Migration schreibt jede Anfragezeile neu.
 Diese einmaligen Umschreibungen lassen `messages` bis zum Aufräumen etwa doppelt so groß.
 Führen Sie nach dem ersten Start einmal `VACUUM (ANALYZE) messages` aus, damit der Platz wiederverwendbar wird, was die Unterhaltungen verfügbar hält.
 `VACUUM FULL messages` oder pg_repack gibt ihn an das System zurück, doch das erste sperrt die Unterhaltungen währenddessen, planen Sie dafür also Ausfallzeit ein.

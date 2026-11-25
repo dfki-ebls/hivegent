@@ -9,18 +9,32 @@ and prod hit the database the rest of the app uses.
 """
 
 import asyncio
+from typing import Literal
 
 from alembic import context
+from alembic.autogenerate.api import AutogenContext
 from sqlalchemy import func, pool, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from hivegent.db.engine import resolve_database_url
 from hivegent.db.migrations import COMPARE
-from hivegent.db.models import Base
+from hivegent.db.models import Base, JSONText, PydanticJSONB
 
 config = context.config
 config.set_main_option("sqlalchemy.url", resolve_database_url())
+
+
+def _render_item(
+    type_: str, obj: object, autogen_context: AutogenContext
+) -> str | Literal[False]:
+    """Render the app's ``JSONB`` types as the ``JSONB`` they are in the database, everything else as Alembic does."""
+    if type_ != "type" or not isinstance(obj, PydanticJSONB | JSONText):
+        return False
+
+    autogen_context.imports.add("from sqlalchemy.dialects import postgresql")
+
+    return "postgresql.JSONB()"
 
 
 def _run_migrations(connection: Connection) -> None:
@@ -32,6 +46,7 @@ def _run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=Base.metadata,
+        render_item=_render_item,
         **COMPARE,
     )
     with context.begin_transaction():
