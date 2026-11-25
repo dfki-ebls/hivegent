@@ -5,8 +5,8 @@ from datetime import date
 import pytest
 
 from hivegent import prompts
-from hivegent.l10n import Localized
-from hivegent.prompts import Personality, compose_instructions
+from hivegent.prompts import compose_instructions
+from hivegent.shared.l10n import Localized
 
 _TODAY = date(2026, 1, 1)
 
@@ -16,8 +16,6 @@ _BLOCKS = {
         for name, value in vars(prompts).items()
         if isinstance(value, Localized)
     },
-    "request_limit_note": prompts.request_limit_note(4),
-    "retry_limit_note": prompts.retry_limit_note("x", 3, 4),
     "sandbox_api_instructions": prompts.sandbox_api_instructions("x"),
     "date_note": prompts.date_note(_TODAY),
 }
@@ -31,19 +29,11 @@ def test_every_block_is_translated(name: str) -> None:
     assert german != str(_BLOCKS[name].en)
 
 
-@pytest.mark.parametrize("personality", list(Personality))
-def test_the_composed_instructions_end_on_the_german_pin(
-    personality: Personality,
-) -> None:
-    german = compose_instructions(personality, "", "de", _TODAY)
+def test_the_composed_instructions_end_on_the_german_pin() -> None:
+    german = compose_instructions("de")
 
-    assert german != compose_instructions(personality, "", "en", _TODAY)
+    assert german != compose_instructions("en")
     assert german.endswith(
         "Antworte immer auf Deutsch, außer die Benutzer:in schreibt in einer "
         "anderen Sprache."
     )
-
-
-def test_every_personality_is_translated() -> None:
-    for template in prompts.PERSONALITY_TEMPLATES.values():
-        assert template.de.strip() and template.de != template.en

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from hivegent.server.operations import inventory as inv
+from hivegent.tools.entries import Part
 
 
 @pytest.fixture
@@ -31,15 +32,22 @@ def test_file_vanishing_mid_scan_is_skipped_not_raised(
 
     monkeypatch.setattr(Path, "stat", flaky_stat)
 
-    tree = inv._build_directory_tree(workspace, workspace, {}, frozenset())
+    tree = inv._build_directory_tree(workspace, workspace, {})
     # The entry survives via its description; the vanished original is dropped.
     assert {c.path for c in (tree.children or [])} == {"laws2.md", "keep.md"}
 
 
-def test_inflight_stem_is_hidden(workspace: Path) -> None:
-    """An entry whose stem has an upload in flight is hidden from the tree."""
-    tree = inv._build_directory_tree(workspace, workspace, {}, frozenset({"laws2"}))
-    assert {c.path for c in (tree.children or [])} == {"keep.md"}
+def test_marks_what_cbrkit_may_read_as_a_case_base(tmp_path: Path) -> None:
+    """A case base file by its suffix, a folder by a member at any depth, as cbrkit's `is_casebase`."""
+    for path in ("flows/sub/a.json", "docs/a.pdf", "docs/.hidden/b.json", "cars.csv"):
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("{}")
+
+    (tmp_path / Part("flows", "sidecar").path).write_text("{}")
+    tree = inv._build_directory_tree(tmp_path, tmp_path, {})
+    marks = {child.path: child.case_base_candidate for child in tree.children or []}
+
+    assert marks == {"flows": True, "docs": False, "cars.csv": True}
 
 
 def test_vanished_directory_yields_empty_listing(tmp_path: Path) -> None:

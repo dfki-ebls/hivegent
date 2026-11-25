@@ -2,54 +2,27 @@
 
 The repository never stores ``original_path`` directly: it reduces it to
 ``Document.original_suffix`` on write and reconstructs the path on read. For an
-original whose pathlib suffix is empty — an extension-less upload (``abc``) or a
-dotfile (``.env``) — the old encoding collapsed that to ``NULL`` and lost the
+original whose pathlib suffix is empty (an extension-less upload (``abc``) or a
+dotfile (``.env``)), the old encoding collapsed that to ``NULL`` and lost the
 original, which silently broke delete, move, reconvert, and replace_original
 (all of which branch on ``metadata.original_path``). These tests pin the full
 round-trip so the projection cannot regress.
 """
 
 import pytest
+from cbrkit.io import COMPANION_SUFFIXES
 
-from hivegent.chunkers.base import EntryMetadata
 from hivegent.db._common import stem_subtree_filter
 from hivegent.db.documents import _entry_from_row, _EntryColumns, _original_suffix
 from hivegent.db.models import Document
-from hivegent.entries import (
-    description_path_for_stem,
+from hivegent.metadata import EntryMetadata
+from hivegent.tools.entries import (
+    FileKind,
+    Part,
     is_below,
-    is_projectable_original,
-    original_path_for_stem,
     rebase,
     stem_path_from_reference,
 )
-
-
-@pytest.mark.parametrize(
-    ("rel_path", "projectable"),
-    [
-        ("docs/settings.ini", True),
-        ("docs/data.xml", True),
-        ("docs/Makefile", True),
-        ("docs/report.md", False),
-        ("docs/report.pdf", False),
-        ("docs/table.csv", False),
-        # Markup, and claimed by no converter: an SVG is the one image format
-        # whose own text is the better index, so it derives verbatim.
-        ("docs/diagram.svg", True),
-        ("docs/report.assets/notes.txt", False),
-        ("docs/.DS_Store", False),
-    ],
-)
-def test_projectable_originals_are_the_verbatim_formats(
-    rel_path: str, projectable: bool
-) -> None:
-    """Only files whose markdown is a copy of their own text may be derived.
-
-    A converter- or vision-backed format is excluded even though it is text,
-    because deriving it is not free; junk and managed assets are never entries.
-    """
-    assert is_projectable_original(rel_path) is projectable
 
 
 def _project(entry: EntryMetadata) -> EntryMetadata:
@@ -57,7 +30,7 @@ def _project(entry: EntryMetadata) -> EntryMetadata:
 
     Mirrors production exactly: ``_EntryColumns.from_entry`` reduces the entry
     to its stored columns, those populate an in-memory row, and
-    ``_entry_from_row`` reconstructs the metadata — the same lossy seam the bug
+    ``_entry_from_row`` reconstructs the metadata, the same lossy seam the bug
     lived in.
     """
     columns = _EntryColumns.from_entry(entry)
@@ -71,7 +44,7 @@ def _converted_entry(filepath: str) -> EntryMetadata:
     return EntryMetadata(
         entry_kind="convertible",
         stem_path=stem,
-        description_path=description_path_for_stem(stem),
+        description_path=Part(stem, "description").path,
         original_path=filepath,
         assets_dir=None,
         origin="upload",
@@ -95,7 +68,7 @@ def test_original_survives_sql_projection(
 ) -> None:
     """The original path reconstructs verbatim through the column projection."""
     assert stem_path_from_reference(filepath) == stem
-    assert description_path_for_stem(stem) == description
+    assert Part(stem, "description").path == description
 
     reconstructed = _project(_converted_entry(filepath))
     assert reconstructed.stem_path == stem
@@ -126,9 +99,8 @@ def test_stored_suffix_distinguishes_absent_from_empty() -> None:
     assert _original_suffix(".env") == ""
     assert _original_suffix("report.pdf") == ".pdf"
 
-    assert original_path_for_stem("docs/note", None) is None
-    assert original_path_for_stem("abc", "") == "abc"
-    assert original_path_for_stem("docs/report", ".pdf") == "docs/report.pdf"
+    assert Part("abc", "original", "").path == "abc"
+    assert Part("docs/report", "original", ".pdf").path == "docs/report.pdf"
 
 
 def test_subtree_filter_excludes_equal_stem_and_escapes_wildcards() -> None:
@@ -142,6 +114,21 @@ def test_subtree_filter_excludes_equal_stem_and_escapes_wildcards() -> None:
     )
     assert "LIKE '100\\%\\_a/%'" in sql
     assert "=" not in sql
+
+
+@pytest.mark.parametrize(
+    "kind", ["description", "original", "assets", *COMPANION_SUFFIXES]
+)
+@pytest.mark.parametrize(
+    ("stem", "suffix"), [("docs/cars", ".csv"), ("a.tar", ".gz"), (".env", "")]
+)
+def test_every_part_round_trips_through_its_subject(
+    stem: str, suffix: str, kind: FileKind
+) -> None:
+    """A companion's path names its subject and kind, which name the same path again."""
+    part = Part(stem, kind, "" if kind in ("description", "assets") else suffix)
+
+    assert Part.of(part.path) == part
 
 
 @pytest.mark.parametrize(
