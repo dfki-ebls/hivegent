@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, HttpUrl, SecretStr
 
-from .common import HttpOperatorUrl, Section
+from .common import HttpOperatorUrl, ProviderEndpoint, Section
 
 __all__ = [
     "DebugSettings",
@@ -66,24 +66,24 @@ class LogfireSettings(Section):
         return self.otlp_endpoint is not None or self.token is not None
 
 
-class TransparencySettings(Section):
+class TransparencySettings(ProviderEndpoint):
     """AI-generated text marking and detection settings.
 
     Configuring this section enables watermark detection and signing.
-    ``detector_url`` points at the vLLM reference detector attached to the
-    inference server. ``report_issuer`` is the public origin placed in signed
-    reports. ``secret_key`` is the root the signing key is derived from, so
-    changing it rotates the key.  The detector speaks vLLM's detector contract
-    at a path of its own rather than the OpenAI API, so it keeps its own URL
-    and key instead of naming an ``llm.providers`` entry.
+    The vLLM reference detector is attached to the inference server, so the
+    provider serving the watermarked model also serves it, at
+    ``detector_path``.  ``report_issuer`` is the public origin placed in
+    signed reports.  ``secret_key`` is the root the signing key is derived
+    from, so changing it rotates the key.
 
     Configurable via ``HIVEGENT_TRANSPARENCY__*`` environment variables.
     """
 
-    detector_url: HttpOperatorUrl
+    detector_path: str = Field(min_length=1)
+    """Resolved against the provider's ``base_url`` like a link, so an absolute
+    path such as llmhop's ``/llmhop/proxy/<name>/detect`` lands on its origin."""
     report_issuer: HttpUrl
     secret_key: SecretStr = Field(min_length=32)
-    detector_api_key: SecretStr | None = None
     contact_email: Annotated[str, Field(min_length=1)] | None = None
     #: Public ``x`` values of earlier signing keys, kept in the JWKS so reports
     #: and exports signed before a planned rotation still verify. Leave a

@@ -9,14 +9,21 @@ from joserfc.jwk import OKPKey
 from pydantic import HttpUrl, SecretStr
 
 from hivegent import transparency
+from hivegent.config.llm import LlmProviderSettings
 from hivegent.config.observability import TransparencySettings
 from hivegent.security import OperatorUrl
 from hivegent.types import ServerConversation
 
 ISSUER = "https://example.test"
 
+PROVIDER = LlmProviderSettings(
+    base_url=OperatorUrl("https://inference.test/v1"),
+    api_key=SecretStr("provider-key"),
+)
+
 CONFIG = TransparencySettings(
-    detector_url=OperatorUrl("http://detector/detect"),
+    endpoint="inference",
+    detector_path="/llmhop/proxy/watermark/detect",
     report_issuer=HttpUrl(ISSUER),
     secret_key=SecretStr("test-secret-key-with-enough-entropy"),
 )
@@ -49,11 +56,13 @@ class _Client:
 
     async def post(
         self,
-        _url: str,
+        url: str,
         *,
         json: object,
         headers: object,
     ) -> _Response:
+        assert url == "https://inference.test/llmhop/proxy/watermark/detect"
+        assert headers == {"Authorization": "Bearer provider-key"}
         assert json == {"text": "marked text"}
 
         return self.response
@@ -84,7 +93,7 @@ async def test_detection_report_is_verifiable_and_contains_only_a_hash(
     )
     config = CONFIG.model_copy(update={"report_issuer": HttpUrl(issuer)})
 
-    result = await transparency.detect_text(config, "marked text")
+    result = await transparency.detect_text(config, PROVIDER, "marked text")
     header, claims = _verified(result.signed_report, config)
 
     assert result.status == "detected"

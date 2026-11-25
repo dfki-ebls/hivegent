@@ -41,21 +41,22 @@ Configuring the `[transparency]` section enables detection and signing:
 
 ```toml
 [transparency]
-detector_url = "http://127.0.0.1:18000/route/watermark/detect"
+endpoint = "local"
+detector_path = "/llmhop/proxy/watermark/detect"
 report_issuer = "https://hivegent.example.eu"
 contact_email = "responsible-operator@example.eu"
 ```
 
-`secret_key` and the optional `detector_api_key` are secrets, so pass them as credentials `hivegent.TRANSPARENCY__SECRET_KEY` and `hivegent.TRANSPARENCY__DETECTOR_API_KEY`, never in the TOML file.
+`secret_key` is a secret, so pass it as the credential `hivegent.TRANSPARENCY__SECRET_KEY`, never in the TOML file.
 On NixOS, store the signing secret in the root-only system credential store:
 
 ```bash
 (umask 077; openssl rand -base64 32 > /etc/credstore/hivegent.TRANSPARENCY__SECRET_KEY)
 ```
 
-`detector_url` is vLLM's reference detector, here the llmhop detector named `watermark`, which takes `{"text": "..."}` and answers with `score`, `p_value`, `num_scored_tokens`, and `is_watermarked`.
+`endpoint` names the `llm.providers` entry serving the watermarked model, and `detector_path` the path of vLLM's reference detector, resolved against the provider's `base_url` like a link, so an absolute path lands on its origin, here the llmhop detector named `watermark`, which takes `{"text": "..."}` and answers with `score`, `p_value`, `num_scored_tokens`, and `is_watermarked`.
 Hivegent speaks that contract directly so that no Hivegent-specific detection format exists.
-`detector_api_key` is the bearer token of the endpoint, if it requires one.
+The detector takes the provider's key as its bearer token, if it requires one.
 
 ## Keys
 

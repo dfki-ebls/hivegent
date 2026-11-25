@@ -134,9 +134,9 @@ Every settings section refuses a key it does not declare, in the TOML file and i
 
 ### Endpoints are declared once
 
-Every OpenAI-compatible endpoint is one `llm.providers` entry with its key, and a remote embedder or reranker names it as `embedding.endpoint` or `rerank.endpoint`, so a key lives in one credential, and the boot refuses a remote one naming none or an unknown one.
+Every inference endpoint is one `llm.providers` entry with its key, and a remote embedder, reranker, or watermark detector names it as `embedding.endpoint`, `rerank.endpoint`, or `transparency.endpoint`, so a key lives in one credential, and the boot refuses a remote one naming none or an unknown one.
 `embedding` and `rerank` are discriminated unions keyed on `provider`, a local variant (`sentence-transformers`) without an endpoint and a remote one (`openai`, `http`) that requires it, so each variant holds only the fields that apply to it, and an unset `rerank` disables reranking.
-The watermark detector speaks another contract at a path of its own, so it keeps `transparency.detector_url` and its key.
+The watermark detector speaks vLLM's detector contract rather than the OpenAI API, so `transparency.detector_path` places it on the provider, resolved against its `base_url` like the reranker's `rerank`, and an absolute path lands on the origin, where llmhop serves it beside the models.
 Every consumer of a provider, from a chat model to the detector, takes the whole `LlmProviderSettings` rather than its fields one by one.
 
 ### A request names, the operator configures

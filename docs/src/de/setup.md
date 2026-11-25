@@ -78,7 +78,8 @@ service_client_id = "hivegent-bot"
 - `llm.stt`: ein Transkriptionsmodell wie `whisper-1` für Browser ohne Spracherkennung, aus, solange es nicht gesetzt ist.
 - `subagents.max_cost`: höchstens so viele US-Dollar darf ein Chat-Zug samt seiner Unteragenten ausgeben, unbegrenzt, solange es nicht gesetzt ist.
   Es zählt nur Modelle, die pydantic-ai bepreisen kann, daher begrenzen ein selbst betriebenes allein `llm.request_limit` und die Token-Grenzen.
-- `embedding.endpoint` und `rerank.endpoint`: der Anbieter, über den ein entfernter Embedder (`embedding.provider = "openai"`) oder Reranker (`rerank.provider = "http"`, dessen Route `/rerank`) läuft, mit dessen Schlüssel.
+- `embedding.endpoint`, `rerank.endpoint` und `transparency.endpoint`: der Anbieter, über den ein entfernter Embedder (`embedding.provider = "openai"`), Reranker (`rerank.provider = "http"`, dessen Route `/rerank`) oder Wasserzeichendetektor (unter `transparency.detector_path`) läuft, mit dessen Schlüssel.
+  Ein Pfad wird wie ein Link gegen die `base_url` des Anbieters aufgelöst, relativ darunter, wie `rerank`, und absolut auf deren Origin, wie `/llmhop/proxy/watermark/detect` von llmhop.
   Ein entfernter Embedder braucht außerdem `model` und dessen Ausgabegröße `dimension`.
   `embedding.query_prefix` und `embedding.document_prefix` stellen voran, was das Modell erwartet, etwa `"query: "` und `"passage: "` für e5-Modelle, oder eine Anweisung wie `"Instruct: Given a question, retrieve passages that answer it\nQuery:"` vor den Anfragen von Qwen3-Embedding-Modellen.
   `embedding.request` geht an jede Anfrage, etwa `extra_body = { truncate_prompt_tokens = -1 }`, womit vLLM zu lange Texte selbst kürzt.

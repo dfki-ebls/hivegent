@@ -46,7 +46,9 @@ async def detect_watermark(
 ) -> TransparencyDetectionResponse:
     """Verify a text watermark without logging or retaining submitted content."""
     try:
-        return await detect_text(config, request.text)
+        return await detect_text(
+            config, settings.llm.providers[config.endpoint], request.text
+        )
     except TransparencyUnavailable as exc:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,

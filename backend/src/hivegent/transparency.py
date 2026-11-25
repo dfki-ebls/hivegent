@@ -13,6 +13,7 @@ from joserfc.jwk import OKPKey
 from pydantic import BaseModel, Field
 
 from .config import API_PREFIX, reveal, settings
+from .config.llm import LlmProviderSettings
 from .config.observability import TransparencySettings
 from .http_client import get_trusted_http_client
 from .shared.text import sha256
@@ -205,14 +206,13 @@ def sign_provenance(
 
 
 async def detect_text(
-    config: TransparencySettings, text: str
+    config: TransparencySettings, provider: LlmProviderSettings, text: str
 ) -> TransparencyDetectionResponse:
-    """Detect the configured watermark without retaining the submitted text."""
-    api_key = reveal(config.detector_api_key)
-
+    """Detect the configured watermark at *provider* without retaining the submitted text."""
+    api_key = reveal(provider.api_key)
     try:
-        response = await get_trusted_http_client(config.detector_url).post(
-            config.detector_url,
+        response = await get_trusted_http_client(provider.base_url).post(
+            provider.url(config.detector_path),
             json=_DetectorRequest(text=text).model_dump(),
             headers={"Authorization": f"Bearer {api_key}"} if api_key else None,
         )
