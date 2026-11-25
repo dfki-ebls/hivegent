@@ -8,8 +8,10 @@ from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from typing import Protocol
 
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.toolsets import AbstractToolset
 
+from ..shared.l10n import Language, Localized
 from ..store import User
 from ..types import Integration as IntegrationInfo
 from ..types import ToolInfo
@@ -20,8 +22,8 @@ from .external import SOURCES
 __all__ = [
     "INTEGRATIONS",
     "Integration",
+    "integration_capabilities",
     "integration_tool_infos",
-    "integration_toolsets",
     "integrations_lifespan",
     "is_integration_tool",
 ]
@@ -39,6 +41,11 @@ class Integration(Protocol):
     @property
     def toolset(self) -> AbstractToolset[UserDeps]:
         """The tools as a run offers them."""
+        ...
+
+    @property
+    def instructions(self) -> Localized[str] | None:
+        """What a run is told about the tools besides their schemas, ``None`` where the toolset tells it."""
         ...
 
     def tool_infos(self) -> list[ToolInfo]:
@@ -76,9 +83,23 @@ def _visible(user: User) -> list[Integration]:
     ]
 
 
-def integration_toolsets(user: User) -> list[AbstractToolset[UserDeps]]:
-    """The toolsets of the integrations *user* sees, for a run to compose."""
-    return [integration.toolset for integration in _visible(user)]
+def integration_capabilities(
+    user: User, language: Language
+) -> list[AbstractCapability[UserDeps]]:
+    """The capabilities of the integrations *user* sees, for a run in *language* to compose.
+
+    The instructions are fixed text, since pydantic-ai renders an instruction
+    callable before every request and places it behind the cache boundary.
+    """
+    return [
+        Capability(
+            toolsets=[integration.toolset],
+            instructions=None
+            if (text := integration.instructions) is None
+            else text[language],
+        )
+        for integration in _visible(user)
+    ]
 
 
 def integration_tool_infos(user: User) -> list[ToolInfo]:

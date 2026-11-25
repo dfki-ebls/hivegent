@@ -199,7 +199,7 @@ wheels = [
 [[package]]
 name = "cbrkit"
 version = "1.7.1"
-source = { git = "https://github.com/wi2trier/cbrkit?branch=dev#515f4d649d20e8aaa084ecd7761ef6cd4556659d" }
+source = { git = "https://github.com/wi2trier/cbrkit?branch=dev#8396ae7306b7d85fff0cd37199c6142a72adc1c3" }
 dependencies = [
     { name = "filelock" },
     { name = "griffelib" },
@@ -826,7 +826,7 @@ wheels = [
 [[package]]
 name = "exar"
 version = "1.0.0"
-source = { git = "https://github.com/wi2trier/exar?branch=dev#4670253ca18291d8a21308987dbac0b5222814a4" }
+source = { git = "https://github.com/wi2trier/exar?branch=dev#82265ba7e41e603b5a6f64807f83a6232200d97a" }
 dependencies = [
     { name = "griffelib" },
     { name = "opentelemetry-sdk" },

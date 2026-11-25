@@ -3,10 +3,10 @@
 Every entry of ``settings.mcp_servers`` is a :class:`CatalogServer` whose
 :class:`~exar.mcp_client.McpClient` keeps one connection entered while the app
 runs, reconnecting with a growing backoff after a failure.  A run never
-connects itself: it is offered the tools the server listed while it is
-reachable, none and a short notice while it is not, and a call the connection
-fails returns a failed result, so an unreachable server withholds its own
-tools and fails no turn.  This module adds what is Hivegent's, the settings,
+connects itself: it is offered the tools the server last listed, and a call
+while the connection is down fails at once with a short notice, so an outage
+changes neither the tools nor the instructions of a run, which keeps its
+cached prefix, and fails no turn.  This module adds what is Hivegent's, the settings,
 the headers that authenticate the deployment, and the caller a server is told.
 
 Every tool is named ``<id>_<name>``, and since an id has no underscore and none
@@ -263,6 +263,11 @@ class CatalogServer:
         """The server's tools as a run offers them, prefixed by its id."""
         return self.client.agent_toolset()
 
+    @property
+    def instructions(self) -> None:
+        """None, since a trusted server's instructions reach the run through its :attr:`toolset`."""
+        return None
+
     def tool_infos(self) -> list[ToolInfo]:
         """The tools of the server while it is connected."""
         return [
@@ -281,7 +286,7 @@ class CatalogServer:
             host=self.config.host,
             groups=self.config.groups,
             trusted=self.config.trusted,
-            connected=self.client.tools is not None,
+            connected=self.client.connected,
             error=self.client.error,
             tools={
                 name: self.client.effect_of(tool)

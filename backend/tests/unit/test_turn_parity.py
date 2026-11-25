@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from exar.memory import InMemoryMemory
 from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
@@ -209,7 +210,9 @@ def _prefix(run_prefix: RunPrefix, script: Script) -> RunPrefix:
     return replace(
         run_prefix,
         model=_model(script),
-        capabilities=build_capabilities(run_prefix.deps, extra=[_toolset()]),
+        capabilities=build_capabilities(
+            run_prefix.deps, extra=[Capability(toolsets=[_toolset()])]
+        ),
     )
 
 

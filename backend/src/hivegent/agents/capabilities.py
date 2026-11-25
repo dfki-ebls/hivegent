@@ -39,7 +39,7 @@ from typing import Any, Self
 
 from exar.agents import session
 from exar.helpers import get_name
-from exar.pydantic_ai import definition_action
+from exar.pydantic_ai import Render, RunNote, definition_action
 from exar.pydantic_ai.guards import LenientArguments
 from exar.tools import effect_of
 from pydantic_ai import FunctionToolset
@@ -50,8 +50,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import SystemPromptFunc, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.tools import ToolDefinition
 
 from ..assistants import global_assistants
 from ..config import settings
@@ -80,7 +79,12 @@ from ..types import (
 from .app import turn_usage_limits
 from .approval import ApprovalNotes
 from .common import AgentTools, UserDeps, run_context, static_tools
-from .context import ASSISTANT_INSTRUCTIONS, DATE_NOTE, DOCUMENT_SCOPE, MODE_NOTE
+from .context import (
+    ASSISTANT_INSTRUCTIONS,
+    DATE_NOTE,
+    DOCUMENT_SCOPE,
+    MODE_NOTE,
+)
 from .guards import HOST_GATE, SPILL_TOOLS
 from .integrations import is_integration_tool
 from .policy import host_policy, listed
@@ -123,17 +127,15 @@ __all__ = [
 ]
 
 
-type FeatureInstruction = Localized[str] | SystemPromptFunc[UserDeps]
-"""A fixed block in every language, or a callable resolved per run."""
-
-
 @dataclass(frozen=True, slots=True)
 class Feature:
     """A named agent feature: its tools, their instructions, its extras, and its modes.
 
-    :meth:`capability` bundles the tools and the instructions into the
+    :meth:`capability` bundles the tools and the fixed instructions into the
     capability a run composes, once per language around the tools built for
-    the run, and ``extras`` are the capabilities composed beside it.
+    the run, ``rendered`` are the instructions rendered once per run as
+    fixed text (a ``RunNote`` with ``on_change='rewrite'``), and ``extras``
+    are the capabilities composed beside them.
     ``tool_defs`` are resolved once from the tools, so the per-request
     offering check needs no build, and ``modes`` from what they declare:
     a mode the host policy denies any of them withholds the feature, so no
@@ -146,7 +148,8 @@ class Feature:
     tools: AgentTools
     tool_defs: tuple[ToolDefinition, ...]
     modes: frozenset[Mode]
-    instructions: Sequence[FeatureInstruction] = ()
+    instructions: Sequence[Localized[str]] = ()
+    rendered: Sequence[Render[UserDeps]] = ()
     extras: Sequence[AbstractCapability[UserDeps]] = ()
 
     @classmethod
@@ -155,7 +158,8 @@ class Feature:
         id: str,
         tools: AgentTools,
         *,
-        instructions: Sequence[FeatureInstruction] = (),
+        instructions: Sequence[Localized[str]] = (),
+        rendered: Sequence[Render[UserDeps]] = (),
         extras: Sequence[AbstractCapability[UserDeps]] = (),
     ) -> Self:
         """Name a feature once, resolving its tool definitions and modes from its tools."""
@@ -172,6 +176,7 @@ class Feature:
                 if all(host_policy(mode)(action) != "deny" for action in actions)
             ),
             instructions=instructions,
+            rendered=rendered,
             extras=extras,
         )
 
@@ -188,14 +193,11 @@ class Feature:
         )
 
     def capability(self, language: Language) -> AbstractCapability[UserDeps]:
-        """The capability this feature contributes to a run in *language*."""
+        """The tools and the fixed instructions this feature contributes to a run in *language*."""
         return Capability(
             id=self.id,
             toolsets=[self.tools.toolset()],
-            instructions=[
-                part[language] if isinstance(part, Localized) else part
-                for part in self.instructions
-            ],
+            instructions=[part[language] for part in self.instructions],
         )
 
 
@@ -227,7 +229,8 @@ _BUILT_IN: tuple[Feature, ...] = (
     Feature.build(
         "python",
         python_toolset,
-        instructions=[PYTHON_INSTRUCTIONS, sandbox_instructions],
+        instructions=[PYTHON_INSTRUCTIONS],
+        rendered=[sandbox_instructions],
     ),
     Feature.build("write", write_toolset),
     Feature.build("cases", cases_toolset),
@@ -357,15 +360,16 @@ SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
 
 
 def build_capabilities(
-    deps: UserDeps, *, extra: Sequence[AbstractToolset[UserDeps]] = ()
+    deps: UserDeps, *, extra: Sequence[AbstractCapability[UserDeps]] = ()
 ) -> Sequence[AbstractCapability[UserDeps]]:
     """Compose the capabilities for an agent run over *deps*.
 
     Selects the features *deps* compose (:meth:`Feature.live`), so a feature
     whose every tool is withheld contributes neither tools nor instructions,
     adds the :data:`SHARED_INSTRUCTIONS` blocks whose features survived that
-    selection, composes the live features' extras, the date, and the mode note, and
-    wraps each extra toolset as its own capability.
+    selection, the instructions the features render for the run, the *extra*
+    capabilities, and last the run notes, which differ between conversations
+    (see "Interface language" in the README for the order).
 
     Which tools a run is offered is decided by its deps alone
     (``UserDeps.policy``), which :data:`~.guards.HOST_GATE` applies to every
@@ -382,8 +386,8 @@ def build_capabilities(
 
     Args:
         deps: The run's deps, whose mode, language, and withheld tools decide.
-        extra: Additional toolsets to expose, each tool declaring its effect,
-            such as the external MCP servers the user sees.
+        extra: Additional capabilities whose tools declare their effects,
+            such as the integrations the user sees.
 
     Returns:
         Sequence of capabilities ready to pass to the agent.
@@ -401,10 +405,14 @@ def build_capabilities(
         if shared.features & live and mode in shared.modes
     )
 
-    result.extend(extra for feature in features for extra in feature.extras)
+    result.extend(
+        RunNote[UserDeps](render=render, on_change="rewrite")
+        for feature in features
+        for render in feature.rendered
+    )
+    result.extend(extra)
+    result.extend(note for feature in features for note in feature.extras)
     result.extend([DATE_NOTE, MODE_NOTE, ASSISTANT_INSTRUCTIONS])
-
-    result.extend(Capability(toolsets=[toolset]) for toolset in extra)
 
     # Cross-cutting run-loop safeguards, applied to every run regardless of mode.
     # The output spill rides on the agents (`agents/app.py`).

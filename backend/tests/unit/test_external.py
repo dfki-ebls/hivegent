@@ -7,13 +7,11 @@ import pytest
 import sqlalchemy as sa
 from pydantic import ValidationError
 
-from hivegent.agents.common import UserDeps
 from hivegent.agents.external import DataSource, _api, _database
 from hivegent.config import Settings
 from hivegent.config.integrations import ApiSettings, SqlDatabaseSettings
 from hivegent.shared.l10n import Language
 from hivegent.store import User
-from tests.helpers import run_context
 
 SPEC = {
     "paths": {
@@ -69,7 +67,7 @@ def test_database_offers_reading_tools_and_its_statements_to_its_groups(
     assert not User("v").sees(source.groups)
 
 
-async def test_database_instructions_follow_the_language_of_the_run() -> None:
+def test_database_instructions_follow_the_language_of_the_run() -> None:
     source = _database(
         "erp",
         SqlDatabaseSettings(
@@ -80,14 +78,9 @@ async def test_database_instructions_follow_the_language_of_the_run() -> None:
     leads: dict[Language, str] = {"en": "Database erp:", "de": "Datenbank erp:"}
 
     for language, lead in leads.items():
-        deps = UserDeps(user=User("u"), mode="interactive", language=language)
-        parts = await source.toolset.get_instructions(run_context(deps))
+        text = source.instructions[language]
 
-        assert (
-            parts is not None
-            and parts[0].content.startswith(lead)
-            and parts[0].content.endswith("Orders only.")
-        )
+        assert text.startswith(lead) and text.endswith("Orders only.")
 
 
 def test_api_offers_its_operations_with_effects(tmp_path: Path) -> None:

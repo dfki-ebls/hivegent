@@ -8,6 +8,7 @@ import pytest
 from exar.pydantic_ai import definition_action
 from pydantic_ai import FunctionToolset
 from pydantic_ai.agent import AgentInstructions
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -222,7 +223,9 @@ def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
                     "hi",
                     model=FunctionModel(respond),
                     deps=_deps(),
-                    capabilities=build_capabilities(_deps(), extra=[extra]),
+                    capabilities=build_capabilities(
+                        _deps(), extra=[Capability(toolsets=[extra])]
+                    ),
                 ),
             )
         )

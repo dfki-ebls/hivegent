@@ -12,6 +12,7 @@ from typing import Any
 import httpx2
 import pytest
 from pydantic_ai import FunctionToolset, ModelRetry, models
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.usage import UsageLimits
 
@@ -145,7 +146,9 @@ async def test_each_request_extends_the_previous_one(
                 "hi",
                 model=model,
                 deps=deps,
-                capabilities=build_capabilities(deps, extra=[broken]),
+                capabilities=build_capabilities(
+                    deps, extra=[Capability(toolsets=[broken])]
+                ),
                 instructions=compose_instructions("en"),
                 message_history=list(history),
                 usage_limits=limits,

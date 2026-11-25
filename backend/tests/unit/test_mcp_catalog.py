@@ -16,6 +16,7 @@ from mcp.shared.auth import OAuthMetadata
 from mcp.types import CONNECTION_CLOSED, ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import ModelRetry
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     ModelMessage,
@@ -108,7 +109,9 @@ async def _turn(
             "hi",
             model=FunctionModel(respond),
             deps=deps,
-            capabilities=build_capabilities(deps, extra=[server.toolset]),
+            capabilities=build_capabilities(
+                deps, extra=[Capability(toolsets=[server.toolset])]
+            ),
         ),
     )
 
@@ -140,7 +143,7 @@ async def test_an_untrusted_servers_tools_all_execute_but_the_listed_reads() -> 
     }
 
 
-async def test_an_unreachable_server_withholds_its_tools_and_fails_no_turn(
+async def test_an_unreachable_server_keeps_its_tools_and_fails_no_turn(
     connected: CatalogServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def unreachable(*_args: object) -> None:
@@ -162,12 +165,19 @@ async def test_an_unreachable_server_withholds_its_tools_and_fails_no_turn(
     ]
 
     assert "could not be reached" in returned[0].model_response_str()
-    assert connected.client.tools is None
+    assert not connected.client.connected
+    assert not connected.integration().connected
 
-    params, _ = await _turn(connected, "read")
-    assert not _names(params)
+    params, messages = await _turn(
+        connected, "read", ToolCallPart("crm_lookup", {"key": "a"}, "call")
+    )
+    assert _names(params) == {"crm_lookup"}
     assert "crm are unavailable" in "\n".join(
-        part.content for part in params.instruction_parts or []
+        part.model_response_str()
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
     )
 
 

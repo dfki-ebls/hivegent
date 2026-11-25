@@ -27,7 +27,7 @@ from exar.pydantic_ai import tool_effect, toolset
 from exar.tools.http import OpenApi, OpenApiDocument
 from exar.tools.sql import HostEngine, Sql
 from exar.tools.web import HostClient
-from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai import FunctionToolset
 from sqlalchemy import create_engine, make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -50,6 +50,7 @@ class DataSource:
     host: str
     groups: Sequence[str]
     toolset: FunctionToolset[UserDeps]
+    instructions: Localized[str]
     close: Callable[[], Awaitable[None]]
 
     def __post_init__(self) -> None:
@@ -84,20 +85,14 @@ class DataSource:
             await self.close()
 
 
-def _with_instructions(
-    toolset: FunctionToolset[UserDeps],
-    lead: Localized[str],
-    instructions: str,
-    notes: str,
-) -> FunctionToolset[UserDeps]:
-    """*toolset* with the *lead* in the language of the run, the *instructions* of its tools, and the operator's *notes*."""
-
-    def describe(ctx: RunContext[UserDeps]) -> str:
-        return f"{lead[ctx.deps.language]} {instructions} {notes}".strip()
-
-    _ = toolset.instructions(describe)
-
-    return toolset
+def _instructions(
+    lead: Localized[str], instructions: str, notes: str
+) -> Localized[str]:
+    """The *lead* in each language, the *instructions* of the tools, and the operator's *notes*."""
+    return Localized(
+        en=f"{lead.en} {instructions} {notes}".strip(),
+        de=f"{lead.de} {instructions} {notes}".strip(),
+    )
 
 
 def _database(source_id: str, config: SqlDatabaseSettings) -> DataSource:
@@ -135,8 +130,8 @@ def _database(source_id: str, config: SqlDatabaseSettings) -> DataSource:
         "database",
         config.host,
         config.groups,
-        _with_instructions(
-            toolset(sql.tools()),
+        toolset(sql.tools()),
+        _instructions(
             Localized(en=f"Database {source_id}:", de=f"Datenbank {source_id}:"),
             sql.instructions(),
             config.instructions,
@@ -175,8 +170,8 @@ def _api(source_id: str, config: ApiSettings) -> DataSource:
         "api",
         config.host,
         config.groups,
-        _with_instructions(
-            toolset(api.tools()),
+        toolset(api.tools()),
+        _instructions(
             Localized(en=f"API {source_id}:", de=f"API {source_id}:"),
             api.instructions(),
             config.instructions,

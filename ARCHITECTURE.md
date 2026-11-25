@@ -59,7 +59,7 @@ flowchart LR
   Conversions and the `semantic` chunker run in worker processes, while the cheap chunkers, which load no model, run in a thread of the server, so they never queue behind conversions.
 - Plugins are Python packages advertising `hivegent.plugins` entry points, loaded only when `plugins.enabled` names them, which contribute features, converters, chunkers, and skill directories through the facade `plugins.api`, every id unique among Hivegent's and every plugin's and every tool declaring its `Effect`.
 - Run state that changes during a conversation, the date and the mode among it, is an instruction whose changes are appended to the history rather than rewriting the instructions, which keeps the provider's prompt cache valid, so the prompt prefix of a conversation survives midnight.
-  Changing mode, tools, assistant, model, or language between turns changes it by design, and so does an outage of an external MCP server, which changes the tool list.
+  Changing mode, tools, assistant, model, or language between turns changes it by design, and so does an external MCP server that lists other tools after reconnecting.
   A request stores its system prompt in `messages.instructions` only where it differs from the one in effect at its parent, so a conversation keeps each prompt once per change and stays self-contained.
 - PostgreSQL with `pgvector` and cbrkit 2 (its async `Pgvector` storage, embedders through Pydantic AI or sentence-transformers, and `Rerank`) provide dense, sparse, and hybrid retrieval, plus conversations and memory.
   The chunks a caller may read and each person's memory page are exar memories over cbrkit storages scoped by SQL to them (`retrieval.document_memory`, `db.memory.user_memory`).
@@ -108,7 +108,7 @@ flowchart LR
 - External MCP servers are an operator catalog (`settings.mcp_servers`, `agents/catalog.py`), declared in the configuration with their secrets in credential files, never by a request.
   Each is one long-lived connection, over Streamable HTTP or to a stdio process the backend starts, that reconnects with backoff, its tools named `<id>_<tool>` and each given the `Effect` that `effects` declares for it, else one from the server's hints only when it is `trusted`, otherwise `execute`.
   The boot refuses an id of a server, database, or API that prefixes a built-in tool, the delegation tools included, so no integration tool takes the name of one.
-  A server with `groups` is seen by their members only, one without by everyone, and an unreachable one withholds its tools with a note instead of failing the turn.
+  A server with `groups` is seen by their members only, one without by everyone, and an unreachable one keeps offering the tools it last listed, failing their calls with a note, so neither the turn nor the cached prefix breaks.
 - Wiping anything beyond the caller's own data runs only on the host, with `hivegent reset {workspace,database,factory}` for the deployment and `hivegent reset {user,group} <id>` for one owner, refused while a server holds the database's serving lock (`db.engine.serving`), never over HTTP, and pipelines are listed at `GET /api/v1/pipelines/{stage}`.
 
 ## Integration

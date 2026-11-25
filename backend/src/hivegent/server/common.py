@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from .. import workspace
 from ..agents import RunPrefix, UserDeps, build_capabilities
-from ..agents.integrations import integration_toolsets
+from ..agents.integrations import integration_capabilities
 from ..agents.subagents import delegation
 from ..assistants import (
     Assistant,
@@ -271,7 +271,9 @@ async def build_run_prefix(
 
     prefix = RunPrefix(
         deps=deps,
-        capabilities=build_capabilities(deps, extra=integration_toolsets(user)),
+        capabilities=build_capabilities(
+            deps, extra=integration_capabilities(user, language)
+        ),
         instructions=compose_instructions(language),
         llm=llm,
         model=model_from_config(llm),

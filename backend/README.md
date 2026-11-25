@@ -63,7 +63,8 @@ Fixed option values such as pipelines are sent as enum values and described by t
 The agent's instructions and injected notes are composed in the run's language (`UserDeps.language`) and end with a pin to answer in it.
 Tool names, descriptions, schemas, results, and retries stay English, since models call tools most reliably from English schemas, and `EnglishToolCalls` runs every tool call in English.
 A query argument says which language to phrase the query in, since copying the user's language into a search over documents in another language is the common failure.
-Features hold one capability per language around the same toolset rather than an instruction callable, which pydantic-ai would treat as dynamic and move behind the cache boundary.
+Features and integrations hold one capability per language around the same toolset rather than an instruction callable, which pydantic-ai would render before every request and move behind the cache boundary, and a block rendered from the run, such as the functions the sandbox declares, is an exar `RunNote` with `on_change='rewrite'`, rendered once per run as fixed text.
+pydantic-ai keeps the order of fixed blocks, the run notes included, so `build_capabilities` composes the blocks every run shares first, then those following the run's policy, and the ones that differ between conversations, the document scope, the date, the mode, and the assistant, last.
 State that changes during a conversation is an instruction that appends its changes (see below).
 
 ## Database
