@@ -13,33 +13,35 @@ dependencies = [
   "cbrkit[bpmn,http,pgvector,pydantic-ai,transformers]",
   "chonkie>=1,<2",
   "cryptography>=50,<51",
-  "exar[anydoc,cbrkit,chonkie,eval,media,pdf-inspector,table]",
-  "fastapi[standard]>=0.163,<0.164",
+  "exar[anydoc,cbrkit,chonkie,eval,media,pdf-inspector,table,web]",
+  "fastapi[standard]>=0.165,<1",
   "fastmcp>=4,<5",
-  "frozendict>=2,<3",
   "httpx2>=2,<3",
   "joserfc>=1,<2",
-  "logfire>=5,<6",
+  "logfire[fastapi]>=6,<7",
   "markdown-it-py>=4,<5",
-  "markdownify>=1,<2",
+  "mcp>=2,<3",
   "openai>=3,<4",
   "opentelemetry-exporter-otlp-proto-http>=1,<2",
-  "opentelemetry-instrumentation-fastapi>=0.66b0,<0.67",
+  "opentelemetry-sdk>=1,<2",
+  "pgvector>=0.5,<1",
   "pillow>=13,<14",
-  "polars>=2,<3",
   "psycopg[binary]>=3,<4",
-  "pydantic-ai-harness>=0.68,<0.69",
+  "pydantic>=2,<3",
+  "pydantic-ai-harness>=0.71,<1",
   "pydantic-ai-slim[ui,openai,mcp]>=2,<3",
+  "pydantic-core>=2,<3",
+  "pydantic-evals>=2,<3",
   "pydantic-monty>=1,<2",
   "pydantic-settings>=2,<3",
-  "pyspellchecker>=0.9,<0.10",
+  "pyspellchecker>=0.9,<1",
   "pyyaml>=6,<7",
   "sqlalchemy[asyncio]>=2,<3",
+  "starlette>=1,<2",
   # Transitive via cbrkit and exar, direct only so `tool.uv.sources` applies.
   "torch>=2,<3",
-  "trafilatura>=2,<3",
-  "typer>=0.27,<0.28",
-  "uvicorn[standard]>=0.54,<0.55",
+  "typer>=0.27,<1",
+  "uvicorn[standard]>=0.54,<1",
 ]
 
 [project.scripts]
@@ -47,7 +49,7 @@ hivegent = "hivegent.cli:app"
 
 [project.optional-dependencies]
 all = ["hivegent-backend[docling,pdf-oxide,semantic]"]
-docling = ["exar[docling]", "torchvision>=0.29,<0.30"]
+docling = ["exar[docling]", "torchvision>=0.29,<1"]
 kreuzberg = ["exar[kreuzberg]"]
 markitdown = ["exar[markitdown]"]
 pdf-oxide = ["exar[pdf-oxide]"]
@@ -55,16 +57,15 @@ semantic = ["exar[semantic]"]
 
 [dependency-groups]
 dev = [
-  "dirty-equals>=0.11,<0.12",
-  "inline-snapshot>=0.36,<0.37",
   "jsonschema>=4,<5",
   "openpyxl>=3,<4",
   "pytest>=9,<10",
   "pytest-asyncio>=1,<2",
+  "typing-extensions>=4,<5",
 ]
 
 [build-system]
-requires = ["uv-build>=0.13,<0.14"]
+requires = ["uv-build>=0.13,<1"]
 build-backend = "uv_build"
 
 [tool.alembic]
@@ -100,6 +101,7 @@ addopts = [
 filterwarnings = ["ignore:`force_full_page_ocr` is deprecated:DeprecationWarning"]
 testpaths = ["src", "tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 # Makes this file the ruff config wherever ruff runs from, so `nix fmt` at the
 # repository root sorts `hivegent` as first-party as a run from here does.
@@ -138,7 +140,9 @@ tesserocr = ["setuptools", "cython"]
 # PyPI's Linux wheels bundle CUDA, macOS has only PyPI's CPU and MPS builds.
 torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
 torchvision = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
-# The owner's checkouts until cbrkit 2 and exar are released, which the nix
-# build then needs, as it cannot reach these paths.
-cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
-exar = { path = "../../../wi2trier/exar", editable = true }
+# The dev branches until cbrkit 2 and exar are released.
+# Swap in the owner's checkouts to develop against local changes.
+cbrkit = { git = "https://github.com/wi2trier/cbrkit", branch = "dev" }
+exar = { git = "https://github.com/wi2trier/exar", branch = "dev" }
+# cbrkit = { path = "../../../wi2trier/cbrkit", editable = true }
+# exar = { path = "../../../wi2trier/exar", editable = true }
