@@ -112,6 +112,16 @@ let
         ];
       }
     );
+    # The Linux wheels link the libraries bundled in torch's wheel, outside any
+    # `lib` directory `autoPatchelfHook` searches, as nixpkgs' `torchvision-bin`.
+    torchvision = prev.torchvision.overrideAttrs (
+      old:
+      lib.optionalAttrs stdenv.hostPlatform.isLinux {
+        preInstall = (old.preInstall or "") + ''
+          addAutoPatchelfSearchPath "${final.torch}/${final.python.sitePackages}/torch"
+        '';
+      }
+    );
     # `license-files` in `pyproject.toml` reaches the repo-level license
     # and additional terms through symlinks, and the tests read the shared
     # RAGold schema and the turn fixtures the frontend replays, so the build
