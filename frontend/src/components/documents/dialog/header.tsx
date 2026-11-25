@@ -95,7 +95,7 @@ export function DocumentHeader({
           {!isEditing && (
             <div className="flex flex-wrap items-center gap-2">
               {editable && (
-                <Button variant="outline" size="sm" onClick={onEdit}>
+                <Button variant="outline" size="sm" onClick={onEdit} disabled={fullContent == null}>
                   <Pencil data-icon="inline-start" />
                   {t(($) => $.common.actions.edit)}
                 </Button>

@@ -97,11 +97,11 @@ export function previewText(text: string, maxChars = 300): string {
 }
 
 /**
- * Scroll *container* so *element* sits centered in it, or starts at its top when taller.
+ * Scroll *container* so *element*, or a text range, sits centered in it, or starts at its top when taller.
  * Unlike `scrollIntoView`, it leaves every other ancestor alone, so no clipping one shifts.
  */
 export function centerInScroller(
-  element: HTMLElement,
+  element: Element | Range,
   container: HTMLElement,
   behavior: ScrollBehavior = "auto",
 ): void {

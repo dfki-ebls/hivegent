@@ -114,6 +114,7 @@ function fetchedContentChunk(
 /**
  * What the dialog shows of *filename*: the workspace document and its chunks in managed mode,
  * else the content and chunks the tool outputs fetched, led by the *chunk* it opened on.
+ * It loads until both the content and the entry metadata arrived, as the metadata decides the layout.
  */
 export function useDocumentContent({
   filename,
@@ -127,7 +128,7 @@ export function useDocumentContent({
   image?: FetchedImage | null;
   isNew?: boolean;
   isManagedMode: boolean;
-}): { contentModel: ContentModel; isLoading: boolean; managedLoading: boolean } {
+}): { contentModel: ContentModel; isLoading: boolean } {
   const { t } = useTranslation();
   const conversationId = useConversationId();
   const workspaces = useWorkspaces();
@@ -155,13 +156,11 @@ export function useDocumentContent({
   });
 
   const metadata = chunksQuery.data ?? null;
-  const managedLoading = chunksQuery.isLoading;
-  const isLoading = contentQuery.isLoading;
+  const isLoading = contentQuery.isLoading || chunksQuery.isLoading;
 
   if (isManagedMode) {
     return {
       isLoading,
-      managedLoading,
       contentModel: {
         content: contentQuery.data ?? null,
         chunks:
@@ -172,7 +171,6 @@ export function useDocumentContent({
             detail: t(($) => $.documents.dialog.tokens, { count: item.token_count }),
             range: { start: item.start_index, end: item.end_index },
           })) ?? [],
-        loading: isLoading || managedLoading,
         error: chunksQuery.error && errorMessage(chunksQuery.error),
         assetsDir: metadata?.assets_dir ?? null,
         preview: entryPreview(filename, metadata),
@@ -189,11 +187,9 @@ export function useDocumentContent({
 
   return {
     isLoading,
-    managedLoading,
     contentModel: {
       content: fetchedContent,
       chunks: sortChunks(fetched).map((item) => fetchedContentChunk(item, resolveRange)),
-      loading: isLoading,
       error: null,
       assetsDir: null,
       preview: image

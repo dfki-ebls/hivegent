@@ -59,6 +59,10 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 5000,
   },
+  // Module workers, so a worker loads its libraries on demand.
+  worker: {
+    format: "es",
+  },
   server: {
     proxy: {
       "/api": { target: "http://localhost:8000", changeOrigin: true },

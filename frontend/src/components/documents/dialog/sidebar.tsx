@@ -5,7 +5,7 @@ import { type AssetEntry } from "@/api/documents";
 import { previewText } from "@/lib/utils";
 import { type ContentModel, type SidebarTab, type View } from "@/components/documents/dialog/model";
 import { SidebarItem } from "@/components/documents/dialog/parts";
-import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
+import { StatusPanel } from "@/components/common/status-panel";
 import { Badge } from "@/components/ui/badge";
 import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
@@ -20,7 +20,6 @@ export function DocumentSidebar({
   onSidebarTabChange,
   contentModel,
   isManagedMode,
-  managedLoading,
   hasAssets,
   assets,
   assetsLoading,
@@ -31,20 +30,11 @@ export function DocumentSidebar({
   onSidebarTabChange: (tab: SidebarTab) => void;
   contentModel: ContentModel;
   isManagedMode: boolean;
-  managedLoading: boolean;
   hasAssets: boolean;
   assets: AssetEntry[] | undefined;
   assetsLoading: boolean;
 }) {
   const { t } = useTranslation();
-
-  if (isManagedMode && managedLoading) {
-    return (
-      <aside className="flex w-56 shrink-0 border-r">
-        <LoadingPanel />
-      </aside>
-    );
-  }
 
   if (contentModel.error) {
     return (
@@ -78,7 +68,7 @@ export function DocumentSidebar({
         contentModel.chunks.length > 0 && <Separator />
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+      <div className="lazy-blocks flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
         {sidebarTab === "chunks" &&
           contentModel.chunks
             .filter((item) => !item.isFullDocument)

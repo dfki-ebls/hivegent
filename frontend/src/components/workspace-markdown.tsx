@@ -18,8 +18,10 @@ function WorkspaceLink({ children, ...props }: ComponentProps<"a">) {
   );
 }
 
+// The blocks sit right in the typeset container, unwrapped.
 const BASE_OPTIONS = {
   disableParsingRawHTML: true,
+  wrapper: null,
   overrides: { a: { component: WorkspaceLink } },
 } satisfies MarkdownToJSX.Options;
 

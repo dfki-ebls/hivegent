@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ComponentProps, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { formatFileSize } from "@/i18n/format";
@@ -63,13 +63,13 @@ export function DescriptionPane({ children }: { children: ReactNode }) {
   );
 }
 
-/** The document text as one wrapped, scrolling code block filling the pane. */
-export function TextPane({ children }: { children: ReactNode }) {
+/** The document text as one wrapped, scrolling code block filling the pane, the *span* holding it. */
+export function TextPane(props: ComponentProps<"span">) {
   return (
     <div className="flex min-h-0 flex-1 flex-col p-4">
       <CodeBlock className="min-h-0 flex-1">
         <CodeBlockContent wrap>
-          <span>{children}</span>
+          <span {...props} />
         </CodeBlockContent>
       </CodeBlock>
     </div>

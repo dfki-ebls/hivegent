@@ -1,4 +1,5 @@
 import { FileQuestionIcon } from "lucide-react";
+import { useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { StatusPanel } from "@/components/common/status-panel";
@@ -15,7 +16,7 @@ import { CodeBlock, CodeBlockContent, CodeBlockHeader } from "@/components/ui/co
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceMarkdown } from "@/components/workspace-markdown";
 import type { DocumentPreview } from "@/lib/original-preview";
-import { basename, cn, isWebUrl } from "@/lib/utils";
+import { basename, centerInScroller, cn, isWebUrl } from "@/lib/utils";
 
 type MediaPreview = Extract<DocumentPreview, { kind: "media" }>;
 
@@ -47,7 +48,7 @@ export function FullDocumentText({
   if (content) {
     return (
       <ScrollArea className="min-h-0 flex-1">
-        <WorkspaceMarkdown className="p-4" documentPath={filename}>
+        <WorkspaceMarkdown className="lazy-blocks p-4" documentPath={filename}>
           {content}
         </WorkspaceMarkdown>
       </ScrollArea>
@@ -87,50 +88,60 @@ export function FullDocumentText({
   );
 }
 
-/** One chunk, highlighted within the full content when that is known. */
+/** The CSS highlight marking the shown chunk, styled in `styles.css`. */
+const CHUNK_HIGHLIGHT = "document-chunk";
+
+/**
+ * One chunk, highlighted within the full content when that is known.
+ * The highlight paints over the unchanged text, so switching chunks never lays out the document again.
+ */
 export function ChunkText({
   chunk,
   fullContent,
-  highlightRef,
 }: {
   chunk: ContentChunk;
   fullContent: string | null;
-  highlightRef: (node: HTMLElement | null) => void;
 }) {
   const { t } = useTranslation();
+  const textRef = useRef<HTMLSpanElement>(null);
+  // The first chunk jumps into view, every later one scrolls there.
+  const scrolledRef = useRef(false);
+  const start = chunk.range?.start;
+  const end = chunk.range?.end;
+
+  useLayoutEffect(() => {
+    const span = textRef.current;
+    const text = span?.firstChild;
+    const viewport = span?.closest<HTMLElement>('[data-slot="code-block-content"]');
+
+    if (start === undefined || end === undefined || !(text instanceof Text) || !viewport) return;
+
+    const range = new Range();
+    range.setStart(text, Math.min(start, text.length));
+    range.setEnd(text, Math.min(end, text.length));
+    CSS.highlights.set(CHUNK_HIGHLIGHT, new Highlight(range));
+    centerInScroller(range, viewport, scrolledRef.current ? "smooth" : "instant");
+    scrolledRef.current = true;
+
+    return () => {
+      CSS.highlights.delete(CHUNK_HIGHLIGHT);
+    };
+  }, [fullContent, start, end]);
 
   if (!fullContent) {
     return chunk.content ? (
       <TextPane>{chunk.content}</TextPane>
     ) : (
-      <StatusPanel icon={FileQuestionIcon} title={t(($) => $.documents.dialog.contentUnavailable)} />
+      <StatusPanel
+        icon={FileQuestionIcon}
+        title={t(($) => $.documents.dialog.contentUnavailable)}
+      />
     );
   }
 
-  if (!chunk.range) return <TextPane>{fullContent}</TextPane>;
-
-  const { start, end } = chunk.range;
-  // Whole lines are marked as one block, which paints and measures as a single box
-  // however many thousand lines it spans, and whose own break replaces the newlines around it.
-  const wholeLines =
-    (start === 0 || fullContent[start - 1] === "\n") &&
-    (end === fullContent.length || fullContent[end] === "\n");
-  const gap = wholeLines ? 1 : 0;
-
   return (
-    <TextPane>
-      <span className="text-muted-foreground">{fullContent.slice(0, Math.max(0, start - gap))}</span>
-      <mark
-        key={chunk.id}
-        ref={highlightRef}
-        className={cn(
-          "rounded-sm bg-primary/15 text-foreground",
-          wholeLines ? "block" : "box-decoration-clone",
-        )}
-      >
-        {fullContent.slice(start, end)}
-      </mark>
-      <span className="text-muted-foreground">{fullContent.slice(end + gap)}</span>
+    <TextPane ref={textRef} className={cn(chunk.range && "text-muted-foreground")}>
+      {fullContent}
     </TextPane>
   );
 }

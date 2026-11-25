@@ -66,7 +66,8 @@ export function EditPane({
           value={editContent}
           onChange={(e) => setEditContent(e.target.value)}
           placeholder={t(($) => $.documents.dialog.contentPlaceholder)}
-          className="min-h-0 flex-1 font-mono text-sm"
+          // A fixed size, as measuring a long document on every keystroke lags.
+          className="min-h-0 flex-1 field-sizing-fixed font-mono text-sm"
         />
       </div>
       <DialogFooter className="p-4">

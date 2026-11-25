@@ -161,3 +161,23 @@
     --scroll-fade-mask: none;
   }
 }
+
+/* The chunk the document dialog shows, painted over its muted text by `ChunkText`. */
+::highlight(document-chunk) {
+  background-color: color-mix(in oklab, var(--primary) 15%, transparent);
+  color: var(--foreground);
+}
+
+/* The blocks of a long list or document skip layout and paint while off screen.
+   Containment keeps the first child margin of a block from collapsing into it,
+   so it is dropped, which the larger typeset block margins absorbed anyway. */
+@utility lazy-blocks {
+  & > * {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 2lh;
+  }
+
+  & > * > :first-child {
+    margin-block-start: 0;
+  }
+}

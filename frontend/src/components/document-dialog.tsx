@@ -1,21 +1,21 @@
 import { TextSelectIcon } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { startTransition, useRef, useState } from "react";
+import { startTransition, useDeferredValue, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { canonicalPath, splitScopePath, documentMutations, documentQueries } from "@/api/documents";
 import { type FetchedChunk, type FetchedImage } from "@/lib/chunks";
-import { centerInScroller, isWebUrl } from "@/lib/utils";
+import { isWebUrl } from "@/lib/utils";
 import { type DocumentPreview } from "@/lib/original-preview";
 import { AssetPane } from "@/components/documents/dialog/asset-pane";
 import { EditPane } from "@/components/documents/dialog/edit-pane";
 import { DocumentHeader } from "@/components/documents/dialog/header";
-import { type SidebarTab, type View, defaultTab } from "@/components/documents/dialog/model";
+import { type SidebarTab, type View } from "@/components/documents/dialog/model";
 import { ChunkBadges } from "@/components/documents/dialog/parts";
 import { DocumentSidebar } from "@/components/documents/dialog/sidebar";
 import { ChunkText, FullDocumentText } from "@/components/documents/dialog/text-views";
 import { useDocumentContent } from "@/components/documents/dialog/use-document-content";
-import { PreviewTabs } from "@/components/documents/preview-tabs";
+import { type PreviewTab, PreviewTabs } from "@/components/documents/preview-tabs";
 import { SimilarityView } from "@/components/documents/similarity-view";
 import { LoadingPanel, StatusPanel } from "@/components/common/status-panel";
 import { ScrollDialogContent } from "@/components/scroll-dialog-content";
@@ -94,22 +94,22 @@ function DocumentDialogBody({
     return { mode: "chunk", id: chunk.id };
   });
 
-  const [tab, setTab] = useState(() => defaultTab(view));
+  // Every view opens on the text, the original loads only once its tab is picked.
+  const [tab, setTab] = useState<PreviewTab>("text");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chunks");
   const [assetDescriptionDraft, setAssetDescriptionDraft] = useState("");
   const [isEditingAssetDescription, setIsEditingAssetDescription] = useState(false);
 
-  // When true, the next scroll-into-view uses "instant" instead of "smooth".
-  const isInitialScrollRef = useRef(true);
-
   const isManagedMode = showMetadata || onRechunk != null;
-  const { contentModel, isLoading, managedLoading } = useDocumentContent({
+  const { contentModel, isLoading } = useDocumentContent({
     filename,
     chunk,
     image,
     isNew,
     isManagedMode,
   });
+  // Starts out loading, so the dialog paints its frame before mounting a cached document.
+  const loading = useDeferredValue(isLoading, true);
   // Loaded on the first switch to the assets tab
   // (404 when the document has none → tab stays hidden via assets_dir)
   const assetsQuery = useQuery({
@@ -135,20 +135,6 @@ function DocumentDialogBody({
       : null;
   const activeAsset = view.mode === "asset" ? (assetsData?.assets[view.index] ?? null) : null;
 
-  // Scroll the highlight into view when its DOM element mounts. The mark
-  // is keyed by the active chunk identifier, so each chunk switch remounts
-  // it and re-fires this callback.
-  const highlightRef = (node: HTMLElement | null) => {
-    if (!node) return;
-    const behavior = isInitialScrollRef.current ? "instant" : "smooth";
-    isInitialScrollRef.current = false;
-    // Single rAF to let the code block settle.
-    requestAnimationFrame(() => {
-      const viewport = node.closest<HTMLElement>('[data-slot="code-block-content"]');
-      if (viewport) centerInScroller(node, viewport, behavior);
-    });
-  };
-
   // An uploaded image or video is shown like an extracted asset (the media, its
   // description, and file metadata), which drops the chunk/asset sidebar entirely.
   const preview = contentModel.preview;
@@ -161,18 +147,15 @@ function DocumentDialogBody({
   const mediaEntry = isManagedMode && preview?.kind === "media" ? preview : null;
   const hasAssets = contentModel.assetsDir != null;
   const hasSidebar =
-    isNew || mediaEntry
-      ? false
-      : isManagedMode
-        ? contentModel.loading || contentModel.chunks.length > 0 || hasAssets
-        : true;
+    !(isNew || loading || mediaEntry) &&
+    (!isManagedMode || contentModel.chunks.length > 0 || hasAssets || contentModel.error != null);
 
   // Switch the main pane, leaving any asset description edit behind.
   const showView = (next: View) => {
     setIsEditingAssetDescription(false);
     startTransition(() => {
       setView(next);
-      setTab(defaultTab(next));
+      setTab("text");
     });
   };
 
@@ -190,6 +173,8 @@ function DocumentDialogBody({
         />
       );
     }
+
+    if (loading) return <LoadingPanel />;
 
     // An extracted asset previews itself, any other view the entry's original.
     const shownPreview: DocumentPreview | null = activeAsset
@@ -219,8 +204,6 @@ function DocumentDialogBody({
   };
 
   const renderText = () => {
-    if (isLoading) return <LoadingPanel />;
-
     if (view.mode === "full-doc") {
       return (
         <FullDocumentText filename={filename} contentModel={contentModel} mediaEntry={mediaEntry} />
@@ -247,7 +230,7 @@ function DocumentDialogBody({
       return <StatusPanel icon={TextSelectIcon} title={t(($) => $.documents.dialog.selectChunk)} />;
     }
 
-    return <ChunkText chunk={activeChunk} fullContent={fullContent} highlightRef={highlightRef} />;
+    return <ChunkText chunk={activeChunk} fullContent={fullContent} />;
   };
 
   return (
@@ -276,7 +259,6 @@ function DocumentDialogBody({
             onSidebarTabChange={setSidebarTab}
             contentModel={contentModel}
             isManagedMode={isManagedMode}
-            managedLoading={managedLoading}
             hasAssets={hasAssets}
             assets={assetsData?.assets}
             assetsLoading={assetsQuery.isLoading}

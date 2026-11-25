@@ -34,18 +34,55 @@ export function previewKind(
   return DOCUMENT_KINDS.find((kind) => kind === extension) ?? null;
 }
 
-/** The parsed original per kind, its library loaded on first use. */
+/** What the worker parses each kind to, which the page finishes where it needs the DOM. */
+export interface WorkerParsed {
+  docx: string;
+  xlsx: Sheet[];
+}
+
+export type WorkerRequest = {
+  [K in keyof WorkerParsed]: { kind: K; blob: Blob };
+}[keyof WorkerParsed];
+export type WorkerReply<T> = { value: T } | { error: string };
+
+/** *blob* parsed as *kind* by a worker of its own, which *signal* terminates. */
+function parseInWorker<K extends keyof WorkerParsed>(
+  kind: K,
+  blob: Blob,
+  signal?: AbortSignal,
+): Promise<WorkerParsed[K]> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const worker = new Worker(new URL("./original-worker.ts", import.meta.url), {
+      type: "module",
+    });
+    const settle = (finish: () => void) => {
+      worker.terminate();
+      signal?.removeEventListener("abort", abort);
+      finish();
+    };
+    const abort = () => settle(() => reject(signal?.reason));
+
+    signal?.addEventListener("abort", abort, { once: true });
+    worker.addEventListener("message", ({ data }: MessageEvent<WorkerReply<WorkerParsed[K]>>) =>
+      settle(() => ("value" in data ? resolve(data.value) : reject(new Error(data.error)))),
+    );
+    worker.addEventListener("error", (event) => settle(() => reject(new Error(event.message))));
+    worker.postMessage({ kind, blob });
+  });
+}
+
+/** The parsed original per kind, its library loaded on first use, away from the page where it can. */
 export const parseOriginal: {
-  [K in DocumentKind]: (blob: Blob) => Promise<OriginalContent[K]>;
+  [K in DocumentKind]: (blob: Blob, signal?: AbortSignal) => Promise<OriginalContent[K]>;
 } = {
   // Retyped so the frame showing it never renders other content.
   pdf: async (blob) => URL.createObjectURL(new Blob([blob], { type: "application/pdf" })),
-  docx: async (blob) => {
-    const [{ default: mammoth }, { default: DOMPurify }] = await Promise.all([
-      import("mammoth"),
+  docx: async (blob, signal) => {
+    const [value, { default: DOMPurify }] = await Promise.all([
+      parseInWorker("docx", blob, signal),
       import("dompurify"),
     ]);
-    const { value } = await mammoth.convertToHtml({ arrayBuffer: await blob.arrayBuffer() });
     // Neither styles, forms, nor ids reach the app's page, and links leave it in a new tab.
     const html = DOMPurify.sanitize(value, {
       FORBID_TAGS: ["style", "form"],
@@ -63,5 +100,5 @@ export const parseOriginal: {
 
     return container.innerHTML;
   },
-  xlsx: async (blob) => (await import("read-excel-file/browser")).default(blob),
+  xlsx: (blob, signal) => parseInWorker("xlsx", blob, signal),
 };
