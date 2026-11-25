@@ -1,10 +1,14 @@
 /** OIDC client-credentials token provider with single-flight refresh. */
 
-import type { OidcConfig } from "../config.js";
+import { posix } from "node:path";
+
+import { isSecureEndpoint, type OidcConfig } from "../config.js";
+import { fetchRetryable, HttpError } from "./retry.js";
 
 interface CachedToken {
   accessToken: string;
-  expiresAt: number;
+  /** When the token is refreshed, halfway through its lifetime. */
+  refreshAt: number;
 }
 
 interface TokenResponse {
@@ -12,17 +16,8 @@ interface TokenResponse {
   expires_in?: number;
 }
 
-const REFRESH_SKEW_MS = 30_000;
 // Bounds each IdP round-trip, since a hung one would stall every turn behind it.
 const IDP_TIMEOUT_MS = 10_000;
-
-/** Whether the client secret may be sent to `url`: HTTPS, or HTTP on loopback for dev. */
-function isSecureEndpoint(url: URL): boolean {
-  return (
-    url.protocol === "https:" ||
-    (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
-  );
-}
 
 export class ServiceTokenProvider {
   readonly #config: OidcConfig;
@@ -34,9 +29,12 @@ export class ServiceTokenProvider {
     this.#config = config;
   }
 
-  /** Return a valid access token, refreshing (once, shared) when near expiry. */
+  /**
+   * Return an access token with at least half its lifetime left, refreshing
+   * (once, shared) past that, so a turn rarely outlives the token it opened with.
+   */
   async getToken(): Promise<string> {
-    if (this.#cached && this.#cached.expiresAt - REFRESH_SKEW_MS > Date.now()) {
+    if (this.#cached && this.#cached.refreshAt > Date.now()) {
       return this.#cached.accessToken;
     }
 
@@ -52,25 +50,33 @@ export class ServiceTokenProvider {
       return this.#tokenEndpoint;
     }
 
-    const url = `${this.#config.issuer}/.well-known/openid-configuration`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(IDP_TIMEOUT_MS) });
+    const url = new URL(this.#config.issuer);
+    url.pathname = posix.join(url.pathname, ".well-known/openid-configuration");
+
+    if (!isSecureEndpoint(url)) {
+      throw new Error(`OIDC discovery URL ${url.href} is insecure`);
+    }
+
+    const res = await fetchRetryable(url, { signal: AbortSignal.timeout(IDP_TIMEOUT_MS) });
 
     if (!res.ok) {
-      throw new Error(`OIDC discovery failed (${res.status}) at ${url}`);
+      throw new HttpError(res.status, `OIDC discovery failed (${res.status}) at ${url.href}`);
     }
 
     const doc = (await res.json()) as { issuer?: string; token_endpoint?: string };
 
     // OpenID Connect Discovery 1.0, section 4.3.
-    if (doc.issuer?.replace(/\/+$/, "") !== this.#config.issuer) {
+    if (doc.issuer !== this.#config.issuer) {
       throw new Error(`OIDC discovery issuer ${doc.issuer} does not match ${this.#config.issuer}`);
     }
 
-    if (!doc.token_endpoint || !isSecureEndpoint(new URL(doc.token_endpoint))) {
+    const endpoint = doc.token_endpoint && URL.parse(doc.token_endpoint);
+
+    if (!endpoint || !isSecureEndpoint(endpoint)) {
       throw new Error(`OIDC discovery token_endpoint ${doc.token_endpoint} is missing or insecure`);
     }
 
-    this.#tokenEndpoint = doc.token_endpoint;
+    this.#tokenEndpoint = endpoint.href;
     return this.#tokenEndpoint;
   }
 
@@ -86,7 +92,7 @@ export class ServiceTokenProvider {
       "base64",
     );
 
-    const res = await fetch(endpoint, {
+    const res = await fetchRetryable(endpoint, {
       method: "POST",
       headers: {
         Authorization: `Basic ${basic}`,
@@ -97,7 +103,7 @@ export class ServiceTokenProvider {
     });
 
     if (!res.ok) {
-      throw new Error(`client_credentials token request failed (${res.status})`);
+      throw new HttpError(res.status, `client_credentials token request failed (${res.status})`);
     }
 
     const data = (await res.json()) as TokenResponse;
@@ -105,7 +111,7 @@ export class ServiceTokenProvider {
 
     this.#cached = {
       accessToken: data.access_token,
-      expiresAt: Date.now() + expiresIn * 1000,
+      refreshAt: Date.now() + (expiresIn * 1000) / 2,
     };
 
     return this.#cached.accessToken;

@@ -7,12 +7,23 @@ import { BodyTooLargeError } from "srvx/body-limit";
 import { createBot } from "./bot.js";
 import { loadConfig } from "./config.js";
 import { ServiceTokenProvider } from "./hivegent/auth.js";
+import { requireServicePrincipal } from "./hivegent/client.js";
+import { retryTransient } from "./hivegent/retry.js";
 
 // Adapters buffer the body before verifying the platform JWT, so cap what an anonymous sender can make us hold.
 const MAX_BODY_BYTES = 1024 * 1024;
 
 const cfg = loadConfig();
 const token = cfg.oidc ? new ServiceTokenProvider(cfg.oidc) : undefined;
+
+// Without a service principal every Teams user would share one person's memory and conversations.
+// Retried while the IdP or the backend is still starting, so a boot beside them does not exit.
+if (token) {
+  await retryTransient("service principal check", async () =>
+    requireServicePrincipal(cfg, await token.getToken()),
+  );
+}
+
 const chat = await createBot(cfg, { token });
 
 // Exact `METHOD /path` keys, so unknown routes and methods fall through to 404.

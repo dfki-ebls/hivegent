@@ -13,7 +13,7 @@ const TOOL_STATUS: Record<string, string> = {
   list_documents: "Browsing documents…",
   read_document: "Reading documents…",
   read_binary_document: "Reading documents…",
-  explore: "Researching…",
+  delegate_task: "Researching…",
   web_search: "Searching the web…",
   web_fetch: "Reading web pages…",
 };
@@ -38,26 +38,74 @@ function projectChunk(chunk: UIMessageChunk): StreamEvent | null {
   }
 }
 
-export async function* parseHivegentStream(response: Response): AsyncGenerator<StreamEvent> {
-  const body = response.body;
+const CUT_OFF = "The answer was cut off, please ask again.";
 
-  if (!body) {
-    throw new Error("hivegent response has no body");
-  }
+/**
+ * Follow the turn again with a fresh token, `null` once it ended.
+ * hivegent ends a stream when the token that opened it expires, and replays a
+ * running turn from its first chunk to whoever follows it again.
+ */
+export type Reopen = () => Promise<Response | null>;
 
-  for await (const result of parseJsonEventStream({ stream: body, schema: uiMessageChunkSchema })) {
-    if (!result.success) {
-      continue;
+/**
+ * The turn's events up to its `finish`, followed again through *reopen* when a
+ * stream ends before it, skipping the chunks already read.
+ */
+export async function* parseHivegentStream(
+  response: Response,
+  reopen?: Reopen,
+): AsyncGenerator<StreamEvent> {
+  let read = 0;
+  let current: Response | null = response;
+
+  while (current) {
+    const body = current.body;
+
+    if (!body) {
+      throw new Error("hivegent response has no body");
     }
 
-    if (result.value.type === "finish") {
+    const before = read;
+    let index = 0;
+
+    for await (const result of parseJsonEventStream({
+      stream: body,
+      schema: uiMessageChunkSchema,
+    })) {
+      index += 1;
+
+      if (index <= read) {
+        continue;
+      }
+
+      read = index;
+
+      if (!result.success) {
+        continue;
+      }
+
+      const chunk = result.value;
+
+      if (chunk.type === "finish") {
+        return;
+      }
+
+      const event = projectChunk(chunk);
+
+      if (event) {
+        yield event;
+      }
+    }
+
+    if (!reopen) {
       return;
     }
 
-    const event = projectChunk(result.value);
+    // A stream that brought nothing new is not followed again, so a failing backend ends the loop.
+    current = read > before ? await reopen() : null;
 
-    if (event) {
-      yield event;
+    if (!current) {
+      yield { kind: "error", text: CUT_OFF };
     }
   }
 }

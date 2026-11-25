@@ -1,174 +1,129 @@
 /**
- * Layered configuration: an optional JSON file (non-secret settings, e.g. rendered
- * by the NixOS module into the store) overlaid by environment variables, which win.
- * Mirrors the backend's `HIVEGENT_CONFIG_FILE` (TOML) + `HIVEGENT_*` env pattern.
- * The file path comes from `BRIDGE_CONFIG_FILE` (default `config.json`); a missing
- * file is tolerated. Keep secrets out of the file: pass them as environment
- * variables or, preferably, as credential files (see `readCredentials`).
+ * Configuration: one JSON file of non-secret settings validated by `FileSchema`,
+ * read from `BRIDGE_CONFIG_FILE` (default `config.json`), plus the secrets named
+ * in `resolveConfig`, each read from its environment variable or else from the
+ * credential file `hivegent-bridge.<NAME>` in `$CREDENTIALS_DIRECTORY`.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export interface OidcConfig {
-  issuer: string;
-  clientId: string;
-  clientSecret: string;
-  scope?: string;
+import { z } from "zod";
+
+const nonEmpty = z.string().min(1);
+const httpUrl = z.url({ protocol: /^https?$/ });
+
+// Paths are appended to these, so a trailing slash would double up.
+const baseUrl = httpUrl.refine((url) => !url.endsWith("/"), "must not end with a slash");
+
+/** Whether *host* names the loopback interface, as a URL hostname with IPv6 brackets or a bare bind address. */
+function isLoopback(host: string): boolean {
+  return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(host) || host.endsWith(".localhost");
 }
 
-export interface BridgeConfig {
-  hivegentUrl: string;
-  /** Absent for local debugging against an auth-disabled hivegent. */
-  oidc?: OidcConfig;
-  /** Absent to use the server default. */
-  reasoningEffort?: string;
-  disabledTools: string[];
+/** Whether *url* is https, or http on a loopback host alone, the rule the backend applies to its IdP. */
+export function isSecureEndpoint(url: URL): boolean {
+  return url.protocol === "https:" || (url.protocol === "http:" && isLoopback(url.hostname));
+}
+
+const secureUrl = httpUrl.refine(
+  (url) => isSecureEndpoint(new URL(url)),
+  "must be https, or http on a loopback host",
+);
+
+export const FileSchema = z
+  .strictObject({
+    backendUrl: baseUrl,
+    host: nonEmpty.default("127.0.0.1"),
+    port: z.int().min(1).max(65535).default(3003),
+    botUserName: nonEmpty.default("hivegent"),
+    /** Absent for local debugging against `hivegent dev`, which the Teams adapter refuses. */
+    oidc: z
+      // The issuer exactly as the IdP names it in `iss`, trailing slash included.
+      .strictObject({ issuer: secureUrl, clientId: nonEmpty, scope: nonEmpty.optional() })
+      .optional(),
+    adapters: z.strictObject({ teams: z.boolean(), web: z.boolean().default(false) }),
+    /** The Teams app and the Entra tenant ids whose activities it answers, every other refused. */
+    teams: z
+      .strictObject({
+        appId: nonEmpty,
+        tenantId: nonEmpty,
+        allowedTenants: z.array(nonEmpty).min(1),
+      })
+      .optional(),
+  })
+  .refine((cfg) => !cfg.adapters.web || (!cfg.oidc && isLoopback(cfg.host)), {
+    // Unauthenticated, so it may only reach a backend that needs no credentials, and only from this machine.
+    message:
+      "The web adapter answers anyone, so it runs only without oidc on a loopback host, against `hivegent dev`",
+    path: ["adapters", "web"],
+  });
+
+export type FileConfig = z.infer<typeof FileSchema>;
+export type OidcConfig = NonNullable<FileConfig["oidc"]> & { clientSecret: string };
+export type TeamsConfig = NonNullable<FileConfig["teams"]> & { appPassword: string };
+
+export type BridgeConfig = Omit<FileConfig, "oidc" | "teams"> & {
   postgresUrl: string;
-  botUserName: string;
-  host: string;
-  port: number;
-  /** Per-adapter enablement overrides; unset adapters use the registry default. */
-  adapters: Record<string, boolean>;
-}
+  oidc?: OidcConfig;
+  teams?: TeamsConfig;
+};
 
-/** Shape of the optional JSON config file (all keys optional). */
-export interface FileConfig {
-  hivegentUrl?: string;
-  oidc?: Partial<OidcConfig>;
-  reasoningEffort?: string;
-  postgresUrl?: string;
-  botUserName?: string;
-  host?: string;
-  port?: number;
-  adapters?: Record<string, boolean>;
-}
+/** Looks up a secret by name, undefined when it is not set. */
+export type SecretSource = (name: string) => string | undefined;
 
-const DEFAULT_HOST = "127.0.0.1";
-const DEFAULT_CONFIG_FILE = "config.json";
+/** Secrets from the environment, else from credential files in `$CREDENTIALS_DIRECTORY`. */
+export function secretSource(env: NodeJS.ProcessEnv): SecretSource {
+  const dir = env.CREDENTIALS_DIRECTORY;
 
-function trimTrailingSlash(url: string): string {
-  return url.replace(/\/+$/, "");
-}
+  return (name) => {
+    const value = env[name];
 
-function boolFrom(value: string | undefined): boolean | undefined {
-  return value === undefined ? undefined : value !== "false" && value !== "0";
-}
-
-export function readFileConfig(path: string | undefined): FileConfig {
-  const file = path ?? DEFAULT_CONFIG_FILE;
-
-  try {
-    return JSON.parse(readFileSync(file, "utf8")) as FileConfig;
-  } catch (err) {
-    if (isMissing(err)) {
-      return {};
+    if (value) {
+      return value;
     }
 
-    throw new Error(`Failed to read config file ${file}: ${String(err)}`);
-  }
-}
-
-function isMissing(err: unknown): boolean {
-  return (err as NodeJS.ErrnoException).code === "ENOENT";
-}
-
-const CREDENTIAL_PREFIX = "hivegent-bridge.";
-
-/**
- * Credential files `hivegent-bridge.<VAR>` in `$CREDENTIALS_DIRECTORY`, keyed by
- * `<VAR>`, ignoring other files. systemd sets the directory for the unit and the
- * container image points it at `/run/secrets`. A missing directory holds none.
- */
-export function readCredentials(dir: string | undefined): Record<string, string> {
-  if (!dir) {
-    return {};
-  }
-
-  try {
-    return Object.fromEntries(
-      readdirSync(dir, { withFileTypes: true })
-        .filter((entry) => entry.isFile() && entry.name.startsWith(CREDENTIAL_PREFIX))
-        .map((entry) => [
-          entry.name.slice(CREDENTIAL_PREFIX.length),
-          readFileSync(join(dir, entry.name), "utf8").trim(),
-        ]),
-    );
-  } catch (err) {
-    if (isMissing(err)) {
-      return {};
+    if (!dir) {
+      return undefined;
     }
 
-    throw err;
-  }
+    try {
+      return readFileSync(join(dir, `hivegent-bridge.${name}`), "utf8").trim() || undefined;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return undefined;
+      }
+
+      throw err;
+    }
+  };
 }
 
-function requireValue(value: string | undefined, source: string): string {
+function requireSecret(secrets: SecretSource, name: string): string {
+  const value = secrets(name);
+
   if (!value) {
-    throw new Error(`Missing required configuration: ${source}`);
+    throw new Error(`Missing secret ${name}`);
   }
 
   return value;
 }
 
-/**
- * Per-adapter enablement overrides, from the file's `adapters` map plus any
- * `ENABLE_<NAME>` env var (env wins). Unknown names are harmless — the registry
- * only consults the adapters it knows.
- */
-function resolveAdapters(env: NodeJS.ProcessEnv, file: FileConfig): Record<string, boolean> {
-  const adapters: Record<string, boolean> = { ...file.adapters };
-
-  for (const [key, value] of Object.entries(env)) {
-    const name = /^ENABLE_(.+)$/.exec(key)?.[1];
-
-    if (name && value !== undefined) {
-      adapters[name.toLowerCase()] = boolFrom(value) ?? true;
-    }
-  }
-
-  return adapters;
-}
-
-/** Merge a file config with environment variables (env wins). Pure and testable. */
-export function resolveConfig(env: NodeJS.ProcessEnv, file: FileConfig): BridgeConfig {
-  const clientId = env.OIDC_CLIENT_ID ?? file.oidc?.clientId;
-  const oidc: OidcConfig | undefined = clientId
-    ? {
-        issuer: trimTrailingSlash(
-          requireValue(env.OIDC_ISSUER ?? file.oidc?.issuer, "OIDC_ISSUER"),
-        ),
-        clientId,
-        clientSecret: requireValue(
-          env.OIDC_CLIENT_SECRET ?? file.oidc?.clientSecret,
-          "OIDC_CLIENT_SECRET",
-        ),
-        scope: env.OIDC_SCOPE ?? file.oidc?.scope,
-      }
-    : undefined;
+/** Validate the parsed config file and add the secrets its sections need. */
+export function resolveConfig(file: unknown, secrets: SecretSource): BridgeConfig {
+  const { oidc, teams, ...rest } = FileSchema.parse(file);
 
   return {
-    hivegentUrl: trimTrailingSlash(
-      requireValue(env.HIVEGENT_URL ?? file.hivegentUrl, "HIVEGENT_URL"),
-    ),
-    oidc,
-    reasoningEffort: env.REASONING_EFFORT ?? file.reasoningEffort,
-    // The bot is read-only over documents and never writes cross-conversation memory.
-    disabledTools: ["edit_document", "write_document", "write_memory"],
-    postgresUrl: requireValue(env.POSTGRES_URL ?? file.postgresUrl, "POSTGRES_URL"),
-    botUserName: env.BOT_USERNAME ?? file.botUserName ?? "hivegent",
-    host: env.HOST ?? file.host ?? DEFAULT_HOST,
-    port: env.PORT !== undefined ? Number(env.PORT) : (file.port ?? 3003),
-    adapters: resolveAdapters(env, file),
+    ...rest,
+    postgresUrl: requireSecret(secrets, "POSTGRES_URL"),
+    oidc: oidc && { ...oidc, clientSecret: requireSecret(secrets, "OIDC_CLIENT_SECRET") },
+    teams: teams && { ...teams, appPassword: requireSecret(secrets, "TEAMS_APP_PASSWORD") },
   };
 }
 
 export function loadConfig(): BridgeConfig {
-  // Adapters read their own credentials (e.g. `TEAMS_APP_PASSWORD`) from
-  // `process.env`, so credential files fill it, below any variable already set.
-  for (const [name, value] of Object.entries(readCredentials(process.env.CREDENTIALS_DIRECTORY))) {
-    process.env[name] ??= value;
-  }
+  const path = process.env.BRIDGE_CONFIG_FILE ?? "config.json";
+  const file: unknown = JSON.parse(readFileSync(path, "utf8"));
 
-  return resolveConfig(process.env, readFileConfig(process.env.BRIDGE_CONFIG_FILE));
+  return resolveConfig(file, secretSource(process.env));
 }

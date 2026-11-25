@@ -16,8 +16,21 @@ Platform ──webhook──▶ srvx ──chat.webhooks[name]──▶ handler
              thread.post(async generator of text)
 ```
 
-The bot reads the shared group workspace `@team-kb` through a `team-kb:read` groups claim.
-Every turn runs in read mode, so no workspace is writable whatever the claim grants, and `edit_document`, `write_document`, and `write_memory` are disabled on top, so curate the workspace in the web UI.
+## What the bot may do
+
+The backend names the bot's OIDC client in `auth.service_client_id` (`hivegent-bot`), and every token of that client acts as a service principal whose capabilities follow from its kind, not from its claims or its requests.
+
+- It sees the global workspace (`/srv`) alone and writes nothing, whatever groups or roles its token carries.
+- Every turn runs in read mode, whatever the request says.
+- It is offered no memory and no conversation tools, and the chat route is the only route it reaches, so uploads, document writes, and conversation listings are refused with 403.
+
+Curate the global workspace in the web UI as an administrator.
+All Teams users share the bot's one identity, so every Teams conversation is stored under it, which is why nothing that lists or searches conversations is reachable for it.
+Its requests and chat turns spend the `rate_limits.teams` buckets, which all Teams users share.
+
+The bridge fails closed on both counts.
+Its token request and this check retry a network error, timeout, 5xx, or 429 with a backoff from 1s to 30s for up to five minutes, so the bridge can boot beside an IdP or backend still starting, and exit at once on any other failure.
+The Teams adapter refuses to start without `oidc`, and the bot answers only messages whose tenant (`conversation.tenantId`, else `channelData.tenant.id`) is in `teams.allowedTenants`, dropping every other one without a reply. The handlers check it first, which the adapter reaches only after it validated the Bot Framework JWT, so the tenant comes from an activity Microsoft vouches for.
 
 ## Layout
 
@@ -39,29 +52,45 @@ oxlint --type-aware --type-check
 npm run dev
 ```
 
-The repo dev shell (`nix develop`) exports the dev config, see the Bridge group in `nix/shell.nix`.
-It enables the Web adapter, disables Teams and OIDC, and the local backend runs with `HIVEGENT_AUTH__ENABLE=0`.
+The repo dev shell (`nix develop`) points `BRIDGE_CONFIG_FILE` at a dev config, see the Bridge group in `nix/shell.nix`.
+It enables the Web adapter, disables Teams, omits `oidc`, and the local backend runs as `hivegent dev`, whose development user every request acts as.
 To drive a full turn without Teams, POST an AI SDK chat request to `/api/webhooks/web`.
 
 ## Configuration
 
-Environment variables override a JSON file read from `BRIDGE_CONFIG_FILE` (default `config.json`, missing is fine).
+One JSON file, read from `BRIDGE_CONFIG_FILE` (default `config.json`), holds every non-secret setting and is validated at startup, rejecting unknown keys.
 
-- File shape: `{ hivegentUrl, oidc: { issuer, clientId }, reasoningEffort, botUserName, host, port, adapters: { teams, web } }`.
-- `host` defaults to `127.0.0.1`, `port` to `3003`, `reasoningEffort` to the server default.
-- `ENABLE_<NAME>` overrides an adapter, which otherwise uses its default (Teams on, Web off).
-- Secrets (`OIDC_CLIENT_SECRET`, `POSTGRES_URL`, `TEAMS_APP_*`) go in credential files named `hivegent-bridge.<VAR>` in `$CREDENTIALS_DIRECTORY`.
-  Other files, such as the backend's `hivegent.*` secrets in a shared directory, are ignored.
-  A set variable wins over its file.
+```json
+{
+  "backendUrl": "http://127.0.0.1:8000",
+  "host": "127.0.0.1",
+  "port": 3003,
+  "botUserName": "hivegent",
+  "oidc": { "issuer": "https://auth.example.com", "clientId": "hivegent-bot", "scope": "openid" },
+  "adapters": { "teams": true, "web": false },
+  "teams": { "appId": "<app id>", "tenantId": "<tenant id>", "allowedTenants": ["<tenant id>"] }
+}
+```
 
-The bot needs an OIDC client-credentials token whose groups claim carries `team-kb`.
-The backend reads both `groups` and `custom.groups`, so Rauthy's static custom claims work without extra config.
-Omit all `OIDC_*` to run against an auth-disabled hivegent.
+- `backendUrl` and `adapters.teams` are required. `backendUrl` is `http` or `https` without a trailing slash, while `oidc.issuer` is the issuer exactly as the IdP names it in `iss`, trailing slash included, and `https` unless it is a loopback host.
+- `host` defaults to `127.0.0.1`, `port` to `3003`, `botUserName` to `hivegent`, and `adapters.web` to `false`.
+- The Teams adapter needs both `oidc` and `teams`, whose `allowedTenants` names the Microsoft Entra tenant ids it answers.
+- Omit `oidc` to run the Web adapter against `hivegent dev`, where the bot acts as the local dev user instead. The Web adapter answers anyone, so the configuration refuses it together with `oidc`, which leaves it no credentials to reach a real backend with.
+
+Secrets never go in the file.
+The bridge reads each by name from its environment variable, else from the credential file `hivegent-bridge.<NAME>` in `$CREDENTIALS_DIRECTORY`.
+
+- `POSTGRES_URL`, always.
+- `OIDC_CLIENT_SECRET`, with `oidc`.
+- `TEAMS_APP_PASSWORD`, with `teams`.
+
+The bot needs an OIDC client-credentials token of the client the backend names in `auth.service_client_id` and accepts in `auth.audience`.
+It needs no groups or roles claim.
 
 ## Teams setup
 
 Register with `teams app create --endpoint https://<domain>/api/webhooks/teams`.
-Put the credentials into `TEAMS_APP_ID`, `TEAMS_APP_PASSWORD`, and `TEAMS_APP_TENANT_ID`.
+Put the app id and tenant id into `teams.appId` and `teams.tenantId`, the password into the `TEAMS_APP_PASSWORD` secret, and the tenants whose users may chat into `teams.allowedTenants`, usually that same tenant id.
 Expose `/api/webhooks/*` over HTTPS.
 The adapter validates inbound Bot Framework tokens.
 

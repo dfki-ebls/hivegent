@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { parseHivegentStream, type StreamEvent } from "./stream.js";
+import { parseHivegentStream, type Reopen, type StreamEvent } from "./stream.js";
 
 const sse = (chunks: string[]): string => chunks.map((c) => `data: ${c}\n\n`).join("");
 
@@ -49,5 +49,37 @@ describe("parseHivegentStream", () => {
     const events = await collect(sse(['{"type":"error","errorText":"boom"}', "[DONE]"]));
 
     expect(events).toEqual([{ kind: "error", text: "boom" }]);
+  });
+
+  it("follows a cut stream again, skipping the chunks already read", async () => {
+    const chunks = [
+      '{"type":"start","messageId":"m"}',
+      '{"type":"text-delta","id":"t","delta":"Hel"}',
+      '{"type":"text-delta","id":"t","delta":"lo"}',
+      '{"type":"finish","finishReason":"stop"}',
+    ];
+    const reopen = vi.fn<Reopen>(async () => new Response(sse(chunks)));
+    const events: StreamEvent[] = [];
+
+    for await (const event of parseHivegentStream(new Response(sse(chunks.slice(0, 2))), reopen)) {
+      events.push(event);
+    }
+
+    expect(reopen).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      { kind: "text", text: "Hel" },
+      { kind: "text", text: "lo" },
+    ]);
+  });
+
+  it("says the answer was cut off once the turn ended unseen", async () => {
+    const events: StreamEvent[] = [];
+    const cut = new Response(sse(['{"type":"text-delta","id":"t","delta":"Hel"}']));
+
+    for await (const event of parseHivegentStream(cut, async () => null)) {
+      events.push(event);
+    }
+
+    expect(events.at(-1)?.kind).toBe("error");
   });
 });

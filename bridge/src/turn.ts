@@ -4,8 +4,8 @@ import type { Message, MessageContext, Thread } from "chat";
 
 import type { BridgeConfig } from "./config.js";
 import type { ServiceTokenProvider } from "./hivegent/auth.js";
-import { ConversationNotFoundError, chat } from "./hivegent/client.js";
-import { parseHivegentStream } from "./hivegent/stream.js";
+import { ConversationNotFoundError, chat, follow } from "./hivegent/client.js";
+import { parseHivegentStream, type Reopen } from "./hivegent/stream.js";
 
 // EU AI Act Article 50(1) and (5): the first reply of every conversation tells
 // the reader that an AI system is answering, as the web UI's persistent notice does.
@@ -50,41 +50,52 @@ export function createTurnHandler(
     message: Message,
     context?: MessageContext,
   ): Promise<void> {
-    // The state read, token fetch, and typing indicator are independent round-trips.
-    const typing = thread.startTyping();
+    // The state read and token fetch are independent round-trips, the typing indicator needs none.
+    thread.startTyping().catch(logTypingError);
+
     const [state, accessToken] = await Promise.all([
       thread.state,
       token ? token.getToken() : Promise.resolve(undefined),
     ]);
-    await typing;
 
     const existing = state?.hivegentConversationId;
     const text = [...(context?.skipped ?? []), message].map((item) => item.text).join("\n\n");
     const { response, conversationId } = await runChat(existing, text, accessToken);
+    const reopen: Reopen = async () => follow(conversationId, await token?.getToken(), cfg);
 
     const started = conversationId !== existing;
 
-    if (started) {
-      await thread.setState({ hivegentConversationId: conversationId });
-    }
-
-    await thread.post(relay(thread, response, started));
+    await Promise.all([
+      started ? thread.setState({ hivegentConversationId: conversationId }) : undefined,
+      thread.post(relay(thread, response, reopen, started)),
+    ]);
   };
+}
+
+function logTypingError(err: unknown): void {
+  console.error("typing indicator failed", err);
 }
 
 /** Reduce the hivegent stream to answer text, showing tool activity as typing status. */
 async function* relay(
   thread: Thread<ThreadState>,
   response: Response,
+  reopen: Reopen,
   disclose: boolean,
 ): AsyncGenerator<string> {
   if (disclose) {
     yield `${AI_DISCLOSURE}\n\n`;
   }
 
-  for await (const event of parseHivegentStream(response)) {
+  let label: string | undefined;
+
+  for await (const event of parseHivegentStream(response, reopen)) {
     if (event.kind === "status") {
-      await thread.startTyping(event.label);
+      if (event.label !== label) {
+        label = event.label;
+        thread.startTyping(label).catch(logTypingError);
+      }
+
       continue;
     }
 

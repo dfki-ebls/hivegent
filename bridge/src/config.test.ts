@@ -4,67 +4,69 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { readCredentials, resolveConfig } from "./config.js";
+import { resolveConfig, secretSource } from "./config.js";
 
-describe("readCredentials", () => {
-  it("reads one trimmed prefixed credential per file and tolerates a missing directory", () => {
+const secrets = (values: Record<string, string>) => (name: string) => values[name];
+
+describe("secretSource", () => {
+  it("prefers the variable, then the prefixed credential file", () => {
     const dir = mkdtempSync(join(tmpdir(), "credentials-"));
     writeFileSync(join(dir, "hivegent-bridge.OIDC_CLIENT_SECRET"), "s3cret\n");
-    writeFileSync(join(dir, "hivegent.LLM__API_KEY"), "backend\n");
+    writeFileSync(join(dir, "hivegent.POSTGRES_URL"), "backend\n");
+    const source = secretSource({ CREDENTIALS_DIRECTORY: dir, TEAMS_APP_PASSWORD: "env" });
 
-    expect(readCredentials(dir)).toEqual({ OIDC_CLIENT_SECRET: "s3cret" });
-    expect(readCredentials(join(dir, "missing"))).toEqual({});
-    expect(readCredentials(undefined)).toEqual({});
+    expect(source("OIDC_CLIENT_SECRET")).toBe("s3cret");
+    expect(source("TEAMS_APP_PASSWORD")).toBe("env");
+    expect(source("POSTGRES_URL")).toBeUndefined();
+    expect(secretSource({})("POSTGRES_URL")).toBeUndefined();
   });
 });
 
 describe("resolveConfig", () => {
-  it("layers env over the file and requires the essentials", () => {
-    const file = {
-      hivegentUrl: "http://file/",
-      oidc: { issuer: "http://idp", clientId: "from-file", clientSecret: "s" },
-      host: "0.0.0.0",
-      port: 4000,
-      adapters: { teams: false },
-    };
-    // Env overrides file for URL, host, and port; file supplies OIDC; ENABLE_WEB overrides adapters.
+  const base = { backendUrl: "http://backend", adapters: { teams: false } };
+
+  it("applies defaults and attaches the secrets of the configured sections", () => {
     const cfg = resolveConfig(
-      {
-        HIVEGENT_URL: "http://env",
-        POSTGRES_URL: "postgres://x",
-        HOST: "127.0.0.2",
-        PORT: "5000",
-        ENABLE_WEB: "true",
-      },
-      file,
+      { ...base, oidc: { issuer: "https://idp", clientId: "bot" } },
+      secrets({ POSTGRES_URL: "postgres://x", OIDC_CLIENT_SECRET: "s" }),
     );
 
-    expect(cfg.hivegentUrl).toBe("http://env");
-    expect(cfg.host).toBe("127.0.0.2");
-    expect(cfg.port).toBe(5000);
-    expect(cfg.oidc).toEqual({ issuer: "http://idp", clientId: "from-file", clientSecret: "s" });
-    expect(cfg.adapters).toEqual({ teams: false, web: true });
-    expect(cfg.disabledTools).toEqual(["edit_document", "write_document", "write_memory"]);
+    expect(cfg).toEqual({
+      backendUrl: "http://backend",
+      host: "127.0.0.1",
+      port: 3003,
+      botUserName: "hivegent",
+      adapters: { teams: false, web: false },
+      postgresUrl: "postgres://x",
+      oidc: { issuer: "https://idp", clientId: "bot", clientSecret: "s" },
+      teams: undefined,
+    });
   });
 
-  it("lets an ENABLE_<NAME> env var override the file's adapter map", () => {
-    const cfg = resolveConfig(
-      { HIVEGENT_URL: "http://env", POSTGRES_URL: "postgres://x", ENABLE_TEAMS: "false" },
-      { adapters: { teams: true } },
+  it("rejects invalid or unknown settings and missing secrets", () => {
+    const ok = secrets({ POSTGRES_URL: "postgres://x" });
+
+    expect(() => resolveConfig({ ...base, backendUrl: "http://backend/" }, ok)).toThrow("slash");
+    expect(() =>
+      resolveConfig({ ...base, oidc: { issuer: "http://idp", clientId: "bot" } }, ok),
+    ).toThrow("loopback");
+    expect(() => resolveConfig({ ...base, port: "3003" }, ok)).toThrow("expected number");
+    expect(() => resolveConfig({ ...base, hivegentUrl: "http://backend" }, ok)).toThrow(
+      "hivegentUrl",
     );
-
-    expect(cfg.adapters.teams).toBe(false);
-  });
-
-  it("omits OIDC when no client id is configured (auth-disabled debugging)", () => {
-    const cfg = resolveConfig({ HIVEGENT_URL: "http://env", POSTGRES_URL: "postgres://x" }, {});
-
-    expect(cfg.oidc).toBeUndefined();
-    expect(cfg.host).toBe("127.0.0.1");
-    expect(cfg.adapters).toEqual({});
-  });
-
-  it("throws when a required value is absent from both sources", () => {
-    expect(() => resolveConfig({ HIVEGENT_URL: "http://env" }, {})).toThrow(/POSTGRES_URL/);
+    expect(() =>
+      resolveConfig({ ...base, teams: { appId: "a", tenantId: "t", allowedTenants: [] } }, ok),
+    ).toThrow(">=1");
+    expect(() => resolveConfig(base, secrets({}))).toThrow("POSTGRES_URL");
+    expect(() =>
+      resolveConfig(
+        {
+          ...base,
+          adapters: { teams: false, web: true },
+          oidc: { issuer: "https://idp", clientId: "bot" },
+        },
+        secrets({ POSTGRES_URL: "postgres://x", OIDC_CLIENT_SECRET: "s" }),
+      ),
+    ).toThrow("without oidc");
   });
 });

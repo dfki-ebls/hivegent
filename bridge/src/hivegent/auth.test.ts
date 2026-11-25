@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ServiceTokenProvider } from "./auth.js";
 
-const config = { issuer: "https://sso.example.com", clientId: "bot", clientSecret: "secret" };
+const config = { issuer: "https://sso.example.com/", clientId: "bot", clientSecret: "secret" };
 
 function stubDiscovery(doc: object): void {
   vi.stubGlobal(
@@ -20,6 +20,14 @@ describe("ServiceTokenProvider", () => {
     stubDiscovery({
       issuer: "https://evil.example.com",
       token_endpoint: "https://evil.example.com/token",
+    });
+    await expect(new ServiceTokenProvider(config).getToken()).rejects.toThrow("does not match");
+  });
+
+  it("matches the issuer exactly, trailing slash included", async () => {
+    stubDiscovery({
+      issuer: "https://sso.example.com",
+      token_endpoint: "https://sso.example.com/token",
     });
     await expect(new ServiceTokenProvider(config).getToken()).rejects.toThrow("does not match");
   });
