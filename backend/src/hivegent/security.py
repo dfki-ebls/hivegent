@@ -7,24 +7,40 @@ connection, which closes the DNS-rebinding window without a custom HTTP
 transport.
 """
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass
+from http.cookiejar import DefaultCookiePolicy
+from typing import NewType
 
 import httpx2
 
-from .l10n import Localized
+from .shared.l10n import Localized
 
 __all__ = [
     "DEFAULT_EGRESS_PROXY_URL",
+    "OperatorUrl",
+    "Origin",
     "UnsafeUrlError",
     "UrlPolicy",
+    "create_confined_client",
+    "create_operator_client",
     "create_safe_async_client",
-    "require_safe_external_url",
-    "require_safe_headers",
-    "require_safe_url_shape",
+    "origin",
 ]
 
 DEFAULT_EGRESS_PROXY_URL = "http://127.0.0.1:4750"
+
+OperatorUrl = NewType("OperatorUrl", str)
+"""An endpoint the operator configured, built only by the settings.
+
+Only such a URL opens a direct client (:func:`create_operator_client`), which
+an AST test keeps from being minted anywhere else.
+"""
+
+type Origin = tuple[str, str, int]
+"""The scheme, host, and port of a URL, which a direct client is confined to."""
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 def _host_blocked(host: str) -> Localized[str]:
@@ -53,28 +69,17 @@ _CREDENTIALS = Localized(
     de="URLs mit eingebetteten Zugangsdaten sind nicht erlaubt.",
 )
 _NO_HOST = Localized(en="URL has no host.", de="Die URL hat keinen Host.")
-_EMPTY_URL = Localized(en="URL is empty.", de="Die URL ist leer.")
 
 
-def _invalid_url(error: str) -> Localized[str]:
-    return Localized(en=f"Invalid URL: {error}", de=f"Ungültige URL: {error}")
-
-
-def _illegal_header(name: str) -> Localized[str]:
+def _origin_not_configured(url: str) -> Localized[str]:
     return Localized(
-        en=f"Header {name!r} contains illegal control characters.",
-        de=f"Der Header „{name}“ enthält unzulässige Steuerzeichen.",
+        en=f"{url!r} is outside the configured endpoint.",
+        de=f"„{url}“ liegt außerhalb des konfigurierten Endpunkts.",
     )
 
 
-def _unsafe_value(label: str, error: str) -> Localized[str]:
-    return Localized(
-        en=f"Unsafe {label}: {error}", de=f"Unsicherer Wert für {label}: {error}"
-    )
-
-
-class UnsafeUrlError(ValueError):
-    """Raised when a URL or header fails an outbound safety check."""
+class UnsafeUrlError(httpx2.RequestError):
+    """Raised when a URL fails an outbound safety check, a refused request to its client."""
 
 
 def _host_matches(host: str, pattern: str) -> bool:
@@ -138,21 +143,20 @@ def _check_url_shape(url: httpx2.URL) -> str:
     return url.host
 
 
-def _parsed_host(url: str) -> str:
-    """Parse *url* and validate its shape.
+def origin(url: str | httpx2.URL) -> Origin:
+    """The origin of an http or https *url*, its port spelled out.
 
-    Returns:
-        The URL's host.
+    >>> origin("https://idp.example/realms/x")
+    ('https', 'idp.example', 443)
+
+    Raises:
+        UnsafeUrlError: For another scheme, credentials, or no host.
     """
-    if not url:
-        raise UnsafeUrlError(_EMPTY_URL.current)
+    parsed = httpx2.URL(url)
+    host = _check_url_shape(parsed)
+    scheme = parsed.scheme.lower()
 
-    try:
-        parsed = httpx2.URL(url)
-    except (httpx2.InvalidURL, TypeError) as exc:
-        raise UnsafeUrlError(_invalid_url(str(exc)).current) from exc
-
-    return _check_url_shape(parsed)
+    return scheme, host, parsed.port or _DEFAULT_PORTS[scheme]
 
 
 def _egress_transport(
@@ -172,6 +176,92 @@ def _egress_transport(
     return httpx2.AsyncHTTPTransport(proxy=proxy_url, trust_env=False, limits=limits)
 
 
+def _checking(policy: UrlPolicy) -> Callable[[httpx2.Request], Awaitable[None]]:
+    """The request hook refusing every URL of a bad shape or a host *policy* refuses."""
+
+    async def check_request(request: httpx2.Request) -> None:
+        policy.check_host(_check_url_shape(request.url))
+
+    return check_request
+
+
+def _confining(
+    origins: Collection[Origin], discovered: Callable[[], Collection[Origin]]
+) -> Callable[[httpx2.Request], Awaitable[None]]:
+    """The request hook refusing every URL outside *origins* and the *discovered* ones."""
+
+    async def check_request(request: httpx2.Request) -> None:
+        target = origin(request.url)
+
+        if target not in origins and target not in discovered():
+            raise UnsafeUrlError(_origin_not_configured(str(request.url)).current)
+
+    return check_request
+
+
+def create_operator_client(
+    urls: Collection[OperatorUrl],
+    *,
+    timeout: httpx2.Timeout,
+    headers: Mapping[str, str],
+    unix_sockets: Mapping[str, str],
+    discovered: Callable[[], Collection[Origin]] = frozenset,
+) -> httpx2.AsyncClient:
+    """Create a direct client confined to the origins of the operator's *urls*.
+
+    It ignores proxy variables and follows no redirect, and a host of
+    *unix_sockets* is reached over its socket instead.  *discovered* adds the
+    origins a document fetched from those origins names, read on every request.
+    The client is shared across callers, so it keeps no cookies and a session
+    one caller opened can never be inherited by another.
+    """
+    origins = frozenset(map(origin, urls))
+    mounts: dict[str, httpx2.AsyncBaseTransport | None] = {
+        f"all://{host}": httpx2.AsyncHTTPTransport(uds=path)
+        for host, path in unix_sockets.items()
+        if any(host == allowed for _, allowed, _ in origins)
+    }
+
+    return _cookieless(
+        httpx2.AsyncClient(
+            timeout=timeout,
+            headers=headers,
+            trust_env=False,
+            follow_redirects=False,
+            mounts=mounts,
+            event_hooks={"request": [_confining(origins, discovered)]},
+        )
+    )
+
+
+def _cookieless(client: httpx2.AsyncClient) -> httpx2.AsyncClient:
+    """*client*, made to keep no cookies, since a shared client must never hand one caller's session to another."""
+    client.cookies.jar.set_policy(DefaultCookiePolicy(allowed_domains=[]))
+
+    return client
+
+
+def create_confined_client(
+    *,
+    policy: UrlPolicy,
+    timeout: httpx2.Timeout | float | None,
+    auth: httpx2.Auth | None,
+) -> httpx2.AsyncClient:
+    """Create a direct client for an operator endpoint that reaches only the hosts *policy* allows.
+
+    For code reaching an endpoint the operator named, such as a connector,
+    which may lie on a private network the egress proxy refuses: every request
+    is checked, no redirect is followed, and no proxy variable is honoured.
+    """
+    return httpx2.AsyncClient(
+        trust_env=False,
+        event_hooks={"request": [_checking(policy)]},
+        timeout=timeout,
+        auth=auth,
+        follow_redirects=False,
+    )
+
+
 def create_safe_async_client(
     *,
     policy: UrlPolicy,
@@ -189,50 +279,20 @@ def create_safe_async_client(
     and the transport is built here, so an untrusted client cannot silently
     fall back to direct network access.  *keepalive_expiry* is how long an
     idle pooled connection is kept, the pool sizes being HTTPX's defaults.
+    The client is shared across callers, so it keeps no cookies.
     """
     if not proxy_url:
         raise ValueError("An egress proxy URL is required for untrusted requests.")
 
-    async def check_request(request: httpx2.Request) -> None:
-        policy.check_host(_check_url_shape(request.url))
-
-    return httpx2.AsyncClient(
-        transport=_egress_transport(proxy_url, keepalive_expiry),
-        trust_env=False,
-        event_hooks={"request": [check_request]},
-        timeout=timeout,
-        headers=headers,
-        auth=auth,
-        follow_redirects=follow_redirects,
-        max_redirects=max_redirects,
+    return _cookieless(
+        httpx2.AsyncClient(
+            transport=_egress_transport(proxy_url, keepalive_expiry),
+            trust_env=False,
+            event_hooks={"request": [_checking(policy)]},
+            timeout=timeout,
+            headers=headers,
+            auth=auth,
+            follow_redirects=follow_redirects,
+            max_redirects=max_redirects,
+        )
     )
-
-
-def require_safe_headers(headers: Mapping[str, str], label: str) -> None:
-    """Reject HTTP headers that contain CR, LF, or NUL characters.
-
-    Raises:
-        ValueError: Naming *label*, for use inside Pydantic validators.
-    """
-    illegal = ("\r", "\n", "\x00")
-    for name, value in headers.items():
-        if any(character in name or character in value for character in illegal):
-            raise ValueError(
-                _unsafe_value(label, _illegal_header(name).current).current
-            )
-
-
-def require_safe_url_shape(url: str, label: str) -> None:
-    """Validate URL shape for use inside Pydantic validators."""
-    try:
-        _parsed_host(url)
-    except UnsafeUrlError as exc:
-        raise ValueError(_unsafe_value(label, str(exc)).current) from exc
-
-
-def require_safe_external_url(url: str, label: str, *, policy: UrlPolicy) -> None:
-    """Apply the outbound URL policy and produce a labeled validation error."""
-    try:
-        policy.check_host(_parsed_host(url))
-    except UnsafeUrlError as exc:
-        raise ValueError(_unsafe_value(label, str(exc)).current) from exc

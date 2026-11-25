@@ -5,14 +5,22 @@ from io import BytesIO
 import httpx2
 import pytest
 from fastapi import HTTPException, UploadFile
+from pydantic import HttpUrl, ValidationError
 
 from hivegent import security
-from hivegent.config import InferenceProvider, settings
-from hivegent.llm_config import LlmConfig, resolve_llm_config
-from hivegent.security import UrlPolicy, create_safe_async_client
-from hivegent.server.common import prepare_llm_config
+from hivegent.config import settings
+from hivegent.config.llm import LlmModelSettings, LlmSettings
+from hivegent.llm_config import aux_llm, chat_llm
+from hivegent.security import (
+    OperatorUrl,
+    UrlPolicy,
+    create_operator_client,
+    create_safe_async_client,
+)
 from hivegent.server.operations import enforce_upload_size
+from hivegent.types import ChatRequest, Preferences
 from hivegent.workspace.paths import file_too_large
+from tests.helpers import catalog
 
 
 @pytest.fixture(autouse=True)
@@ -49,51 +57,60 @@ async def test_safe_async_client_checks_every_redirect_hop(
         timeout=1.0,
         follow_redirects=True,
     ) as client:
-        with pytest.raises(ValueError, match="allowlist"):
+        with pytest.raises(security.UnsafeUrlError, match="allowlist"):
             await client.get("https://safe.example/start")
 
 
-def test_prepare_llm_config_trusts_configured_base_url_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Server-configured LLM URLs bypass only the user URL policy."""
-    monkeypatch.setattr(settings.security.user_urls, "allow_hosts", [])
-    monkeypatch.setattr(settings.llm, "model", "configured-model")
-    monkeypatch.setattr(settings.llm, "api_key", None)
-    monkeypatch.setattr(settings.llm, "base_url", "http://127.0.0.1:18000/v1")
+async def test_operator_client_keeps_no_cookies() -> None:
+    """A client shared across callers never hands one caller's session to another."""
+    seen: list[str | None] = []
 
-    resolved = prepare_llm_config(LlmConfig())
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers.get("cookie"))
 
-    assert resolved.base_url == "http://127.0.0.1:18000/v1"
-    assert resolved.base_url_is_trusted is True
+        return httpx2.Response(200, headers={"set-cookie": "sid=1; Path=/"})
 
-    monkeypatch.setattr(settings.llm, "base_url", "")
+    client = create_operator_client(
+        [OperatorUrl("https://crm.test/mcp")],
+        timeout=httpx2.Timeout(1),
+        headers={},
+        unix_sockets={},
+    )
+    client._transport = httpx2.MockTransport(handler)
 
-    with pytest.raises(HTTPException) as exc_info:
-        prepare_llm_config(
-            LlmConfig(model="user-model", base_url="http://127.0.0.1:18000/v1")
+    for _ in range(2):
+        _ = await client.get("https://crm.test/mcp")
+
+    assert seen == [None, None]
+
+
+def test_requests_name_catalog_models_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A request picks a chat model by id, and the endpoint stays the operator's."""
+    monkeypatch.setattr(settings, "llm", catalog())
+
+    chat = chat_llm(Preferences(model="big").model)
+    assert chat is not None
+    assert (chat.model, chat.provider.base_url) == ("big-27b", "http://llmhop/v1")
+
+    # The aux role falls back to the default, capped by both limits.
+    aux = aux_llm()
+    assert aux is not None
+    assert aux.max_tokens == min(4096, settings.llm.aux_max_tokens or 4096)
+
+    for unknown in ("whisper", "elsewhere"):
+        with pytest.raises(ValidationError):
+            Preferences(model=unknown)
+
+    with pytest.raises(ValidationError):
+        ChatRequest.model_validate(
+            {"id": "c", "messages": [], "llm": {"base_url": "https://evil.example"}}
         )
 
-    assert exc_info.value.status_code == 400
-    assert "Unsafe LLM base_url" in str(exc_info.value.detail)
 
-
-def test_resolve_llm_config_is_idempotent_on_trust(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Re-resolving a trusted config keeps it trusted (image captioning re-resolves)."""
-    monkeypatch.setattr(settings.llm, "base_url", "http://127.0.0.1:18000/v1")
-    monkeypatch.setattr(settings.llm, "aux_model", "aux-model")
-    monkeypatch.setattr(settings.llm, "inference_provider", InferenceProvider.VLLM)
-
-    once = resolve_llm_config(LlmConfig())
-    twice = resolve_llm_config(once)
-
-    assert once.base_url_is_trusted is True
-    assert once.inference_provider is InferenceProvider.VLLM
-    assert twice.base_url == "http://127.0.0.1:18000/v1"
-    assert twice.inference_provider is InferenceProvider.VLLM
-    assert twice.base_url_is_trusted is True
+def test_catalog_references_are_checked() -> None:
+    """A model naming a missing provider stops the boot."""
+    with pytest.raises(ValidationError, match="unknown provider"):
+        LlmSettings(models={"m": LlmModelSettings(provider="nowhere", model="m")})
 
 
 def test_enforce_upload_size_rejects_over_limit() -> None:
@@ -116,26 +133,30 @@ def test_terms_require_explicit_acceptance(monkeypatch: pytest.MonkeyPatch) -> N
         create_app()
 
 
-def test_auth_disabled_requires_explicit_opt_in(
+def test_serve_requires_an_issuer_and_dev_refuses_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Auth-disabled mode must not start by accident."""
-    monkeypatch.setattr(settings.auth, "enable", True)
-    monkeypatch.setattr(settings.auth, "allow_disabled", False)
-    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
-    monkeypatch.setattr(settings.auth, "audience", "hivegent-api")
-    from hivegent.server.app import create_app
+    """Only ``hivegent dev`` has the development user, and it never validates tokens."""
+    from hivegent.auth import get_current_principal
+    from hivegent.server.app import create_app, create_dev_app
 
-    monkeypatch.setattr(settings.auth, "enable", False)
-    with pytest.raises(ValueError, match="Authentication is disabled"):
+    monkeypatch.setattr(settings.auth, "issuer", None)
+
+    with pytest.raises(ValueError, match="hivegent dev"):
         create_app()
+
+    assert get_current_principal in create_dev_app().dependency_overrides
+
+    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
+
+    with pytest.raises(ValueError, match="hivegent serve"):
+        create_dev_app()
 
 
 def test_auth_enabled_requires_audience(monkeypatch: pytest.MonkeyPatch) -> None:
     """Auth-enabled mode must pin tokens to the API audience."""
     from hivegent.server.app import create_app
 
-    monkeypatch.setattr(settings.auth, "enable", True)
     monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
     monkeypatch.setattr(settings.auth, "audience", None)
 
@@ -143,15 +164,48 @@ def test_auth_enabled_requires_audience(monkeypatch: pytest.MonkeyPatch) -> None
         create_app()
 
 
-def test_mcp_requires_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The MCP endpoint must pin tokens to its own client."""
+def test_auth_rejects_audience_wildcards(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audiences name exact clients, a pattern would admit any future one."""
     from hivegent.server.app import create_app
 
-    monkeypatch.setattr(settings.auth, "enable", True)
     monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
     monkeypatch.setattr(settings.auth, "audience", ["hivegent-*"])
-    monkeypatch.setattr(settings.mcp, "enable", True)
-    monkeypatch.setattr(settings.mcp, "client_id", "")
 
-    with pytest.raises(ValueError, match="CLIENT_ID"):
+    with pytest.raises(ValueError, match="exact client IDs"):
         create_app()
+
+
+def test_mcp_proxy_requires_its_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP proxy must pin upstream tokens to its own client."""
+    from hivegent.mcp import build_mcp_app
+
+    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
+    monkeypatch.setattr(
+        settings.mcp, "base_url", HttpUrl("https://hivegent.example.com/mcp")
+    )
+    monkeypatch.setattr(settings.mcp, "mode", "proxy")
+    monkeypatch.setattr(settings.mcp, "client_id", None)
+
+    with pytest.raises(ValueError, match="CLIENT_SECRET"):
+        build_mcp_app()
+
+
+def test_mcp_requires_its_confirmation_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The approvals of ``/mcp`` are signed with an explicit key, never a random one."""
+    from hivegent.mcp import build_mcp_app
+
+    monkeypatch.setattr(settings.mcp, "confirmation_key", None)
+
+    with pytest.raises(ValueError, match="confirmation_key"):
+        build_mcp_app(dev=True)
+
+
+def test_a_stale_preference_falls_back_to_its_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stored choice outlives what it names, such as a model the catalog dropped, without failing a turn."""
+    monkeypatch.setattr(settings, "llm", catalog())
+
+    stored = Preferences.stored({"model": "gone", "mode": "read", "theme": "dark"})
+
+    assert stored == Preferences(mode="read")

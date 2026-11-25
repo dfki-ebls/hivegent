@@ -1,25 +1,30 @@
-"""Routes for the admin debugging consoles.
+"""Routes for the admin debugging consoles, registered only under ``debug.enable``.
 
 The tool debugger lets an administrator invoke any registered agent tool with
 arbitrary arguments against their own stores.  Its main purpose is exercising
 stateful behaviour that unit tests don't cover, such as pgvector retrieval,
 through the exact code path the agent uses.
 
-The chat debugger lets an administrator ask an agent about any user's
-conversation, and condense the answers into a report free of its data.  It is
+The chat debugger lets an administrator ask an agent about one of their own
+conversations, and condense the answers into a report free of its data.  It is
 stateless: the client sends the whole debugging session with every request.
 """
 
 import asyncio
-import logging
 import time
 import traceback
+from collections.abc import Sequence
 from functools import partial
 from typing import Annotated, Any
 
+from exar.agents import RunConfig
+from exar.policy import allow_all
+from exar.pydantic_ai import traced_events
+from exar.tools.batch import unpack
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import ValidationError
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -38,13 +43,13 @@ from ...auth import require_admin
 from ...db.conversations import (
     ConversationSummary,
     OwnedConversation,
-    any_conversation,
     load_conversation,
     load_conversation_summary,
+    owned_conversation,
+    render_prompt,
 )
 from ...llm import model_from_config, thinking_model_settings
 from ...store import User
-from ...tools.pydantic_ai import unwrap_tool_output
 from ...types import (
     DebugChatRequest,
     DebugReport,
@@ -53,20 +58,19 @@ from ...types import (
     ToolRunResult,
     ToolSchema,
 )
-from ..common import found, found_by_id, prepare_llm_config
+from ..common import found, found_by_id, require_chat_llm
 from ..vercel import SDK_VERSION
 
 __all__ = ["router"]
 
-logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/debug", dependencies=[Depends(require_admin)])
 
-router = APIRouter(prefix="/debug")
+_DEBUG_CONFIG = RunConfig(policy=allow_all)
+"""The config of a chat debugger run, whose agent only reads the conversation it analyzes."""
 
 
 @router.get("/tools")
-async def list_tool_schemas(
-    _user: Annotated[User, Depends(require_admin)],
-) -> list[ToolSchema]:
+async def list_tool_schemas() -> list[ToolSchema]:
     """Return every agent tool with the JSON Schema of its parameters."""
     return collect_tool_schemas()
 
@@ -96,7 +100,7 @@ async def run_tool(
     start = time.perf_counter()
 
     try:
-        output = unwrap_tool_output(await invoke_agent_tool(tool_name, args, deps))
+        output = unpack(await invoke_agent_tool(tool_name, args, deps))
         text, data, ok = output.text, output.data, True
     except ValidationError as exc:
         error = str(exc)
@@ -114,52 +118,61 @@ async def run_tool(
     )
 
 
-async def _any_conversation(
+async def _own_conversation(
     conversation_id: str,
     admin: Annotated[User, Depends(require_admin)],
 ) -> OwnedConversation:
-    """The path's conversation as its owner's, whoever that is, for an admin."""
-    return await found_by_id(conversation_id, partial(any_conversation, admin))
+    """The path's conversation, only while it is the admin's own."""
+    return await found_by_id(conversation_id, partial(owned_conversation, admin))
 
 
-type AnyConversation = Annotated[OwnedConversation, Depends(_any_conversation)]
+type OwnConversation = Annotated[OwnedConversation, Depends(_own_conversation)]
 
 
-async def _debug_deps(admin: User, conversation: OwnedConversation) -> DebugDeps:
+async def _debug_deps(conversation: OwnedConversation) -> DebugDeps:
     """The steps of *conversation* and the tools its agent had.
 
-    Logged, since it hands another user's conversation to *admin*.  The steps
-    are built off the event loop, as they render every tool result.
+    The steps are built off the event loop, as they render every tool result.
     """
     data = found(await load_conversation(conversation))
-    logger.info("admin %r debugging conversation %r", admin.id, conversation.id)
     steps = await asyncio.to_thread(list[Step], conversation_steps(data.messages))
 
     return DebugDeps(steps, collect_tool_schemas())
 
 
 def _main_model(config: DebugRequestConfig) -> tuple[Model, ModelSettings]:
-    """The main tier's model *config* overrides, and its settings."""
-    llm = prepare_llm_config(config.llm, tier="main")
+    """The chat model *config* names, and its settings."""
+    llm = require_chat_llm(config.model, config.reasoning_effort)
 
-    return model_from_config(llm), thinking_model_settings(config.reasoning_effort, llm)
+    return model_from_config(llm), thinking_model_settings(llm)
+
+
+def _task(history: Sequence[ModelMessage]) -> str:
+    """The last prompt of *history*, the task of a debugger run."""
+    prompts = [
+        part
+        for message in history
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+    return render_prompt(prompts[-1]) if prompts else ""
 
 
 @router.get("/conversations/{conversation_id}")
-async def get_debug_conversation(conversation: AnyConversation) -> ConversationSummary:
-    """Return any user's conversation summary, to confirm the id before debugging."""
+async def get_debug_conversation(conversation: OwnConversation) -> ConversationSummary:
+    """Return the conversation summary, to confirm the id before debugging."""
     return found(await load_conversation_summary(conversation))
 
 
 @router.post("/conversations/{conversation_id}/chat")
 async def debug_conversation(
-    conversation: AnyConversation,
+    conversation: OwnConversation,
     config: DebugChatRequest,
     request: Request,
-    user: Annotated[User, Depends(require_admin)],
 ) -> Response:
-    """Stream the debugger agent's answer about any user's conversation."""
-    deps = await _debug_deps(user, conversation)
+    """Stream the debugger agent's answer about the conversation."""
+    deps = await _debug_deps(conversation)
     model, model_settings = _main_model(config)
     adapter = VercelAIAdapter[DebugDeps, str](
         agent=debug_agent,
@@ -168,24 +181,31 @@ async def debug_conversation(
         sdk_version=SDK_VERSION,
     )
 
+    # The run is the root invocation `debug` of an exar run, like a chat turn.
     return adapter.streaming_response(
-        adapter.run_stream(
-            deps=deps,
-            model=model,
-            model_settings=model_settings,
-            usage_limits=turn_usage_limits,
+        adapter.transform_stream(
+            traced_events(
+                adapter.run_stream_native(
+                    deps=deps,
+                    model=model,
+                    model_settings=model_settings,
+                    usage_limits=turn_usage_limits,
+                ),
+                _task(adapter.messages),
+                _DEBUG_CONFIG,
+                name="debug",
+            )
         )
     )
 
 
 @router.post("/conversations/{conversation_id}/report")
 async def report_conversation(
-    conversation: AnyConversation,
+    conversation: OwnConversation,
     body: DebugReportRequest,
-    user: Annotated[User, Depends(require_admin)],
 ) -> DebugReport:
     """Condense a debugging session into a report free of the conversation's data."""
-    deps = await _debug_deps(user, conversation)
+    deps = await _debug_deps(conversation)
     model, model_settings = _main_model(body)
     session = format_messages(VercelAIAdapter.load_messages(body.messages))
 

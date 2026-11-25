@@ -1,356 +1,268 @@
-"""Unit tests for OIDC discovery and JWKS resolution."""
+"""Unit tests for token verification and claim parsing."""
 
-from types import SimpleNamespace
+import asyncio
+import time
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import httpx2
 import pytest
 from fastapi import HTTPException
-from joserfc.jwk import KeySet, OctKey
+from joserfc import jwt
+from joserfc.jwk import KeySet, OctKey, RSAKey
+from pydantic import HttpUrl, SecretStr
+from starlette.applications import Starlette
 
 from hivegent import auth
 from hivegent.auth import (
+    PROBE,
     GroupClaim,
     JWKSFetcher,
+    authenticate,
     build_discovery_url,
+    check_kind,
     parse_group_claims,
+    until_expiry,
+    user_from_claims,
 )
 from hivegent.config import settings
-from hivegent.store import AccessDenied
+from hivegent.mcp import build_mcp_app
+from hivegent.mcp.app import HivegentVerifier
+from hivegent.security import OperatorUrl
+from hivegent.store import User
+
+ISSUER = OperatorUrl("https://auth.example.com/oidc")
+JWKS_URI = f"{ISSUER}/certs"
+AUDIENCE = ["hivegent-api"]
+KEY = RSAKey.generate_key(2048, parameters={"kid": "rsa"})
+HMAC = OctKey.generate_key(parameters={"kid": "hmac"})
+
+type Discovery = dict[str, Any]
 
 
-async def test_get_jwks_uses_jwks_uri_from_discovery_doc(
+def _claims(**changes: Any) -> dict[str, Any]:
+    now = int(time.time())
+    claims = {
+        "iss": ISSUER,
+        "sub": "user-1",
+        "aud": "hivegent-api",
+        "iat": now,
+        "exp": now + 300,
+    }
+
+    return {k: v for k, v in {**claims, **changes}.items() if v is not None}
+
+
+def _token(claims: dict[str, Any], alg: str = "RS256") -> str:
+    key = KEY if alg.startswith("RS") else HMAC
+    algorithms = None if alg.startswith("RS") else [alg]
+
+    return jwt.encode({"alg": alg, "kid": key.kid}, claims, key, algorithms=algorithms)
+
+
+@pytest.fixture()
+async def idp(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """JWKSFetcher must hit the discovery doc's ``jwks_uri`` verbatim."""
-    issuer = "https://auth.example.com/auth/v1/oidc"
-    custom_jwks_uri = f"{issuer}/certs"
-    discovery_url = build_discovery_url(issuer)
-
-    monkeypatch.setattr(settings.auth, "issuer", issuer)
-
-    discovery_payload = {"issuer": issuer, "jwks_uri": custom_jwks_uri}
-    jwks_payload = {"keys": [OctKey.generate_key().as_dict()]}
-
-    requested_urls: list[str] = []
+) -> AsyncIterator[Callable[[Discovery], None]]:
+    """Serve the issuer's discovery and keys, the former changed by the returned function."""
+    discovery: Discovery = {
+        "issuer": ISSUER,
+        "jwks_uri": JWKS_URI,
+        "id_token_signing_alg_values_supported": ["RS256", "HS256", "none"],
+    }
+    keys = {"keys": [KEY.as_dict(private=False), HMAC.as_dict()]}
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        url = str(request.url)
-        requested_urls.append(url)
-        if url == discovery_url:
-            return httpx2.Response(200, json=discovery_payload)
-        if url == custom_jwks_uri:
-            return httpx2.Response(200, json=jwks_payload)
-        raise AssertionError(f"unexpected URL {url!r}")
-
-    def fake_sync_get(url: Any, **_: Any) -> httpx2.Response:
-        with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
-            return client.get(str(url))
-
-    monkeypatch.setattr(httpx2, "get", fake_sync_get)
-
-    fetcher = JWKSFetcher()
-    mock_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    monkeypatch.setattr(auth, "get_trusted_http_client", lambda: mock_client)
-
-    try:
-        await fetcher.get_jwks()
-    finally:
-        await mock_client.aclose()
-
-    assert requested_urls == [discovery_url, custom_jwks_uri]
-
-
-async def test_validate_jwt_token_passes_discovery_algorithms(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``validate_jwt_token`` must forward the discovery algs to ``jwt.decode``.
-
-    Regression: joserfc's default registry only permits its ``recommended``
-    algs (HS256/RS256/ES256), so EdDSA-only IdPs like rauthy were rejected
-    with ``Algorithm of 'EdDSA' is not recommended`` until we started
-    passing ``algorithms=`` explicitly.
-    """
-    monkeypatch.setattr(settings.auth, "issuer", "")
-    monkeypatch.setattr(settings.auth, "audience", [])
-
-    fake_keyset = KeySet.import_key_set({"keys": [OctKey.generate_key().as_dict()]})
-    fake_config = SimpleNamespace(
-        id_token_signing_alg_values_supported=["EdDSA"],
-        jwks_uri="https://example.invalid/jwks",
-    )
-
-    fetcher = JWKSFetcher()
-
-    async def fake_get_jwks(force_refresh: bool = False) -> KeySet:
-        return fake_keyset
-
-    async def fake_get_discovery(force_refresh: bool = False) -> SimpleNamespace:
-        return fake_config
-
-    monkeypatch.setattr(fetcher, "get_jwks", fake_get_jwks)
-    monkeypatch.setattr(fetcher, "_get_discovery", fake_get_discovery)
-    monkeypatch.setattr(auth, "_jwks_fetcher", fetcher)
-
-    captured: dict[str, Any] = {}
-
-    def fake_decode(value: Any, key: Any, algorithms: Any = None, **_: Any) -> Any:
-        captured["algorithms"] = algorithms
-        return SimpleNamespace(claims={"sub": "user-1"})
-
-    monkeypatch.setattr(auth.jwt, "decode", fake_decode)
-
-    user = await auth.validate_jwt_token("dummy.jwt.token")
-
-    assert captured["algorithms"] == ["EdDSA"]
-    assert user.id == "user-1"
-
-
-async def test_get_jwks_serves_stale_keys_when_refresh_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failed JWKS refresh must fall back to the cached key set.
-
-    A transient IdP outage at cache-TTL expiry would otherwise surface as
-    a 503 on whatever user request happened to trigger the refresh.
-    """
-    fetcher = JWKSFetcher()
-    stale = KeySet.import_key_set({"keys": [OctKey.generate_key().as_dict()]})
-    fetcher._jwks._value = stale
-    fetcher._jwks._time = 0  # long expired
-
-    async def fake_get_discovery(force_refresh: bool = False) -> SimpleNamespace:
-        return SimpleNamespace(jwks_uri="https://idp.example.com/jwks")
-
-    monkeypatch.setattr(fetcher, "_get_discovery", fake_get_discovery)
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        raise httpx2.ConnectError("idp unreachable", request=request)
+        match str(request.url):
+            case url if url == build_discovery_url(ISSUER):
+                return httpx2.Response(200, json=discovery)
+            case url if url == JWKS_URI:
+                return httpx2.Response(200, json=keys)
+            case url:
+                raise AssertionError(f"unexpected URL {url!r}")
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    monkeypatch.setattr(auth, "get_trusted_http_client", lambda: client)
+    monkeypatch.setattr(auth, "get_trusted_http_client", lambda *_: client)
+    monkeypatch.setattr(auth, "_jwks_fetcher", JWKSFetcher())
+    monkeypatch.setattr(settings.auth, "issuer", ISSUER)
 
-    try:
-        assert await fetcher.get_jwks() is stale
-        # The failed refresh re-stamps the cache, so the retry window is a
-        # full TTL and the next call never reaches the IdP.
-        assert await fetcher.get_jwks() is stale
-    finally:
-        await client.aclose()
+    async with client:
+        yield discovery.update
 
 
-def _install_fake_jwt_pipeline(
-    monkeypatch: pytest.MonkeyPatch, claims: dict[str, Any]
+async def test_a_signed_token_names_its_principal(
+    idp: Callable[[Discovery], None],
 ) -> None:
-    """Stub JWKS/algorithm fetching and ``jwt.decode`` for claim validation."""
-    fetcher = JWKSFetcher()
-    fake_keyset = KeySet.import_key_set({"keys": [OctKey.generate_key().as_dict()]})
+    """A token of the issuer, named byte for byte, names its principal, and no other ``iss`` passes."""
+    credential = await authenticate(_token(_claims()), AUDIENCE)
 
-    async def fake_get_jwks(force_refresh: bool = False) -> KeySet:
-        return fake_keyset
+    assert credential.user.id == "user-1"
 
-    async def fake_get_algorithms(force_refresh: bool = False) -> list[str]:
-        return ["EdDSA"]
+    with pytest.raises(HTTPException, match="iss"):
+        await authenticate(_token(_claims(iss=f"{ISSUER}/")), AUDIENCE)
 
-    monkeypatch.setattr(fetcher, "get_jwks", fake_get_jwks)
-    monkeypatch.setattr(fetcher, "get_allowed_algorithms", fake_get_algorithms)
-    monkeypatch.setattr(auth, "_jwks_fetcher", fetcher)
 
-    def fake_decode(value: Any, key: Any, algorithms: Any = None, **_: Any) -> Any:
-        return SimpleNamespace(claims=claims)
+async def test_a_configured_issuer_differing_by_a_trailing_slash_verifies_the_discovered_one(
+    idp: Callable[[Discovery], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both spellings address one discovery document, whose issuer the tokens carry."""
+    monkeypatch.setattr(settings.auth, "issuer", OperatorUrl(f"{ISSUER}/"))
 
-    monkeypatch.setattr(auth.jwt, "decode", fake_decode)
+    assert (await authenticate(_token(_claims()), AUDIENCE)).user.id == "user-1"
+
+    with pytest.raises(HTTPException, match="iss"):
+        await authenticate(_token(_claims(iss=f"{ISSUER}/")), AUDIENCE)
+
+
+@pytest.mark.parametrize("alg", ["HS256", "none"])
+async def test_only_asymmetric_algorithms_are_accepted(
+    idp: Callable[[Discovery], None], alg: str
+) -> None:
+    """Whatever discovery advertises, a token signed by a shared secret or unsigned is refused."""
+    if alg == "none":
+        header = jwt.encode({"alg": "RS256"}, _claims(), KEY).split(".")[1]
+        token = f"eyJhbGciOiJub25lIn0.{header}."
+    else:
+        token = _token(_claims(), alg)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await authenticate(token, AUDIENCE)
+
+    assert exc_info.value.status_code == 401
 
 
 @pytest.mark.parametrize(
-    ("configured_iss", "token_iss"),
+    "claims",
     [
-        ("https://auth.example.com", "https://auth.example.com/"),
-        ("https://auth.example.com/", "https://auth.example.com"),
-        ("https://auth.example.com/", "https://auth.example.com/"),
-        ("https://auth.example.com", "https://auth.example.com"),
+        _claims(exp=None),
+        _claims(iat=None),
+        _claims(iss="https://evil.example.com"),
+        _claims(aud="hivegent-api-x"),
+        _claims(exp=int(time.time()) - 3600),
     ],
 )
-async def test_validate_jwt_token_accepts_trailing_slash_iss_mismatch(
-    monkeypatch: pytest.MonkeyPatch,
-    configured_iss: str,
-    token_iss: str,
+async def test_a_token_lacking_a_required_claim_is_refused(
+    idp: Callable[[Discovery], None], claims: dict[str, Any]
 ) -> None:
-    """A trailing ``/`` on ``iss`` must not cause a rejection either way."""
-    monkeypatch.setattr(settings.auth, "issuer", configured_iss)
-    monkeypatch.setattr(settings.auth, "audience", [])
+    """The 401 names at most the claim, never the expected or received value."""
+    with pytest.raises(HTTPException) as exc_info:
+        await authenticate(_token(claims), AUDIENCE)
 
-    _install_fake_jwt_pipeline(monkeypatch, {"sub": "user-1", "iss": token_iss})
-
-    user = await auth.validate_jwt_token("dummy.jwt.token")
-    assert user.id == "user-1"
-
-
-async def test_validate_jwt_token_rejects_mismatched_iss(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A bad ``iss`` produces a 401 that names the claim but leaks no values."""
-    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
-    monkeypatch.setattr(settings.auth, "audience", [])
-
-    _install_fake_jwt_pipeline(
-        monkeypatch,
-        {"sub": "user-1", "iss": "https://evil.example.com"},
+    detail = str(exc_info.value.detail)
+    assert exc_info.value.status_code == 401
+    assert (
+        "evil" not in detail and "hivegent-api" not in detail and "user-1" not in detail
     )
+
+
+@pytest.mark.parametrize(
+    "discovery",
+    [
+        {"issuer": "https://evil.example.com"},
+        {"jwks_uri": "https://evil.example.com/certs"},
+        {"jwks_uri": "http://auth.example.com/oidc/certs"},
+        {"id_token_signing_alg_values_supported": ["HS256"]},
+    ],
+)
+async def test_a_foreign_discovery_document_is_refused(
+    idp: Callable[[Discovery], None], discovery: Discovery
+) -> None:
+    """Another issuer, keys off the issuer's https origin, or no asymmetric algorithm."""
+    idp(discovery)
 
     with pytest.raises(HTTPException) as exc_info:
-        await auth.validate_jwt_token("dummy.jwt.token")
+        await authenticate(_token(_claims()), AUDIENCE)
 
-    assert exc_info.value.status_code == 401
-    detail = exc_info.value.detail
-    assert isinstance(detail, str)
-    assert "iss" in detail
-    assert "https://auth.example.com" not in detail
-    assert "https://evil.example.com" not in detail
+    assert exc_info.value.status_code == 500
 
 
-async def test_validate_jwt_token_rejects_mismatched_aud(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_mcp_tokens_name_the_advertised_resource(
+    idp: Callable[[Discovery], None], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A bad ``aud`` produces a 401 that names the claim but leaks no values."""
-    monkeypatch.setattr(settings.auth, "issuer", "")
-    monkeypatch.setattr(settings.auth, "audience", ["hivegent-api"])
+    """``/mcp`` verifies as the API does, for the resource its challenge and metadata advertise."""
+    monkeypatch.setattr(settings.mcp, "base_url", HttpUrl("https://hivegent.test/mcp"))
+    monkeypatch.setattr(settings.mcp, "mode", "remote")
+    monkeypatch.setattr(settings.mcp, "client_id", None)
+    monkeypatch.setattr(settings.mcp, "confirmation_key", SecretStr("k" * 32))
+    app = Starlette(routes=build_mcp_app().routes)
 
-    _install_fake_jwt_pipeline(monkeypatch, {"sub": "user-1", "aud": "other-api"})
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app), base_url="https://hivegent.test"
+    ) as client:
+        challenge = (await client.post("/mcp")).headers["www-authenticate"]
+        metadata_url = "https://hivegent.test/.well-known/oauth-protected-resource/mcp"
+        assert f'resource_metadata="{metadata_url}"' in challenge
+        resource = (await client.get(metadata_url)).json()["resource"]
 
-    with pytest.raises(HTTPException) as exc_info:
-        await auth.validate_jwt_token("dummy.jwt.token")
-
-    assert exc_info.value.status_code == 401
-    detail = exc_info.value.detail
-    assert isinstance(detail, str)
-    assert "aud" in detail
-    assert "hivegent-api" not in detail
-    assert "other-api" not in detail
-
-
-async def test_validate_jwt_token_accepts_audience_by_prefix(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A ``*`` audience pattern accepts any client id with that prefix."""
-    monkeypatch.setattr(settings.auth, "issuer", "")
-    monkeypatch.setattr(settings.auth, "audience", ["hivegent-*"])
-
-    _install_fake_jwt_pipeline(
-        monkeypatch, {"sub": "svc", "aud": "hivegent-integration"}
-    )
-
-    user = await auth.validate_jwt_token("dummy.jwt.token")
-    assert user.id == "svc"
+    assert resource == "https://hivegent.test/mcp"
+    verifier = HivegentVerifier([resource])
+    assert await verifier.verify_token(_token(_claims())) is None
+    token = await verifier.verify_token(_token(_claims(aud=resource)))
+    assert token is not None and token.claims["sub"] == "user-1"
 
 
-async def test_admin_is_a_role_not_a_group(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Admin derives from the roles claim; the same name in groups must not grant it."""
-    monkeypatch.setattr(settings.auth, "issuer", "")
-    monkeypatch.setattr(settings.auth, "audience", [])
+async def test_get_jwks_serves_stale_keys_when_refresh_fails() -> None:
+    """A failed refresh falls back to the cached keys and re-stamps their TTL."""
+    fetcher = JWKSFetcher()
+    stale = auth._Keys(KeySet([KEY]), ["RS256"], ISSUER)
+    fetcher._keys._value = stale
+    fetcher._keys._time = 0
+    calls: list[None] = []
 
-    # "admin" only in the groups claim is an ordinary group, not a privilege.
-    _install_fake_jwt_pipeline(
-        monkeypatch, {"sub": "u", "groups": ["admin", "eng:write"]}
-    )
-    user = await auth.validate_jwt_token("t")
+    async def failing() -> auth._Keys:
+        calls.append(None)
+        raise HTTPException(503)
+
+    fetcher._fetch = failing  # pyright: ignore[reportAttributeAccessIssue]
+
+    assert await fetcher.get() is stale
+    assert await fetcher.get() is stale
+    assert len(calls) == 1
+
+
+async def test_admin_is_a_role_not_a_group(idp: Callable[[Discovery], None]) -> None:
+    """Admin derives from the roles claim, the same name in groups must not grant it."""
+    user = (
+        await authenticate(_token(_claims(groups=["admin", "eng:write"])), AUDIENCE)
+    ).user
     assert not user.is_admin
     assert "admin" in user.all_groups
     assert "eng" in user.write_groups
 
-    # "admin" in the roles claim grants the privilege without joining a group.
-    _install_fake_jwt_pipeline(monkeypatch, {"sub": "u", "roles": ["admin"]})
-    user = await auth.validate_jwt_token("t")
+    user = (await authenticate(_token(_claims(roles=["admin"])), AUDIENCE)).user
     assert user.is_admin
-    assert user.roles == frozenset({"admin"})
     assert not user.all_groups
 
 
-def test_resolve_claim_path_walks_nested_mappings() -> None:
-    """A dotted path descends into nested mappings; a plain name stays flat."""
-    claims = {"groups": ["a"], "custom": {"groups": ["team-kb:read"]}}
-    assert auth._resolve_claim_path(claims, "groups") == ["a"]
-    assert auth._resolve_claim_path(claims, "custom.groups") == ["team-kb:read"]
-    assert auth._resolve_claim_path(claims, "custom.missing") is None
-    assert auth._resolve_claim_path(claims, "groups.nope") is None
+async def test_a_stream_ends_when_its_token_expires() -> None:
+    """Events flow until the expiry, then the stream ends without waiting for more."""
+
+    async def events() -> AsyncIterator[int]:
+        yield 1
+        await asyncio.sleep(60)
+        yield 2
+
+    seen = [event async for event in until_expiry(events(), time.time() + 0.05)]
+
+    assert seen == [1]
 
 
-def test_default_claim_paths_union_top_level_and_custom() -> None:
-    """By default, groups and roles are read from both the top-level and ``custom``-nested
-    claim and unioned — serving interactive users and client-credentials bots at once."""
-    user = {"groups": ["eng:write"], "roles": ["admin"]}
-    bot = {"custom": {"groups": ["team-kb:read"], "roles": ["auditor"]}}
-    both = {"groups": ["eng:write"], "custom": {"groups": ["team-kb:read"]}}
+def test_claim_paths_walk_nested_mappings_and_union(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A path descends through nested mappings, and the entries of every path are unioned."""
+    claims = {"groups": ["eng:write"], "custom": {"groups": ["team-kb:read"]}}
+    assert auth._resolve_claim_path(claims, ["groups", "nope"]) is None
 
-    def parsed(claims: dict[str, Any]) -> dict[str, str | None]:
+    def parsed() -> dict[str, str | None]:
         entries = auth._claim_entries(claims, settings.claims.groups)
         return {c.id: c.permission for c in parse_group_claims(entries)}
 
-    assert parsed(user) == {"eng": "write"}
-    assert parsed(bot) == {"team-kb": "read"}
-    assert parsed(both) == {"eng": "write", "team-kb": "read"}
-    assert auth._extract_roles(user) == frozenset({"admin"})
-    assert auth._extract_roles(bot) == frozenset({"auditor"})
+    assert parsed() == {"eng": "write"}
 
+    monkeypatch.setattr(settings.claims, "groups", [["groups"], ["custom", "groups"]])
 
-async def test_validate_jwt_token_does_not_leak_sub_in_error_detail(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``sub`` is a user identifier and must never appear in error details."""
-    monkeypatch.setattr(settings.auth, "issuer", "")
-    monkeypatch.setattr(settings.auth, "audience", ["hivegent-api"])
-
-    secret_sub = "personally-identifying-subject-id"
-    _install_fake_jwt_pipeline(monkeypatch, {"sub": secret_sub, "aud": "other-api"})
-
-    with pytest.raises(HTTPException) as exc_info:
-        await auth.validate_jwt_token("dummy.jwt.token")
-
-    detail = exc_info.value.detail
-    assert isinstance(detail, str)
-    assert secret_sub not in detail
-
-
-async def test_impersonation_requires_admin() -> None:
-    """A non-admin sending the impersonation header must get 403."""
-    actor = auth.User(id="u", roles=frozenset({"editor"}))
-
-    with pytest.raises(AccessDenied):
-        await auth.act_as(actor, "victim")
-
-
-async def test_impersonation_rejects_malformed_target() -> None:
-    """Targets failing user-id sanitisation must yield 400, not a lookup."""
-    admin = auth.User(id="root", roles=frozenset({"admin"}))
-
-    with pytest.raises(HTTPException) as exc_info:
-        await auth.act_as(admin, "../etc/passwd")
-
-    assert exc_info.value.status_code == 400
-
-
-async def test_impersonation_yields_personal_scope_without_roles(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An admin gets the target's id only; unknown targets yield 404."""
-
-    async def fake_exists(user_id: str) -> bool:
-        return user_id == "victim"
-
-    monkeypatch.setattr(auth, "user_exists", fake_exists)
-    admin = auth.User(id="root", roles=frozenset({"admin"}))
-
-    user = await auth.act_as(admin, "victim")
-    assert user == auth.User(id="victim")
-    # Groups live only in the target's OIDC token, never reconstructed here.
-    assert not user.all_groups
-    assert not user.is_admin
-
-    with pytest.raises(HTTPException) as exc_info:
-        await auth.act_as(admin, "ghost")
-    assert exc_info.value.status_code == 404
+    assert parsed() == {"eng": "write", "team-kb": "read"}
 
 
 def _parsed_group_claims(entries: list[Any]) -> list[GroupClaim]:
@@ -374,3 +286,27 @@ def test_scim_objects_carry_id_and_display() -> None:
 
 def test_malformed_entries_are_skipped() -> None:
     assert _parsed_group_claims([":write", "", 42, {"display": "x"}]) == []
+
+
+def test_the_service_client_is_a_service_whatever_it_claims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its groups and roles are never read, so it sees the global workspace alone."""
+    monkeypatch.setattr(settings.auth, "service_client_id", "hivegent-bot")
+    claims = {"sub": "bot", "groups": ["team:write"], "roles": ["admin"]}
+
+    bot = user_from_claims({**claims, "azp": "hivegent-bot"})
+    person = user_from_claims({**claims, "azp": "hivegent-spa"})
+
+    assert bot.is_service and not bot.is_admin and bot.workspaces(writable=True) == ()
+    assert not person.is_service and person.is_admin
+
+
+def test_a_declared_principal_kind_must_match_the_token() -> None:
+    check_kind(User(id="bot", kind="service"), "service")
+    check_kind(PROBE, None)
+
+    with pytest.raises(HTTPException) as excinfo:
+        check_kind(PROBE, "service")
+
+    assert excinfo.value.status_code == 403

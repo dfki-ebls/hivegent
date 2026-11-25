@@ -1,26 +1,25 @@
-"""CLI for Hivegent service account management."""
+"""CLI for Hivegent host operations: serving, migrating, reindexing, and resetting.
 
-import ipaddress
-import json
-from collections.abc import Mapping
+It acts on the configured data directory and database directly, with the
+privileges of the host it runs on, and never over HTTP.
+"""
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
-import httpx2
 import typer
 
-from .config import API_PREFIX
-from .humanize import format_bytes
-from .store import WorkspaceScope
+from .config import sanitize_user_id
 
 __all__ = ["app"]
 
 app = typer.Typer(
-    help="Hivegent CLI for service account management.",
+    help="Hivegent host operations: serve, dev, migrate, reindex, and reset.",
     no_args_is_help=True,
     pretty_exceptions_enable=False,
-    # pretty_exceptions_show_locals=False,
-    # pretty_exceptions_short=True,
 )
 
 
@@ -37,336 +36,21 @@ def _main() -> None:
     configure_logging()
 
 
-# Default paths
-CONFIG_DIR = Path.home() / ".config" / "hivegent"
-CREDENTIALS_FILE = CONFIG_DIR / "credentials.json"
-DEFAULT_API_URL = "http://localhost:8000"
-
-
-def _get_credentials() -> dict[str, Any] | None:
-    """Load stored credentials."""
-    if not CREDENTIALS_FILE.exists():
-        return None
-    try:
-        return json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def _save_credentials(credentials: Mapping[str, Any]) -> None:
-    """Save credentials securely."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CREDENTIALS_FILE.write_text(json.dumps(credentials, indent=2), encoding="utf-8")
-    # Set restrictive permissions (owner read/write only)
-    CREDENTIALS_FILE.chmod(0o600)
-
-
-def _clear_credentials() -> None:
-    """Remove stored credentials."""
-    if CREDENTIALS_FILE.exists():
-        CREDENTIALS_FILE.unlink()
-
-
-def _get_api_url() -> str:
-    """Get the API URL from credentials or default."""
-    creds = _get_credentials()
-    if creds and "api_url" in creds:
-        return creds["api_url"]
-    return DEFAULT_API_URL
-
-
-def _get_token() -> str | None:
-    """Get the stored access token."""
-    creds = _get_credentials()
-    if not creds:
-        return None
-    return creds.get("access_token")
-
-
-def _require_auth() -> str:
-    """Require authentication and return the token."""
-    token = _get_token()
-    if not token:
-        typer.echo("Not authenticated. Run 'hivegent login' first.", err=True)
-        raise typer.Exit(1)
-    return token
-
-
-def _document(name: str) -> str:
-    """The API path of document *name*, in the personal workspace unless it names a scope."""
-    try:
-        _ = WorkspaceScope.parse(name)
-    except ValueError:
-        name = WorkspaceScope().render(name)
-
-    return f"/documents/{name}"
-
-
-def _error(response: httpx2.Response) -> str:
-    """The explanation of a refused request, its problem detail where it has one."""
-    try:
-        return str(response.json().get("detail") or response.text)
-    except json.JSONDecodeError:
-        return response.text
-
-
-def _make_request(
-    method: str,
-    path: str,
-    token: str,
-    json_data: Mapping[str, Any] | None = None,
-    files: Mapping[str, Any] | None = None,
-) -> httpx2.Response:
-    """Make an authenticated request to the API route *path*."""
-    url = f"{_get_api_url()}{API_PREFIX}{path}"
-    headers = {"Authorization": f"Bearer {token}"}
-
-    try:
-        with httpx2.Client(timeout=30.0) as client:
-            if method == "GET":
-                return client.get(url, headers=headers)
-            elif method == "POST":
-                return client.post(url, headers=headers, json=json_data)
-            elif method == "PUT":
-                if files:
-                    return client.put(url, headers=headers, files=files)
-                return client.put(url, headers=headers, json=json_data)
-            elif method == "DELETE":
-                return client.delete(url, headers=headers)
-            else:
-                raise ValueError(f"Unknown method: {method}")
-    except httpx2.HTTPError as e:
-        typer.echo(f"Request failed: {e}", err=True)
-        raise typer.Exit(1)
-
-
-@app.command()
-def login(
-    issuer: Annotated[
-        str | None, typer.Option("--issuer", "-i", help="OIDC issuer URL")
-    ] = None,
-    client_id: Annotated[
-        str | None, typer.Option("--client-id", "-c", help="Service account client ID")
-    ] = None,
-    client_secret: Annotated[
-        str | None,
-        typer.Option(
-            "--client-secret",
-            "-s",
-            prompt=False,
-            hide_input=True,
-            help="Client secret (will prompt if not provided)",
-        ),
-    ] = None,
-    api_url: Annotated[
-        str, typer.Option("--api-url", "-u", help="API base URL")
-    ] = DEFAULT_API_URL,
-) -> None:
-    """Authenticate with Hivegent using an OIDC client-credentials grant."""
-    if not issuer or not client_id:
-        typer.echo("Both --issuer and --client-id are required.", err=True)
-        raise typer.Exit(1)
-
-    # Prompt for client secret if not provided
-    if not client_secret:
-        client_secret = typer.prompt("Client secret", hide_input=True)
-
-    # Resolve the token endpoint from the IdP's discovery document so the CLI
-    # works against any OIDC provider rather than a hard-coded vendor path.
-    discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
-
-    try:
-        with httpx2.Client(timeout=30.0) as client:
-            discovery = client.get(discovery_url)
-            discovery.raise_for_status()
-            token_url = discovery.json()["token_endpoint"]
-            response = client.post(
-                token_url,
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                },
-            )
-            response.raise_for_status()
-            token_data = response.json()
-    except httpx2.HTTPError as e:
-        typer.echo(f"Failed to authenticate: {e}", err=True)
-        raise typer.Exit(1)
-    except (KeyError, ValueError) as e:
-        typer.echo(f"Invalid OIDC discovery document: {e}", err=True)
-        raise typer.Exit(1)
-
-    access_token = token_data.get("access_token")
-    if not access_token:
-        typer.echo("No access token in response.", err=True)
-        raise typer.Exit(1)
-
-    _save_credentials(
-        {
-            "access_token": access_token,
-            "refresh_token": token_data.get("refresh_token"),
-            "issuer": issuer,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "api_url": api_url,
-        }
-    )
-    typer.echo("Logged in successfully.")
-
-
-@app.command()
-def logout() -> None:
-    """Clear stored credentials."""
-    _clear_credentials()
-    typer.echo("Logged out.")
-
-
-@app.command()
-def upload(
-    file: Annotated[Path, typer.Argument(help="File to upload", exists=True)],
-    filename: Annotated[
-        str | None, typer.Option("--filename", "-n", help="Target filename")
-    ] = None,
-) -> None:
-    """Upload a document."""
-    token = _require_auth()
-    target_name = filename or file.name
-
-    with file.open("rb") as f:
-        response = _make_request(
-            "PUT",
-            _document(target_name),
-            token,
-            files={"file": (target_name, f, "application/octet-stream")},
-        )
-
-    if response.status_code == 200:
-        typer.echo(
-            f"Uploaded: {target_name}, converting and indexing in the background"
-        )
-    else:
-        typer.echo(f"Upload failed: {_error(response)}", err=True)
-        raise typer.Exit(1)
-
-
-@app.command()
-def download(
-    filename: Annotated[str, typer.Argument(help="Document to download")],
-    output: Annotated[
-        Path | None, typer.Option("--output", "-o", help="Output path")
-    ] = None,
-) -> None:
-    """Download a document."""
-    token = _require_auth()
-
-    response = _make_request("GET", _document(filename), token)
-
-    if response.status_code == 200:
-        out_path = output or Path(Path(filename).name)
-        out_path.write_text(response.text, encoding="utf-8")
-        typer.echo(f"Downloaded: {out_path}")
-    else:
-        typer.echo(f"Download failed: {_error(response)}", err=True)
-        raise typer.Exit(1)
-
-
-def _files(entry: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    """Every file below the directory tree *entry*, depth first."""
-    if entry["type"] == "file":
-        return [entry]
-
-    return [file for child in entry.get("children") or () for file in _files(child)]
-
-
-@app.command("list")
-def list_docs() -> None:
-    """List the documents of the personal workspace."""
-    token = _require_auth()
-
-    response = _make_request("GET", "/directories/~", token)
-
-    if response.status_code != 200:
-        typer.echo(f"Failed to list documents: {_error(response)}", err=True)
-        raise typer.Exit(1)
-
-    documents = _files(response.json()["root"])
-
-    if not documents:
-        typer.echo("No documents found.")
-        return
-
-    typer.echo(f"{'Path':<60} {'Size':>10}")
-    typer.echo("-" * 72)
-    for doc in documents:
-        size = doc.get("size_bytes")
-        typer.echo(
-            f"{doc['path']:<60} {'' if size is None else format_bytes(size):>10}"
-        )
-
-
-@app.command()
-def delete(
-    filename: Annotated[str, typer.Argument(help="Document to delete")],
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation")] = False,
-) -> None:
-    """Delete a document."""
-    if not yes:
-        confirm = typer.confirm(f"Delete '{filename}'?")
-        if not confirm:
-            raise typer.Abort()
-
-    token = _require_auth()
-
-    response = _make_request("DELETE", _document(filename), token)
-
-    if response.status_code == 200:
-        typer.echo(f"Deleted: {filename}")
-    else:
-        typer.echo(f"Delete failed: {_error(response)}", err=True)
-        raise typer.Exit(1)
-
-
-@app.command()
-def whoami() -> None:
-    """Show current authentication status."""
-    creds = _get_credentials()
-    if not creds:
-        typer.echo("Not authenticated.")
-        return
-
-    api_url = creds.get("api_url", DEFAULT_API_URL)
-
-    typer.echo(f"API URL: {api_url}")
-    typer.echo(f"Issuer: {creds.get('issuer', 'N/A')}")
-    typer.echo(f"Client ID: {creds.get('client_id', 'N/A')}")
-
-
-def _is_loopback_host(host: str) -> bool:
-    """Return whether *host* binds only to the local machine."""
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
 @app.command()
 def migrate(
     revision: Annotated[
         str,
         typer.Argument(
-            help="Target revision; defaults to 'head'. Pass a specific hash "
-            "to roll forward/back to that point."
+            help="Revision to upgrade to; defaults to 'head'. Pass a specific "
+            "hash to stop at that point."
         ),
     ] = "head",
 ) -> None:
-    """Run Alembic migrations against the configured database.
+    """Upgrade the configured database with Alembic's migrations.
 
     The API server upgrades the database automatically on startup, so this
-    command is only needed for ad-hoc operator use (dry runs, rolling back,
-    or applying migrations from a maintenance window).
+    command is only needed for ad-hoc operator use, such as applying
+    migrations in a maintenance window.  It never downgrades.
     """
     from alembic import command
 
@@ -375,48 +59,215 @@ def migrate(
     command.upgrade(build_alembic_config(), revision)
 
 
+def _on_host[T](run: Callable[[], Awaitable[T]]) -> T:
+    """Run *run* on the configured database while no server runs on it, ending the command on a refusal."""
+    from .db import engine_lifespan
+    from .db.engine import ServerRunning, no_server_running
+
+    async def hosted() -> T:
+        async with engine_lifespan(), no_server_running():
+            return await run()
+
+    try:
+        return asyncio.run(hosted())
+    except (ServerRunning, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+
+@app.command()
+def reindex(
+    workspace: Annotated[
+        str | None,
+        typer.Option(
+            help="Key of the one workspace to reindex, such as 'user:alice' or 'global'."
+        ),
+    ] = None,
+) -> None:
+    """Chunk and embed the documents again at the next start, such as to recover a workspace.
+
+    The index follows the options of its chunkers and its embedding model by
+    itself, and an update whose code chunks or embeds otherwise ships a
+    migration that clears the stamps, so this is for ad-hoc use only.  It
+    clears the stamps of the documents, which the next start indexes again,
+    and refuses while a server runs on the database.
+    """
+    from .db.documents import clear_content_states
+
+    count = _on_host(lambda: clear_content_states(workspace))
+    typer.echo(f"Marked {count} documents to index again at the next start.")
+
+
+class ResetTarget(StrEnum):
+    """What ``hivegent reset`` wipes."""
+
+    WORKSPACE = "workspace"
+    DATABASE = "database"
+    FACTORY = "factory"
+    USER = "user"
+    GROUP = "group"
+    SOURCES = "sources"
+
+
+_OWNED = frozenset({ResetTarget.USER, ResetTarget.GROUP})
+
+
+async def _reset_owner(target: ResetTarget, owner: str) -> None:
+    """Wipe everything the user or group *owner* owns.
+
+    A user loses their workspace, skills, assistants, conversations, memory,
+    and identity row, which a later sign-in creates again, a group its
+    workspace, skills, and assistants.  The user is built here with no groups
+    or roles, as the operator acts on the host and the token that would carry
+    them is never held.
+    """
+    from .assistants import assistant_library
+    from .db.groups import list_group_ids
+    from .db.users import user_exists
+    from .libraries import LibraryGrant
+    from .server.common import delete_scope_data, delete_user_data
+    from .skills import library
+    from .store import GroupScope, HostGrant, User
+
+    if target is ResetTarget.GROUP:
+        granted = LibraryGrant(HostGrant().workspace(GroupScope(owner)))
+        # A group's row only comes with its first document, its libraries on disk.
+        folders = (
+            granted.store.path,
+            library(granted.scope).path,
+            assistant_library(granted.scope),
+        )
+
+        if not any(folder.exists() for folder in folders) and (
+            owner not in await list_group_ids()
+        ):
+            raise ValueError(f"Unknown group: {owner!r}")
+
+        await delete_scope_data(granted)
+        return
+
+    user = User(id=sanitize_user_id(owner))
+
+    if not await user_exists(user.id):
+        raise ValueError(f"Unknown user: {owner!r}")
+
+    await delete_user_data(user)
+
+
+async def _reset(target: ResetTarget, owner: str | None) -> None:
+    """Wipe *target* in the configured data directory and database."""
+    from .assistants import remove_assistants_root
+    from .config import settings
+    from .conversation_files import reset_conversation_files
+    from .db.sources import prune_sources
+    from .db.users import delete_all_identities
+    from .db.workspaces import delete_all_workspaces
+    from .files import remove_path
+    from .skills import remove_skills_root
+    from .workspace import delete_workspace_root
+
+    if owner is not None:
+        await _reset_owner(target, owner)
+        return
+
+    if target is ResetTarget.SOURCES:
+        from .sources.sync import prune_sources as drop_unconfigured
+
+        await drop_unconfigured(keep_held=False)
+        return
+
+    if target is not ResetTarget.DATABASE:
+        await delete_workspace_root()
+
+    if target is ResetTarget.FACTORY:
+        await remove_skills_root()
+        await remove_assistants_root()
+
+    await delete_all_workspaces()
+    # Their mirrors' rows went, so every source syncs afresh into an empty mirror.
+    _ = await prune_sources((), keep_held=False)
+    await asyncio.to_thread(remove_path, settings.data_dir / "sources")
+
+    if target is not ResetTarget.WORKSPACE:
+        await reset_conversation_files()
+        await delete_all_identities()
+
+
+@app.command()
+def reset(
+    target: Annotated[
+        ResetTarget,
+        typer.Argument(
+            help="'workspace' drops every file and document, 'database' every "
+            "user, group, and conversation, 'factory' both and every skill, "
+            "'user' and 'group' everything one user or group owns, "
+            "'sources' every source no longer configured with its mirror, "
+            "also one the boot keeps for the files its source lost."
+        ),
+    ],
+    owner: Annotated[
+        str | None,
+        typer.Argument(help="The id of the user or group to wipe, for those alone."),
+    ] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation")] = False,
+) -> None:
+    """Wipe data on this host that no HTTP route wipes for anyone but its owner.
+
+    Runs against the configured data directory and database directly, and
+    refuses while a server runs on that database, whose caches and open
+    streams would outlive the wipe.
+    'database' deletes every workspace row, which takes every document and
+    chunk along, and cascades from users and groups to memory and
+    conversations, but leaves the workspace files, which reconciliation then
+    indexes again.  Users wipe their own data in the UI.
+    """
+    if (owner is None) == (target in _OWNED):
+        typer.echo(
+            "Name the id of a 'user' or 'group' wipe, and of no other.", err=True
+        )
+        raise typer.Exit(1)
+
+    what = f"{target} {owner}" if owner is not None else f"the {target}"
+
+    if not yes and not typer.confirm(f"Irreversibly reset {what}?"):
+        raise typer.Abort()
+
+    _on_host(lambda: _reset(target, owner))
+
+    typer.echo(f"Reset {what}.")
+
+
+Port = Annotated[int, typer.Option("--port", "-p", help="Port to bind to")]
+Reload = Annotated[bool, typer.Option("--reload", "-r", help="Enable auto-reload")]
+
+
 @app.command()
 def serve(
     host: Annotated[
         str, typer.Option("--host", "-h", help="Host to bind to")
     ] = "127.0.0.1",
-    port: Annotated[int, typer.Option("--port", "-p", help="Port to bind to")] = 8000,
-    reload: Annotated[
-        bool, typer.Option("--reload", "-r", help="Enable auto-reload")
-    ] = False,
-    allow_unsafe_auth_disabled_bind: Annotated[
-        bool,
-        typer.Option(
-            "--allow-unsafe-auth-disabled-bind",
-            help="Allow auth-disabled mode on a non-loopback listener.",
-        ),
-    ] = False,
+    port: Port = 8000,
+    reload: Reload = False,
 ) -> None:
-    """Start the Hivegent API server."""
-    from .config import settings
+    """Start the Hivegent API server, which refuses to start without an issuer."""
+    _run("create_app", host, port, reload)
 
-    if not settings.auth.enable and not settings.auth.allow_disabled:
-        typer.echo(
-            "Authentication is disabled but HIVEGENT_AUTH__ALLOW_DISABLED is not set.",
-            err=True,
-        )
-        raise typer.Exit(1)
-    if (
-        not settings.auth.enable
-        and not _is_loopback_host(host)
-        and not allow_unsafe_auth_disabled_bind
-    ):
-        typer.echo(
-            "Refusing to bind an auth-disabled server to a non-loopback host. "
-            "Use --host 127.0.0.1 or pass --allow-unsafe-auth-disabled-bind.",
-            err=True,
-        )
-        raise typer.Exit(1)
 
+@app.command()
+def dev(port: Port = 8000, reload: Reload = False) -> None:
+    """Start the API server on the loopback address, every caller acting as the development user.
+
+    It validates no token and refuses to start with an issuer, so a deployment,
+    which runs ``serve``, never has the development user.
+    """
+    _run("create_dev_app", "127.0.0.1", port, reload)
+
+
+def _run(factory: str, host: str, port: int, reload: bool) -> None:
     import uvicorn
 
     uvicorn.run(
-        "hivegent.server:create_app",
+        f"hivegent.server:{factory}",
         factory=True,
         host=host,
         port=port,
