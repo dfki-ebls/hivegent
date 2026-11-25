@@ -3,19 +3,21 @@ self-hosted OpenAI-compatible endpoints need."""
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal
+from dataclasses import replace
+from typing import Any
 
+from exar.agents import call
+from exar.pydantic_ai import PydanticAiAgent
 from openai import AsyncOpenAI
 from pydantic_ai import Agent, UserContent
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import (
-    ModelContextWindowExceededError,
-    ModelHTTPError,
-    UnexpectedModelBehavior,
-)
+from pydantic_ai.capabilities import AbstractCapability, RetryOnModelErrors
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.profiles import ModelProfile, merge_profile
+from pydantic_ai.profiles import (
+    InlineDefsJsonSchemaTransformer,
+    ModelProfile,
+    merge_profile,
+)
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -25,107 +27,98 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
+from pydantic_ai.providers import Provider
+from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 from pydantic_ai.providers.vllm import VLLMProvider
-from pydantic_ai.settings import ModelSettings, ThinkingEffort
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from .config import InferenceProvider, settings
-from .http_client import get_trusted_http_client, get_user_http_client
-from .llm_config import LlmConfig, ReasoningEffort
+from .config import reveal, settings
+from .config.llm import (
+    FAMILY_PROVIDERS,
+    InferenceProvider,
+    LlmProviderSettings,
+    ModelFamily,
+)
+from .http_client import get_trusted_http_client
+from .llm_config import LlmConfig, clamp_reasoning
 
 __all__ = [
     "SUMMARY_MAX_TOKENS",
-    "capped_tokens",
+    "StrictJsonSchemaTransformer",
     "complete",
     "create_openai_chat_model",
     "create_openai_client",
     "create_openai_provider",
-    "is_context_overflow",
     "model_from_config",
     "summary_model_settings",
     "thinking_model_settings",
 ]
 
-# The error ``type`` llama.cpp rejects an oversized prompt with.
-_LLAMACPP_OVERFLOW_TYPE = "exceed_context_size_error"
-# SGLang's wordings, whose 400 body carries no stable identifier:
-# - "The input (N tokens) is longer than the model's context length (M tokens)."
-# - "Input length (N tokens) exceeds the maximum allowed length (M tokens).",
-#   the KV-pool bound below the context length.
-_CONTEXT_OVERFLOW_PHRASES = (
-    "the model's context length",
-    "exceeds the maximum allowed length",
-)
 
-
-def is_context_overflow(error: Exception) -> bool:
-    """Whether *error* means the prompt overflowed the model's context window.
-
-    pydantic-ai already files OpenAI's ``context_length_exceeded`` code and
-    vLLM's wording as ``ModelContextWindowExceededError``.  What it misses is
-    matched here: llama.cpp's error type, SGLang's prose, and the empty
-    response with ``finish_reason == "length"`` that pydantic-ai collapses into
-    the message of an ``UnexpectedModelBehavior``.
-    """
-    match error:
-        case ModelContextWindowExceededError():
-            return True
-        case ModelHTTPError(status_code=400, provider_error_type=kind, body=body):
-            return kind == _LLAMACPP_OVERFLOW_TYPE or any(
-                phrase in str(body) for phrase in _CONTEXT_OVERFLOW_PHRASES
-            )
-        case UnexpectedModelBehavior(message=message):
-            return "exceeded before any response was generated" in message
-        case _:
-            return False
-
-
-def create_openai_provider(
-    *,
-    api_key: str | None,
-    base_url: str | None,
-    base_url_is_trusted: bool,
-) -> OpenAIProvider:
-    """Create an OpenAI provider bound to the matching shared HTTP client."""
+def create_openai_client(provider: LlmProviderSettings) -> AsyncOpenAI:
+    """Create an OpenAI SDK client for *provider* on the shared client."""
     return OpenAIProvider(
-        api_key=api_key or None,
-        base_url=base_url or None,
-        http_client=(
-            get_trusted_http_client() if base_url_is_trusted else get_user_http_client()
-        ),
-    )
-
-
-def create_openai_client(
-    *,
-    api_key: str | None,
-    base_url: str | None,
-    base_url_is_trusted: bool,
-) -> AsyncOpenAI:
-    """Create an OpenAI SDK client bound to the matching shared HTTP client."""
-    return create_openai_provider(
-        api_key=api_key,
-        base_url=base_url,
-        base_url_is_trusted=base_url_is_trusted,
+        api_key=reveal(provider.api_key),
+        base_url=provider.base_url,
+        http_client=get_trusted_http_client(provider.base_url),
     ).client
 
 
-# Model families llama.cpp serves, the same map pydantic-ai maintains in
-# ``VLLMProvider.model_profile``, which is not reusable here: it merges vLLM's
-# own server quirks on top of it.
-_FAMILY_PROFILES: Mapping[str, Callable[[str], ModelProfile | None]] = {
-    "llama": meta_model_profile,
-    "gemma": google_model_profile,
-    "qwen": qwen_model_profile,
-    "qwq": qwen_model_profile,
-    "deepseek": deepseek_model_profile,
-    "mistral": mistral_model_profile,
-    "command": cohere_model_profile,
-    "c4ai-command": cohere_model_profile,
-    "gpt-oss": harmony_model_profile,
-    "glm": zai_model_profile,
+def create_openai_provider(provider: LlmProviderSettings) -> Provider[AsyncOpenAI]:
+    """The pydantic-ai provider of an operator endpoint, named for its runtime.
+
+    Only OpenAI's own API takes pydantic-ai's OpenAI provider, which profiles,
+    prices, and counts tokens as OpenAI does.  vLLM and Ollama take their own,
+    and any other runtime an OpenAI-compatible one named after it, so no
+    self-hosted model is mistaken for an OpenAI one of the same name.
+    """
+    client = create_openai_client(provider)
+    runtime = provider.inference_provider
+
+    match runtime:
+        case InferenceProvider.OPENAI:
+            return OpenAIProvider(openai_client=client)
+
+        case InferenceProvider.VLLM:
+            return VLLMProvider(openai_client=client)
+
+        case InferenceProvider.OLLAMA:
+            return OllamaProvider(openai_client=client)
+
+        case (
+            InferenceProvider.LLAMA_CPP
+            | InferenceProvider.SGLANG
+            | InferenceProvider.OPENAI_COMPATIBLE
+        ):
+            return OpenAICompatibleProvider(runtime.value, openai_client=client)
+
+
+# The profile of each configured model family, the same functions pydantic-ai
+# maps in ``VLLMProvider.model_profile``, which is not reusable here: it merges
+# vLLM's own server quirks on top of them.
+_FAMILY_PROFILES: Mapping[ModelFamily, Callable[[str], ModelProfile | None]] = {
+    ModelFamily.LLAMA: meta_model_profile,
+    ModelFamily.GEMMA: google_model_profile,
+    ModelFamily.QWEN: qwen_model_profile,
+    ModelFamily.DEEPSEEK: deepseek_model_profile,
+    ModelFamily.MISTRAL: mistral_model_profile,
+    ModelFamily.COHERE: cohere_model_profile,
+    ModelFamily.GPT_OSS: harmony_model_profile,
+    ModelFamily.GLM: zai_model_profile,
 }
+
+# The runtimes serving the operator's own models, rather than a hosted API.
+_SELF_HOSTED = frozenset(
+    {
+        InferenceProvider.LLAMA_CPP,
+        InferenceProvider.VLLM,
+        InferenceProvider.SGLANG,
+        InferenceProvider.OLLAMA,
+    }
+)
 
 # What a self-hosted runtime needs on top of the provider and family profiles.
 # ``supports_thinking`` because these endpoints serve reasoning models
@@ -143,159 +136,171 @@ _SELF_HOSTED_PROFILE = OpenAIModelProfile(
 )
 
 
+class StrictJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
+    """Inlines definitions and requires every property of a strict schema.
+
+    vLLM enforces a strict schema with an xgrammar grammar that takes the
+    properties in their declared order, so a model writing an optional
+    property first could no longer write any declared before it, and a tool
+    got only ``limit`` of ``path``, ``query`` and ``limit``.  Required, each
+    property has its place, an argument typed ``X | None`` taking null and
+    any other one its value, the default included.
+
+    Examples:
+        >>> StrictJsonSchemaTransformer(
+        ...     {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "integer"}}}
+        ... ).walk()["required"]
+        ['a', 'b']
+    """
+
+    def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+        """*schema* with every property required unless the schema is not strict."""
+        if self.strict is not False and "properties" in schema:
+            schema["required"] = list(schema["properties"])
+
+        return schema
+
+
+# Wins over the family transformer, such as Qwen's, which inlines definitions
+# but marks every schema strict without requiring its properties.  pydantic-ai's
+# `OpenAIJsonSchemaTransformer` would drop `strict` from every tool with an
+# optional argument, or close a free-form object such as a query record.
+_VLLM_PROFILE = ModelProfile(json_schema_transformer=StrictJsonSchemaTransformer)
+
+# The `<system>` framing is announced from a conversation's first request, so
+# the cached prompt prefix never changes once a turn first needs it.
+_MODEL_SETTINGS = ModelSettings(framing_announcement="always")
+
+
 def _bare_model_name(model: str) -> str:
     """The served model name without any ``<org>/`` prefix, casefolded."""
     return model.rsplit("/", maxsplit=1)[-1].casefold()
 
 
-def _match_prefix[T](bare_name: str, table: Mapping[str, T]) -> T | None:
-    """The value of the first *table* key that prefixes *bare_name*."""
-    return next(
-        (value for prefix, value in table.items() if bare_name.startswith(prefix)),
-        None,
-    )
-
-
-def _llama_cpp_profile(model: str) -> ModelProfile:
-    """The family profile of *model* under the self-hosted one.
-
-    The OpenAI provider profiles by served name, so it hands every self-hosted
-    model the OpenAI family's, which keeps the ``$ref``/``$defs`` a local
-    runtime's guided decoding wants inlined.  The family profile puts the real
-    family back, and the self-hosted one goes on top of both.
-    """
-    bare_name = _bare_model_name(model)
-    family = _match_prefix(bare_name, _FAMILY_PROFILES)
-
-    return merge_profile(family(bare_name) if family else None, _SELF_HOSTED_PROFILE)
-
-
 def create_openai_chat_model(
     model: str,
+    provider: LlmProviderSettings,
     *,
-    api_key: str | None,
-    base_url: str | None,
-    inference_provider: InferenceProvider | None,
-    base_url_is_trusted: bool,
+    family: ModelFamily | None = None,
+    context_window: int | None = None,
 ) -> OpenAIChatModel:
-    """Build an :class:`OpenAIChatModel` bound to the matching shared client.
+    """Build an :class:`OpenAIChatModel` bound to the shared client.
 
-    One branch per runtime, so what each endpoint receives is readable in one
-    place and a provider added to the enum fails to type-check until it states
-    its own quirks.  A spec-compliant endpoint keeps pydantic-ai's own model
-    and profile untouched: every override either contradicts what the real
-    OpenAI API does or replaces inference already correct there.  ``None``
-    means the config was never resolved and is read as that strict contract,
-    the same way :func:`_reasoning_extra_body` reads it.
-
-    vLLM gets pydantic-ai's own provider, whose profile already names the
-    families it serves and merges the leading ``system`` messages its chat
-    templates reject.
+    The provider profiles the model by its served name
+    (:func:`create_openai_provider`), the vLLM and Ollama ones by the families
+    they serve, the OpenAI-compatible one by a ``<vendor>/`` prefix.  On top of
+    it go the configured *family* where the runtime takes one
+    (``FAMILY_PROVIDERS``), the self-hosted profile on a self-hosted runtime,
+    and the configured *context_window*, which pydantic-ai otherwise knows
+    only for the models of genai-prices.  OpenAI's own API keeps pydantic-ai's
+    profile untouched, since every override would contradict it.
     """
-    provider = create_openai_provider(
-        api_key=api_key,
-        base_url=base_url,
-        base_url_is_trusted=base_url_is_trusted,
+    runtime = provider.inference_provider
+    family_profile = (
+        _FAMILY_PROFILES[family](_bare_model_name(model))
+        if family is not None and runtime in FAMILY_PROVIDERS
+        else None
     )
-    match inference_provider:
-        case None | InferenceProvider.OPENAI:
-            return OpenAIChatModel(model, provider=provider)
+    profile = merge_profile(
+        family_profile,
+        _SELF_HOSTED_PROFILE if runtime in _SELF_HOSTED else None,
+        _VLLM_PROFILE if runtime is InferenceProvider.VLLM else None,
+        ModelProfile(context_window=context_window) if context_window else None,
+    )
 
-        case InferenceProvider.LLAMA_CPP:
-            return OpenAIChatModel(
-                model, provider=provider, profile=_llama_cpp_profile(model)
-            )
-
-        case InferenceProvider.VLLM:
-            return OpenAIChatModel(
-                model,
-                provider=VLLMProvider(openai_client=provider.client),
-                profile=_SELF_HOSTED_PROFILE,
-            )
+    return OpenAIChatModel(
+        model,
+        provider=create_openai_provider(provider),
+        profile=profile or None,
+        settings=_MODEL_SETTINGS,
+    )
 
 
 def model_from_config(config: LlmConfig) -> OpenAIChatModel:
-    """Build an :class:`OpenAIChatModel` from an :class:`LlmConfig`.
+    """Build an :class:`OpenAIChatModel` from a catalog model.
 
-    Single canonical adapter from the pydantic-validated request shape to
-    the pydantic-ai model surface — keeps every call site honest about
-    which fields flow where.
+    The one adapter from the catalog to the pydantic-ai model surface, which
+    keeps every call site honest about which fields flow where.
     """
     return create_openai_chat_model(
         config.model,
-        api_key=config.api_key,
-        base_url=config.base_url,
-        inference_provider=config.inference_provider,
-        base_url_is_trusted=config.base_url_is_trusted,
+        config.provider,
+        family=config.family,
+        context_window=config.context_window,
     )
 
 
-# Generic-to-native effort remapping for models whose reasoning levels do not
-# line up with pydantic-ai's, keyed by a casefolded model-name prefix (the part
-# after any ``<org>/``).  Levels a model does not implement, such as Qwen3.8's
-# missing ``high``, are mapped onto the nearest one it does, while the
-# configured thinking budget stays keyed on the generic level.
-_REASONING_EFFORT_OVERRIDES: Mapping[str, Mapping[ReasoningEffort, ThinkingEffort]] = {
-    "qwen3.8": {"high": "xhigh"},
+_BUDGET_FIELDS: dict[InferenceProvider, str] = {
+    InferenceProvider.LLAMA_CPP: "thinking_budget_tokens",
+    InferenceProvider.VLLM: "thinking_token_budget",
 }
+"""The request field capping reasoning per runtime, which only these enforce."""
 
-
-def _map_reasoning_effort(model: str, effort: ReasoningEffort) -> ThinkingEffort:
-    overrides = _match_prefix(_bare_model_name(model), _REASONING_EFFORT_OVERRIDES)
-
-    return overrides.get(effort, effort) if overrides else effort
-
-
-def _reasoning_extra_body(
-    thinking: ReasoningEffort | Literal[False], provider: InferenceProvider | None
-) -> dict[str, object] | None:
-    match provider:
-        case InferenceProvider.LLAMA_CPP:
-            budget_field = "thinking_budget_tokens"
-        case InferenceProvider.VLLM:
-            budget_field = "thinking_token_budget"
-        case InferenceProvider.OPENAI | None:
-            return None
-
-    extra_body: dict[str, object] = {
-        "chat_template_kwargs": {"enable_thinking": thinking is not False}
-    }
-    if thinking is not False:
-        extra_body[budget_field] = settings.llm.thinking_budget_tokens[thinking]
-
-    return extra_body
+_TEMPLATE_PROVIDERS = frozenset(
+    {InferenceProvider.LLAMA_CPP, InferenceProvider.VLLM, InferenceProvider.SGLANG}
+)
+"""The runtimes switching thinking through ``chat_template_kwargs``, Ollama maps ``reasoning_effort`` itself."""
 
 
 def thinking_model_settings(
-    thinking: ReasoningEffort | Literal[False], config: LlmConfig
+    config: LlmConfig, answer_tokens: int | None = None
 ) -> ModelSettings:
-    """Model settings applying *thinking* and *max_tokens* across endpoints.
+    """Model settings applying ``config.thinking`` and *max_tokens* across endpoints.
 
+    The one place every model call of the backend takes its reasoning from.
     Spec-compliant OpenAI servers receive the unified pydantic-ai
     ``thinking`` value as the top-level ``reasoning_effort`` field, remapped by
-    :data:`_REASONING_EFFORT_OVERRIDES` to the level the model actually
-    implements.  The generic effort selects the hard reasoning token cap.
+    ``config.reasoning_overrides`` to the level the model actually implements.
+    The generic effort selects the hard reasoning token cap.
 
     Provider-specific request construction is selected by
-    ``config.inference_provider``.  llama.cpp and vLLM receive their respective
-    hard-budget field plus ``enable_thinking``, while OpenAI receives no extra
-    body fields.
+    ``config.provider.inference_provider``.  llama.cpp and vLLM receive their respective
+    hard-budget field plus ``enable_thinking``, SGLang only the latter, while
+    Ollama and the OpenAI-compatible APIs receive no extra body fields.
 
-    *thinking* of ``False`` disables reasoning.  ``config.max_tokens``
-    (resolved per tier in :func:`resolve_llm_config`) is forwarded as the
-    completion cap whenever set, regardless of the thinking level.
+    A ``thinking`` of ``False`` disables reasoning, and a level the model does
+    not list is clamped to the nearest one it does, or disables reasoning for a
+    model that lists none, while a model that sets no list takes it unchanged.
+
+    The completion is capped by ``config.max_tokens`` and by *answer_tokens*
+    plus the reasoning budget where the runtime enforces one, since it counts
+    reasoning against the cap, so a reasoning call keeps its whole answer.
     """
+    thinking = config.thinking and (
+        clamp_reasoning(config.thinking, config.reasoning) or False
+    )
+    provider = config.provider.inference_provider
+    budget_field = _BUDGET_FIELDS.get(provider)
+    budget = (
+        0
+        if thinking is False or budget_field is None
+        else settings.llm.thinking_budget_tokens[thinking]
+    )
     model_settings = ModelSettings(
         thinking=False
         if thinking is False
-        else _map_reasoning_effort(config.model, thinking)
+        else config.reasoning_overrides.get(thinking, thinking)
     )
+    caps = [
+        cap
+        for cap in (
+            config.max_tokens,
+            None if answer_tokens is None else answer_tokens + budget,
+        )
+        if cap is not None
+    ]
 
-    if config.max_tokens is not None:
-        model_settings["max_tokens"] = config.max_tokens
+    if caps:
+        model_settings["max_tokens"] = min(caps)
 
-    extra_body = _reasoning_extra_body(thinking, config.inference_provider)
-    if extra_body is not None:
+    if provider in _TEMPLATE_PROVIDERS:
+        extra_body: dict[str, object] = {
+            "chat_template_kwargs": {"enable_thinking": thinking is not False}
+        }
+
+        if budget_field is not None and budget:
+            extra_body[budget_field] = budget
+
         model_settings["extra_body"] = extra_body
 
     return model_settings
@@ -303,64 +308,52 @@ def thinking_model_settings(
 
 # Completion cap for a one-shot summary request: a ceiling that fits a
 # structured handover rather than a paragraph, sized against what other
-# harnesses budget (see `backend/README.md`).  Its other job is to stop a
-# reasoning model from spending the whole provider-default budget on thinking
-# and returning a length-truncated empty response.
+# harnesses budget (see `backend/README.md`).
 SUMMARY_MAX_TOKENS = 8192
 
 
-def capped_tokens(config: LlmConfig, cap: int) -> int:
-    """*cap*, or the configured ``max_tokens`` where that is lower.
-
-    A ``max_tokens`` the endpoint would reject is not made acceptable by a
-    caller with a narrower purpose asking for it.
-    """
-    return min(config.max_tokens or cap, cap)
-
-
 def summary_model_settings(config: LlmConfig) -> ModelSettings:
-    """Bounded, reasoning-off settings for a one-shot summary request.
+    """Settings of a one-shot summary request, reasoning off under a bounded completion.
 
-    Summarization renders a large (near-overflowing) transcript into a
-    structured digest, so reasoning adds little and risks the model emitting
-    only thinking until it hits the completion limit — a length-truncated
-    empty response the server reports as success.  Disabling thinking and
-    capping the completion keeps the whole output budget available for the
-    summary itself.  The cap never rises above what the request is already
-    configured for (:func:`capped_tokens`).
+    Summarizing renders a near-overflowing transcript into a structured note,
+    where reasoning adds little and could spend the whole cap on thinking
+    before the summary starts.
     """
-    model_settings = thinking_model_settings(False, config)
-    model_settings["max_tokens"] = capped_tokens(config, SUMMARY_MAX_TOKENS)
-    return model_settings
+    return thinking_model_settings(replace(config, thinking=False), SUMMARY_MAX_TOKENS)
 
 
 # Deliberately not ``agents.app.title_agent``, so converters can run it without
 # importing the agents.  The guards that agent carries have nothing to act on in
-# a single tool-free completion, and callers cap the images they send themselves.
+# a single tool-free completion but its retries of a transient model error, and
+# callers cap the images they send themselves.
 _completion_agent: Agent[None, str] = Agent(
     name="complete",
     retries=settings.llm.retries,
     model_settings=ModelSettings(timeout=settings.llm.request_timeout_seconds),
+    capabilities=[RetryOnModelErrors()],
 )
 
 
-async def complete(
+async def complete[T](
     prompt: Sequence[UserContent],
     config: LlmConfig,
     *,
+    output_type: type[T],
     timeout: float,
+    answer_tokens: int | None = None,
     model: Model | None = None,
     usage: RunUsage | None = None,
     usage_limits: UsageLimits | None = None,
     conversation_id: str | None = None,
     capabilities: Sequence[AbstractCapability[None]] = (),
-) -> str:
-    """Run one tool-free completion with thinking disabled.
+) -> T:
+    """Run one tool-free completion of *output_type*, reasoning as ``config.thinking`` says.
 
-    Meant for single-shot work such as converting a page, captioning an image,
-    or one item of a sandboxed program's loop, where a reasoning trace would
-    only fill a small model's window before any text is emitted.
-    ``config.max_tokens`` bounds the output and *timeout* the seconds spent
+    Meant for single-shot work such as captioning an image, which runs on the
+    ``aux`` model with thinking off, or one item of a sandboxed program's
+    loop, which runs on the turn's model.
+    ``config.max_tokens`` and *answer_tokens* bound the output, see
+    :func:`thinking_model_settings`, and *timeout* the seconds spent
     across every retry, raising ``TimeoutError``.  A caller making many calls
     passes the *model* it built from *config* once.
 
@@ -368,17 +361,22 @@ async def complete(
     and then its *usage_limits* too, since pydantic-ai's default would check
     the shared count against a limit of its own, and its *conversation_id* so
     a trace groups the call with the run that made it, and any *capabilities*
-    that guard the call's requests.
+    that guard the call's requests.  The call is an `exar` invocation, below
+    the run that made it if any, whose usage its own spans record.
     """
-    async with asyncio.timeout(timeout):
-        result = await _completion_agent.run(
-            prompt,
+    completion = PydanticAiAgent[Sequence[UserContent], T](
+        run=lambda task: _completion_agent.run(
+            task,
+            output_type=output_type,
             model=model or model_from_config(config),
-            model_settings=thinking_model_settings(False, config),
+            model_settings=thinking_model_settings(config, answer_tokens),
             usage=usage,
             usage_limits=usage_limits,
             conversation_id=conversation_id,
             capabilities=capabilities,
-        )
+        ),
+        name="complete",
+    )
 
-    return result.output
+    async with asyncio.timeout(timeout):
+        return await call(completion, prompt)
