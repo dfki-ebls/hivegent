@@ -1,9 +1,9 @@
-"""Tests for conversation summarization."""
+"""Tests for the summary of a conversation asked under its prefix."""
 
 from dataclasses import replace
 
 import pytest
-from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -15,14 +15,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from hivegent.agents import RunPrefix, build_capabilities
-from hivegent.agents.guards import fence_messages
-from hivegent.agents.summarize import COMPACT_PROMPT, _plan, summarize_conversation
-from hivegent.l10n import LANGUAGES, Language
-from hivegent.types import ToolsSpec
-from tests.helpers import MEMORY_READ, OVERFLOW
+from hivegent.agents.compaction import COMPACT_PROMPT, PrefixSummary
+from hivegent.agents.guards import TOOL_OUTPUT_FENCE
+from hivegent.shared.l10n import LANGUAGES, Language
+from tests.helpers import MEMORY_READ, OVERFLOW, in_run
 
 _MESSAGES = [
     ModelRequest(parts=[UserPromptPart(content="What does the manual say?")]),
@@ -71,6 +70,20 @@ _MEASURED: list[ModelMessage] = [
 ]
 
 
+async def summarize_conversation(
+    messages: list[ModelMessage], prefix: RunPrefix
+) -> str:
+    """The summary of *messages* asked under *prefix*, its usage counted."""
+    usage = RunUsage()
+    part = await in_run(
+        prefix.deps, PrefixSummary(prefix=prefix).compact(messages, usage)
+    )
+    assert part.content is not None
+    assert usage.requests >= 1
+
+    return part.content
+
+
 @pytest.mark.parametrize("language", LANGUAGES)
 async def test_compaction_continues_the_conversation_instead_of_re_rendering_it(
     run_prefix: RunPrefix, language: Language
@@ -99,7 +112,7 @@ async def test_compaction_continues_the_conversation_instead_of_re_rendering_it(
     sent = seen[0]
     # Every original message is replayed as itself, so everything ahead of the
     # appended prompt is the prefix the provider already holds.
-    assert sent[: len(_MESSAGES)] == fence_messages(_MESSAGES)
+    assert sent[: len(_MESSAGES)] == TOOL_OUTPUT_FENCE.fence_messages(_MESSAGES)
     request = sent[-1]
     assert isinstance(request, ModelRequest)
     prompt = request.parts[-1]
@@ -120,25 +133,6 @@ async def test_compaction_propagates_errors_that_are_not_overflow(
         await summarize_conversation(
             _MEASURED, replace(run_prefix, model=FunctionModel(reject))
         )
-
-
-def test_plan_offers_everything_first_then_sheds_a_reserve_at_a_time() -> None:
-    """The endpoint judges the first attempt; only a refusal trims."""
-    # Everything the endpoint served (191k, so all but the refused prompt),
-    # then the largest prefix a reserve below that (151k), then 101k -- each
-    # landing on a turn boundary rather than on a share of the list.
-    assert _plan(_MEASURED) == [6, 4, 2]
-
-
-def test_plan_reserves_the_configured_summary_output_cap() -> None:
-    """A smaller completion cap keeps recent turns that still fit."""
-    close_turns = [
-        *_turn("first", input_tokens=100_000),
-        *_turn("second", input_tokens=105_000),
-        *_turn("third", input_tokens=110_000),
-    ]
-
-    assert _plan(close_turns, max_output_tokens=1_024) == [6, 4, 2]
 
 
 async def test_compaction_sheds_again_when_the_trimmed_turn_still_overflows(
@@ -162,55 +156,36 @@ async def test_compaction_sheds_again_when_the_trimmed_turn_still_overflows(
     assert summary == "summary"
     # The refused attempt carried every turn the endpoint had served; the retry
     # sheds from the tail, so what remains is still the block it has cached.
-    assert seen[0][:-1] == fence_messages(history[:8])
-    assert seen[1][:-1] == fence_messages(history[:6])
+    assert seen[0][:-1] == TOOL_OUTPUT_FENCE.fence_messages(history[:8])
+    assert seen[1][:-1] == TOOL_OUTPUT_FENCE.fence_messages(history[:6])
 
 
-def test_plan_never_cuts_on_an_unanswered_tool_call() -> None:
-    """A history ending on an open call is not a history a provider accepts."""
-    dangling: list[ModelMessage] = [
-        *_turn("first", input_tokens=100_000),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name="read_document", args={}, tool_call_id="1")],
-            usage=RequestUsage(input_tokens=150_000, output_tokens=1_000),
-        ),
-    ]
-
-    assert _plan(dangling) == [2]
-
-
-def test_plan_falls_back_to_everything_when_no_turn_reported_a_size() -> None:
-    """Nothing to plan from means one attempt, with the endpoint as the judge."""
-    assert _plan(_MESSAGES) == [len(_MESSAGES)]
-
-
-async def test_compaction_rejects_tool_calls_before_execution(
+async def test_compaction_never_executes_a_tool_and_asks_again_without_tools(
     run_prefix: RunPrefix,
 ) -> None:
-    """Compaction preserves tool schemas but permits no tool execution."""
-    calls: list[None] = []
+    """The tool schemas stay for the cache, a call is refused, and the retry withholds them."""
+    offered: list[int] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        calls.append(None)
-        assert info.function_tools
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name="write_document",
-                    args={"file_path": "~/notes.md", "content": "mutated"},
-                    tool_call_id="write-1",
-                )
-            ]
-        )
+        offered.append(len(info.function_tools))
 
+        if info.function_tools:
+            call = ToolCallPart(
+                tool_name="write_document",
+                args={"file_path": "~/notes.md", "content": "mutated"},
+                tool_call_id="write-1",
+            )
+            return ModelResponse(parts=[call])
+
+        return ModelResponse(parts=[TextPart(content="summary")])
+
+    write_deps = replace(run_prefix.deps, mode="write")
     write_run = replace(
         run_prefix,
-        deps=replace(run_prefix.deps, mode="write"),
-        capabilities=build_capabilities(ToolsSpec(), mode="write", language="en"),
+        deps=write_deps,
+        capabilities=build_capabilities(write_deps),
         model=FunctionModel(respond),
     )
 
-    with pytest.raises(UsageLimitExceeded, match="tool_calls_limit of 0"):
-        await summarize_conversation(_MESSAGES, write_run)
-
-    assert len(calls) == 1
+    assert await summarize_conversation(_MESSAGES, write_run) == "summary"
+    assert offered[0] > 0 and offered[1:] == [0]

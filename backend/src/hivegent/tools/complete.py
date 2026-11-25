@@ -10,19 +10,41 @@ boundary's (:class:`~hivegent.tools.monty.HostCalls`), so this tool only complet
 """
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Annotated, ClassVar, override
+from typing import Annotated, Literal
 
+from exar.tools import effect
+from exar.tools.batch import tool_return
 from pydantic import Field
+from pydantic_ai import ToolReturn
 
-from ..l10n import Localized
-from ..prompts import SANDBOX_COMPLETE_INSTRUCTIONS
-from .base import AsyncTool, ToolOutput
+from ..shared.l10n import Localized
+from .base import ToolFunc
 
-__all__ = ["CompleteTool", "Completion", "CompletionPromptArg"]
+__all__ = [
+    "COMPLETE_INSTRUCTIONS",
+    "Completion",
+    "CompletionPromptArg",
+    "CompletionReasoning",
+    "CompletionReasoningArg",
+    "complete",
+]
 
-type Completion = Callable[[str], Awaitable[str]]
-"""Complete one prompt and return the text."""
+COMPLETE_INSTRUCTIONS: Localized[str] = Localized(
+    en="""
+Use `complete` to classify, extract from, or summarize many items in a loop or with `asyncio.gather`. It has no tools and no documents, so pass each item's text in `prompt`, and every call counts against a fixed budget per turn. It answers without reasoning, so pass `reasoning="low"`, `"medium"`, or `"high"` only where an item needs thought, since that is slower.
+""",
+    de="""
+Nutze `complete`, um viele Elemente in einer Schleife oder mit `asyncio.gather` zu klassifizieren, auszuwerten oder zusammenzufassen. Die Funktion hat keine Tools und keine Dokumente, gib den Text jedes Elements also in `prompt` mit, und jeder Aufruf zählt gegen ein festes Budget pro Runde. Sie antwortet ohne Nachdenken, gib `reasoning="low"`, `"medium"` oder `"high"` also nur mit, wo ein Element Überlegung braucht, da das langsamer ist.
+""",
+)
+"""Added only where ``complete`` is live, since the prose names it."""
+
+
+type CompletionReasoning = Literal["low", "medium", "high"]
+"""The effort a completion reasons with."""
+
+type Completion = Callable[[str, CompletionReasoning | None], Awaitable[str]]
+"""Complete one prompt, reasoning at the effort if any, and return the text."""
 
 CompletionPromptArg = Annotated[
     str,
@@ -34,24 +56,30 @@ CompletionPromptArg = Annotated[
     ),
 ]
 
+CompletionReasoningArg = Annotated[
+    CompletionReasoning | None,
+    Field(
+        description=(
+            "How hard the model thinks before answering, none by default, "
+            "since reasoning is slower and only pays off for hard items."
+        ),
+    ),
+]
 
-@dataclass(slots=True, frozen=True)
-class CompleteTool(AsyncTool[str]):
-    """Complete prompts with a language model."""
 
-    injectable: ClassVar[bool] = True
-    registered: ClassVar[bool] = False
-    sandbox_instructions: ClassVar[Localized[str] | None] = (
-        SANDBOX_COMPLETE_INSTRUCTIONS
-    )
+def complete(completion: Completion) -> ToolFunc:
+    """The tool that completes prompts with a language model through *completion*."""
 
-    completion: Completion
-
-    @override
-    async def __call__(self, prompt: CompletionPromptArg) -> ToolOutput[str]:
+    @effect("read")
+    async def complete(
+        prompt: CompletionPromptArg, reasoning: CompletionReasoningArg = None
+    ) -> ToolReturn[str]:
         """Answer `prompt` with a language model and return its text.
 
         The model has no tools, no documents, and no memory of earlier calls.
+        It reasons only at the `reasoning` effort given.
         Every call counts against a fixed budget per turn.
         """
-        return ToolOutput(data=await self.completion(prompt))
+        return tool_return(await completion(prompt, reasoning))
+
+    return complete

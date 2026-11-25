@@ -1,6 +1,7 @@
 """Memory: edited in place and reported when a conversation or compaction window starts."""
 
 import pytest
+from exar.tools import Retry
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     CompactionPart,
@@ -12,20 +13,19 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from hivegent.agents.common import UserDeps
-from hivegent.agents.tools.memory import MemoryNote, edit_memory, memory_toolset
+from hivegent.agents.tools.memory import MEMORY_NOTE, edit_memory, memory_toolset
 from hivegent.store import User
-from hivegent.tools.base import ToolRetry
 
 
 def test_an_edit_names_one_passage_and_fits() -> None:
     """A miss or an ambiguous match would edit the wrong passage, so both refuse."""
-    with pytest.raises(ToolRetry, match="does not occur"):
+    with pytest.raises(Retry, match="occurs 0 times"):
         edit_memory("- tea", "- coffee", "- milk", 100)
 
-    with pytest.raises(ToolRetry, match="occurs 2 times"):
+    with pytest.raises(Retry, match="occurs 2 times"):
         edit_memory("- tea\n- tea", "- coffee", "- tea", 100)
 
-    with pytest.raises(ToolRetry, match="at most 10"):
+    with pytest.raises(Retry, match="at most 10"):
         edit_memory("- tea", "- a longer line", None, 10)
 
     # An oversized memory may still shrink, or it could never be condensed.
@@ -38,7 +38,7 @@ def _reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
 
 async def test_the_memory_is_reported_once_per_window() -> None:
     """Each turn extends the history, so only a compaction calls for a second report."""
-    agent = Agent(deps_type=UserDeps, toolsets=[memory_toolset])
+    agent = Agent(deps_type=UserDeps, toolsets=[memory_toolset.toolset()])
     history: list[ModelMessage] = []
 
     for compacted in (False, False, True):
@@ -50,7 +50,7 @@ async def test_the_memory_is_reported_once_per_window() -> None:
             model=FunctionModel(_reply),
             deps=UserDeps(user=User("u"), mode="interactive"),
             message_history=history,
-            capabilities=[MemoryNote()],
+            capabilities=[MEMORY_NOTE],
         )
         history = result.all_messages()
 

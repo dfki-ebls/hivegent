@@ -1,4 +1,4 @@
-"""Adapter exposing tool classes as host functions inside the Monty sandbox.
+"""Adapter exposing plain tools as host functions inside the Monty sandbox.
 
 The mount already makes ``open`` and ``iterdir`` the read tools, ``re`` grep,
 and ``json`` jq, which leaves exactly the tools whose answer no program can
@@ -9,14 +9,18 @@ rather than spending a turn and a ``/tmp`` file per step.  Nothing that
 mutates is injected and nothing needs to be: a program cannot stop to ask for
 approval, and every function here is a read.
 
-What crosses the boundary is the structured ``data`` channel, as the plain
-objects the tool's declared result type serialises to.  That declared type is
-also what the rendered stub names and what ``return_schema`` publishes, so what
-a program receives and what it was told to expect are one description read
-twice, and it stops at objects rather than going on to bytes a program would
-only parse back.  The model-facing ``text`` channel stays behind, as its
-budgets, truncation, and hints exist to fit a context window a program does not
-have, and a program that wanted fewer rows can say so in the query.
+What crosses the boundary is the typed data a tool returns as its
+``ToolReturn.metadata``, as the plain objects it serialises to.  Its type, the
+parameter of the tool's ``ToolReturn[T]`` annotation, is also what pydantic-ai
+publishes as ``return_schema`` and what the rendered stub names, so what a
+program receives and what it was told to expect are one description read
+twice.  The model-facing text stays behind, as its budgets, truncation, and
+hints exist to fit a context window a program does not have, and a program that
+wanted fewer rows can say so in the query.
+
+pydantic-ai-harness's ``CodeMode`` was evaluated and not adopted.
+A program needs the typed tool metadata rather than model-facing text, the
+``WorkspaceOS`` with its staged writes, and no approval in the middle of a run.
 
 The declarations are rendered by pydantic-ai's own
 :class:`~pydantic_ai.function_signature.FunctionSignature`, which is what
@@ -25,17 +29,17 @@ supplies the two JSON schemas per tool and does none of the type rendering
 itself.  That is worth more than it looks: the renderer states a defaulted
 field as ``NotRequired``, carries each field's own description into the stub,
 and disambiguates two tools whose result records share a class name by
-prefixing each with its function's name — the last of which a name-keyed
-renderer gets silently and catastrophically wrong, declaring the second tool
+prefixing each with its function's name (the last of which a name-keyed
+renderer gets silently and catastrophically wrong), declaring the second tool
 with the first one's fields so that reading its result correctly is the thing
 the type check rejects.
 
 The result is produced twice, exactly as the harness does it:
 :attr:`MontySurface.declarations` for the model and :attr:`MontySurface.stubs`
 for Monty's ``type_check_stubs``, so the shape promised and the shape enforced
-are one text.  Rendering depends on the tools alone, so it is cached on them,
-while the host functions are rebuilt per run because they close over the run's
-deps.
+are one text.  Rendering depends on the tool definitions alone, so it is
+cached on them, while the host functions are rebuilt per run because they close
+over the run's deps.
 
 A schema describes the serialised shape and not the Python type it started as:
 ``json_schema(mode="serialization")`` is what makes a ``tuple`` field a list and
@@ -54,29 +58,31 @@ import inspect
 import reprlib
 import types
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import InitVar, dataclass, field
+from dataclasses import InitVar, dataclass, field, replace
 from functools import cache, wraps
 from typing import Any
 
+from exar.helpers import get_name
+from exar.text import fenced, truncate_line
+from exar.tools import Retry
+from exar.tools.batch import unpack
 from pydantic import JsonValue, ValidationError
+from pydantic_ai import Tool
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.tools import ToolDefinition
+from pydantic_core import SchemaValidator, to_jsonable_python
 
-from ..converters.base import fenced_code_block
-from .base import AsyncTool, AsyncToolFactory, CallBudget, ToolRetry, ToolSpec
-from .formatting import render_arguments, truncate_line
+from .base import CallBudget, ToolFunc, render_arguments
 
 __all__ = [
-    "TURN_ENDING_ERRORS",
     "HostCall",
     "HostCalls",
     "MontySurface",
-    "monty_declarations",
     "monty_surface",
 ]
 
-TURN_ENDING_ERRORS: tuple[type[Exception], ...] = (UsageLimitExceeded,)
+_TURN_ENDING_ERRORS: tuple[type[Exception], ...] = (UsageLimitExceeded,)
 """What a host function may raise that ends the turn rather than the program.
 
 The turn's shared usage limit is spent for every run in it, so no rewrite of
@@ -85,15 +91,6 @@ the program could get past it.
 
 type _HostFunction = Callable[..., Awaitable[JsonValue]]
 """What one injected tool becomes, whose payload the rendered stub declares."""
-
-_STUB_HEADER = "import asyncio\nfrom typing import Any, Literal, NotRequired, TypedDict"
-"""What the harness puts at the head of its stubs, and for the same reasons."""
-
-_CATALOG_BODY = "..."
-"""What a declaration's body is in the catalog the model reads."""
-
-_STUB_BODY = "raise NotImplementedError()"
-"""What it is in the stubs the checker reads, as the harness spells it."""
 
 
 _PREVIEW = reprlib.Repr(
@@ -181,12 +178,12 @@ class MontySurface:
 def _program_error(name: str, exc: Exception) -> Exception:
     """What a program meets for a failed call: a correction, or the bare type.
 
-    >>> _program_error("complete", ToolRetry("give me a query"))
+    >>> _program_error("complete", Retry("give me a query"))
     ValueError('give me a query')
     >>> _program_error("complete", OSError("/srv/secret"))
     RuntimeError('complete raised OSError')
     """
-    if isinstance(exc, ToolRetry | ValidationError):
+    if isinstance(exc, Retry | ValidationError):
         return ValueError(str(exc))
 
     return RuntimeError(f"{name} raised {type(exc).__name__}")
@@ -207,10 +204,10 @@ class HostCalls:
     One policy for every function :meth:`bind` hands a program.  A call is
     counted against the program's :attr:`budget` before its first await, so
     fanning out with ``asyncio.gather`` cannot exceed it.  A
-    :class:`~hivegent.tools.base.ToolRetry` or an invalid argument reaches the
+    `exar.tools.Retry` or an invalid argument reaches the
     program as a ``ValueError`` it may correct, and any other failure as a
     ``RuntimeError`` naming its type alone, since a host error may carry host
-    details.  An exception of :data:`TURN_ENDING_ERRORS` is not the program's
+    details.  An exception of :data:`_TURN_ENDING_ERRORS` is not the program's
     failure: the first one is kept in :attr:`ending` for the host to raise once
     the program stopped, and every later call is refused, since the turn it
     would spend on is over.
@@ -274,7 +271,7 @@ class HostCalls:
                 async with clock:
                     result = await function(**kwargs)
 
-            except TURN_ENDING_ERRORS as exc:
+            except _TURN_ENDING_ERRORS as exc:
                 self.ending = self.ending or exc
                 raise
 
@@ -310,150 +307,131 @@ def _undescribed(schema: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _definition(
-    factory: AsyncToolFactory[Any], listed: frozenset[str]
-) -> ToolDefinition:
-    """Describe one tool the way the renderer wants it.
+@dataclass(frozen=True, slots=True)
+class _Key:
+    """What the definition of a tool derives from, whichever run built its function."""
 
-    A :class:`ToolDefinition` rather than a bare ``FunctionSignature``, since it
-    is what pairs the name and description with the two schemas and caches the
-    signature built from them, which is one invariant this module then does not
-    have to keep by hand.
+    name: str
+    doc: str | None
+    signature: inspect.Signature
+
+    @staticmethod
+    def of(func: ToolFunc) -> _Key:
+        return _Key(get_name(func), func.__doc__, inspect.signature(func))
+
+
+@dataclass(frozen=True, slots=True)
+class _Schema:
+    """The definition and argument validator of a tool, which keep nothing of the run that built its function."""
+
+    tool_def: ToolDefinition
+    validator: SchemaValidator
+
+
+_SCHEMAS: dict[_Key, _Schema] = {}
+"""The schema of every tool by its key, built once for every run's equal function."""
+
+
+def _schema(key: _Key, func: ToolFunc) -> _Schema:
+    """The schema of *func*, whose key is *key*."""
+    schema = _SCHEMAS.get(key)
+
+    if schema is None:
+        tool = Tool(func)
+        schema = _SCHEMAS[key] = _Schema(tool.tool_def, tool.function_schema.validator)
+
+    return schema
+
+
+def _described(tool_def: ToolDefinition, listed: frozenset[str]) -> ToolDefinition:
+    """*tool_def* as the renderer reads it.
 
     A tool named in *listed* is one the model also holds in its tool list, whose
     description and arguments it already read there, so they are pointed at
     rather than repeated.  The result records stay, since the tool list has no
     return schema.
     """
-    spec = ToolSpec.from_factory(factory)
+    name = tool_def.name
 
-    if spec.name in listed:
-        parameters = _undescribed(spec.parameters_json_schema)
-        description = (
-            f"Your {spec.name} tool, whose description and arguments apply here."
+    if name in listed:
+        return replace(
+            tool_def,
+            description=f"Your {name} tool, whose description and arguments apply here.",
+            parameters_json_schema=_undescribed(tool_def.parameters_json_schema),
+            return_schema=tool_def.return_schema or {},
         )
-    else:
-        parameters = spec.parameters_json_schema
-        description = spec.description
 
-    return ToolDefinition(
-        name=spec.name,
-        parameters_json_schema=parameters,
-        description=description,
-        return_schema=spec.data_json_schema,
-    )
+    return replace(tool_def, return_schema=tool_def.return_schema or {})
 
 
 @cache
-def _rendered(
-    factories: tuple[AsyncToolFactory[Any], ...], listed: frozenset[str]
-) -> tuple[str, str]:
-    """The catalog and the stubs for these tools, rendered once per process.
+def _render(keys: tuple[_Key, ...], listed: frozenset[str]) -> tuple[str, str]:
+    """The catalog and the stubs of these tools, whose schemas are built, rendered once per process.
 
-    Cached because rendering is a pure function of the tools: a factory is a
-    module-level function, the set of them is fixed at import, and only which
-    of them are live varies per run.  Uncached this ran on every model request
-    (the catalog is a dynamic instruction) and again on every ``run_python``
-    call, for perhaps fifty milliseconds a turn of schema building that
-    produced the same bytes each time.
+    Cached because rendering is a pure function of the keys and *listed*, while
+    it ran on every model request (the catalog is a dynamic instruction) and
+    again on every ``run_python`` call.
     """
-    definitions = [_definition(factory, listed) for factory in factories]
-    signatures = [definition.function_signature for definition in definitions]
+    tool_defs = [_described(_SCHEMAS[key].tool_def, listed) for key in keys]
+    signatures = [tool_def.function_signature for tool_def in tool_defs]
     conflicting = FunctionSignature.get_conflicting_type_names(signatures)
     declared = FunctionSignature.render_type_definitions(signatures, conflicting)
 
     def rendered(body: str) -> list[str]:
         return [
-            definition.render_signature(
+            tool_def.render_signature(
                 body, is_async=True, conflicting_type_names=conflicting
             )
-            for definition in definitions
+            for tool_def in tool_defs
         ]
 
     catalog = "".join(
-        fenced_code_block("\n\n".join(block), ".python")
-        for block in (declared, rendered(_CATALOG_BODY))
+        fenced("\n\n".join(block), "python")
+        for block in (declared, rendered("..."))
         if block
     )
+    header = "import asyncio\nfrom typing import Any, Literal, NotRequired, TypedDict"
 
-    return catalog, "\n\n".join([_STUB_HEADER, *declared, *rendered(_STUB_BODY)])
-
-
-@cache
-def _keyword_only(factory: AsyncToolFactory[Any]) -> inspect.Signature:
-    """The signature every host function built from *factory* is stamped with."""
-    params = ToolSpec.from_factory(factory).params
-
-    return inspect.Signature(
-        [param.replace(kind=param.KEYWORD_ONLY) for param in params],
-        return_annotation=Any,
+    return catalog, "\n\n".join(
+        [header, *declared, *rendered("raise NotImplementedError()")]
     )
 
 
-def _host_function(
-    factory: AsyncToolFactory[Any], tool: AsyncTool[Any]
-) -> _HostFunction:
+def _host_function(func: ToolFunc, validator: SchemaValidator) -> _HostFunction:
     """Wrap a tool as the coroutine the sandbox calls and awaits.
 
-    Keyword-only, which is what the rendered signatures declare and what the
-    harness's sandboxed tools are: an argument list a program spells out is
-    also the one a reader of that program can follow.  The call metadata is
-    stamped through :meth:`ToolSpec.apply_to`, as both sibling adapters do, so
-    the object says what it accepts rather than leaving the docstring to.
-    What a failure becomes inside the program is :class:`HostCalls`' to decide.
+    The arguments are validated against the tool's own schema, and the program
+    receives the typed data of the result as plain objects.  What a failure
+    becomes inside the program is :class:`HostCalls`' to decide.
     """
-    spec = ToolSpec.from_factory(factory)
 
+    @wraps(func)
     async def call(**kwargs: Any) -> JsonValue:
-        result = await tool(**spec.validate_arguments(kwargs))
+        result = await func(**validator.validate_python(kwargs))
 
-        return spec.serialize_data(result.data)
-
-    spec.apply_to(call, _keyword_only(factory), {**spec.annotations, "return": Any})
+        return to_jsonable_python(unpack(result).data)
 
     return call
 
 
-def monty_declarations(
-    factories: Sequence[AsyncToolFactory[Any]], listed: frozenset[str]
-) -> str:
-    """What the model is shown for *factories*, rendered without building one.
+def monty_surface(funcs: Sequence[ToolFunc], listed: frozenset[str]) -> MontySurface:
+    """Build the host functions and both renderings for the tools *funcs* of one run.
 
-    All the prompt needs, and asking for it never runs a factory: the rendering
-    is a pure function of the tools, while a built tool is bound to one run's
-    dependencies.  *listed* names the tools the model also holds in its tool list.
+    A tool is built once for the whole program rather than per call, since a
+    program may call one many times.  *listed* names the tools the model also holds in its tool list, documented there.
     """
-    if not factories:
-        return ""
-
-    declarations, _ = _rendered(tuple(factories), listed)
-
-    return declarations
-
-
-def monty_surface(
-    tools: Mapping[AsyncToolFactory[Any], AsyncTool[Any]],
-    listed: frozenset[str],
-) -> MontySurface:
-    """Build the host functions and both renderings for *tools*.
-
-    Each tool comes built, keyed by the factory that describes it, so the
-    caller decides what a factory is handed: the run's deps for most, the run
-    itself for one that spends its usage.  A tool is built once for the whole
-    program rather than per call, since a program may call one many times and
-    the fields a factory wires up do not change between them.  *listed* is as
-    for :func:`monty_declarations`.
-    """
-    if not tools:
+    if not funcs:
         return MontySurface()
 
-    declarations, stubs = _rendered(tuple(tools), listed)
+    keys = tuple(_Key.of(func) for func in funcs)
+    functions = {
+        key.name: _host_function(func, _schema(key, func).validator)
+        for key, func in zip(keys, funcs, strict=True)
+    }
+    declarations, stubs = _render(keys, listed)
 
     return MontySurface(
-        functions={
-            ToolSpec.from_factory(factory).name: _host_function(factory, tool)
-            for factory, tool in tools.items()
-        },
+        functions=functions,
         declarations=declarations,
         stubs=stubs,
     )

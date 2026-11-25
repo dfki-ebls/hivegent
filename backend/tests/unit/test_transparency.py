@@ -1,20 +1,23 @@
 """Tests for watermark detection reports and export provenance."""
 
+import hashlib
 import json
 
+import pytest
 from joserfc import jws
 from joserfc.jwk import OKPKey
-from pydantic import SecretStr
+from pydantic import HttpUrl, SecretStr
 
 from hivegent import transparency
-from hivegent.config import TransparencySettings, content_digest
+from hivegent.config.observability import TransparencySettings
+from hivegent.security import OperatorUrl
 from hivegent.types import ServerConversation
 
 ISSUER = "https://example.test"
 
 CONFIG = TransparencySettings(
-    detector_url="http://detector/detect",
-    report_issuer=ISSUER,
+    detector_url=OperatorUrl("http://detector/detect"),
+    report_issuer=HttpUrl(ISSUER),
     secret_key=SecretStr("test-secret-key-with-enough-entropy"),
 )
 
@@ -69,24 +72,27 @@ def _verified(
     return signature.headers(), json.loads(signature.payload)
 
 
+@pytest.mark.parametrize("issuer", [ISSUER, f"{ISSUER}/hivegent"])
 async def test_detection_report_is_verifiable_and_contains_only_a_hash(
-    monkeypatch,
+    monkeypatch, issuer: str
 ) -> None:
-    """A positive result is signed with the key derived from the app secret."""
+    """A positive result is signed with the key derived from the app secret, below the issuer's path."""
     monkeypatch.setattr(
         transparency,
         "get_trusted_http_client",
-        lambda: _Client(_Response(is_watermarked=True, num_scored_tokens=250)),
+        lambda *_: _Client(_Response(is_watermarked=True, num_scored_tokens=250)),
     )
+    config = CONFIG.model_copy(update={"report_issuer": HttpUrl(issuer)})
 
-    result = await transparency.detect_text(CONFIG, "marked text")
-    header, claims = _verified(result.signed_report)
+    result = await transparency.detect_text(config, "marked text")
+    header, claims = _verified(result.signed_report, config)
 
     assert result.status == "detected"
     assert claims["method"] == "watermark"
     assert claims["status"] == "detected"
     assert header["typ"] == "JWT"
-    assert claims["detector"] == f"{ISSUER}/api/v1/transparency/detect"
+    assert claims["iss"] == issuer
+    assert claims["detector"] == f"{issuer}/api/v1/transparency/detect"
     assert "marked text" not in json.dumps(claims)
 
 
@@ -105,7 +111,7 @@ def test_export_provenance_covers_the_canonical_conversation() -> None:
 
     assert header["typ"] == transparency.PROVENANCE_TYPE
     assert claims["ai_generated"] is True
-    assert claims["content_sha256"] == content_digest(canonical)
+    assert claims["content_sha256"] == hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def test_a_retired_key_still_verifies_after_rotation() -> None:

@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, TextDeltaChunk
 
-from hivegent.db.conversations import OwnedConversation
+from hivegent.db.conversations import OwnedConversation, models
 from hivegent.runs import Prepared, Runs
 from hivegent.store import User
 
@@ -15,11 +15,11 @@ _B = TextDeltaChunk(id="t", delta="b")
 
 
 def _conversation(user: str = "alice", id: UUID | None = None) -> OwnedConversation:
-    return OwnedConversation(user, id or uuid4())
+    return models._conversation(user, id or uuid4())
 
 
 async def _prepared(stream: AsyncIterator[BaseChunk]) -> Prepared:
-    return stream, None
+    return Prepared(stream, [])
 
 
 async def test_a_turn_outlives_its_follower_and_replays_to_the_next() -> None:
@@ -80,7 +80,7 @@ async def test_a_turn_stopped_while_preparing_never_streams() -> None:
     async def prepare() -> Prepared:
         preparing.set()
         _ = await asyncio.Event().wait()
-        return turn(), None
+        return Prepared(turn(), [])
 
     runs = Runs()
     conversation = _conversation()
@@ -129,3 +129,16 @@ async def test_a_turn_is_hidden_from_other_users_of_its_id() -> None:
 
     release.set()
     await run.wait()
+
+
+async def test_a_failing_turn_ends_on_an_error_chunk() -> None:
+    async def turn() -> AsyncIterator[BaseChunk]:
+        yield _A
+        raise RuntimeError("boom")
+
+    run = Runs().start(_conversation(), None, _prepared(turn()))
+    await run.wait()
+
+    assert run.chunks[0] == _A
+    assert run.error is not None
+    assert "boom" not in run.error

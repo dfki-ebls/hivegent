@@ -2,35 +2,46 @@
 
 The memory is one markdown page per user, read with ``read_memory`` and
 changed in place with ``write_memory``, so a save never has to repeat what it
-keeps.  :class:`MemoryNote` reports it as a ``read_memory`` call when a
+keeps.  :data:`MEMORY_NOTE` reports it as a ``read_memory`` call when a
 conversation starts, and again after each compaction.  It is model-written, possibly after reading a web page
 or a document, so it reaches the model as a tool result and never as an
-instruction.
+instruction, and every write asks the user first, whatever the mode, since a
+planted instruction saved there would reach every later conversation.  That
+is the host policy for a write outside the changeset gateway
+(``agents/policy.py``), which ``guards.HOST_GATE`` applies before the tool
+writes :func:`~hivegent.db.memory.user_memory`.  So a write lands only once the
+user approved the call, and the tool refuses a change that would not land
+before the user is asked.
 """
 
-from dataclasses import dataclass
+from collections.abc import Sequence
 from functools import partial
 from typing import Annotated
 
+from exar.errors import Conflict
+from exar.pydantic_ai import Read, ToolNote, latest_read
+from exar.text import replace_once
+from exar.tools import Retry, effect, retry_on
+from exar.typing import Changes, Update
 from pydantic import Field
-from pydantic_ai import FunctionToolset, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    ToolCallPart,
-    ToolReturnPart,
-    post_compaction_window,
-)
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai import RunContext
+from pydantic_ai.messages import ModelMessage
 
 from ...config import settings
-from ...db.memory import load_memory, update_memory
+from ...db.conversations import HIDDEN_KEY
+from ...db.memory import user_memory
 from ...store import User
-from ...tools.base import ToolRetry, translate_tool_retry
-from ..common import UserDeps, agent_toolset
+from ...tools.base import ToolFunc
+from ..common import AgentTools, Hooked, UserDeps
 
-__all__ = ["MemoryNote", "edit_memory", "memory_toolset", "read_memory", "write_memory"]
+__all__ = [
+    "MEMORY_NOTE",
+    "edit_memory",
+    "memory_toolset",
+    "read_memory",
+    "validate_memory_write",
+    "write_memory",
+]
 
 MemoryContentArg = Annotated[
     str,
@@ -49,11 +60,13 @@ MemoryOldTextArg = Annotated[
     ),
 ]
 
-memory_toolset: FunctionToolset[UserDeps] = agent_toolset()
+
+async def _load(user: User) -> str:
+    return (await user_memory(user).read([user.id])).get(user.id, "")
 
 
 async def _read(user: User) -> str:
-    return await load_memory(user) or "Your memory is empty."
+    return await _load(user) or "Your memory is empty."
 
 
 def edit_memory(memory: str, content: str, old_text: str | None, max_chars: int) -> str:
@@ -63,7 +76,7 @@ def edit_memory(memory: str, content: str, old_text: str | None, max_chars: int)
     oversized memory can still be condensed.
 
     Raises:
-        ToolRetry: If there is nothing to append, *old_text* does not match
+        Retry: If there is nothing to append, *old_text* does not match
             exactly one passage, or the result does not fit *max_chars*.
 
     Examples:
@@ -74,28 +87,23 @@ def edit_memory(memory: str, content: str, old_text: str | None, max_chars: int)
     """
     if old_text is None:
         if not content.strip():
-            raise ToolRetry("`content` is empty, so there is nothing to append.")
+            raise Retry("`content` is empty, so there is nothing to append.")
 
         updated = "\n".join(text for text in (memory.rstrip(), content.strip()) if text)
 
     else:
-        occurrences = memory.count(old_text)
+        try:
+            replaced, _ = replace_once(memory, old_text, content)
+        except ValueError as exc:
+            raise Retry(
+                f"`old_text` must match exactly one passage of the memory ({exc}). "
+                "Copy it from the memory verbatim, with enough context to be unique."
+            ) from exc
 
-        if occurrences != 1:
-            found = (
-                "does not occur" if not occurrences else f"occurs {occurrences} times"
-            )
-
-            raise ToolRetry(
-                f"`old_text` {found} in the memory, but must match exactly one "
-                "passage. Copy it from the memory verbatim, with enough context "
-                "to be unique."
-            )
-
-        updated = memory.replace(old_text, content, 1).strip()
+        updated = replaced.strip()
 
     if len(updated) > max_chars and len(updated) >= len(memory):
-        raise ToolRetry(
+        raise Retry(
             f"The memory would hold {len(updated)} characters, but at most "
             f"{max_chars} fit. Condense it by replacing passages with shorter ones."
         )
@@ -103,13 +111,29 @@ def edit_memory(memory: str, content: str, old_text: str | None, max_chars: int)
     return updated
 
 
-@memory_toolset.tool
+@effect("read")
 async def read_memory(ctx: RunContext[UserDeps]) -> str:
     """Read your persistent memory, which is preserved across conversations."""
     return await _read(ctx.deps.user)
 
 
-@memory_toolset.tool
+def _change(content: str, old_text: str | None) -> partial[str]:
+    return partial(
+        edit_memory,
+        content=content,
+        old_text=old_text,
+        max_chars=settings.limits.max_memory_chars,
+    )
+
+
+async def validate_memory_write(
+    ctx: RunContext[UserDeps], content: str, old_text: str | None = None
+) -> None:
+    """Refuse a change that would not land, before the user is asked to approve it."""
+    _ = _change(content, old_text)(await _load(ctx.deps.user))
+
+
+@effect("write")
 async def write_memory(
     ctx: RunContext[UserDeps],
     content: MemoryContentArg,
@@ -119,41 +143,50 @@ async def write_memory(
 
     Without `old_text`, `content` is appended as new lines.  With it, the one
     passage matching `old_text` exactly is replaced by `content`.
+    The user approves every change.
     """
-    max_chars = settings.limits.max_memory_chars
-    change = partial(
-        edit_memory, content=content, old_text=old_text, max_chars=max_chars
+    user = ctx.deps.user
+    memory = user_memory(user)
+    page = await memory.read([user.id])
+    updated = _change(content, old_text)(page.get(user.id, ""))
+    change = Update(key=user.id, value=updated, reason="The model edited its memory")
+
+    with retry_on(Conflict):
+        _ = await memory.write(Changes(items=[change]), expected=page)
+
+    return (
+        f"Memory saved, it holds {len(updated)} of "
+        f"{settings.limits.max_memory_chars} characters."
     )
 
-    with translate_tool_retry(ModelRetry):
-        updated = await update_memory(ctx.deps.user, change)
 
-    return f"Memory saved, it holds {len(updated)} of {max_chars} characters."
+def memory_tools(ctx: RunContext[UserDeps]) -> list[ToolFunc | Hooked]:
+    """The tools of the user's persistent memory, the same for every run."""
+    return [read_memory, Hooked(write_memory, args_validator=validate_memory_write)]
 
 
-@dataclass(slots=True)
-class MemoryNote(AbstractCapability[UserDeps]):
-    """Report the memory as a ``read_memory`` call where the model has not read it.
+memory_toolset = AgentTools(factory=memory_tools, people_only=True, derived=True)
+"""The memory tools, which act on one person's own data."""
 
-    The pair is enqueued into the first request of a conversation, or of the
-    window a compaction opens, and persisted with it.  So the memory the
-    window started with stays in the cached prefix, while a later change
-    reaches the model through its own ``write_memory`` call or a fresh read.
-    """
 
-    async def before_model_request(
-        self, ctx: RunContext[UserDeps], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        """Enqueue the read unless the window already holds one."""
-        if not any(
-            isinstance(part, ToolReturnPart) and part.tool_name == read_memory.__name__
-            for message in post_compaction_window(ctx.messages)
-            for part in message.parts
-        ):
-            call = ToolCallPart(read_memory.__name__, {})
-            result = ToolReturnPart(
-                call.tool_name, await _read(ctx.deps.user), call.tool_call_id
-            )
-            ctx.enqueue(ModelResponse(parts=[call]), ModelRequest(parts=[result]))
+async def _memory_reads(
+    ctx: RunContext[UserDeps], window: Sequence[ModelMessage]
+) -> list[Read]:
+    """The memory as a ``read_memory`` result where the window has not read it."""
+    if latest_read(window, read_memory.__name__) is not None:
+        return []
 
-        return request_context
+    return [Read(tool=read_memory.__name__, content=await _read(ctx.deps.user))]
+
+
+MEMORY_NOTE = ToolNote[UserDeps](
+    reads=_memory_reads, metadata={HIDDEN_KEY: True}, id="memory-note"
+)
+"""Reports the memory as a ``read_memory`` call where the model has not read it.
+
+The pair is enqueued into the first request of a conversation, or of the
+window a compaction opens, and persisted with it.  So the memory the window
+started with stays in the cached prefix, while a later change reaches the
+model through its own ``write_memory`` call or a fresh read.  The user never
+asked for it, so the transcript leaves it out (:data:`HIDDEN_KEY`).
+"""

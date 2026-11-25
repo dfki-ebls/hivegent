@@ -5,8 +5,10 @@ with the instructions, hooks, and model settings that belong to it, so a whole
 feature reaches the agent through one composable unit.
 
 This module is the single source of truth for the agent's features:
-:data:`FEATURES` lists each one as a :class:`Feature` (a capability plus the
-modes it is offered in), and every consumer derives from it. The agent run
+:data:`FEATURES` lists each one as a :class:`Feature` (a capability whose tools
+each declare their traits), the built-in ones and every enabled plugin's, and
+every consumer derives from it.  A mode offers
+a feature whole or not at all, by what its tools declare (:mod:`.policy`). The agent run
 composes from the capabilities, while the debug/meta REST surface lists and
 invokes individual tools extracted from the very same capabilities, so an admin
 inspects exactly the tools an agent is built from.
@@ -14,7 +16,7 @@ inspects exactly the tools an agent is built from.
 Guidance follows the tools it describes: a block bound to one feature rides on
 its capability, a block spanning several is a :class:`SharedInstructions` entry
 composed as soon as any of them is live, and only behaviour tied to no
-feature at all (personality, language, math) stays agent-level ``instructions``.
+feature at all (base prompt, language, math) stays agent-level ``instructions``.
 State that changes during a conversation is an ``on_change='append'``
 instruction (:mod:`.context`), whose changes extend the history instead of
 rewriting the prefix.
@@ -24,64 +26,89 @@ that names a tool belongs in the agent-level set.
 Instructions are composed in the run's interface language, chosen explicitly
 rather than from the ambient request, while the toolsets and their schemas are
 one English set shared by every language.  A feature therefore holds its fixed
-instructions as :class:`~hivegent.l10n.Localized` text and resolves them into
+instructions as :class:`~hivegent.shared.l10n.Localized` text and resolves them into
 plain strings when it builds the run's capability: an instruction callable
 reading the language off the run would do the same with less, but pydantic-ai
 marks every callable dynamic, which would move all of this guidance behind the
 cache boundary.
 """
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Self
 
-from pydantic_ai import FunctionToolset, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
-from pydantic_ai.tools import SystemPromptFunc, Tool, ToolDefinition
+from exar.agents import session
+from exar.helpers import get_name
+from exar.pydantic_ai import definition_action
+from exar.pydantic_ai.guards import LenientArguments
+from exar.tools import effect_of
+from pydantic_ai import FunctionToolset
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CombinedCapability,
+)
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import SystemPromptFunc, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 
+from ..assistants import global_assistants
 from ..config import settings
-from ..l10n import DEFAULT_LANGUAGE, Language, Localized, use_language
+from ..plugins import api
+from ..plugins.loader import merge
 from ..prompts import (
     CITATION_INSTRUCTIONS,
     GROUNDING_INSTRUCTIONS,
     IMAGE_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS,
     PYTHON_INSTRUCTIONS,
+    SKILLS_INSTRUCTIONS,
     TMP_INSTRUCTIONS,
     VERSION_INSTRUCTIONS,
     WORKSPACE_PATH_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
 )
-from ..tools.pydantic_ai import invoke_tool
+from ..shared.l10n import DEFAULT_LANGUAGE, Language, Localized, use_language
 from ..types import (
     MODE_VALUES,
-    MUTATING_MODES,
+    WRITABLE_MODES,
     Mode,
+    ToolInfo,
     ToolSchema,
-    ToolsSpec,
 )
 from .app import turn_usage_limits
 from .approval import ApprovalNotes
-from .common import UserDeps
-from .context import DOCUMENT_SCOPE, MODE_NOTE
+from .common import AgentTools, UserDeps, run_context, static_tools
+from .context import ASSISTANT_INSTRUCTIONS, DATE_NOTE, DOCUMENT_SCOPE, MODE_NOTE
+from .guards import HOST_GATE, SPILL_TOOLS
+from .integrations import is_integration_tool
+from .policy import host_policy, listed
+from .subagents import DELEGATION_TOOLS, SUBAGENTS
 from .tools import (
+    ASSISTANT_NOTE,
     INJECTABLE_TOOL_NAMES,
+    MEMORY_NOTE,
     SANDBOX_FUNCTION_NAMES,
-    MemoryNote,
+    SKILLS_NOTE,
     ask_toolset,
+    assistant_toolset,
+    cases_toolset,
     conversation_toolset,
     explore_toolset,
     memory_toolset,
     python_toolset,
     sandbox_instructions,
-    subagent_toolset,
+    skills_toolset,
     web_toolset,
     write_toolset,
 )
 
 __all__ = [
     "FEATURES",
+    "INTERNAL_TOOL_NAMES",
+    "KNOWN_TOOL_NAMES",
+    "PLUGIN_FEATURE_IDS",
     "SHARED_INSTRUCTIONS",
     "TOOL_NAMES",
     "Feature",
@@ -91,7 +118,8 @@ __all__ = [
     "collect_tool_schemas",
     "feature_tools",
     "invoke_agent_tool",
-    "unlisted_tool_names",
+    "tool_infos",
+    "unknown_tool_names",
 ]
 
 
@@ -101,48 +129,69 @@ type FeatureInstruction = Localized[str] | SystemPromptFunc[UserDeps]
 
 @dataclass(frozen=True, slots=True)
 class Feature:
-    """A named agent feature: a toolset, its instructions, its extras, and its modes.
+    """A named agent feature: its tools, their instructions, its extras, and its modes.
 
-    :meth:`capability` bundles the toolset and the instructions into the
-    capability a run composes, once per language around the one shared
-    toolset, and ``extras`` are the capabilities composed beside it.
-    ``modes`` is the only selection metadata pydantic-ai has no concept of.
-    ``tool_names`` is resolved once from the toolset, so the per-request
-    disabled-tool check needs no toolset walk.
+    :meth:`capability` bundles the tools and the instructions into the
+    capability a run composes, once per language around the tools built for
+    the run, and ``extras`` are the capabilities composed beside it.
+    ``tool_defs`` are resolved once from the tools, so the per-request
+    offering check needs no build, and ``modes`` from what they declare:
+    a mode the host policy denies any of them withholds the feature, so no
+    instruction ever explains a tool the mode took away.  An internal
+    feature (``AgentTools.internal``) serves the host rather than the user:
+    it is offered whatever a tool list withholds, and no list names its tools.
     """
 
     id: str
-    toolset: FunctionToolset[UserDeps]
-    tool_names: frozenset[str]
+    tools: AgentTools
+    tool_defs: tuple[ToolDefinition, ...]
+    modes: frozenset[Mode]
     instructions: Sequence[FeatureInstruction] = ()
     extras: Sequence[AbstractCapability[UserDeps]] = ()
-    modes: frozenset[Mode] = MODE_VALUES
 
     @classmethod
     def build(
         cls,
         id: str,
-        toolset: FunctionToolset[UserDeps],
+        tools: AgentTools,
         *,
         instructions: Sequence[FeatureInstruction] = (),
         extras: Sequence[AbstractCapability[UserDeps]] = (),
-        modes: frozenset[Mode] = MODE_VALUES,
     ) -> Self:
-        """Name a feature once, resolving its tool names from the toolset."""
+        """Name a feature once, resolving its tool definitions and modes from its tools."""
+        tool_defs = static_tools(tools)
+        actions = [definition_action(tool_def) for tool_def in tool_defs]
+
         return cls(
             id=id,
-            toolset=toolset,
-            tool_names=frozenset(toolset.tools),
+            tools=tools,
+            tool_defs=tool_defs,
+            modes=frozenset(
+                mode
+                for mode in MODE_VALUES
+                if all(host_policy(mode)(action) != "deny" for action in actions)
+            ),
             instructions=instructions,
             extras=extras,
-            modes=modes,
+        )
+
+    @property
+    def tool_names(self) -> frozenset[str]:
+        """The names of its tools."""
+        return frozenset(tool_def.name for tool_def in self.tool_defs)
+
+    def live(self, deps: UserDeps) -> bool:
+        """Whether a run over *deps* composes it: its mode offers it, and its policy lists one of its tools."""
+        return deps.mode in self.modes and any(
+            listed(deps.policy, definition_action(tool_def))
+            for tool_def in self.tool_defs
         )
 
     def capability(self, language: Language) -> AbstractCapability[UserDeps]:
         """The capability this feature contributes to a run in *language*."""
         return Capability(
             id=self.id,
-            toolsets=[self.toolset],
+            toolsets=[self.tools.toolset()],
             instructions=[
                 part[language] if isinstance(part, Localized) else part
                 for part in self.instructions
@@ -155,15 +204,16 @@ class Feature:
 # version discipline for the retrieval tools it owns and appends the live
 # document scope (so the model knows which documents the user selected), and
 # ``memory`` explains editing and reports the stored memory when a
-# conversation starts.  ``write`` is offered in every mode, since ``/tmp`` is writable in
-# all of them, so its workspace guidance is a shared block narrowed to the modes
-# that may write the workspaces.  The rest are bare toolset bundles.  Adding a
+# conversation starts.  ``write`` is offered in every mode, since its tools
+# write through the gateway and ``/tmp`` is writable in all of them, so its
+# workspace guidance is a shared block narrowed to the modes that may write the
+# workspaces.  The rest are bare toolset bundles.  Adding a
 # feature here exposes it to the agent and the debug surface.
 #
 # Grounding rides here rather than on the agent so it appears exactly when the
 # tools it mandates do: a user who disables every explore tool must not be left
 # with a prompt ordering searches it can no longer perform.
-FEATURES: tuple[Feature, ...] = (
+_BUILT_IN: tuple[Feature, ...] = (
     Feature.build(
         "explore",
         explore_toolset,
@@ -179,31 +229,98 @@ FEATURES: tuple[Feature, ...] = (
         python_toolset,
         instructions=[PYTHON_INSTRUCTIONS, sandbox_instructions],
     ),
-    Feature.build("subagent", subagent_toolset),
     Feature.build("write", write_toolset),
+    Feature.build("cases", cases_toolset),
     Feature.build(
         "memory",
         memory_toolset,
         instructions=[MEMORY_INSTRUCTIONS],
-        extras=[MemoryNote()],
-        modes=MUTATING_MODES,
+        extras=[MEMORY_NOTE],
     ),
+    Feature.build(
+        "skills",
+        skills_toolset,
+        instructions=[SKILLS_INSTRUCTIONS],
+        extras=[SKILLS_NOTE],
+    ),
+    Feature.build("assistant", assistant_toolset, extras=[ASSISTANT_NOTE]),
     Feature.build("web", web_toolset),
     Feature.build("conversation", conversation_toolset),
     Feature.build("ask", ask_toolset),
 )
 
-TOOL_NAMES = frozenset(name for feature in FEATURES for name in feature.tool_names)
-"""Every agent tool any feature registers."""
+
+def _plugin_feature(plugin: str, feature: api.Feature) -> Feature:
+    """The agent feature a plugin contributes, held to the host's policy.
+
+    Each tool must declare its effect with `exar.tools.effect`, which decides
+    its modes and approvals.  None writes through the changeset gateway,
+    whose writes are approved per item by validators only built-in tools carry.
+
+    Raises:
+        ValueError: For a tool declaring no effect.
+    """
+    tools = tuple(feature.tools)
+
+    for func in tools:
+        if getattr(func, "effect", None) is None:
+            raise ValueError(
+                f"Plugin {plugin!r} tool {get_name(func)!r} declares no Effect"
+            )
+
+        _ = effect_of(func)
+
+    return Feature.build(
+        feature.id,
+        AgentTools(factory=lambda _ctx: tools),
+        instructions=() if feature.instructions is None else (feature.instructions,),
+    )
+
+
+_FEATURES = merge(
+    "feature",
+    ((feature.id, feature) for feature in _BUILT_IN),
+    lambda loaded: (
+        (feature.id, _plugin_feature(loaded.name, feature))
+        for feature in loaded.plugin.features
+    ),
+)
+
+FEATURES: tuple[Feature, ...] = tuple(_FEATURES.values())
+"""The built-in features and every enabled plugin's."""
+
+PLUGIN_FEATURE_IDS = frozenset(_FEATURES.keys() - {feature.id for feature in _BUILT_IN})
+"""The features the enabled plugins contribute."""
+
+TOOL_NAMES = frozenset(
+    merge(
+        "tool",
+        ((name, feature.id) for feature in _BUILT_IN for name in feature.tool_names),
+        lambda loaded: (
+            (get_name(tool), feature.id)
+            for feature in loaded.plugin.features
+            for tool in feature.tools
+        ),
+    )
+)
+"""Every agent tool any feature registers, none of them twice."""
+
+INTERNAL_TOOL_NAMES = frozenset(
+    name
+    for feature in FEATURES
+    if feature.tools.internal
+    for name in feature.tool_names
+)
+"""The tools of the internal features, always offered and never listed or switchable."""
 
 
 @dataclass(frozen=True, slots=True)
 class SharedInstructions:
     """A prompt block owned by several features rather than by one.
 
-    Some guidance describes what a group of features produces — the path syntax
+    Some guidance describes what a group of features produces (the path syntax
     every document tool speaks, the citation markup for every source a tool can
-    return — so it belongs to none of them alone and must not be repeated across
+    return), so it belongs to none of them alone and must not be repeated across
     them.  It is composed once when any of ``features`` is live and drops out
     when none is, the same rule a feature's own instructions follow, and
     ``modes`` narrows it further for a block whose subject a mode withholds.
@@ -233,90 +350,46 @@ SHARED_INSTRUCTIONS: tuple[SharedInstructions, ...] = (
         "workspace-writes",
         frozenset({"write"}),
         WRITE_INSTRUCTIONS,
-        modes=MUTATING_MODES,
+        modes=WRITABLE_MODES,
     ),
 )
 """Guidance spanning several features, composed while any of them is live."""
 
 
-def _filter_unlisted(disabled: frozenset[str]) -> AbstractCapability[UserDeps]:
-    """A capability that hides every disabled tool from the model, group-agnostic."""
-
-    def prepare(
-        _ctx: RunContext[UserDeps], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition]:
-        return [td for td in tool_defs if td.name not in disabled]
-
-    return PrepareTools(prepare, id="disabled-tools")
-
-
-def unlisted_tool_names(tools_spec: ToolsSpec) -> frozenset[str]:
-    """The tool names that reach the model with no schema.
-
-    Three lists in one namespace: ``settings.tools.disabled`` is the operator's
-    standing choice, ``ToolsSpec.disabled_tools`` the user's per-turn one, and
-    ``settings.tools.sandbox_only`` the operator's placement choice.  The first
-    two withhold a tool outright; the third only unlists it, since it is still
-    injected as a function (``agents/tools/python.py``).
-
-    One function, because the surfaces that must agree are the ones asking this
-    question — the :class:`PrepareTools` pass and the settings listing.  What
-    the sandbox withholds is a different question with a different answer, and
-    it is asked where it is used (``agents.tools.python.sandbox_surface``)
-    rather than published here as a near-twin of this name.
-    """
-    return frozenset(settings.tools.disabled).union(
-        tools_spec.disabled_tools or (), settings.tools.sandbox_only
-    )
-
-
 def build_capabilities(
-    tools_spec: ToolsSpec,
-    *,
-    extra: Sequence[AbstractToolset[UserDeps]] = (),
-    mode: Mode,
-    language: Language,
+    deps: UserDeps, *, extra: Sequence[AbstractToolset[UserDeps]] = ()
 ) -> Sequence[AbstractCapability[UserDeps]]:
-    """Compose the capabilities for an agent run.
+    """Compose the capabilities for an agent run over *deps*.
 
-    Selects the features offered in ``mode``, drops any whose tools are all
-    disabled (so a fully-disabled feature contributes neither tools nor
-    instructions), adds the :data:`SHARED_INSTRUCTIONS` blocks whose features
-    survived that selection, composes the live features' extras and the mode
-    note, hides individually disabled tools via a single
-    :class:`PrepareTools` capability, and wraps each extra toolset (e.g. an
-    MCP server) as its own capability.
+    Selects the features *deps* compose (:meth:`Feature.live`), so a feature
+    whose every tool is withheld contributes neither tools nor instructions,
+    adds the :data:`SHARED_INSTRUCTIONS` blocks whose features survived that
+    selection, composes the live features' extras, the date, and the mode note, and
+    wraps each extra toolset as its own capability.
 
-    A run withholds the union of two lists that differ only in who wrote them:
-    ``settings.tools.disabled``, the operator's standing choice, and the
-    request's own ``disabled_tools``, the user's per-turn one.  They are one
-    namespace and one mechanism, so an operator exclusion drops a feature's
-    instructions exactly as a user's does, and the :class:`PrepareTools` pass
-    covers *extra* as well, which is the only reach an operator has over the
-    tools a user-configured MCP server brings.
+    Which tools a run is offered is decided by its deps alone
+    (``UserDeps.policy``), which :data:`~.guards.HOST_GATE` applies to every
+    tool, the extra ones and the subagents' included, on every agent,
+    by what it declares and by its name.
 
-    The mode selects which features are offered at all (``read`` is handed
-    none of the mutating ones), so the modes that may write compose the same
-    prefix and differ only in the mode note.  Whether a write the remaining ones
-    perform pauses for the user is decided per call by the gate in
-    ``agents/tools/write.py``, which alone can see the path.
+    The mode selects which features are offered at all (``Feature.modes``,
+    derived from what their tools declare), so the modes that may write compose
+    the same prefix and differ only in the mode note.  Whether a call of the
+    remaining ones pauses for the user is the host policy's (``agents/policy.py``):
+    a gateway write is decided per item by the validators in
+    ``agents/tools/write.py``, which alone can see the path, and every other
+    call by the policy, as an approval :data:`~.guards.HOST_GATE` requires.
 
     Args:
-        tools_spec: Combined tool configuration from the chat request.
-        extra: Additional toolsets to expose (e.g. MCP servers).
-        mode: Agent mode controlling which features are included.
-        language: Language of every instruction, the tool schemas stay English.
+        deps: The run's deps, whose mode, language, and withheld tools decide.
+        extra: Additional toolsets to expose, each tool declaring its effect,
+            such as the external MCP servers the user sees.
 
     Returns:
         Sequence of capabilities ready to pass to the agent.
     """
-    unlisted = unlisted_tool_names(tools_spec)
-
-    features = [
-        feature
-        for feature in FEATURES
-        if mode in feature.modes and not feature.tool_names <= unlisted
-    ]
+    mode, language = deps.mode, deps.language
+    features = [feature for feature in FEATURES if feature.live(deps)]
     live = {feature.id for feature in features}
 
     result: list[AbstractCapability[UserDeps]] = [
@@ -329,10 +402,7 @@ def build_capabilities(
     )
 
     result.extend(extra for feature in features for extra in feature.extras)
-    result.append(MODE_NOTE)
-
-    if unlisted:
-        result.append(_filter_unlisted(unlisted))
+    result.extend([DATE_NOTE, MODE_NOTE, ASSISTANT_INSTRUCTIONS])
 
     result.extend(Capability(toolsets=[toolset]) for toolset in extra)
 
@@ -343,34 +413,86 @@ def build_capabilities(
     return result
 
 
+_SUBAGENT_NAMES = frozenset(SUBAGENTS) if settings.subagents.enabled else frozenset()
+_DELEGATION_NAMES = (
+    frozenset(DELEGATION_TOOLS) if settings.subagents.enabled else frozenset()
+)
+
+KNOWN_TOOL_NAMES = (
+    (TOOL_NAMES - INTERNAL_TOOL_NAMES)
+    | SANDBOX_FUNCTION_NAMES
+    | _DELEGATION_NAMES
+    | _SUBAGENT_NAMES
+)
+"""Every name a list of withheld tools may hold.
+
+The switchable agent tools, the program-only functions, and while subagents
+are enabled the delegation tools and the subagents.
+"""
+
+
+def unknown_tool_names(names: Iterable[str]) -> list[str]:
+    """The sorted names among *names* that withhold nothing, since no tool has them.
+
+    A name an external server's id prefixes is taken, whether or not the
+    server is up to list it.
+    """
+    return sorted(
+        name for name in set(names) - KNOWN_TOOL_NAMES if not is_integration_tool(name)
+    )
+
+
 def check_tool_settings() -> None:
     """Refuse to start when the operator's tool lists name the wrong thing.
 
     A list entry that matches nothing withholds nothing, and the only symptom
     is a schema the operator believed was gone, so the typo has to surface at
-    startup rather than on the first turn that pays for it.  Only the built-in
-    tools can be checked: an MCP server's names are not known until its
-    transport is opened, per user and per request.
+    startup rather than on the first turn that pays for it.
 
     ``sandbox_only`` is held to the narrower set, since a name outside it would
     take a tool off the model's list and give it to no program either, which is
-    an exclusion the operator did not ask for.  That the injectable set is
-    itself registered needs no check: it is filtered from the lists that
-    register these tools rather than kept beside them.
+    an exclusion the operator did not ask for.  That the injected set is
+    itself registered needs no check: it is taken by name from the list that
+    builds these tools rather than kept beside them.
 
     ``disabled`` may also name a function only a program is handed, such as
     ``complete``, which withholds it like any tool.
 
+    The id of an external server, database, or API must prefix no built-in tool, the internal ones,
+    the harness's reader of saved results, and the delegation tools
+    included, whether or not subagents are enabled, or one of its tools could take that tool's name.
+
+    The operator's assistants are parsed here too, each tool they withhold
+    held to the same names as ``disabled``.
+
     Raises:
         ValueError: If a name is not a built-in tool, or is not one the
-            sandbox can be given.
+            sandbox can be given, or a server, database, or API id prefixes a built-in tool, or
+            an operator's assistant is invalid.
     """
-    known = TOOL_NAMES | SANDBOX_FUNCTION_NAMES
+    taken = (
+        KNOWN_TOOL_NAMES
+        | INTERNAL_TOOL_NAMES
+        | DELEGATION_TOOLS.keys()
+        | SPILL_TOOLS.keys()
+    )
 
-    if unknown := sorted(set(settings.tools.disabled) - known):
+    if clashes := sorted(name for name in taken if is_integration_tool(name)):
+        raise ValueError(
+            f"mcp_servers, databases, and apis ids prefix the built-in tools {', '.join(clashes)}, "
+            "rename those servers"
+        )
+
+    if unknown := unknown_tool_names(settings.tools.disabled):
         raise ValueError(
             f"tools.disabled names no such tool: {', '.join(unknown)}. "
-            f"Available: {', '.join(sorted(known))}"
+            f"Available: {', '.join(sorted(KNOWN_TOOL_NAMES))}"
+        )
+
+    if unknown := unknown_tool_names(settings.tools.budgets):
+        raise ValueError(
+            f"tools.budgets names no such tool: {', '.join(unknown)}. "
+            f"Available: {', '.join(sorted(KNOWN_TOOL_NAMES))}"
         )
 
     if stranded := sorted(set(settings.tools.sandbox_only) - INJECTABLE_TOOL_NAMES):
@@ -380,13 +502,18 @@ def check_tool_settings() -> None:
             f"{', '.join(sorted(INJECTABLE_TOOL_NAMES))}"
         )
 
+    for assistant in global_assistants():
+        if unknown := unknown_tool_names(assistant.spec.disabled_tools):
+            raise ValueError(
+                f"The assistant {assistant.name!r} withholds no such tool: "
+                f"{', '.join(unknown)}"
+            )
 
-def feature_tools() -> Iterator[tuple[str, Tool[UserDeps]]]:
-    """Every agent tool with the id of the feature it belongs to."""
+
+def feature_tools() -> Iterator[tuple[str, ToolDefinition]]:
+    """The definition of every agent tool with the id of the feature it belongs to."""
     return (
-        (feature.id, tool)
-        for feature in FEATURES
-        for tool in feature.toolset.tools.values()
+        (feature.id, tool_def) for feature in FEATURES for tool_def in feature.tool_defs
     )
 
 
@@ -404,13 +531,56 @@ def collect_tool_schemas() -> list[ToolSchema]:
     """
     return [
         ToolSchema(
-            name=tool.name,
-            description=tool.description or "",
+            name=tool_def.name,
+            description=tool_def.description or "",
             group=feature_id,
-            parameters=tool.function_schema.json_schema,
+            parameters=tool_def.parameters_json_schema,
         )
-        for feature_id, tool in feature_tools()
+        for feature_id, tool_def in feature_tools()
     ]
+
+
+def tool_infos() -> list[ToolInfo]:
+    """Every name a chat model may call or a list withhold, the canonical tool catalog of ``GET /tools``.
+
+    The feature tools by their feature, the delegation tools and the
+    subagents in the group ``subagents`` while subagents are enabled, and the
+    harness's reader of saved results.  ``switchable`` marks what a list of
+    withheld tools takes (:data:`KNOWN_TOOL_NAMES`), and every name the
+    operator withholds or places ``sandbox_only`` is left out, since the model
+    never calls it.
+    """
+    hidden = {*settings.tools.disabled, *settings.tools.sandbox_only}
+    subagents = settings.subagents.enabled
+    infos = [
+        *(
+            ToolInfo(
+                name=tool_def.name,
+                description=tool_def.description or "",
+                group=feature_id,
+                switchable=tool_def.name in KNOWN_TOOL_NAMES,
+            )
+            for feature_id, tool_def in feature_tools()
+        ),
+        *(
+            ToolInfo(name=name, description=description, group="subagents")
+            for name, description in DELEGATION_TOOLS.items()
+            if subagents
+        ),
+        *(
+            ToolInfo(name=name, description=subagent.description, group="subagents")
+            for name, subagent in SUBAGENTS.items()
+            if subagents
+        ),
+        *(
+            ToolInfo(
+                name=name, description=description, group="harness", switchable=False
+            )
+            for name, description in SPILL_TOOLS.items()
+        ),
+    ]
+
+    return [info for info in infos if info.name not in hidden]
 
 
 def _feature_of(name: str) -> Feature:
@@ -431,38 +601,59 @@ async def invoke_agent_tool(
     deps: UserDeps,
     *,
     approved: bool = False,
+    metadata: Mapping[str, Any] | None = None,
 ) -> Any:
     """Validate ``args`` and run the tool *name* with ``deps`` as one agent turn would.
 
-    Runs the tool through the exact code path the agent uses (see
-    :func:`hivegent.tools.pydantic_ai.invoke_tool`), its feature's toolset and
-    so its timeout included, held to a turn's usage limits and in the default
-    language like every agent tool call.
+    Builds the tool's feature for a run over *deps*, held through :data:`~.guards.HOST_GATE`
+    to the host policy of the run in an exar run of its own (``UserDeps.run_config``),
+    and calls it through pydantic-ai's own :class:`ToolManager` over a toolset
+    of the tool alone, so its ``prepare`` hook, its schema, its validator, its
+    approval, and its timeout apply exactly as in a run, with errors raised
+    rather than turned into retry prompts.  Held to a turn's usage limits and
+    in the default language like every agent tool call.
 
     Args:
         name: The agent tool to invoke.
         args: Raw argument mapping, validated against the tool's schema.
         deps: The dependencies passed to the tool (e.g. ``UserDeps``).
         approved: Whether the user already approved this call.
+        metadata: What the approval carries, as ``DeferredToolResults.metadata``
+            does, such as the changes it is bound to (``approval.APPROVED_CHANGES``).
 
     Returns:
         The raw return value, taken apart by
-        :func:`hivegent.tools.pydantic_ai.unwrap_tool_output`.
+        ``exar.tools.batch.unpack``.
 
     Raises:
-        KeyError: If no tool named *name* is registered.
+        KeyError: If no tool named *name* is registered, or the mode or *deps* withhold it.
         pydantic.ValidationError: If ``args`` fail the tool's schema.
-        ModelRetry: If the tool or its validator refuses the arguments.
-        ApprovalRequired: If the write gate asks the user first.
+        ModelRetry: If the tool or its validator refuses the arguments, or
+            its ``prepare`` hook withholds it.
+        ApprovalRequired: If the policy or the write gate asks the user first.
     """
-    toolset = _feature_of(name).toolset
+    feature = _feature_of(name)
+    context = run_context(deps, usage_limits=turn_usage_limits)
+    toolset = feature.tools.build(context)
+    tool = toolset.tools.get(name)
 
-    with use_language(DEFAULT_LANGUAGE):
-        return await invoke_tool(
-            toolset,
-            name,
-            args,
-            deps,
-            approved=approved,
-            usage_limits=turn_usage_limits,
+    async with session(dict(args), deps.run_config, name=name, record=False):
+        if tool is None or not await HOST_GATE.prepare_tools(context, [tool.tool_def]):
+            raise KeyError(name)
+
+        alone = FunctionToolset[UserDeps](
+            [tool], max_retries=toolset.max_retries, timeout=toolset.timeout
         )
+        root = CombinedCapability[UserDeps]([LenientArguments(), HOST_GATE])
+
+        with use_language(DEFAULT_LANGUAGE):
+            manager = await ToolManager(alone, root_capability=root).for_run_step(
+                context
+            )
+
+            return await manager.handle_call(
+                ToolCallPart(name, dict(args)),
+                approved=approved,
+                metadata=None if metadata is None else dict(metadata),
+                wrap_validation_errors=False,
+            )

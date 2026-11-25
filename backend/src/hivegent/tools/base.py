@@ -1,121 +1,66 @@
-"""Shared base protocol and helpers for tool implementations."""
+"""Shared helpers of the tools: search paths, refusals, batches, and line clips.
 
-import inspect
-import json
-import re
-import types
-from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Generator, Hashable, Iterable, Mapping
-from contextlib import contextmanager
+Tools are plain typed async functions, built by factories that close over their configuration,
+with the conventions of `exar.tools`: an `effect` declares what a call changes,
+`exar.tools.Retry` refuses input the model can fix, and a list argument is served item by item.
+A tool returns a pydantic-ai `ToolReturn` (`tool_return`), whose `return_value` is the text the model reads
+and whose `metadata` is the typed data programs and the client receive.
+The type parameter of `ToolReturn[T]` names the type of that data,
+which pydantic-ai publishes as the return schema the sandbox declares to programs.
+"""
+
+import reprlib
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cache, cached_property, reduce
-from operator import or_
-from os import stat_result
+from functools import partial
 from pathlib import Path
-from stat import S_ISDIR, S_ISLNK, S_ISREG
-from typing import (
-    Annotated,
-    Any,
-    ClassVar,
-    Literal,
-    NoDefault,
-    Protocol,
-    Self,
-    TypeVar,
-    Union,
-    cast,
-    get_args,
-    get_origin,
-    get_type_hints,
-    override,
-)
+from typing import Any, ClassVar, Protocol, Self
 
-from pydantic import (
-    BaseModel,
-    BeforeValidator,
-    ConfigDict,
-    Field,
-    JsonValue,
-    TypeAdapter,
-    create_model,
+from cbrkit.io import COMPANION_SUFFIXES
+from exar.memory.mounts import (
+    Mount,
+    canonical,
+    claim,
+    resolve,
 )
-from pydantic.json_schema import JsonSchemaValue
+from exar.text import truncate_line
+from exar.tools import common as exar_common
+from exar.tools.common import Refusal, is_in_excluded_dir
 
-from ..concurrency import bounded_gather
-from ..config import normalize_unicode
-from ..converters import is_json, is_tabular
-from ..entries import (
+from ..shared.formats import is_json, is_tabular
+from .entries import (
     Listdir,
-    description_path_for_stem,
+    Part,
     find_original_for_stem,
     is_description_file,
-    is_inside_assets_dir,
     is_reserved_path,
     leads_with,
-    respell,
     stem_path_from_reference,
 )
-from ..l10n import Localized
-from ..text import MAX_BYTES_PER_CHAR, NOT_TEXT_REASON, DecodedText, read_text_file
-from .scope import Scope
 
 __all__ = [
-    "DEFAULT_EXCLUDE_DIRS",
-    "MAX_BATCH_ITEMS",
+    "HIDDEN_ENTRIES",
     "WORKSPACE_SCOPE_HINT",
-    "AsyncPathTool",
-    "AsyncTool",
-    "AsyncToolFactory",
-    "Batch",
-    "BatchShare",
-    "BinaryAttachment",
     "CallBudget",
     "CommitPolicy",
     "Direct",
-    "FullLinesArg",
-    "Gated",
-    "IncludeIgnoredArg",
-    "ItemFailure",
-    "OffsetArg",
-    "PathTool",
+    "ModeGated",
+    "PathFilter",
+    "Reviewed",
     "SearchPath",
-    "SearchPathFilterFunc",
-    "SyncTool",
-    "Tool",
-    "ToolFactory",
-    "ToolOutput",
-    "ToolRetry",
-    "ToolSpec",
-    "addressable_roots",
-    "batch_field",
-    "canonical_local_path",
-    "check_read_budget",
-    "coerce_paths",
-    "entry_ignored",
-    "entry_stat",
+    "ToolFunc",
     "entry_visible",
-    "excluded_dirs",
-    "factory_tool_name",
-    "file_allowed",
-    "is_in_excluded_dir",
-    "lenient",
     "match_scope",
-    "missing_directory_retry",
-    "near_miss_hint",
-    "policy_of",
+    "mounts_of",
+    "omission_hints",
     "query_hint",
-    "read_text_or_retry",
+    "refusal_hint",
+    "render_arguments",
     "resolve_accessible_file",
-    "resolve_directory",
     "resolve_file_or_retry",
     "resolve_search_path",
-    "resolve_tool_cls",
-    "run_batch",
-    "scope_paths",
     "sidecar_hint",
-    "tool_description",
-    "tool_name",
-    "translate_tool_retry",
+    "strictest",
     "workspace_root_hint",
 ]
 
@@ -147,71 +92,6 @@ class CallBudget:
         self.used += 1
 
 
-class ToolRetry(Exception):
-    """A model-correctable tool failure.
-
-    Raised by tools for inputs the model can fix and retry — a missing or
-    inaccessible path, an ambiguous edit, or a stale ``expected_hash``. The
-    framework adapters translate it: the pydantic-ai adapter re-raises it as
-    ``ModelRetry`` so the model self-corrects, and the MCP adapter raises a
-    FastMCP ``ToolError``. Keeping it framework-neutral lets the tool
-    implementations stay free of any framework import.
-    """
-
-
-@contextmanager
-def translate_tool_retry(into: Callable[[str], Exception]) -> Generator[None]:
-    """Re-raise any :class:`ToolRetry` from the block as *into* the message.
-
-    The single translation point each framework adapter wraps its tool call
-    in, so the retry signal reaches the framework in its own idiom (FastMCP
-    ``ToolError``, pydantic-ai ``ModelRetry``) instead of aborting the run.
-    """
-    try:
-        yield
-    except ToolRetry as exc:
-        raise into(str(exc)) from exc
-
-
-DEFAULT_EXCLUDE_DIRS: tuple[str, ...] = (
-    "node_modules",
-    ".git",
-    "dist",
-    "build",
-    ".next",
-    "coverage",
-    "__pycache__",
-)
-"""Build and vendor directory names skipped by default in file listings."""
-
-IncludeIgnoredArg = Annotated[
-    bool,
-    Field(
-        description=(
-            "When true, include the build and vendor directories "
-            "(node_modules, .git, dist, ...) skipped by default."
-        ),
-    ),
-]
-
-OffsetArg = Annotated[
-    int,
-    Field(description="1-based line to start reading from.", ge=1),
-]
-"""Where ``read_document`` and ``web_fetch`` show a text from, to read on past a window."""
-
-FullLinesArg = Annotated[
-    bool,
-    Field(
-        description=(
-            "When true, return every line in full instead of clipping it to a "
-            "per-line budget, for content whose tail carries meaning such as a "
-            "wide table or a long matched line."
-        ),
-    ),
-]
-
-
 class PathFilter(Protocol):
     """Which paths below a root its tools may see, decided by a finite set of entries."""
 
@@ -223,9 +103,10 @@ class PathFilter(Protocol):
         """Whether *path* or anything below it is hidden, answered without listing it."""
         ...
 
+    def globs(self, root: Path) -> tuple[str, ...]:
+        """The paths it hides below *root* as the ``exclude`` globs of a :class:`~exar.memory.mounts.Mount`."""
+        ...
 
-SearchPathFilterFunc = PathFilter | None
-"""Optional filter that decides which paths are accessible."""
 
 WORKSPACE_SCOPE_HINT = (
     "Lead with a scope prefix to restrict the operation to that one scope; "
@@ -241,16 +122,21 @@ arguments repeating it cost more on every request than the one sentence saves.
 """
 
 
-@dataclass(slots=True, frozen=True)
-class Gated:
-    """A workspace root, whose changes are approved where the mode asks.
+class _ReservesAssets:
+    """A root reserving each ``.assets`` payload in it, since it belongs to its document."""
 
-    Each ``.assets`` payload in it is reserved, since it belongs to its document.
-    """
+    __slots__ = ()
 
     def reserves(self, root: Path, local: str) -> bool:
         """Whether *local* is or lies in an ``.assets`` payload, wherever *root* is."""
         return is_reserved_path(local)
+
+
+@dataclass(slots=True, frozen=True)
+class ModeGated(_ReservesAssets):
+    """A workspace root, whose changes are approved where the run's mode asks."""
+
+    strictness: ClassVar[int] = 1
 
 
 @dataclass(slots=True, frozen=True)
@@ -264,312 +150,158 @@ class Direct:
 
     reserved: str | None = None
 
+    strictness: ClassVar[int] = 0
+    """How much it asks of a change, the most of a change reaching several roots winning."""
+
     def reserves(self, root: Path, local: str) -> bool:
         """Whether *local* is or lies in :attr:`reserved`, compared as *root*'s filesystem does."""
         return leads_with(root, local, self.reserved)
 
 
-type CommitPolicy = Gated | Direct
-"""Whether a change to a root's files is approved, and what it reserves, the root's alone."""
+@dataclass(slots=True, frozen=True)
+class Reviewed(_ReservesAssets):
+    """A root whose every change a person approves, in every mode.
 
-_GATED = Gated()
+    It reserves what a :class:`ModeGated` one does, so a workspace may be either.
+    """
+
+    strictness: ClassVar[int] = 2
 
 
-# Not frozen, alone among the value types here, because it normalises its own
-# input: a root has to be resolved before anything can be contained in it, and
-# a frozen dataclass can only assign in `__post_init__` by reaching around its
-# own immutability with `object.__setattr__`.  Nothing mutates an instance
-# after construction, and nothing hashes one, so the guarantee that is given up
-# was never being used.
-@dataclass(slots=True)
+type CommitPolicy = Direct | ModeGated | Reviewed
+"""Whether a change to a root's files is approved, and what it reserves, the root's alone.
+
+The host decides what each one means for a run (``agents/policy.py``).
+"""
+
+_GATED = ModeGated()
+
+
+def strictest(policies: Iterable[CommitPolicy]) -> CommitPolicy:
+    """The policy of *policies* that asks the most, as a change reaching several roots answers to.
+
+    >>> strictest((ModeGated(), Reviewed()))
+    Reviewed()
+    """
+    return max(policies, key=lambda policy: policy.strictness)
+
+
+HIDDEN_GLOBS = (
+    "**/*.assets/**",
+    *(f"**/?*{suffix}" for suffix in COMPANION_SUFFIXES.values()),
+)
+"""The ``hidden`` globs of every workspace: the elements of ``.assets`` payloads, which a single converted document can fill with hundreds of extracted images,
+and the cbrkit companions of a case base, since ``similar_cases`` shows its configuration."""
+
+
+@dataclass(slots=True, frozen=True)
 class SearchPath:
-    """A labeled directory path with optional filter.
+    """A workspace folder as the tools see it, its mount with the filter and policy the write gateway asks.
 
-    Groups multiple search roots under a common interface. Each path may carry
-    a :class:`~hivegent.tools.scope.Scope` so that results from different roots
-    stay distinguishable and incoming paths can be matched back to their
-    workspace, plus an optional *filter_func* that controls which files are
-    visible.
+    Each mount leads with a *target* so that results from different roots stay
+    distinguishable and incoming paths can be matched back to their workspace,
+    and an optional *filter_func* controls which files are visible.  What the
+    read tools see of it is its :attr:`mount`, while the write gateway asks the
+    filter and the policy itself.
 
     Attributes:
-        path: Directory to search, folded to its real location on construction.
-        scope: Addressing scope whose prefix tags filenames from this path.
-            ``None`` means the path carries no prefix (a single bare root).
+        mount: The folder as the read tools address it, its source resolved.
         filter_func: Optional predicate controlling file visibility.
         policy: How a change to a file under the root commits.
     """
 
-    path: Path
-    scope: Scope | None = None
-    filter_func: SearchPathFilterFunc = None
+    mount: Mount
+    filter_func: PathFilter | None = None
     policy: CommitPolicy = _GATED
 
-    def __post_init__(self) -> None:
-        """Fold the root once, here, rather than once per path resolved under it.
+    @classmethod
+    def of(
+        cls,
+        path: Path,
+        target: str = "",
+        *,
+        implied: bool = False,
+        filter_func: PathFilter | None = None,
+        policy: CommitPolicy = _GATED,
+    ) -> Self:
+        """The search path of a folder, resolved once for every containment check, a missing one to itself.
 
-        Every containment check needs the root's real location, so the
-        resolution is not optional, only its frequency is, and a root does not
-        move for the length of a call.  It belongs on the type rather than on
-        the callers because several of them hand a root straight to
-        :func:`resolve_accessible_file` without passing through
-        :func:`coerce_paths`, and a root that missed the fold would not be
-        wrong in a corner: every document under it would simply cease to exist.
-        A root that has not been created yet folds to itself, which is what a
-        workspace nobody has written to needs, since handing a tool its roots
-        must not create one.
+        Args:
+            path: The folder to search.
+            target: The mount point whose prefix tags its files, empty for a single bare root.
+            implied: Whether a path leading with no target is shorthand for one in it.
+            filter_func: Optional predicate controlling file visibility.
+            policy: How a change to a file under it commits.
         """
-        self.path = self.path.resolve()
+        path = path.resolve()
+        mount = Mount(
+            source=path,
+            target=target,
+            implied=implied,
+            exclude=() if filter_func is None else filter_func.globs(path),
+            hidden=HIDDEN_GLOBS,
+        )
 
-    def prefixed(self, filename: str) -> str:
-        """Return *filename* rendered under this path's scope."""
-        return self.scope.render(filename) if self.scope is not None else filename
+        return cls(mount, filter_func, policy)
+
+    @property
+    def path(self) -> Path:
+        """The folder, resolved."""
+        return self.mount.source
 
     def is_reserved(self, local: str) -> bool:
         """Whether *local* is or lies in a subtree its root keeps from ordinary changes.
 
-        >>> SearchPath(Path("/w")).is_reserved("notes/report.assets/fig1.png")
+        >>> SearchPath.of(Path("/w")).is_reserved("notes/report.assets/fig1.png")
         True
         """
         return self.policy.reserves(self.path, local)
 
 
-def policy_of(paths: tuple[SearchPath, ...], canonical: str) -> CommitPolicy:
-    """How a change to *canonical* commits: its root's policy, gated where no root claims it.
-
-    An unclaimed path is gated because the gateway is what refuses one.
-    """
-    resolved = resolve_search_path(paths, canonical)
-
-    return _GATED if resolved is None else resolved[0].policy
+def mounts_of(paths: Sequence[SearchPath]) -> tuple[Mount, ...]:
+    """The mounts of the search paths, which the read tools of ``exar.tools.files`` take."""
+    return tuple(sp.mount for sp in paths)
 
 
-def coerce_paths(
-    raw: Path | SearchPath | tuple[SearchPath, ...],
-) -> tuple[SearchPath, ...]:
-    """Normalise into a ``SearchPath`` tuple.
-
-    Accepts a bare :class:`~pathlib.Path`, a single :class:`SearchPath`,
-    or an already-normalised tuple.
-    """
-    if isinstance(raw, Path):
-        return (SearchPath(path=raw),)
-    if isinstance(raw, SearchPath):
-        return (raw,)
-    return raw
+def _path_of(paths: Sequence[SearchPath], mount: Mount) -> SearchPath:
+    """The search path whose mount it is."""
+    return next(sp for sp in paths if sp.mount is mount)
 
 
-def match_scope(
-    paths: tuple[SearchPath, ...],
-    raw: str,
-) -> tuple[SearchPath, str] | None:
-    """Return the first scoped path that claims *raw*, plus its local remainder.
+def match_scope(paths: Sequence[SearchPath], raw: str) -> tuple[SearchPath, str] | None:
+    """The search path that claims *raw* by its prefix and the local remainder, empty for a bare prefix."""
+    claimed = claim(mounts_of(paths), raw)
 
-    The shared scope-prefix scan behind :func:`resolve_search_path` and
-    :func:`scope_paths`. A non-``None`` local is the prefix-stripped remainder
-    (empty for a bare scope root); ``None`` means no scoped path matched.
-
-    Public for the one caller that wants the case the two resolvers drop: a
-    bare scope root is a directory the sandbox mount lists, where it is a path
-    argument no document tool takes.
-    """
-    for sp in paths:
-        if sp.scope is not None:
-            local = sp.scope.strip_prefix(raw)
-            if local is not None:
-                return sp, local
-    return None
+    return None if claimed is None else (_path_of(paths, claimed[0]), claimed[1])
 
 
 def resolve_search_path(
-    paths: tuple[SearchPath, ...],
-    filename: str,
+    paths: Sequence[SearchPath], raw: str
 ) -> tuple[SearchPath, str] | None:
-    """Find the :class:`SearchPath` matching a possibly-prefixed filename.
+    """The search path *raw* names and its local path, an unprefixed one falling back to the personal workspace.
 
-    A scope prefix is matched against each path's :attr:`SearchPath.scope`.
-    An unprefixed filename falls back to the first path that claims it anyway,
-    a scopeless one or one whose scope it implies.
-
-    The filename is folded to NFC here, the single funnel every path-taking
-    tool passes through, so a decomposed spelling still resolves to the
-    canonically named file on a normalization-sensitive filesystem.
-
-    Args:
-        paths: Ordered search paths to check.
-        filename: A filename that may carry a scope prefix.
-
-    Returns:
-        ``(search_path, local_filename)`` with the prefix stripped,
-        or ``None`` if no path matches.
+    Raises:
+        Retry: If *raw* holds a NUL byte, which no file name can.
     """
-    filename = normalize_unicode(filename)
-    match = match_scope(paths, filename)
-    if match is not None and match[1]:
-        return match
+    exar_common.refuse_nul(raw)
+    resolved = resolve(mounts_of(paths), raw)
 
-    return next(
-        (
-            (sp, filename)
-            for sp in paths
-            if sp.scope is None or sp.scope.implies(filename)
-        ),
-        None,
-    )
-
-
-def scope_paths(
-    paths: tuple[SearchPath, ...],
-    raw: str | None,
-) -> tuple[tuple[SearchPath, ...], str | None]:
-    """Narrow *paths* to the workspace named by *raw*'s scope prefix.
-
-    Filter arguments — a listing subdirectory or a grep glob — may lead
-    with a workspace scope prefix to target a single workspace, mirroring
-    the file-path tools.  When *raw* starts with a known prefix, only the
-    matching :class:`SearchPath` is returned, together with the
-    prefix-stripped remainder.  Otherwise *paths* and *raw* pass through
-    unchanged, so an unprefixed value still spans every workspace and a
-    missing value covers them all.
-
-    Like :func:`resolve_search_path`, *raw* is folded to NFC so a decomposed
-    subdirectory or glob still matches the canonically named entries.
-
-    Args:
-        paths: The search paths in scope for the call.
-        raw: A possibly prefixed subdirectory or glob, or ``None``.
-
-    Returns:
-        ``(scoped_paths, local)`` where *local* has the matched prefix
-        stripped, and is ``None`` when the prefix named a bare workspace
-        root (e.g. ``~`` or ``@team``).
-    """
-    if not raw:
-        return paths, raw
-    raw = normalize_unicode(raw)
-    match = match_scope(paths, raw)
-    if match is not None:
-        sp, local = match
-        return (sp,), local or None
-    return paths, raw
-
-
-def file_allowed(filter_func: SearchPathFilterFunc, filename: str) -> bool:
-    """Return whether *filename* passes *filter_func*.
-
-    Args:
-        filter_func: A predicate, or ``None`` to allow everything.
-        filename: The relative document path to check.
-
-    Returns:
-        ``True`` if the file is allowed, ``False`` otherwise.
-    """
-    return filter_func is None or filter_func(filename)
-
-
-def excluded_dirs(include_ignored: bool) -> tuple[str, ...]:
-    """Return the default exclude list, or empty when *include_ignored* is true."""
-    return () if include_ignored else DEFAULT_EXCLUDE_DIRS
-
-
-def is_in_excluded_dir(rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
-    """Check whether *rel_path* sits inside any excluded directory name."""
-    if not exclude_dirs:
-        return False
-    parts = rel_path.split("/")
-    return any(excluded in parts for excluded in exclude_dirs)
-
-
-def entry_ignored(rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
-    """Whether *rel_path* is hidden by default, which ``include_ignored`` reveals.
-
-    The one definition of what a path tool hides by default, shared by the
-    listing walk and the grep post-filter so ``include_ignored`` means the same
-    thing in both.  Elements of ``.assets`` payload directories are hidden with
-    the build and vendor directories: a single converted document can carry
-    hundreds of extracted images, and only the directory itself is worth
-    listing.
-    """
-    return is_in_excluded_dir(rel_path, exclude_dirs) or bool(
-        exclude_dirs and is_inside_assets_dir(rel_path)
-    )
+    return None if resolved is None else (_path_of(paths, resolved[0]), resolved[1])
 
 
 def entry_visible(sp: SearchPath, rel_path: str, exclude_dirs: tuple[str, ...]) -> bool:
     """Whether the entry at *rel_path* may be shown for search path *sp*.
 
-    Not :func:`entry_ignored`, and allowed by the search path's own filter,
-    which always applies.
+    The one definition of what a path tool hides by default, shared by the
+    listing walk and ``exar.tools.files`` so ``include_ignored`` means the same
+    thing in both: not in an excluded directory, and not hidden while
+    *exclude_dirs* are in force, and never one the filter of the path excludes.
     """
-    return not entry_ignored(rel_path, exclude_dirs) and file_allowed(
-        sp.filter_func, rel_path
+    return not (
+        is_in_excluded_dir(rel_path, exclude_dirs)
+        or (bool(exclude_dirs) and sp.mount.hides(rel_path))
+        or sp.mount.excludes(rel_path)
     )
-
-
-def check_read_budget(canonical: str, size: int, limit: int) -> None:
-    """Refuse a file too large to decode into a caller's character budget.
-
-    Sized before it is decoded, so a file that cannot fit whatever it decodes
-    to is refused without ever being read into memory: anything above
-    :data:`~hivegent.text.MAX_BYTES_PER_CHAR` times the limit is over it for
-    certain, and anything smaller is left to the exact check the caller runs on
-    the decoded text.
-
-    The bound is per file rather than per run, because one decoded file is what
-    a reader actually holds: :func:`read_text_file` reads the whole thing and
-    decodes it in one go, so an unbounded file is one unbounded allocation in
-    the server process, while reading a thousand bounded ones in turn is not.
-
-    Shared because a ``run_python`` call applies the same rule from three
-    places, the script it loads before the sandbox starts, the output document
-    it fingerprints, and every document the mounted workspace hands the
-    program, and three copies of it would be three budgets wearing one name.
-    """
-    if size <= limit * MAX_BYTES_PER_CHAR:
-        return
-
-    raise ToolRetry(
-        f"'{canonical}' is too large to read here ({size} bytes, and one "
-        f"document may hold at most {limit} characters)."
-    )
-
-
-def entry_stat(path: Path) -> stat_result | None:
-    """Return *path*'s own stat, or ``None`` when it names no addressable entry.
-
-    One ``lstat`` answers what ``is_symlink`` / ``is_dir`` / ``is_file`` ask in
-    three, and a symlink is reported as absent rather than followed: its name
-    is an alias for a file the document filter was never asked about, which is
-    also why the upload pipeline refuses one.
-    """
-    try:
-        st = path.lstat()
-    except OSError:
-        return None
-
-    return None if S_ISLNK(st.st_mode) else st
-
-
-def canonical_local_path(
-    root: Path, local: str, listdir: Listdir | None = None
-) -> tuple[str, Path] | None:
-    """Resolve *local* under an already-resolved *root* to its canonical form.
-
-    The one place a spelling becomes an identity: ``..`` segments are folded
-    away, symlinks are followed, and on a case-insensitive filesystem every
-    existing segment is respelled the way the disk spells it, so the name a
-    filter is asked about is the file the operation would actually touch, not
-    the alias it was addressed by: ``SECRET.md`` is asked about as the hidden
-    ``secret.md`` it opens.  *listdir* lets a caller cache the listings that
-    takes.  Returns ``None`` when the target escapes *root* or is *root*
-    itself, which names no entry.
-    """
-    absolute = (root / local).resolve()
-    if not absolute.is_relative_to(root) or absolute == root:
-        return None
-
-    local = respell(root, absolute.relative_to(root).as_posix(), listdir)
-
-    return local, root / local
 
 
 def resolve_accessible_file(
@@ -582,128 +314,45 @@ def resolve_accessible_file(
     Performs the checks every document tool shares: prefix resolution,
     traversal and symlink-escape defense, and the filter predicate. The
     filter is applied to the canonical path rather than the spelling the
-    caller sent, so no alias — ``a/../b.md`` or a symlink — reaches a
-    document the filter excludes. Does *not* require the file to exist —
-    callers that need that should check :py:meth:`pathlib.Path.is_file` on
+    caller sent, so no alias (``a/../b.md`` or a symlink) reaches a
+    document the filter excludes. Does *not* require the file to exist.
+    Callers that need that should check :py:meth:`pathlib.Path.is_file` on
     the returned path.
     """
     resolved = resolve_search_path(paths, file_path)
     if resolved is None:
         return None
     sp, local = resolved
-    canonical = canonical_local_path(sp.path, local, listdir)
+    found = canonical(sp.path, local, listdir)
 
-    if canonical is None:
-        return None
-    local, absolute = canonical
-    if not file_allowed(sp.filter_func, local):
+    if found is None or sp.mount.excludes(found[0]):
         return None
 
-    return sp, local, absolute
+    return sp, *found
 
 
-def addressable_roots(paths: tuple[SearchPath, ...]) -> list[str]:
-    """The prefixes a path may lead with, which is what a refusal has to name.
-
-    Empty for an unscoped root, which has no prefix to give and therefore
-    nothing to offer a caller that led with the wrong one.  One definition, so
-    the sandbox's own refusal names the same roots this one does.
-    """
-    return [root for sp in paths if (root := sp.prefixed(""))]
-
-
-def workspace_root_hint(paths: tuple[SearchPath, ...], file_path: str) -> str:
-    """Name the addressable roots when *file_path* leads with none of them.
-
-    Every refusal on a path argument ends here, so a caller that dropped the
-    prefix is told which roots exist rather than left to guess another spelling
-    — the one correction it cannot derive from context, since no root is
-    implied.  Empty when the path does name a known root (the refusal then has
-    another cause — a missing file, a filtered document, a traversal escape —
-    that listing roots would only muddle) and empty for a single unscoped root,
-    which has no prefix to give.
-    """
-    if resolve_search_path(paths, file_path) is not None:
-        return ""
-
-    roots = addressable_roots(paths)
-    if not roots:
-        return ""
-
-    return (
-        f" This tool addresses {', '.join(roots)}; give the full path, "
-        "leading with one of them."
-    )
+def refusal_hint(refusal: Refusal, path: str) -> str:
+    """What the tools of the workspaces add to a refusal of *path*: the tool to use instead."""
+    match refusal:
+        case "directory":
+            return " Use list_documents to see the documents in it."
+        case "format":
+            return f" Read anything else with read_document.{sidecar_hint(path)}"
+        case "binary":
+            return sidecar_hint(path)
+        case "media":
+            return f" Use read_document if it is text.{sidecar_hint(path)}"
 
 
-def resolve_directory(
-    paths: tuple[SearchPath, ...], subdir: str
-) -> tuple[tuple[tuple[SearchPath, Path], ...], str]:
-    """Pair each search path with the directory *subdir* names under it.
+HIDDEN_ENTRIES = "`.assets` contents and common build/vendor directories"
+"""What ``include_ignored`` reveals in the workspaces, as the hint on hidden entries names it."""
 
-    Returns the ``(search_path, root)`` pairs a walk starts from, and *subdir*
-    folded to the canonical spelling its entries are named under, so a ``..``
-    segment resolves the way it does for every other path argument rather than
-    being refused for its spelling.  A root that holds no such directory drops
-    out, so a directory no accessible root holds comes back empty and the
-    refusal falls out of the resolution instead of costing a second pass.
-    """
-    roots: list[tuple[SearchPath, Path]] = []
-    canonical = subdir
-    for sp in paths:
-        resolved = canonical_local_path(sp.path, subdir)
-        if resolved is not None and resolved[1].is_dir():
-            canonical, root = resolved
-            roots.append((sp, root))
-
-    return tuple(roots), canonical
+omission_hints = partial(exar_common.omission_hints, what=HIDDEN_ENTRIES)
 
 
-def missing_directory_retry(paths: tuple[SearchPath, ...], shown: str) -> ToolRetry:
-    """The refusal a filter argument owes when it names no directory.
-
-    A listing or search that silently comes back empty reads as an empty
-    workspace, which the caller cannot tell from its own typo.
-
-    Deliberately not :func:`workspace_root_hint`, which tells a *file* path to
-    lead with a root: a filter argument may legitimately carry none, so the
-    roots are named without demanding one.  *shown* is the caller's own
-    spelling, never the prefix-stripped remainder, since a scope that was never
-    claimed is still on it and rendering the remainder back through one would
-    staple a second prefix onto a path that already carries it.
-    """
-    roots = addressable_roots(paths)
-    hint = f" This tool addresses {', '.join(roots)}." if roots else ""
-
-    return ToolRetry(f"Directory '{shown}' does not exist.{hint}")
-
-
-def near_miss_hint(absolute: Path) -> str:
-    """Name the sibling that a missed path almost matched.
-
-    A refusal on a path copied out of a listing one step earlier is otherwise
-    unactionable: nothing in the message says which of the many ways a name can
-    differ went wrong, and no respelling the caller can derive is more likely
-    than the one it already sent.  Siblings are compared case-folded and
-    NFC-folded, so a re-cased basename, the failure a canonical spelling
-    cannot rule out since the filesystem is case-sensitive, is named
-    outright.  Empty when nothing in the directory is equivalent.
-    """
-    target = normalize_unicode(absolute.name).casefold()
-    try:
-        siblings = sorted(
-            name
-            for path in absolute.parent.iterdir()
-            if (name := path.name) != absolute.name
-            and normalize_unicode(name).casefold() == target
-        )
-    except OSError:
-        return ""
-
-    if not siblings:
-        return ""
-
-    return f" A file with an equivalent name exists: {', '.join(siblings)}."
+def workspace_root_hint(paths: Sequence[SearchPath], file_path: str) -> str:
+    """Name the targets of the *paths* when *file_path* leads with none of them, else nothing."""
+    return exar_common.workspace_root_hint(mounts_of(paths), file_path)
 
 
 def resolve_file_or_retry(
@@ -711,38 +360,15 @@ def resolve_file_or_retry(
 ) -> tuple[SearchPath, str, Path]:
     """Resolve *file_path* to an existing file, or raise a correctable refusal.
 
-    Every reader owes a turned-away caller the same correction, and which one
-    it owes splits on the reason: a path naming no root is told which roots
-    exist, one naming a missing file is told which sibling it almost matched.
-    Neither is derivable from context, so the two hints live together here
-    rather than being re-decided per tool.
-
-    The mutating tools resolve through their own gateway instead: a mutation
-    may legitimately create the file, so absence is not a refusal there.
-
-    A directory is turned away in its own words rather than as a missing
-    file: it exists, so "not found" is false and sends the caller looking for
-    a respelling of a path that was right, and the correction it needs is the
-    tool that opens a directory instead of the one that opens a document.
+    A path naming no root is told which roots exist, a missing file which
+    sibling it almost matched, and a directory to be listed instead.
     """
-    resolved = resolve_accessible_file(paths, file_path)
-    st = entry_stat(resolved[2]) if resolved is not None else None
+    mount, local, _absolute = exar_common.resolve_file_or_retry(
+        mounts_of(paths), file_path, refusal_hint
+    )
+    sp = _path_of(paths, mount)
 
-    if st is not None and S_ISDIR(st.st_mode):
-        raise ToolRetry(
-            f"'{file_path}' is a directory, not a document. "
-            "Use list_documents to see the documents in it."
-        )
-
-    if resolved is None or st is None or not S_ISREG(st.st_mode):
-        hint = (
-            workspace_root_hint(paths, file_path)
-            if resolved is None
-            else near_miss_hint(resolved[2])
-        )
-        raise ToolRetry(f"'{file_path}' not found.{hint}")
-
-    return resolved
+    return sp, local, sp.path / local
 
 
 def _query_phrase(file_path: str) -> str:
@@ -780,723 +406,56 @@ def sidecar_hint(file_path: str) -> str:
     """
     if is_description_file(file_path):
         return ""
-    sidecar = description_path_for_stem(stem_path_from_reference(file_path))
+    sidecar = Part(stem_path_from_reference(file_path), "description").path
     query = _query_phrase(file_path)
     lead = f" {query}." if query else ""
 
     return f"{lead} To read its extracted text, request '{sidecar}' instead."
 
 
-def query_hint(sp: SearchPath, local: str) -> str:
-    """Name the tool that queries the entry *local* belongs to, if one does.
+def query_hint(mount: Mount, local: str) -> str:
+    """Name the tool that queries the original of the entry *local* belongs to, if one does.
 
-    Keyed on the entry rather than on the path the caller addressed: an
-    uploaded table is served as its ``<stem>.md`` projection, so the path a
-    read or a selection has in hand is never the one ``query_table`` takes,
-    and asking the suffix alone left the tool invisible for exactly the file
-    it exists for.  A table dropped in as text (a bare ``.csv``) is its own
-    original and answers the same question directly.
-
-    One sentence for both surfaces that need it, the read that was served the
-    projection and the document scope that named it, so the run is told the
-    same thing whichever of the two reaches it first.  Both resolve a path
-    before they get here for their own reasons, so this takes what they hold
-    rather than resolving it a second time.
-
-    Empty when the entry has no original, when no query tool claims its
-    format, or when the filter hides it — the same predicate the reader
-    answers to, so a hint can never name a document its reader would refuse.
+    Keyed on the entry, since a table is served as its ``<stem>.md``
+    projection.  Empty when the entry has no original, no query tool claims
+    its format, or the filter hides it.
     """
     original = (
-        find_original_for_stem(sp.path, stem_path_from_reference(local))
+        find_original_for_stem(mount.root(), stem_path_from_reference(local))
         if is_description_file(local)
         else local
     )
-    if original is None or not file_allowed(sp.filter_func, original):
+    if original is None or mount.excludes(original):
         return ""
 
     phrase = _query_phrase(original)
 
-    return f"{phrase}, on '{sp.prefixed(original)}'" if phrase else ""
+    return f"{phrase}, on '{mount.render(original)}'" if phrase else ""
 
 
-def read_text_or_retry(path: Path, file_path: str, hint: str = "") -> DecodedText:
-    """Decode a resolved file, or raise :class:`ToolRetry` when it is not text.
+type ToolFunc = Callable[..., Awaitable[Any]]
+"""A tool, a plain typed async function named and described by itself."""
 
-    Legacy encodings are decoded rather than refused, so callers can report the
-    source encoding instead of failing on it.
+_ARGUMENT_REPR = reprlib.Repr(maxlevel=2, maxstring=200)
+"""Renders one argument value cut short, never the whole of a large one."""
+
+
+def render_arguments(args: str | Mapping[str, object] | None, max_chars: int) -> str:
+    """The keyword arguments of a call as it spells them, within *max_chars*.
+
+    A large argument, such as a written document or a program, is cut while it
+    is rendered rather than serialized whole and cut afterwards.  A string is
+    the arguments a model sent already serialized.
+
+    >>> render_arguments({"query": "x", "limit": 5}, 200)
+    "query='x', limit=5"
     """
-    decoded = read_text_file(path)
-    if decoded is None:
-        raise ToolRetry(f"'{file_path}' {NOT_TEXT_REASON}.{hint}")
-
-    return decoded
-
-
-@dataclass(slots=True, frozen=True)
-class BinaryAttachment:
-    """Framework-neutral binary blob attached to a tool result.
-
-    Adapters convert it to the framework-specific representation:
-    pydantic-ai ``BinaryContent`` (inline in the tool return) or MCP
-    ``ImageContent`` / ``EmbeddedResource``.
-    """
-
-    data: bytes
-    media_type: str
-    identifier: str | None = None
-
-
-@dataclass(slots=True, frozen=True)
-class ToolOutput[T]:
-    """Tool result carrying both structured data and a compact text form.
-
-    The adapters route ``data`` to the frontend (via the Vercel AI
-    stream) and :attr:`text` to the LLM and MCP clients.
-
-    When ``formatted`` is ``None``, :attr:`text` derives the
-    representation automatically: strings are used as-is, other types
-    are serialized to JSON.
-
-    ``attachments`` carries framework-neutral binary blobs that the
-    adapter converts to its framework's multimodal type and sends
-    inline with the tool return.
-
-    ``display_only`` marks ``data`` as only what the client shows, such as a
-    subagent's transcript, so the text alone is the result.
-    """
-
-    data: T
-    formatted: str | None = None
-    attachments: tuple[BinaryAttachment, ...] = ()
-    display_only: bool = False
-
-    @property
-    def text(self) -> str:
-        """Model-facing text: explicit ``formatted`` or auto-derived."""
-        if self.formatted is not None:
-            return self.formatted
-        if isinstance(self.data, str):
-            return self.data
-        return json.dumps(self.data, default=str)
-
-
-MAX_BATCH_ITEMS = 10
-"""Default cap on the items one list argument may carry."""
-
-
-@dataclass(slots=True, frozen=True)
-class ItemFailure:
-    """One item of a batch that could not be served, and why.
-
-    Stands in the result at the item's position, so a partial failure is read
-    beside the items that succeeded instead of discarding them.  *kind* is
-    serialized with it, so a client tells a failure from a result in one parse.
-    """
-
-    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(
-        json_schema_serialization_defaults_required=True
+    text = (
+        args
+        if isinstance(args, str)
+        else ", ".join(
+            f"{key}={_ARGUMENT_REPR.repr(value)}" for key, value in (args or {}).items()
+        )
     )
 
-    item: str
-    reason: str
-    kind: Literal["failure"] = "failure"
-
-
-type Batch[R] = tuple[R | ItemFailure, ...]
-"""One entry per distinct requested item, in request order."""
-
-
-def batch_field(description: str, *, max_items: int = MAX_BATCH_ITEMS) -> Any:
-    """The ``Field`` of a list argument: ``Annotated[list[X], batch_field(...)]``.
-
-    A one-item list is how a single item is asked for, so there is no separate
-    scalar variant of the argument and no empty list to answer.
-    """
-    return Field(description=description, min_length=1, max_length=max_items)
-
-
-def _is_list_type(annotation: Any) -> bool:
-    """Whether *annotation* is a list, possibly annotated or optional."""
-    origin = get_origin(annotation)
-
-    if origin is Annotated:
-        return _is_list_type(get_args(annotation)[0])
-
-    if origin in (Union, types.UnionType):
-        return any(_is_list_type(arg) for arg in get_args(annotation))
-
-    return origin is list
-
-
-def _as_list(value: object) -> object:
-    """Wrap a bare value into a one-item list, passing lists and ``None`` through."""
-    return value if value is None or isinstance(value, list | tuple) else [value]
-
-
-_AS_LIST = BeforeValidator(_as_list)
-
-
-def _dequote(value: object) -> object:
-    """Strip the bookend quotes of a string sent JSON-encoded twice.
-
-    >>> _dequote('"files_with_matches"'), _dequote("plain"), _dequote(3)
-    ('files_with_matches', 'plain', 3)
-    """
-    if isinstance(value, str) and len(value) >= 2 and value[0] == value[-1] == '"':
-        return value[1:-1]
-
-    return value
-
-
-_DEQUOTE = BeforeValidator(_dequote)
-
-
-def lenient(annotation: Any) -> Any:
-    """The annotation a model-written argument is validated against.
-
-    Two slips models make are repaired first: a string JSON-encoded twice,
-    which llama.cpp's autoparser lets through unconstrained, and one bare item
-    sent where a list is declared.  Every runtime adapter applies it, and only
-    to validation: the published schema is unchanged, so a caller following it
-    is never steered toward either spelling.
-    """
-    dequoted = Annotated[annotation, _DEQUOTE]
-
-    return Annotated[dequoted, _AS_LIST] if _is_list_type(annotation) else dequoted
-
-
-@dataclass(slots=True, frozen=True)
-class BatchShare:
-    """Which item of how many a batch runner is serving.
-
-    A batch spends one call's budgets, so each item takes its share of them
-    rather than the whole: :meth:`of` splits any per-call budget evenly, the
-    remainder going to the first items.
-    """
-
-    index: int
-    count: int
-
-    def of(self, total: int) -> int:
-        """This item's share of *total*.
-
-        >>> [BatchShare(i, 3).of(10) for i in range(3)]
-        [4, 3, 3]
-        """
-        base, extra = divmod(total, self.count)
-
-        return base + (self.index < extra)
-
-
-def _batch_failed(failures: list[ItemFailure]) -> ToolRetry:
-    """The refusal of a batch none of whose items succeeded.
-
-    A one-item batch refuses in the item's own words, exactly as a scalar call
-    did, so the list form costs a single request nothing.
-    """
-    if len(failures) == 1:
-        return ToolRetry(failures[0].reason)
-
-    lines = "\n".join(f"- {failure.item}: {failure.reason}" for failure in failures)
-
-    return ToolRetry(f"Every item failed:\n{lines}")
-
-
-async def run_batch[I, R](
-    items: Iterable[I],
-    run: Callable[[I, BatchShare], Awaitable[ToolOutput[R]]],
-    *,
-    key: Callable[[I], str],
-    concurrency: int = 1,
-    identity: Callable[[R], Hashable] | None = None,
-    shares: Callable[[I], bool] | None = None,
-) -> ToolOutput[Batch[R]]:
-    """Run *run* over every distinct item and present the results side by side.
-
-    Items are deduplicated by *key*, keeping the first, and run at most
-    *concurrency* at a time while the result keeps request order.  Each item
-    is handed its :class:`BatchShare` to split the call's budgets with, among
-    the items *shares* picks when given, the others being handed them whole.  A
-    :class:`ToolRetry` from one item becomes its :class:`ItemFailure`, and only
-    a batch in which every item failed is refused as a whole.  *identity*
-    names what makes two results the same, for items that only turn out to be
-    duplicates once served (two URLs redirecting to one page).
-
-    Each item is rendered under its key, ``head``'s ``==> key <==`` header,
-    and the attachments are concatenated in order.
-    """
-    unique: dict[str, I] = {}
-
-    for item in items:
-        unique.setdefault(key(item), item)
-
-    count = len(unique)
-    sharing = [name for name, item in unique.items() if shares is None or shares(item)]
-    split = {
-        name: BatchShare(index, len(sharing)) for index, name in enumerate(sharing)
-    }
-
-    async def attempt(entry: tuple[str, I]) -> ToolOutput[R] | ItemFailure:
-        name, item = entry
-
-        try:
-            return await run(item, split.get(name, BatchShare(0, 1)))
-        except ToolRetry as exc:
-            return ItemFailure(item=name, reason=str(exc))
-
-    outcomes = await bounded_gather(unique.items(), attempt, limit=concurrency)
-    seen: dict[Hashable, str] = {}
-    data: list[R | ItemFailure] = []
-    blocks: list[str] = []
-    attachments: list[BinaryAttachment] = []
-
-    for name, outcome in zip(unique, outcomes, strict=True):
-        if isinstance(outcome, ToolOutput) and identity is not None:
-            first = seen.setdefault(identity(outcome.data), name)
-
-            if first != name:
-                outcome = ItemFailure(item=name, reason=f"same result as {first}")
-
-        if isinstance(outcome, ItemFailure):
-            data.append(outcome)
-            blocks.append(f"==> {name} <==\nfailed: {outcome.reason}")
-            continue
-
-        data.append(outcome.data)
-        blocks.append(f"==> {name} <==\n{outcome.text}")
-        attachments.extend(outcome.attachments)
-
-    failures = [entry for entry in data if isinstance(entry, ItemFailure)]
-
-    if len(failures) == count:
-        raise _batch_failed(failures)
-
-    return ToolOutput(
-        data=tuple(data),
-        formatted="\n\n".join(blocks),
-        attachments=tuple(attachments),
-    )
-
-
-class Tool[T](ABC):
-    """Base class for all tool implementations.
-
-    Concrete tools should inherit from :class:`SyncTool` or
-    :class:`AsyncTool` (or their :class:`PathTool` counterparts) instead
-    of subclassing this directly.
-
-    The ``__call__`` docstring serves as the canonical tool description,
-    reused by agent toolsets and MCP endpoints, while parameter
-    descriptions live in ``Annotated`` metadata on the signature itself.
-    """
-
-    injectable: ClassVar[bool] = False
-    """Whether a sandboxed program may be handed this tool as a function.
-
-    True for the few whose answer no program can work out for itself: retrieval
-    reaches the database, the web tools the network, a spreadsheet a decoder
-    the interpreter does not have.  False for everything the workspace mount
-    already provides — ``open`` is the read tools, ``re`` is grep, ``json`` is
-    jq — and for everything that mutates, since a running program cannot stop
-    to ask for approval.
-
-    Declared here rather than listed elsewhere because it is a property of the
-    tool: whichever surface registers it, the same answer holds.  Only
-    :mod:`hivegent.agents.tools.python` reads it, which is what keeps the
-    injectable set derived from the registered one instead of kept beside it.
-    """
-
-    registered: ClassVar[bool] = True
-    """Whether the model is also handed this tool, false for a program's alone."""
-
-    sandbox_instructions: ClassVar[Localized[str] | None] = None
-    """Guidance a run's prompt carries while a program may call this tool."""
-
-    @abstractmethod
-    def __call__(
-        self, *args: Any, **kwargs: Any
-    ) -> ToolOutput[T] | Awaitable[ToolOutput[T]]:
-        """Execute the tool."""
-        ...
-
-
-class SyncTool[T](Tool[T], ABC):
-    """Abstract base for synchronous tool implementations."""
-
-    @override
-    @abstractmethod
-    def __call__(self, *args: Any, **kwargs: Any) -> ToolOutput[T]: ...
-
-
-class AsyncTool[T](Tool[T], ABC):
-    """Abstract base for asynchronous tool implementations."""
-
-    @override
-    @abstractmethod
-    async def __call__(self, *args: Any, **kwargs: Any) -> ToolOutput[T]: ...
-
-
-type ToolFactory[D] = Callable[[D], Tool[Any]]
-"""Factory that builds a tool from one run's dependencies."""
-
-type AsyncToolFactory[D] = Callable[[D], AsyncTool[Any]]
-"""Factory restricted to tools that can be awaited."""
-
-
-@dataclass(slots=True, frozen=True)
-class PathTool[T](Tool[T], ABC):
-    """Tool base that owns a ``paths`` field with lazy coercion.
-
-    Accepts a bare :class:`~pathlib.Path`, a single :class:`SearchPath`,
-    or a tuple. Use :attr:`resolved_paths` to obtain the normalized
-    tuple. Concrete subclasses should inherit from
-    :class:`AsyncPathTool`.
-    """
-
-    paths: Path | SearchPath | tuple[SearchPath, ...] = ()
-
-    @cached_property
-    def resolved_paths(self) -> tuple[SearchPath, ...]:
-        """Return *paths* normalised to a ``SearchPath`` tuple."""
-        return coerce_paths(self.paths)
-
-    def scoped(self, raw: str | None) -> tuple[tuple[SearchPath, ...], str | None]:
-        """Narrow :attr:`resolved_paths` to the workspace named by *raw*'s prefix.
-
-        Thin wrapper over :func:`scope_paths` for the filter tools.
-        """
-        return scope_paths(self.resolved_paths, raw)
-
-
-@dataclass(slots=True, frozen=True)
-class AsyncPathTool[T](PathTool[T], AsyncTool[T], ABC):
-    """Asynchronous tool with search paths."""
-
-
-def tool_name(tool_cls: type[Tool[Any]]) -> str:
-    """Derive a snake_case tool name from a CamelCase class name.
-
-    Strips a trailing ``Tool`` suffix so that e.g.
-    ``ListDocumentsTool`` becomes ``list_documents``.
-
-    Args:
-        tool_cls: The tool class.
-
-    Returns:
-        The snake_case name.
-    """
-    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", tool_cls.__name__)
-    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
-    return s.lower().removesuffix("_tool")
-
-
-def factory_tool_name(factory: Callable[..., Any]) -> str:
-    """Derive a tool name from a factory function.
-
-    Strips a leading underscore from the function name so that
-    ``_search`` becomes ``search``.
-
-    Args:
-        factory: The factory callable.
-
-    Returns:
-        The tool name.
-    """
-    name: str = getattr(factory, "__name__", "") or getattr(factory, "__qualname__", "")
-    return name.lstrip("_")
-
-
-def _typevar_bindings(annotation: Any) -> dict[TypeVar, Any]:
-    """Resolve a tool annotation's type variables through its generic bases."""
-    bindings: dict[TypeVar, Any] = {}
-    pending = [annotation]
-
-    while pending:
-        current = pending.pop()
-        origin = get_origin(current) or current
-        parameters = getattr(origin, "__type_params__", ())
-        arguments = get_args(current)
-
-        if parameters and not arguments:
-            arguments = tuple(parameter.__default__ for parameter in parameters)
-
-        if parameters and NoDefault not in arguments:
-            bindings.update(
-                zip(
-                    parameters,
-                    (_replace_typevars(argument, bindings) for argument in arguments),
-                    strict=True,
-                )
-            )
-
-        for base in getattr(origin, "__orig_bases__", ()):
-            base_origin = get_origin(base) or base
-
-            if isinstance(base_origin, type) and issubclass(base_origin, Tool):
-                pending.append(_replace_typevars(base, bindings))
-
-    return bindings
-
-
-def _replace_typevars(annotation: Any, bindings: Mapping[TypeVar, Any]) -> Any:
-    """Apply known type variable bindings to a generic annotation."""
-    if isinstance(annotation, TypeVar):
-        return bindings.get(annotation, annotation)
-
-    origin = get_origin(annotation)
-    arguments = get_args(annotation)
-
-    if origin is None or not arguments:
-        return annotation
-
-    replaced = tuple(_replace_typevars(argument, bindings) for argument in arguments)
-
-    if origin is types.UnionType:
-        return reduce(or_, replaced)
-
-    return origin[replaced]
-
-
-def _has_typevar(annotation: Any) -> bool:
-    """Whether an annotation still contains an unresolved type parameter."""
-    if isinstance(annotation, TypeVar):
-        return True
-
-    return any(_has_typevar(argument) for argument in get_args(annotation))
-
-
-def resolve_tool_cls(factory: Callable[..., Tool[Any]]) -> type[Tool[Any]]:
-    """Extract the Tool subclass from a factory's return type annotation.
-
-    Handles parameterized generics like ``VectorSearchTool[str]`` by
-    unwrapping them to their origin.
-
-    Args:
-        factory: A callable whose return annotation is a ``Tool`` subclass.
-
-    Returns:
-        The Tool subclass.
-
-    Raises:
-        TypeError: If the return annotation is missing or not a Tool subclass.
-    """
-    annotation = get_type_hints(factory).get("return")
-    tool_cls = get_origin(annotation) or annotation
-    if not isinstance(tool_cls, type) or not issubclass(tool_cls, Tool):
-        name = getattr(factory, "__qualname__", repr(factory))
-        msg = (
-            f"{name!r} must have a return type "
-            f"annotation that is a Tool subclass, got {tool_cls!r}"
-        )
-        raise TypeError(msg)
-    return tool_cls
-
-
-def tool_description(tool: type[Tool[Any]]) -> str | None:
-    """Return the canonical user-facing description for a tool callable."""
-    return inspect.getdoc(tool.__call__) or inspect.getdoc(tool)
-
-
-# `slots=True` is deliberately absent, and the derived members below are the
-# reason: `cached_property` stores into the instance `__dict__` a slotted class
-# does not have.  They have to be memoised somehow, since building one costs
-# ~250us and `argument_model` and `data_adapter` are read on every sandbox
-# call, and they have to be derived rather than stored beside the fields
-# they are a function of.
-# The slotted alternative is a `dict[str, Any]` memo field, which launders
-# every value through `Any` behind string keys no checker reads; slots buys
-# nothing against that here, since `from_factory` caches one spec per tool for
-# the life of the process.
-@dataclass(frozen=True)
-class ToolSpec:
-    """Framework-neutral contract for a tool's arguments and structured data.
-
-    Provides what the three surfaces built from a tool -- pydantic-ai, MCP, and
-    the sandbox -- need to build wrapper functions with correct signatures and
-    type annotations.
-
-    The six fields are what a tool declares.  Everything below them is a pure
-    function of those, derived once on first use rather than stored beside
-    them: a schema and the validator that has to agree with it are then built
-    one way for every surface, and a surface pays only for what it reads, which
-    for pydantic-ai is none of it.
-
-    Attributes:
-        name: Tool name derived from the factory function.
-        description: Canonical tool description from the Tool class.
-        params: ``__call__`` parameters with ``self`` removed, each carrying
-            the resolved annotation.
-        data_type: Concrete type carried by :attr:`ToolOutput.data`.
-        is_async: Whether ``__call__`` is a coroutine function.
-        source_module: Module name of the originating factory.
-    """
-
-    name: str
-    description: str | None
-    params: tuple[inspect.Parameter, ...]
-    data_type: Any
-    is_async: bool
-    source_module: str
-
-    @cached_property
-    def annotations(self) -> Mapping[str, Any]:
-        """Resolved type hints for ``__call__`` parameters, keyed by name.
-
-        Read off :attr:`params`, which carry the resolved annotation, rather
-        than stored beside them, since the two would otherwise be the same
-        data in two places.
-        """
-        return types.MappingProxyType({p.name: p.annotation for p in self.params})
-
-    @cached_property
-    def argument_model(self) -> type[BaseModel]:
-        """Validator for one call's arguments, built from :attr:`params`."""
-        fields: dict[str, Any] = {
-            param.name: (
-                param.annotation,
-                ... if param.default is param.empty else param.default,
-            )
-            for param in self.params
-        }
-
-        return create_model(
-            f"{self.name}_arguments",
-            __config__=ConfigDict(extra="forbid"),
-            **fields,
-        )
-
-    @cached_property
-    def parameters_json_schema(self) -> JsonSchemaValue:
-        """JSON schema of the arguments :attr:`argument_model` validates."""
-        return self.argument_model.model_json_schema()
-
-    @cached_property
-    def data_adapter(self) -> TypeAdapter[Any]:
-        """Serialiser for :attr:`data_type`."""
-        return TypeAdapter(self.data_type)
-
-    @cached_property
-    def data_json_schema(self) -> JsonSchemaValue:
-        """Serialization-mode JSON schema of :attr:`data_type`."""
-        return self.data_adapter.json_schema(mode="serialization")
-
-    def validate_arguments(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        """Validate, convert, and default arguments before invoking a tool."""
-        return dict(self.argument_model.model_validate(arguments).__dict__)
-
-    def serialize_data(self, data: Any) -> JsonValue:
-        """Serialize a structured tool payload to plain JSON-compatible values."""
-        return cast(JsonValue, self.data_adapter.dump_python(data, mode="json"))
-
-    def apply_to(
-        self,
-        wrapper: types.FunctionType,
-        sig: inspect.Signature,
-        annotations: dict[str, Any],
-    ) -> None:
-        """Stamp call metadata onto a wrapper function.
-
-        Sets ``__signature__``, ``__annotations__``, ``__name__``,
-        ``__qualname__``, ``__doc__``, and ``__module__`` so that
-        framework introspection sees the rewritten signature.
-
-        Args:
-            wrapper: The wrapper function to decorate.
-            sig: The rewritten :class:`inspect.Signature`.
-            annotations: The rewritten ``__annotations__`` dict.
-        """
-        wrapper.__annotations__ = annotations
-        wrapper.__name__ = self.name
-        wrapper.__qualname__ = self.name
-        wrapper.__doc__ = self.description
-        wrapper.__module__ = self.source_module
-        # __signature__ is not in the FunctionType stub; use setattr.
-        wrapper.__signature__ = sig  # type: ignore[attr-defined]  # pyright: ignore[reportFunctionMemberAccess]  # ty: ignore[missing-attribute]
-
-    @classmethod
-    @cache
-    def from_factory(cls, factory: Callable[..., Tool[Any]]) -> Self:
-        """Extract call metadata from a Tool factory's return type.
-
-        Resolves the Tool subclass from *factory*'s return annotation,
-        then inspects its ``__call__`` method to build a :class:`ToolSpec`.
-
-        Cached on the factory, which is what makes this affordable on the
-        sandbox path: the two schema-building adapters run it once at import,
-        but the sandbox rebuilds its surface on every model request, and
-        resolving type hints is the whole cost.  Safe to share because the
-        result is frozen through to its fields -- ``params`` is a tuple of
-        immutable parameters and ``annotations`` a mapping -- and every caller
-        derives what it needs from it rather than editing it.
-
-        Args:
-            factory: A callable whose return annotation is a ``Tool``
-                subclass.
-
-        Returns:
-            Extracted tool contract.
-
-        Raises:
-            TypeError: If the factory's return annotation is not a Tool
-                subclass, if any ``__call__`` parameter (besides ``self``)
-                lacks a type annotation, or if ``__call__`` does not return
-                a ``ToolOutput``.
-        """
-        tool_cls = resolve_tool_cls(factory)
-        factory_annotation = get_type_hints(factory)["return"]
-        bindings = _typevar_bindings(factory_annotation)
-        call = tool_cls.__call__
-        sig = inspect.signature(call)
-        hints = get_type_hints(call, include_extras=True)
-        cls_name = tool_cls.__qualname__
-
-        params = tuple(p for name, p in sig.parameters.items() if name != "self")
-
-        for p in params:
-            if p.name not in hints:
-                msg = f"{cls_name}.__call__ has unannotated parameter {p.name!r}"
-                raise TypeError(msg)
-
-        # `SyncTool`/`AsyncTool` already declare the envelope, so what this
-        # catches is the annotation that never resolved to one -- which used to
-        # leave `returns` as None and surface far away, in the sandbox, as a
-        # missing generic argument.
-        returns = hints.get("return")
-        if get_origin(returns) is not ToolOutput:
-            msg = f"{cls_name}.__call__ must return ToolOutput[...], got {returns!r}"
-            raise TypeError(msg)
-
-        annotations = {
-            name: _replace_typevars(hint, bindings)
-            for name, hint in hints.items()
-            if name not in ("self", "return")
-        }
-        # A factory annotated `-> VectorSearchTool[RetrievedChunk]` names the
-        # record its `list[R]` holds, and resolving the tool class discards it.
-        # Binding it here keeps every field concrete for whoever reads it, and
-        # this is the only place the parameterised annotation and the resolved
-        # one are both in hand.
-        envelope = _replace_typevars(returns, bindings)
-        unresolved = [
-            name for name, annotation in annotations.items() if _has_typevar(annotation)
-        ]
-        if _has_typevar(envelope):
-            unresolved.append("return")
-        if unresolved:
-            name = getattr(factory, "__qualname__", repr(factory))
-            joined = ", ".join(unresolved)
-            raise TypeError(f"{name!r} leaves tool parameters unresolved: {joined}")
-
-        (data_type,) = get_args(envelope)
-
-        return cls(
-            name=factory_tool_name(factory),
-            description=tool_description(tool_cls),
-            params=tuple(
-                param.replace(annotation=annotations[param.name]) for param in params
-            ),
-            data_type=data_type,
-            is_async=inspect.iscoroutinefunction(call),
-            source_module=getattr(factory, "__module__", ""),
-        )
+    return truncate_line(text, max_chars)

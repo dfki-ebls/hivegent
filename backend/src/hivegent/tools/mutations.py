@@ -9,15 +9,29 @@ which is what the approval shows and what lands.
 import csv
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path, PurePosixPath
-from typing import Annotated, override
+from typing import Annotated
 
-from fastapi import HTTPException
+from exar.memory.mounts import entry_stat
+from exar.text import plural
+from exar.tools import Retry, effect
+from exar.tools.batch import batch_field, tool_return
+from exar.tools.common import near_miss_hint
 from pydantic import Field
+from pydantic_ai import ToolReturn
 
-from ..changes import (
+from ..shared.formats import BINARY_WRITE_REASON, DELIMITERS, writes_as_text
+from .base import (
+    SearchPath,
+    ToolFunc,
+    resolve_accessible_file,
+    resolve_file_or_retry,
+    workspace_root_hint,
+)
+from .changes import (
+    ChangeRefused,
     Changeset,
     Delete,
     Edit,
@@ -26,47 +40,31 @@ from ..changes import (
     Write,
     WriteMode,
 )
-from ..converters import BINARY_WRITE_REASON, DELIMITERS, writes_as_text
-from ..humanize import pluralize
-from .base import (
-    AsyncPathTool,
-    SearchPath,
-    ToolOutput,
-    ToolRetry,
-    batch_field,
-    entry_stat,
-    near_miss_hint,
-    resolve_accessible_file,
-    resolve_file_or_retry,
-    workspace_root_hint,
-)
 
 __all__ = [
-    "MAX_BATCH",
     "Commit",
-    "DeleteDocumentsTool",
     "DeletePathsArg",
     "DocumentContentArg",
     "DocumentEditsArg",
     "DocumentMove",
     "DocumentMovesArg",
     "DocumentTargetPathArg",
-    "EditDocumentTool",
     "ExpectedHashArg",
-    "MoveDocumentsTool",
     "MutationHint",
-    "WriteDocumentTool",
     "WriteModeArg",
     "check_delimited_rows",
     "delete_changeset",
+    "delete_documents",
     "edit_changeset",
+    "edit_document",
     "move_changeset",
+    "move_documents",
     "mutation_errors",
-    "resolve_text_target",
     "write_changeset",
+    "write_document",
 ]
 
-MAX_BATCH = 100
+_MAX_BATCH = 100
 """Most items one mutation call may carry, which keeps one approval readable."""
 
 DocumentTargetPathArg = Annotated[
@@ -103,7 +101,7 @@ DocumentEditsArg = Annotated[
             "left, and saved as one write. Put every change to this document "
             "in one call rather than one call per change."
         ),
-        max_items=MAX_BATCH,
+        max_items=_MAX_BATCH,
     ),
 ]
 
@@ -146,7 +144,7 @@ DocumentMovesArg = Annotated[
             "swaps, and moves into or out of a directory another move takes "
             "fit in one call. Each source may appear in one move only."
         ),
-        max_items=MAX_BATCH,
+        max_items=_MAX_BATCH,
     ),
 ]
 DeletePathsArg = Annotated[
@@ -156,7 +154,7 @@ DeletePathsArg = Annotated[
             "Full workspace paths of the documents to delete, each of which "
             "must exist, listed one by one. They are deleted together or not at all."
         ),
-        max_items=MAX_BATCH,
+        max_items=_MAX_BATCH,
     ),
 ]
 WriteModeArg = Annotated[
@@ -194,15 +192,15 @@ def mutation_errors(
 ) -> Generator[None]:
     """Re-raise a refused mutation as *into* its detail, *suffix* appended as a sentence.
 
-    The gateway refuses with an ``HTTPException`` and a route it cannot find with
-    a ``ValueError``, and this is the one place either becomes the surface's own
-    correctable error, the way :func:`~hivegent.tools.base.translate_tool_retry`
-    is for a :class:`ToolRetry`.
+    The gateway refuses with a :class:`ChangeRefused` and a route it cannot find
+    with a ``ValueError``, and this is the one place either becomes the surface's own
+    correctable error, the way `exar.tools.translate_retry` is for a
+    :class:`Retry`.
     """
     try:
         yield
-    except (HTTPException, ValueError) as exc:
-        detail = str(exc.detail if isinstance(exc, HTTPException) else exc)
+    except (ChangeRefused, ValueError) as exc:
+        detail = str(exc)
         raise into(f"{detail.rstrip('.')}. {suffix}" if suffix else detail) from exc
 
 
@@ -220,23 +218,23 @@ def _resolve_target(paths: tuple[SearchPath, ...], file_path: str) -> tuple[str,
     routes on) and the file on disk.  It may name a directory, which for a move
     destination means moving into it, the ``mv`` semantics the gateway applies.
     What a directory cannot be is the target of a text write, which is where
-    :func:`resolve_text_target` refuses it.
+    :func:`_resolve_text_target` refuses it.
     """
     resolved = resolve_accessible_file(paths, file_path)
     if resolved is None:
         hint = workspace_root_hint(paths, file_path)
-        raise ToolRetry(f"'{file_path}' is not accessible.{hint}")
+        raise Retry(f"'{file_path}' is not accessible.{hint}")
 
     sp, local, absolute = resolved
 
-    return sp.prefixed(local), absolute
+    return sp.mount.render(local), absolute
 
 
 _NOT_A_VALUE = frozenset({"None", "nan", "NaN", "NaT", "null", "undefined"})
 """How a language spells a missing value when a cell was interpolated, not rendered.
 
-Every one of these reaches a delimited file the same way — an f-string handed
-the value rather than the text for it — and reads downstream as the four-letter
+Every one of these reaches a delimited file the same way (an f-string handed
+the value rather than the text for it) and reads downstream as the four-letter
 word it is rather than as the gap it means.  Deliberately not `NA` or `N/A`,
 which a lab writes on purpose.
 """
@@ -250,8 +248,8 @@ def check_delimited_rows(canonical_path: str, content: str) -> None:
     row lands under the wrong heading, where it reads as a measurement of
     something it is not.  The header decides the width, since it is the one row
     whose shape is a statement about the file, and the suffix decides the
-    separator through :data:`~hivegent.converters.DELIMITERS`, the same table
-    the query tool's loader reads — so the surface that writes a `.csv` and the
+    separator through :data:`~hivegent.shared.formats.DELIMITERS`, the same table
+    the query tool's loader reads, so the surface that writes a `.csv` and the
     surface that reads one back can never disagree about what its fields are.
 
     Read as a stream rather than a list, so the bad row this exists to catch
@@ -274,15 +272,15 @@ def check_delimited_rows(canonical_path: str, content: str) -> None:
     width = len(next(rows, ()))
 
     # One column has no width to disagree with, which is also what a file that
-    # is not really delimited looks like here — and not ours to judge further.
+    # is not really delimited looks like here, and not ours to judge further.
     if width < 2:
         return
 
     for number, row in enumerate(rows, start=2):
         if len(row) != width and any(cell.strip() for cell in row):
-            raise ToolRetry(
+            raise Retry(
                 f"'{canonical_path}' line {number} has {len(row)} "
-                f"{pluralize(len(row), 'field')} where the header has {width}, "
+                f"{plural(len(row), 'field')} where the header has {width}, "
                 "so every value on it lands under the wrong column. Build each "
                 "row as a list of cells, one per header, and join them once, "
                 "rather than writing the separators by hand; a row carrying "
@@ -290,7 +288,7 @@ def check_delimited_rows(canonical_path: str, content: str) -> None:
             )
 
         if placeholder := next((c for c in row if c.strip() in _NOT_A_VALUE), None):
-            raise ToolRetry(
+            raise Retry(
                 f"'{canonical_path}' line {number} carries the cell "
                 f"'{placeholder}', which is a language's name for a missing "
                 "value rather than one a reader of this file can use. A missing "
@@ -299,7 +297,7 @@ def check_delimited_rows(canonical_path: str, content: str) -> None:
             )
 
 
-def resolve_text_target(paths: tuple[SearchPath, ...], file_path: str) -> str:
+def _resolve_text_target(paths: tuple[SearchPath, ...], file_path: str) -> str:
     """Resolve *file_path* for a mutation that writes text at it, to its canonical path.
 
     This adds the two questions every text write shares and a move or a delete
@@ -317,10 +315,10 @@ def resolve_text_target(paths: tuple[SearchPath, ...], file_path: str) -> str:
     canonical, absolute = _resolve_target(paths, file_path)
 
     if absolute.is_dir():
-        raise ToolRetry(f"'{canonical}' is a directory.")
+        raise Retry(f"'{canonical}' is a directory.")
 
     if not absolute.is_file() and not writes_as_text(canonical):
-        raise ToolRetry(f"'{canonical}' {BINARY_WRITE_REASON}.")
+        raise Retry(f"'{canonical}' {BINARY_WRITE_REASON}.")
 
     return canonical
 
@@ -332,8 +330,8 @@ def write_changeset(
     mode: WriteModeArg = "replace",
     expected_hash: str | None = None,
 ) -> Changeset[str]:
-    """The changeset :class:`WriteDocumentTool` commits, refused as it would be."""
-    target = resolve_text_target(paths, file_path)
+    """The changeset :func:`write_document` commits, refused as it would be."""
+    target = _resolve_text_target(paths, file_path)
     check_delimited_rows(target, content)
 
     return Changeset((Write(target, content, mode, expected_hash),))
@@ -345,8 +343,8 @@ def edit_changeset(
     edits: Sequence[TextEdit],
     expected_hash: str | None = None,
 ) -> Changeset[str]:
-    """The changeset :class:`EditDocumentTool` commits, refused as it would be."""
-    target = resolve_text_target(paths, file_path)
+    """The changeset :func:`edit_document` commits, refused as it would be."""
+    target = _resolve_text_target(paths, file_path)
 
     return Changeset((Edit(target, tuple(edits), expected_hash),))
 
@@ -354,7 +352,7 @@ def edit_changeset(
 def move_changeset(
     paths: tuple[SearchPath, ...], moves: Sequence[DocumentMove]
 ) -> Changeset[str]:
-    """The changeset :class:`MoveDocumentsTool` commits, or a refusal of the batch.
+    """The changeset :func:`move_documents` commits, or a refusal of the batch.
 
     A source must exist, as a document or a directory, but a destination need not,
     since naming a missing one is how a document is renamed.  Whether the moves
@@ -366,7 +364,7 @@ def move_changeset(
         source, absolute = _resolve_target(paths, move.source)
 
         if entry_stat(absolute) is None:
-            raise ToolRetry(f"'{move.source}' not found.{near_miss_hint(absolute)}")
+            raise Retry(f"'{move.source}' not found.{near_miss_hint(absolute)}")
 
         destination, _absolute = _resolve_target(paths, move.destination)
         operations.append(Move(source, destination))
@@ -377,7 +375,7 @@ def move_changeset(
 def delete_changeset(
     paths: tuple[SearchPath, ...], file_paths: Sequence[str]
 ) -> Changeset[str]:
-    """The changeset :class:`DeleteDocumentsTool` commits, or a refusal of the batch.
+    """The changeset :func:`delete_documents` commits, or a refusal of the batch.
 
     A directory is refused like any reader refuses one: deleting its documents
     means naming them, so what the user approves is exactly what goes.
@@ -386,29 +384,29 @@ def delete_changeset(
 
     for file_path in file_paths:
         sp, local, _absolute = resolve_file_or_retry(paths, file_path)
-        operations.append(Delete(sp.prefixed(local)))
+        operations.append(Delete(sp.mount.render(local)))
 
     return Changeset(tuple(operations))
 
 
-@dataclass(slots=True, frozen=True)
-class EditDocumentTool(AsyncPathTool[str]):
-    """Edit a document by replacing exact strings with new strings.
+def edit_document(
+    paths: tuple[SearchPath, ...],
+    *,
+    commit: Commit,
+    hint: MutationHint | None = None,
+) -> ToolFunc:
+    """The tool that edits a document below *paths* by replacing exact strings with new strings.
 
-    Resolves and access-checks the path, then hands the edit to :attr:`commit`,
+    Resolves and access-checks the path, then hands the edit to *commit*,
     which owns the string-replacement semantics and re-indexing.
     """
 
-    commit: Commit = field(kw_only=True)
-    hint: MutationHint | None = None
-
-    @override
-    async def __call__(
-        self,
+    @effect("write")
+    async def edit_document(
         file_path: DocumentTargetPathArg,
         edits: DocumentEditsArg,
         expected_hash: ExpectedHashArg = None,
-    ) -> ToolOutput[str]:
+    ) -> ToolReturn[str]:
         """Replace exact strings in a document, one or many in a single write.
 
         The edits apply in order, each to the text the previous one left, and
@@ -421,36 +419,38 @@ class EditDocumentTool(AsyncPathTool[str]):
         document, and equally an original such as a config, data
         (``.csv``), markup, or source file, whose searchable markdown is
         regenerated from the new content automatically.  A binary (PDF,
-        Office document, spreadsheet, image, video) cannot be edited —
-        replace it by uploading a new version instead.
+        Office document, spreadsheet, image, video) cannot be edited.
+        Replace it by uploading a new version instead.
         """
-        changeset = edit_changeset(self.resolved_paths, file_path, edits, expected_hash)
+        changeset = edit_changeset(paths, file_path, edits, expected_hash)
 
-        with mutation_errors(ToolRetry):
-            data = await self.commit(changeset)
+        with mutation_errors(Retry):
+            data = await commit(changeset)
 
-        return ToolOutput(data=_hinted(self.hint, data, changeset.locations[0]))
+        return tool_return(_hinted(hint, data, changeset.locations[0]))
+
+    return edit_document
 
 
-@dataclass(slots=True, frozen=True)
-class WriteDocumentTool(AsyncPathTool[str]):
-    """Write content to a document using the requested write mode.
+def write_document(
+    paths: tuple[SearchPath, ...],
+    *,
+    commit: Commit,
+    hint: MutationHint | None = None,
+) -> ToolFunc:
+    """The tool that writes content to a document below *paths* using the requested write mode.
 
-    Resolves and access-checks the path, then hands the write to
-    :attr:`commit`, which owns the write-mode semantics and re-indexing.
+    Resolves and access-checks the path, then hands the write to *commit*,
+    which owns the write-mode semantics and re-indexing.
     """
 
-    hint: MutationHint | None = None
-    commit: Commit = field(kw_only=True)
-
-    @override
-    async def __call__(
-        self,
+    @effect("write")
+    async def write_document(
         file_path: DocumentTargetPathArg,
         content: DocumentContentArg,
         mode: WriteModeArg = "replace",
         expected_hash: ExpectedHashArg = None,
-    ) -> ToolOutput[str]:
+    ) -> ToolReturn[str]:
         """Write content to a document.
 
         Pass ``expected_hash`` from a prior read to reject the write if the
@@ -461,33 +461,29 @@ class WriteDocumentTool(AsyncPathTool[str]):
         original such as a config, data (``.csv``), markup, or source
         file, whose searchable markdown is regenerated from the new
         content automatically.  A binary (PDF, Office document,
-        spreadsheet, image, video) cannot be written — replace it by
+        spreadsheet, image, video) cannot be written.  Replace it by
         uploading a new version instead.
         """
-        changeset = write_changeset(
-            self.resolved_paths, file_path, content, mode, expected_hash
-        )
+        changeset = write_changeset(paths, file_path, content, mode, expected_hash)
 
-        with mutation_errors(ToolRetry):
-            data = await self.commit(changeset)
+        with mutation_errors(Retry):
+            data = await commit(changeset)
 
-        return ToolOutput(data=_hinted(self.hint, data, changeset.locations[0]))
+        return tool_return(_hinted(hint, data, changeset.locations[0]))
+
+    return write_document
 
 
-@dataclass(slots=True, frozen=True)
-class MoveDocumentsTool(AsyncPathTool[str]):
-    """Move or rename documents and directories, all together or not at all.
+def move_documents(paths: tuple[SearchPath, ...], *, commit: Commit) -> ToolFunc:
+    """The tool that moves or renames documents and directories below *paths*, all together or not at all.
 
     Both ends of every move are resolved against the writable span, so a
     cross-workspace move is allowed exactly when the run may write the source
-    and the destination, and :attr:`commit` routes each end back to its own
-    root.
+    and the destination, and *commit* routes each end back to its own root.
     """
 
-    commit: Commit = field(kw_only=True)
-
-    @override
-    async def __call__(self, moves: DocumentMovesArg) -> ToolOutput[str]:
+    @effect("write")
+    async def move_documents(moves: DocumentMovesArg) -> ToolReturn[str]:
         """Move documents or directories, renaming them when the name differs.
 
         This is how documents are renamed or re-filed: an entry keeps its
@@ -500,20 +496,19 @@ class MoveDocumentsTool(AsyncPathTool[str]):
         or swapping two names, is one call, and the batch is checked as a
         whole before anything moves and lands completely or not at all.
         """
-        changeset = move_changeset(self.resolved_paths, moves)
+        changeset = move_changeset(paths, moves)
 
-        with mutation_errors(ToolRetry):
-            return ToolOutput(data=await self.commit(changeset))
+        with mutation_errors(Retry):
+            return tool_return(await commit(changeset))
+
+    return move_documents
 
 
-@dataclass(slots=True, frozen=True)
-class DeleteDocumentsTool(AsyncPathTool[str]):
-    """Delete documents with everything derived from them, all or none."""
+def delete_documents(roots: tuple[SearchPath, ...], *, commit: Commit) -> ToolFunc:
+    """The tool that deletes documents below *roots* with everything derived from them, all or none."""
 
-    commit: Commit = field(kw_only=True)
-
-    @override
-    async def __call__(self, paths: DeletePathsArg) -> ToolOutput[str]:
+    @effect("write")
+    async def delete_documents(paths: DeletePathsArg) -> ToolReturn[str]:
         """Delete documents and everything belonging to them.
 
         The searchable markdown, the original it was projected from, its
@@ -523,7 +518,9 @@ class DeleteDocumentsTool(AsyncPathTool[str]):
         cannot be undone: ask the user before deleting anything they did not
         name.
         """
-        changeset = delete_changeset(self.resolved_paths, paths)
+        changeset = delete_changeset(roots, paths)
 
-        with mutation_errors(ToolRetry):
-            return ToolOutput(data=await self.commit(changeset))
+        with mutation_errors(Retry):
+            return tool_return(await commit(changeset))
+
+    return delete_documents

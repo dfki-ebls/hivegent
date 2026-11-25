@@ -12,20 +12,23 @@ from typing import Any
 import httpx2
 import pytest
 from pydantic_ai import FunctionToolset, ModelRetry, models
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.usage import UsageLimits
 
 import hivegent.llm as llm_module
-from hivegent.agents.app import turn_usage_limits, user_agent
+from hivegent.agents import context
+from hivegent.agents.app import chat_agent, turn_usage_limits
 from hivegent.agents.capabilities import build_capabilities
 from hivegent.agents.common import UserDeps
-from hivegent.config import InferenceProvider
-from hivegent.db.conversations import _dump_messages, _load_messages
+from hivegent.config.llm import InferenceProvider, LlmProviderSettings
+from hivegent.db.conversations.postgres import _dump_message, _load_message
 from hivegent.llm import create_openai_chat_model
-from hivegent.prompts import FENCE_TAG
+from hivegent.prompts import FENCE_TAG, compose_instructions
+from hivegent.security import OperatorUrl
+from hivegent.shared.l10n import Localized
 from hivegent.store import User
-from hivegent.types import Mode, ToolsSpec
-from tests.helpers import owned
+from hivegent.types import Mode
+from tests.helpers import in_run, owned
 
 type Payload = dict[str, Any]
 
@@ -99,22 +102,27 @@ async def test_each_request_extends_the_previous_one(
         return httpx2.Response(200, json=replies.pop(0))
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    monkeypatch.setattr(llm_module, "get_trusted_http_client", lambda: client)
+    monkeypatch.setattr(llm_module, "get_trusted_http_client", lambda *_: client)
     model = create_openai_chat_model(
         "qwen3.8-27b",
-        api_key="test",
-        base_url="http://llm/v1",
-        inference_provider=InferenceProvider.VLLM,
-        base_url_is_trusted=True,
+        LlmProviderSettings(
+            base_url=OperatorUrl("http://llm/v1"),
+            inference_provider=InferenceProvider.VLLM,
+        ),
     )
 
     broken = FunctionToolset[UserDeps]()
 
-    @broken.tool_plain(name="broken", retries=4)
+    @broken.tool_plain(
+        name="broken",
+        retries=4,
+        metadata={"effect": "read"},
+    )
     def _broken() -> str:
         raise ModelRetry("still broken")
 
     turns: list[int] = []
+    stored: list[Payload] = []
 
     async def turn(
         history: Sequence[ModelMessage],
@@ -125,33 +133,44 @@ async def test_each_request_extends_the_previous_one(
     ) -> list[ModelMessage]:
         turns.append(len(requests))
         replies.extend(script)
-        result = await user_agent.run(
-            "hi",
-            model=model,
-            deps=UserDeps(
-                user=User("u"),
-                mode=mode,
-                conversation=owned("c1"),
-                relevant_documents=relevant,
+        deps = UserDeps(
+            user=User("u"),
+            mode=mode,
+            conversation=owned("c1"),
+            relevant_documents=relevant,
+        )
+        result = await in_run(
+            deps,
+            chat_agent.run(
+                "hi",
+                model=model,
+                deps=deps,
+                capabilities=build_capabilities(deps, extra=[broken]),
+                instructions=compose_instructions("en"),
+                message_history=list(history),
+                usage_limits=limits,
             ),
-            capabilities=build_capabilities(
-                ToolsSpec(), extra=[broken], mode=mode, language="en"
-            ),
-            instructions="chat instructions",
-            message_history=list(history),
-            usage_limits=limits,
         )
         assert not replies
 
-        # Every turn starts from the stored conversation, as a chat turn does.
-        return _load_messages(_dump_messages(result.all_messages()))
+        # Every turn starts from the stored conversation, as a chat turn does,
+        # which keeps the prompt of its first request once.
+        messages = result.all_messages()
+        prompt = next(m.instructions for m in messages if isinstance(m, ModelRequest))
+        payloads = [_dump_message(m, prompt) for m in messages]
+        stored.extend(payloads)
+
+        return [_load_message(payload, prompt) for payload in payloads]
 
     # The memory is reported, and a tool call follows within the turn.
     history = await turn(
         (), "interactive", frozenset({"~/a.md"}), [_call_broken(-1), _ANSWER]
     )
-    # The selection and the mode change, and a tool fails until its retry
-    # note fires mid-turn.
+    # The day, the selection, and the mode change, and a tool fails until its
+    # retry note fires mid-turn.
+    monkeypatch.setattr(
+        context, "date_note", lambda _today: Localized(en="Today is tomorrow.", de="")
+    )
     history = await turn(
         history,
         "write",
@@ -169,7 +188,7 @@ async def test_each_request_extends_the_previous_one(
 
     # Each change did reach the model, or the checks below would hold vacuously.
     sent = json.dumps(requests[-1]["messages"])
-    assert "~/b.md" in sent and "Write mode" in sent
+    assert "~/b.md" in sent and "Write mode" in sent and "Today is tomorrow." in sent
     assert "failed 3 times in a row" in sent
     assert "most of its 4 model requests" in sent
     assert f"<{FENCE_TAG}>" in sent
@@ -179,6 +198,9 @@ async def test_each_request_extends_the_previous_one(
         assert current["tools"] == previous["tools"]
         prefix = _rendered(current["messages"])[: len(previous["messages"])]
         assert prefix == _rendered(previous["messages"])
+
+    # No request stores the prompt it was sent under.
+    assert not any("instructions" in payload for payload in stored)
 
     # Only a turn's first request may carry a new user message.
     for index in set(range(1, len(requests))) - set(turns):

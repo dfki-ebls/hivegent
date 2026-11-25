@@ -1,62 +1,78 @@
-"""Retrieval tool over the global cbrkit-backed vector index.
+"""Retrieval tool over a memory of chunks, an `exar.typing.Memory`.
 
-One storage backs every casebase; per-casebase scoping is enforced by
-an optional ``filter_factory`` the caller supplies — its async return
-is compiled to a SQL-level WHERE on the cbrkit query, so rows outside
-the caller's scope never enter the candidate set.
+The caller supplies the memory, which scopes what a search may find, such as
+the chunks of the documents the caller may read (`hivegent.retrieval`).
 """
 
-import logging
-from collections.abc import Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar, Literal, cast, override
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Annotated, Literal
+from uuid import UUID
 
-import cbrkit
 import logfire
-from cbrkit import filter as cbrkit_filter
-from cbrkit.typing import AsyncRetrieverFunc
-from pydantic import Field
+from cbrkit.indexable import Dense, Hybrid, Search, Sparse
+from exar.text import LineClip, hint_suffix, number_lines
+from exar.tools import MAX_BATCH_ITEMS, effect
+from exar.tools.batch import batch_field, tool_return
+from exar.tools.common import FullLinesArg, line_clip
+from exar.tools.files import BLOCK_SEP
+from exar.typing import Hit, Memory
+from pydantic import BaseModel, Field
+from pydantic_ai import ToolReturn
 
-from .base import AsyncTool, FullLinesArg, ToolOutput, batch_field
-from .formatting import (
-    BLOCK_SEP,
-    LineClip,
-    annotate_lines,
-    hint_suffix,
-)
+from .base import ToolFunc
 
 __all__ = [
+    "SEARCHES",
+    "RetrievedChunk",
     "SearchMaxResultsArg",
     "SearchQueriesArg",
-    "SearchResult",
     "SearchType",
     "SearchTypeArg",
-    "VectorSearchTool",
+    "search",
 ]
-
-logger = logging.getLogger(__name__)
 
 type SearchType = Literal["dense", "sparse", "hybrid"]
 
-VectorStorage = cbrkit.typing.AsyncFilterableIndexableFunc[
-    cbrkit.typing.Casebase[str, Any], Collection[str]
-]
+SEARCHES: Mapping[SearchType, Search] = {
+    "dense": Dense(),
+    "sparse": Sparse(),
+    "hybrid": Hybrid(),
+}
+"""The cbrkit search of every search type."""
 
-_RRF_K = 60
-"""Reciprocal rank fusion's damping constant, the value its authors chose."""
 
+class RetrievedChunk(BaseModel):
+    """A chunk retrieved from search, ranked by its position in the results.
 
-@dataclass(slots=True, frozen=True)
-class SearchResult:
-    """A single search result with key, text, and relevance score.
-
-    The score is the chunk's reciprocal rank fusion over the call's queries,
-    which orders the results and means nothing beyond that.
+    It carries no score: a hybrid score is normalised per query and several
+    queries fuse their ranks, so a score orders the results but says nothing
+    about how relevant any one is, and a threshold on it would mislead.
     """
 
-    key: str
-    text: str
-    score: float
+    store_key: str | None = Field(
+        default=None,
+        description="Source store identifier (e.g. 'user:alice', 'group:eng')",
+    )
+    filename: str = Field(description="The document filename")
+    chunk_index: int = Field(description="Chunk index within the document")
+    text: str = Field(description="The chunk text content")
+    token_count: int = Field(description="Number of tokens in the chunk")
+    start_line: int = Field(
+        description="1-based start line number in the original document"
+    )
+    end_line: int = Field(
+        description="1-based end line number in the original document"
+    )
+    start_index: int = Field(
+        description="Start character index in the original document (for frontend highlighting only)",
+    )
+    end_index: int = Field(
+        description="End character index in the original document (for frontend highlighting only)",
+    )
+    image_path: str | None = Field(
+        default=None,
+        description="Workspace-relative path to the original image file when this chunk describes an image",
+    )
 
 
 SearchQueriesArg = Annotated[
@@ -70,7 +86,8 @@ SearchQueriesArg = Annotated[
         "returned once. Phrase each in the language the documents are likely "
         "written in, and add phrasings in another language (e.g. English or "
         "the user's) or other wordings of the question in the same call "
-        "rather than retrying."
+        "rather than retrying.",
+        max_items=MAX_BATCH_ITEMS,
     ),
 ]
 _MAX_SEARCH_RESULTS = 1000
@@ -95,54 +112,34 @@ SearchTypeArg = Annotated[
 ]
 
 
-@dataclass(slots=True, frozen=True)
-class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
-    """Search the global vector index with SQL-level scope filtering.
+def search[V](
+    *,
+    memory: Callable[[SearchType], Awaitable[Memory[UUID, V]]],
+    result_mapper: Callable[[Sequence[Hit[UUID, V]]], Awaitable[list[RetrievedChunk]]],
+    max_line_chars: int = 2000,
+) -> ToolFunc:
+    """The tool that searches a memory of chunks with several queries at once.
 
     Args:
-        storage_factory: Async callable returning the cbrkit storage
-            handle.  Resolved lazily so the tool can be constructed
-            before storage is initialised.
-        filter_factory: Async callable returning a cbrkit
-            :class:`cbrkit_filter.Filter` (or ``None``) that scopes the
-            search to the caller's accessible documents.  Resolved per
-            call so the filter sees fresh data (e.g. newly accessible
-            groups).
-        result_mapper: Async callable that maps the raw ranked results
-            to the final type — typically enriches with metadata from
-            SQL.
-        reranker_factory: Async callable returning a cbrkit reranker (or
-            ``None`` when reranking is disabled).  When present, the base
-            retriever over-fetches and the reranker rescores the candidate
-            pool as a second pipeline stage.
-        candidate_multiplier: How many times ``max_results`` to fetch as the
-            rerank candidate pool.  Only applied when a reranker is active.
+        memory: Async callable that returns the memory searched with a search
+            type, such as the chunks of the documents the caller may read.
+            Resolved per call, so the tool can be constructed before the
+            index is initialised.
+        result_mapper: Async callable that maps the hits to the chunks
+            they are, typically enriching them with their documents from SQL.
         max_line_chars: Per-line truncation cap for the formatted output,
             guarding the context against a chunk carrying a base64-embedded
             image or other very long line, unless the call passes
             ``full_lines``.
     """
 
-    injectable: ClassVar[bool] = True
-    """Retrieval reaches the database, which no program can do for itself."""
-
-    storage_factory: Callable[[], Awaitable[VectorStorage]] | None = None
-    filter_factory: Callable[[], Awaitable[cbrkit_filter.Filter | None]] | None = None
-    result_mapper: Callable[[Sequence[SearchResult]], Awaitable[list[R]]] | None = None
-    reranker_factory: (
-        Callable[[], Awaitable[AsyncRetrieverFunc[str, str, float] | None]] | None
-    ) = None
-    candidate_multiplier: int = 1
-    max_line_chars: int = 2000
-
-    @override
-    async def __call__(
-        self,
+    @effect("read")
+    async def search(
         queries: SearchQueriesArg,
         max_results: SearchMaxResultsArg = 10,
         search_type: SearchTypeArg = "hybrid",
         full_lines: FullLinesArg = False,
-    ) -> ToolOutput[list[R]]:
+    ) -> ToolReturn[list[RetrievedChunk]]:
         """Search indexed chunks using dense, sparse, or hybrid retrieval.
 
         Start here to find content, since it scales to large collections,
@@ -152,133 +149,39 @@ class VectorSearchTool[R = SearchResult](AsyncTool[list[R]]):
         Results are candidates, not proof of relevance. Read and check the
         relevant passages against the task before using them in an answer.
         """
-        rankings = await self._search(
-            list(dict.fromkeys(queries)), max_results, search_type
-        )
-        raw = _fuse(rankings, max_results)
-
-        final: list[R] = (
-            await self.result_mapper(raw)
-            if self.result_mapper is not None
-            else cast(list[R], raw)
-        )
-
-        if not final:
-            return ToolOutput(data=final, formatted="(no results)")
-
-        clip = LineClip(None if full_lines else self.max_line_chars)
-        formatted = _format_results(final, clip) + hint_suffix(clip.hints())
-
-        return ToolOutput(data=final, formatted=formatted)
-
-    async def _search(
-        self, queries: list[str], max_results: int, search_type: SearchType
-    ) -> list[list[SearchResult]]:
-        """Run the cbrkit queries with the scope filter applied at SQL level.
-
-        The storage, filter, and reranker are resolved once for all of them,
-        and each query comes back as its own ranking, best first.
-        """
-        if self.storage_factory is None:
-            return []
-        storage = await self.storage_factory()
-        if not await storage.has_index():
-            return []
-        where = await self.filter_factory() if self.filter_factory is not None else None
-        reranker = (
-            await self.reranker_factory() if self.reranker_factory is not None else None
-        )
-        candidate_pool = (
-            max_results * self.candidate_multiplier
-            if reranker is not None
-            else max_results
-        )
         with logfire.span(
             "vector.search",
             search_type=search_type,
             max_results=max_results,
             query_count=len(queries),
-            reranked=reranker is not None,
-            candidate_pool=candidate_pool,
         ) as span:
-            retriever = cbrkit.retrieval.indexable.pgvector_async(
-                storage=cast(Any, storage),
-                search_type=search_type,
-                where=where,
-                limit=candidate_pool,
-            )
-            retrievers: list[Any] = (
-                [retriever, reranker] if reranker is not None else [retriever]
-            )
-            result = await cbrkit.retrieval.apply_queries_indexed_async(
-                {query: query for query in queries}, retrievers
-            )
-            rankings = [
-                [
-                    SearchResult(
-                        key=cast(str, key),
-                        text=step.casebase[key],
-                        score=float(step.similarities[key]),
-                    )
-                    for key in step.ranking
-                ]
-                for step in map(result.final_step.queries.__getitem__, queries)
-            ]
-            span.set_attribute("result_count", sum(map(len, rankings)))
+            chunks = await memory(search_type)
+            hits = await chunks.search(*dict.fromkeys(queries), limit=max_results)
+            span.set_attribute("result_count", len(hits))
 
-            return rankings
+        final = await result_mapper(hits)
+
+        if not final:
+            return tool_return(final, "(no results)")
+
+        clip = line_clip(max_line_chars, full_lines)
+
+        return tool_return(
+            final, _format_results(final, clip) + hint_suffix(clip.hints())
+        )
+
+    return search
 
 
-def _fuse(rankings: Sequence[Sequence[SearchResult]], limit: int) -> list[SearchResult]:
-    """Merge per-query rankings by reciprocal rank fusion, keeping the top *limit*.
-
-    Fused by rank rather than score, since cbrkit min-max normalises each
-    query's scores on its own and they are not comparable across queries.  A
-    chunk several queries found is summed into one result.
-
-    >>> a, b, c = (SearchResult(k, k, 1.0) for k in "abc")
-    >>> [r.key for r in _fuse([[a, b], [c, b]], 2)]
-    ['b', 'a']
-    """
-    scores: dict[str, float] = {}
-    texts: dict[str, str] = {}
-
-    for ranking in rankings:
-        for rank, result in enumerate(ranking, 1):
-            scores[result.key] = scores.get(result.key, 0.0) + 1 / (_RRF_K + rank)
-            texts.setdefault(result.key, result.text)
-
-    best = sorted(scores, key=scores.__getitem__, reverse=True)[:limit]
-
-    return [SearchResult(key=key, text=texts[key], score=scores[key]) for key in best]
-
-
-def _format_results(results: Sequence[Any], clip: LineClip) -> str:
+def _format_results(results: Sequence[RetrievedChunk], clip: LineClip) -> str:
     """Render search results as a human/LLM-readable string block.
 
-    Accepts both :class:`SearchResult` and ``RetrievedChunk`` via attribute
-    lookup; either is a valid downstream of :class:`VectorSearchTool`.
     *clip* truncates each line so a long line in a chunk cannot flood the
     context.
     """
-    blocks: list[str] = []
-    for i, r in enumerate(results, 1):
-        key = getattr(r, "key", None) or getattr(r, "filename", "?")
-        chunk_idx = getattr(r, "chunk_index", None)
-        text: str = getattr(r, "text", "")
-        start_line = getattr(r, "start_line", None)
-        end_line = getattr(r, "end_line", None)
-        label = f"{key}#{chunk_idx}" if chunk_idx is not None else key
-        if start_line is not None and end_line is not None:
-            label += f" L{start_line}-{end_line}"
-            text = annotate_lines(text.splitlines(), start_line, clip)
-        else:
-            text = "\n".join(map(clip, text.splitlines()))
-        # The leading [i] is the relevance rank (results are sorted best-first).
-        # We deliberately omit the score: cbrkit min-max normalizes per query,
-        # so it pins the top hit to 100% and the worst to 0% even when every
-        # result is off-topic, which misleads the model. Rank carries the
-        # ordering without fabricating an absolute relevance magnitude.
-        blocks.append(f"[{i}] {label}\n{text}")
-
-    return BLOCK_SEP.join(blocks)
+    # The leading [i] is the relevance rank (results are sorted best-first).
+    return BLOCK_SEP.join(
+        f"[{i}] {r.filename}#{r.chunk_index} L{r.start_line}-{r.end_line}\n"
+        + number_lines(r.text.splitlines(), r.start_line, clip)
+        for i, r in enumerate(results, 1)
+    )

@@ -8,49 +8,44 @@ which is the serialised ``data`` channel and not the Python objects behind it.
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, make_dataclass, replace
+from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, Literal, override
+from typing import Annotated
 
 import pytest
+from exar.tools import Retry, effect, tool_action
+from exar.tools.batch import tool_return
 from pydantic import BaseModel, Field, JsonValue
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_monty import AsyncMonty
 
 from hivegent import llm
-from hivegent.agents.capabilities import check_tool_settings, unlisted_tool_names
-from hivegent.agents.common import Completions, UserDeps
-from hivegent.agents.tools.explore import EXPLORE_FACTORIES
+from hivegent.agents.capabilities import check_tool_settings
+from hivegent.agents.common import Completions, UserDeps, static_tools
+from hivegent.agents.policy import listed
+from hivegent.agents.tools.explore import explore_toolset
 from hivegent.agents.tools.python import (
     INJECTABLE_TOOL_NAMES,
     SANDBOX_FUNCTION_NAMES,
     sandbox_instructions,
     sandbox_surface,
 )
-from hivegent.agents.tools.web import WEB_FACTORIES, web_enabled
 from hivegent.config import settings
 from hivegent.store import User
-from hivegent.tools.base import (
-    AsyncTool,
-    CallBudget,
-    ToolOutput,
-    ToolRetry,
-    factory_tool_name,
-    resolve_tool_cls,
-)
+from hivegent.tools.base import CallBudget, ToolFunc
 from hivegent.tools.monty import (
     HostCalls,
     MontySurface,
-    monty_declarations,
     monty_surface,
 )
-from hivegent.tools.python import RunPythonTool
-from hivegent.types import ToolsSpec
-from tests.helpers import LIMITS, run_context
+from hivegent.tools.python import run_python
+from hivegent.tools.workspace_os import MOUNT_STUB
+from tests.helpers import LIMITS, catalog, run_context
 
 QueryArg = Annotated[str, Field(description="What to look for.")]
 LimitArg = Annotated[int, Field(ge=1)]
@@ -79,48 +74,30 @@ class Wrapped:
     missing: str | None = None
 
 
-@dataclass(slots=True, frozen=True)
-class _Search(AsyncTool[list[Hit]]):
-    """Search the things."""
+@effect("read")
+async def search(query: QueryArg, limit: LimitArg = 5) -> ToolReturn[list[Hit]]:
+    """Find matching records.
 
-    @override
-    async def __call__(
-        self, query: QueryArg, limit: LimitArg = 5
-    ) -> ToolOutput[list[Hit]]:
-        """Find matching records.
+    A second paragraph the stub keeps for a tool the model may not call.
+    """
+    if not query:
+        raise Retry("give me a query")
 
-        A second paragraph the stub keeps for a tool the model may not call.
-        """
-        if not query:
-            raise ToolRetry("give me a query")
+    if query == "slow":
+        await asyncio.sleep(60)
 
-        if query == "slow":
-            await asyncio.sleep(60)
-
-        return ToolOutput(data=[Hit(filename="a.md", score=0.5)][:limit])
+    return tool_return([Hit(filename="a.md", score=0.5)][:limit])
 
 
-@dataclass(slots=True, frozen=True)
-class _Wrap(AsyncTool[Wrapped]):
-    """Wrap the things."""
-
-    @override
-    async def __call__(self) -> ToolOutput[Wrapped]:
-        """Return a nested record."""
-        return ToolOutput(data=Wrapped(rows=(("a", "b"),), nested=(Nested("x"),)))
+@effect("read")
+async def wrap() -> ToolReturn[Wrapped]:
+    """Return a nested record."""
+    return tool_return(Wrapped(rows=(("a", "b"),), nested=(Nested("x"),)))
 
 
-def _search(_deps: None) -> _Search:
-    return _Search()
-
-
-def _wrap(_deps: None) -> _Wrap:
-    return _Wrap()
-
-
-def _surface(*factories: Callable[[None], AsyncTool[Any]]) -> MontySurface:
-    """The surface of *factories*, each built from no deps."""
-    return monty_surface({factory: factory(None) for factory in factories}, frozenset())
+def _surface(*funcs: ToolFunc) -> MontySurface:
+    """The surface of *funcs*, none of which the model holds."""
+    return monty_surface(funcs, frozenset())
 
 
 @pytest.fixture()
@@ -133,7 +110,7 @@ def deps(data_dir: Path) -> UserDeps:
 
 class TestStub:
     def test_declares_the_serialised_shape(self) -> None:
-        stubs = _surface(_search).stubs
+        stubs = _surface(search).stubs
 
         # The model is a dict once it has crossed and arguments are keyword-only.
         assert "class Hit(TypedDict):" in stubs
@@ -144,14 +121,14 @@ class TestStub:
         self,
     ) -> None:
         """A `sandbox_only` tool's guidance exists in the stub and nowhere else."""
-        stubs = _surface(_search).stubs
+        stubs = _surface(search).stubs
 
         assert "Find matching records." in stubs
         assert "second paragraph" in stubs
 
     def test_points_at_a_listed_tool_instead_of_repeating_it(self) -> None:
         """The model read a listed tool's documentation, so only its records stay."""
-        declared = monty_declarations([_search], frozenset({"search"}))
+        declared = monty_surface([search], frozenset({"search"})).declarations
 
         assert (
             "async def search(*, query: str, limit: int = 5) -> list[Hit]:" in declared
@@ -162,7 +139,7 @@ class TestStub:
         assert "class Hit(TypedDict):" in declared
 
     def test_a_tuple_is_a_list_and_a_defaulted_field_is_not_required(self) -> None:
-        stubs = _surface(_wrap).stubs
+        stubs = _surface(wrap).stubs
 
         assert "    rows: list[list[str]]" in stubs
         assert "    missing: NotRequired[str | None]" in stubs
@@ -171,7 +148,7 @@ class TestStub:
 
 def _bound(name: str) -> Callable[..., Awaitable[JsonValue]]:
     """The function *name* of the search surface, as one program is handed it."""
-    return HostCalls(CallBudget(10)).bind(_surface(_search))[name]
+    return HostCalls(CallBudget(10)).bind(_surface(search))[name]
 
 
 class TestHostFunction:
@@ -196,15 +173,6 @@ class TestHostFunction:
             await call(query="invoices", limit=0)
 
 
-def test_declarations_are_rendered_without_building_runtime_tools() -> None:
-    """Prompt construction needs declarations but no dependency-bound tool."""
-
-    def unavailable(_deps: None) -> _Search:
-        raise AssertionError("a runtime tool was built")
-
-    assert "async def unavailable" in monty_declarations([unavailable], frozenset())
-
-
 class TestGate:
     def test_a_disabled_tool_is_not_injected(self, deps: UserDeps) -> None:
         assert "query_table" in sandbox_surface(run_context(deps)).functions
@@ -217,38 +185,36 @@ class TestGate:
         assert "query_table" not in withheld.stubs
         assert "search" in withheld.functions
 
-    def test_the_web_pair_follows_its_master_switch(self, deps: UserDeps) -> None:
-        surface = sandbox_surface(run_context(deps))
-
-        assert ("web_fetch" in surface.functions) is web_enabled
-
 
 class TestInsideTheSandbox:
     """The surface as a program actually meets it."""
 
     @pytest.fixture()
-    async def tool(self) -> AsyncIterator[RunPythonTool]:
+    async def build(self) -> AsyncIterator[Callable[..., ToolFunc]]:
         async with AsyncMonty(min_processes=1) as pool:
-            yield RunPythonTool(
-                pool=pool, changeset_limits=LIMITS, surface=_surface(_search)
+            yield partial(
+                run_python,
+                pool=lambda: pool,
+                changeset_limits=LIMITS,
+                surface=_surface(search),
             )
 
     async def test_a_program_awaits_the_call_and_works_on_the_whole_result(
-        self, tool: RunPythonTool
+        self, build: Callable[..., ToolFunc]
     ) -> None:
         """The composition the surface exists for: call and work are one program.
 
         A tool call would have shown the model the budgeted rendering, which it
         would then have had to read back before it could compute anything.
         """
-        result = await tool(
+        result = await build()(
             "hits = await search(query='inv')\n[h['filename'] for h in hits]"
         )
 
-        assert result.data.result == "['a.md']"
+        assert result.metadata.result == "['a.md']"
 
     async def test_host_calls_are_capped_and_recorded(
-        self, tool: RunPythonTool
+        self, build: Callable[..., ToolFunc]
     ) -> None:
         program = """
 await search(query='a')
@@ -259,17 +225,17 @@ except RuntimeError as exc:
     refused = str(exc)
 refused
 """
-        result = await replace(tool, max_host_calls=2)(program)
+        result = await build(max_host_calls=2)(program)
 
-        assert "limit of 2 host function calls" in str(result.data.result)
-        assert [call.arguments for call in result.data.calls] == [
+        assert "limit of 2 host function calls" in str(result.metadata.result)
+        assert [call.arguments for call in result.metadata.calls] == [
             "query='a'",
             "query='b'",
         ]
-        assert result.data.calls[0].result == "[{'filename': 'a.md', 'score': 0.5}]"
+        assert result.metadata.calls[0].result == "[{'filename': 'a.md', 'score': 0.5}]"
 
     async def test_a_call_past_the_time_limit_is_cut_off_for_the_program_to_finish(
-        self, tool: RunPythonTool
+        self, build: Callable[..., ToolFunc]
     ) -> None:
         program = """
 results = []
@@ -280,44 +246,37 @@ for query in ['slow', 'a']:
         results.append(str(exc))
 results
 """
-        result = await replace(tool, max_wall_seconds=0.2)(program)
+        result = await build(max_wall_seconds=0.2)(program)
 
-        assert str(result.data.result).count("reached its time limit") == 2
-        assert [call.arguments for call in result.data.calls] == ["query='slow'"]
+        assert str(result.metadata.result).count("reached its time limit") == 2
+        assert [call.arguments for call in result.metadata.calls] == ["query='slow'"]
 
     async def test_a_failure_lists_the_calls_that_finished(
-        self, tool: RunPythonTool
+        self, build: Callable[..., ToolFunc]
     ) -> None:
         with pytest.raises(
-            ToolRetry, match=r"1 host call finished(.|\n)*search\(query='a'\) -> \["
+            Retry, match=r"1 host call finished(.|\n)*search\(query='a'\) -> \["
         ):
-            await tool("await search(query='a')\n1 / 0")
+            await build()("await search(query='a')\n1 / 0")
 
     async def test_type_checking_rejects_a_misread_field_before_the_run(
-        self, tool: RunPythonTool
+        self, build: Callable[..., ToolFunc]
     ) -> None:
-        checked = replace(tool, type_check=True)
+        checked = build(type_check=True)
 
-        with pytest.raises(ToolRetry, match="filenam"):
+        with pytest.raises(Retry, match="filenam"):
             await checked("hits = await search(query='inv')\nhits[0]['filenam']")
 
 
-def test_the_injectable_set_is_derived_from_what_registers_the_tools() -> None:
-    """One list, registered and filtered, so the two cannot drift.
-
-    `Tool.injectable` is a property of the tool, so a factory renamed or a
-    feature switched off moves both the tool list and the sandbox together —
-    which is why nothing has to check that an injectable name is registered.
-    """
-    assert INJECTABLE_TOOL_NAMES == {
-        factory_tool_name(f)
-        for f in (*EXPLORE_FACTORIES, *WEB_FACTORIES)
-        if resolve_tool_cls(f).injectable
-    }
+def test_the_injectable_set_is_taken_from_the_tools_the_model_holds() -> None:
+    """A program is handed the explore tools it needs, built from the list that registers them."""
+    assert INJECTABLE_TOOL_NAMES <= {td.name for td in static_tools(explore_toolset)}
     # Only a program is handed `complete`, so `sandbox_only` cannot name it.
     assert SANDBOX_FUNCTION_NAMES - INJECTABLE_TOOL_NAMES == {"complete"}
     # The mount already is the read tools, so they are not handed over again.
     assert not INJECTABLE_TOOL_NAMES & {"grep", "read_document", "list_documents"}
+    # A program looping over fetched links would carry data out by its URLs.
+    assert not INJECTABLE_TOOL_NAMES & {"web_fetch", "web_search"}
 
 
 class TestPlacement:
@@ -328,7 +287,8 @@ class TestPlacement:
     ) -> None:
         monkeypatch.setattr(settings.tools, "sandbox_only", ["query_table"])
 
-        assert "query_table" in unlisted_tool_names(ToolsSpec())
+        assert deps.policy(tool_action("query_table", "read")) == "allow"
+        assert not listed(deps.policy, tool_action("query_table", "read"))
         assert "query_table" in sandbox_surface(run_context(deps)).functions
 
     def test_a_disabled_tool_reaches_neither_surface(
@@ -337,7 +297,7 @@ class TestPlacement:
         """The operator's half holds on a deps that never carried it."""
         monkeypatch.setattr(settings.tools, "disabled", ["query_table"])
 
-        assert "query_table" in unlisted_tool_names(ToolsSpec())
+        assert deps.policy(tool_action("query_table", "read")) == "deny"
         assert "query_table" not in sandbox_surface(run_context(deps)).functions
 
     def test_the_request_withholds_a_tool_from_the_sandbox_too(
@@ -346,9 +306,7 @@ class TestPlacement:
         withheld = replace(deps, disabled_tools=frozenset({"query_table"}))
 
         assert "query_table" not in sandbox_surface(run_context(withheld)).functions
-        assert "query_table" in unlisted_tool_names(
-            ToolsSpec(disabled_tools=["query_table"])
-        )
+        assert withheld.policy(tool_action("query_table", "read")) == "deny"
 
     def test_a_tool_the_sandbox_cannot_take_fails_the_boot(
         self, monkeypatch: pytest.MonkeyPatch
@@ -367,27 +325,18 @@ def test_the_mount_declares_its_own_open_and_the_model_never_sees_it() -> None:
     `open` is.  So the surface carries neither, and the tool joins the mount's
     half in when it hands the checker its stubs.
     """
-    surface = _surface(_search)
+    surface = _surface(search)
 
     assert "def open(" not in surface.stubs
     assert "def open(" not in surface.declarations
     assert "async def search(*, query: str" in surface.declarations
-
-    stubs = RunPythonTool(pool=None, changeset_limits=LIMITS, surface=surface)._stubs()  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
-
-    assert "def open(" in stubs
-    assert surface.stubs in stubs
-
-
-def test_an_empty_surface_still_lets_a_program_open_a_document() -> None:
-    """The mount's half of the stubs does not depend on a tool being injected."""
-    assert "def open(" in RunPythonTool(pool=None, changeset_limits=LIMITS)._stubs()  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    assert "def open(" in MOUNT_STUB
 
 
 def test_an_empty_surface_is_falsy() -> None:
     """A dataclass is otherwise always truthy, which is what the prompt asks."""
     assert not _surface()
-    assert _surface(_search)
+    assert _surface(search)
 
 
 def test_a_run_given_no_tool_opens_no_api_block(
@@ -415,19 +364,12 @@ def test_two_records_sharing_a_name_are_disambiguated() -> None:
     """
     other = make_dataclass("Wrapped", [("beta", int)], frozen=True, slots=True)
 
-    @dataclass(slots=True, frozen=True)
-    class _Clash(AsyncTool[other]):  # pyright: ignore[reportInvalidTypeForm]  # ty: ignore[invalid-type-form]
-        """Clash."""
+    @effect("read")
+    async def clash() -> ToolReturn[other]:  # pyright: ignore[reportInvalidTypeForm]  # ty: ignore[invalid-type-form]
+        """Return the other record."""
+        return tool_return(other(1))
 
-        @override
-        async def __call__(self) -> ToolOutput[other]:  # pyright: ignore[reportInvalidTypeForm]  # ty: ignore[invalid-type-form]
-            """Return the other record."""
-            return ToolOutput(data=other(1))
-
-    def _clash(_deps: None) -> _Clash:
-        return _Clash()
-
-    stubs = _surface(_wrap, _clash).stubs
+    stubs = _surface(wrap, clash).stubs
 
     assert "class wrap_Wrapped(TypedDict):" in stubs
     assert "class clash_Wrapped(TypedDict):" in stubs
@@ -437,10 +379,15 @@ def test_two_records_sharing_a_name_are_disambiguated() -> None:
 class TestComplete:
     """The plain model call a program is handed and no tool list carries."""
 
+    @pytest.fixture(autouse=True)
+    def models(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "llm", catalog())
+
     def test_is_declared_and_withheld_by_name(self, deps: UserDeps) -> None:
         declared = sandbox_instructions(run_context(deps))
 
-        assert "async def complete(*, prompt: str) -> str:" in declared
+        assert "async def complete(" in declared
+        assert "reasoning: Literal['low', 'medium', 'high'] | None = None" in declared
         assert "Use `complete` to classify" in declared
         assert "complete" in sandbox_surface(run_context(deps)).functions
 
@@ -469,12 +416,14 @@ except ValueError as exc:
 """
 
         async with AsyncMonty(min_processes=1) as pool:
-            tool = RunPythonTool(
-                pool=pool, changeset_limits=LIMITS, surface=sandbox_surface(context)
+            tool = run_python(
+                pool=lambda: pool,
+                changeset_limits=LIMITS,
+                surface=sandbox_surface(context),
             )
             result = await tool(program)
 
-        assert result.data.result == (
+        assert result.metadata.result == (
             "['sunny', 'complete may be called 1 times per turn and this turn "
             "has used them all. Finish without it.']"
         )
@@ -499,8 +448,8 @@ except RuntimeError:
 """
 
         async with AsyncMonty(min_processes=1) as pool:
-            tool = RunPythonTool(
-                pool=pool,
+            tool = run_python(
+                pool=lambda: pool,
                 changeset_limits=LIMITS,
                 surface=sandbox_surface(run_context(deps)),
             )
@@ -552,20 +501,21 @@ except RuntimeError:
     async def test_retries_cannot_consume_reserved_slots(
         self, deps: UserDeps, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        def unknown_tool(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart("missing", {})])
+
+        monkeypatch.setattr(llm, "_completion_agent", Agent(retries=2))
         monkeypatch.setattr(
-            llm, "_completion_agent", Agent(output_type=Literal["ok"], retries=2)
-        )
-        monkeypatch.setattr(
-            llm,
-            "model_from_config",
-            lambda _config: TestModel(custom_output_args={"response": "invalid"}),
+            llm, "model_from_config", lambda _config: FunctionModel(unknown_tool)
         )
         context = run_context(deps)
         context.usage.requests = 1
         context.usage_limits = UsageLimits(request_limit=3)
         complete = sandbox_surface(context).functions["complete"]
 
-        with pytest.raises(ToolRetry, match="keeps one for its response"):
+        with pytest.raises(Retry, match="keeps one for its response"):
             await complete(prompt="retry")
 
         assert context.usage.requests == 2

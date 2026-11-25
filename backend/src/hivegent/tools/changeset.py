@@ -25,24 +25,29 @@ another one deletes that one, and every other node is a delete, a new
 directory, or a whole write.  A rename to or from a gated root was recorded as
 a write and a removal.
 
-Every gated operation carries the stat the file had when the program first
-touched it, so a version landing in between is refused at commit rather than
-overwritten.
+Every operation carries the stat the file had when the program first touched
+it, a direct root's too, so a version landing in between is refused at commit
+rather than overwritten, however long a staged changeset waits.
 
 This module names no store and no folder: the agent layer routes every item
-to its root, writes the direct ones, and plans, stages, or applies the gated
-ones through callbacks, the way every other mutation tool reaches the
-workspace.
+to its root and applies the changeset at once, or plans and stages all of it
+when any item's root asks, through callbacks, the way every other mutation
+tool reaches the workspace.
 """
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Annotated, Literal, override
+from typing import Annotated, Literal
 
+from exar.text import plural
+from exar.tools import Retry, effect
+from exar.tools.batch import tool_return
 from pydantic import Field
+from pydantic_ai import ToolReturn
 
-from ..changes import (
+from .base import Direct, ToolFunc
+from .changes import (
     Changeset,
     ChangesetSummary,
     CreateDir,
@@ -51,26 +56,25 @@ from ..changes import (
     Operation,
     Write,
 )
-from ..entries import (
+from .entries import (
     is_below,
     is_description_file,
     repoint_asset_refs,
     resolve_entry_paths,
     stem_path_from_reference,
 )
-from ..humanize import pluralize
-from .base import AsyncTool, Direct, ToolOutput, ToolRetry
 from .mutations import check_delimited_rows
 from .workspace_os import Deleted, Dir, Entry, Node, Ref, Text, WorkspaceOS
 
 __all__ = [
     "AppliedChanges",
     "ApplyChanges",
-    "ApplyChangesTool",
     "ChangesetIdArg",
     "ChangesetOutcome",
     "CommitChanges",
     "PendingChanges",
+    "apply_changes",
+    "changes_report",
     "stage_changes",
 ]
 
@@ -82,10 +86,13 @@ class PendingChanges:
     Attributes:
         changeset_id: What ``apply_changes`` applies them by.
         summary: What the user is asked to approve.
+        held: How many changes to a direct root (``/tmp``) wait with them, left
+            out of *summary* since nobody approves them.
     """
 
     changeset_id: str
     summary: ChangesetSummary
+    held: int
     status: Literal["pending"] = "pending"
 
 
@@ -105,17 +112,45 @@ type ChangesetOutcome = PendingChanges | AppliedChanges
 """What became of a program's workspace changes."""
 
 CommitChanges = Callable[[Changeset[str]], Awaitable[ChangesetOutcome | None]]
-"""Write a program's direct changes, then apply or stage its gated ones.
+"""Apply a program's changes at once, or stage all of them when any of them asks.
 
-``None`` when the program changed no gated root.
+``None`` when the program changed no gated root and nothing was staged.
 """
 
 ApplyChanges = Callable[[str], Awaitable[tuple[str, ...]]]
 """Apply a staged changeset by id, returning the gateway's report of each change."""
 
 
+def changes_report(changeset: ChangesetOutcome | None) -> str:
+    """Tell the model what a changeset did and what is left to do about it."""
+    match changeset:
+        case None:
+            return ""
+        case PendingChanges(changeset_id=changeset_id, summary=summary, held=held):
+            changes = f"{summary.count} {plural(summary.count, 'change')}"
+            lines = "\n".join(summary.lines())
+            tmp = (
+                "/tmp is unchanged too, since the changeset also holds the "
+                f"program's {held} {plural(held, 'change')} there.\n"
+                if held
+                else ""
+            )
+
+            return (
+                f"Staged {changes}, and nothing in the workspace has changed yet:\n"
+                f"{lines}\n{tmp}Call apply_changes with changeset_id='{changeset_id}' "
+                "to apply them, and the user approves them there. Do not make them again "
+                "unless that call says the changeset is stale."
+            )
+        case _:
+            count = len(changeset.reports)
+            reports = "\n".join(changeset.reports)
+
+            return f"Applied {count} {plural(count, 'change')} to the workspace:\n{reports}"
+
+
 def _stem(entry: Entry) -> str:
-    return entry.search_path.prefixed(stem_path_from_reference(entry.local))
+    return entry.search_path.mount.render(stem_path_from_reference(entry.local))
 
 
 @dataclass(slots=True)
@@ -138,9 +173,9 @@ class _Stager:
         paths = resolve_entry_paths(sp.path, entry.local, self.fs.listdir)
 
         return {
-            sp.prefixed(path)
+            sp.mount.render(path)
             for path in (paths.description_path, paths.original_path)
-            if path is not None and self.fs.base(sp.prefixed(path)) is not None
+            if path is not None and self.fs.base(sp.mount.render(path)) is not None
         }
 
     def _under(self, key: str) -> Entry | None:
@@ -246,7 +281,12 @@ class _Stager:
             else:
                 self.delete(min(parts), primaries | parts)
 
-    def stage(self) -> None:
+    def classify(
+        self,
+    ) -> tuple[
+        dict[str, tuple[Entry, dict[str, str]]], list[tuple[str, str, Entry | None]]
+    ]:
+        """Stage the directory moves, returning the file moves by stem and the texts written."""
         fs = self.fs
         moved: dict[str, tuple[Entry, dict[str, str]]] = {}
         texts: list[tuple[str, str, Entry | None]] = []
@@ -270,24 +310,25 @@ class _Stager:
             if isinstance(node, Text):
                 texts.append((key, node.content, entry))
 
-        # A rename onto a file replaces it, so that file goes like a removed one.
-        gone = [
+        return moved, texts
+
+    def gone(self) -> list[Entry]:
+        """The disk entries the program removed or renamed another onto.
+
+        A rename onto a file replaces it, so that file goes like a removed one.
+        """
+        return [
             under
             for key, node in self.nodes.items()
             if isinstance(node, Deleted | Ref)
             or (isinstance(node, Text) and node.origin)
             if (under := self._under(key)) is not None
         ]
-        gone_paths = {entry.canonical for entry in gone}
-        lands: dict[str, str] = {}
 
-        for entry, parts in moved.values():
-            lands |= self.carry(entry, parts, gone_paths)
-
-        self.remove(
-            [entry for entry in gone if entry.is_dir or _stem(entry) not in moved]
-        )
-
+    def write_texts(
+        self, texts: list[tuple[str, str, Entry | None]], lands: dict[str, str]
+    ) -> None:
+        """Stage every text, written where its file lands once a rename carried it."""
         for key, content, entry in texts:
             # Text written over a file is that file's, which a moved entry takes
             # along, and which a removed entry no longer has.
@@ -301,6 +342,8 @@ class _Stager:
 
             self.write(target, content, base, names)
 
+    def create_dirs(self) -> None:
+        """Stage the directories that stay empty."""
         created = [
             key for key, node in self.nodes.items() if not isinstance(node, Deleted)
         ]
@@ -308,10 +351,25 @@ class _Stager:
         for key, node in self.nodes.items():
             if (
                 isinstance(node, Dir)
-                and fs.lookup(key, below=True) is None
+                and self.fs.lookup(key, below=True) is None
                 and not any(is_below(path, key) for path in created)
             ):
                 self.operations.append(CreateDir(key))
+
+    def stage(self) -> None:
+        moved, texts = self.classify()
+        gone = self.gone()
+        gone_paths = {entry.canonical for entry in gone}
+        lands: dict[str, str] = {}
+
+        for entry, parts in moved.values():
+            lands |= self.carry(entry, parts, gone_paths)
+
+        self.remove(
+            [entry for entry in gone if entry.is_dir or _stem(entry) not in moved]
+        )
+        self.write_texts(texts, lands)
+        self.create_dirs()
 
 
 def _direct(fs: WorkspaceOS, nodes: dict[str, Node]) -> list[Operation[str]]:
@@ -320,8 +378,11 @@ def _direct(fs: WorkspaceOS, nodes: dict[str, Node]) -> list[Operation[str]]:
     A node a rename carried here is a move from the disk path it came from, and
     every disk file the program removed or renamed another onto goes, unless a
     rename carries it elsewhere.  Sources and deletes name the disk as it is,
-    so a file below a renamed directory is deleted where it lies now.
+    so a file below a renamed directory is deleted where it lies now.  Each
+    carries its basis as a gated one does, and a write the file it replaces,
+    or must not find, since a staged changeset may land long after the run.
     """
+    bases = fs.bases
     origins = {
         key: node.origin
         for key, node in nodes.items()
@@ -329,22 +390,28 @@ def _direct(fs: WorkspaceOS, nodes: dict[str, Node]) -> list[Operation[str]]:
     }
     carried = set(origins.values())
     operations: list[Operation[str]] = [
-        Move(origin, key) for key, origin in origins.items()
+        Move(origin, key, bases.get(origin)) for key, origin in origins.items()
     ]
 
     for key, node in nodes.items():
         under = fs.lookup(key, below=True)
+        replaced = (
+            under.canonical
+            if isinstance(under, Entry) and under.canonical not in carried
+            else None
+        )
 
-        if (
-            (isinstance(node, Deleted) or key in origins)
-            and isinstance(under, Entry)
-            and under.canonical not in carried
-        ):
-            operations.append(Delete(under.canonical))
+        if replaced is not None and (isinstance(node, Deleted) or key in origins):
+            operations.append(Delete(replaced, bases.get(replaced)))
 
         match node:
-            case Text():
-                operations.append(Write(key, node.content))
+            case Text(origin=origin):
+                read = origin or replaced
+                operations.append(
+                    Write(key, node.content, "create")
+                    if read is None
+                    else Write(key, node.content, "replace", bases.get(read))
+                )
             case Dir():
                 operations.append(CreateDir(key))
             case Ref() | Deleted():
@@ -360,7 +427,7 @@ def stage_changes(fs: WorkspaceOS) -> Changeset[str] | None:
     as entries and directories, the direct half as plain files.
 
     Raises:
-        ToolRetry: When the gated changes cannot be applied as one changeset,
+        Retry: When the gated changes cannot be applied as one changeset,
             naming every reason at once so one corrected run fixes them all.
     """
     gated: dict[str, Node] = {}
@@ -373,7 +440,7 @@ def stage_changes(fs: WorkspaceOS) -> Changeset[str] | None:
     stager.stage()
 
     if stager.refusals:
-        raise ToolRetry("\n".join(stager.refusals))
+        raise Retry("\n".join(stager.refusals))
 
     operations = (*stager.operations, *_direct(fs, direct))
 
@@ -386,14 +453,11 @@ ChangesetIdArg = Annotated[
 ]
 
 
-@dataclass(slots=True, frozen=True)
-class ApplyChangesTool(AsyncTool[str]):
-    """Apply a changeset a sandboxed program staged, all or nothing."""
+def apply_changes(*, apply: ApplyChanges) -> ToolFunc:
+    """The tool that applies a changeset a sandboxed program staged, all or nothing, through *apply*."""
 
-    apply: ApplyChanges = field(kw_only=True)
-
-    @override
-    async def __call__(self, changeset_id: ChangesetIdArg) -> ToolOutput[str]:
+    @effect("write")
+    async def apply_changes(changeset_id: ChangesetIdArg) -> ToolReturn[str]:
         """Apply the workspace changes a run_python program staged.
 
         A program's writes, renames, and deletions are staged rather than made,
@@ -403,11 +467,12 @@ class ApplyChangesTool(AsyncTool[str]):
         since the program ran, the changeset is refused and the program has to
         run again to stage a fresh one.
         """
-        reports = await self.apply(changeset_id)
+        reports = await apply(changeset_id)
         count = len(reports)
         report = "\n".join(reports)
 
-        return ToolOutput(
-            data=report,
-            formatted=f"Applied {count} {pluralize(count, 'change')}.\n{report}",
+        return tool_return(
+            report, f"Applied {count} {plural(count, 'change')}.\n{report}"
         )
+
+    return apply_changes

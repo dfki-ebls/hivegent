@@ -5,8 +5,11 @@ from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
+from exar.tools import effect
+from exar.tools.batch import tool_return
+from exar.tools.files import BLOCK_SEP
 from pydantic import Field
-from pydantic_ai import FunctionToolset, RunContext
+from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     ModelMessage,
@@ -26,15 +29,13 @@ from ...db.conversations import (
     list_conversations as _list_conversations,
 )
 from ...db.conversations import (
-    load_conversation as _load_conversation,
+    load_conversation_data as _load_conversation,
 )
 from ...db.conversations import (
     search_conversation as _search_conversation,
 )
-from ...tools.base import ToolOutput
-from ...tools.formatting import BLOCK_SEP, render_arguments
-from ...tools.pydantic_ai import wrap_tool_output
-from ..common import UserDeps, agent_toolset
+from ...tools.base import ToolFunc, render_arguments
+from ..common import AgentTools, UserDeps
 
 __all__ = [
     "ConversationMatch",
@@ -47,14 +48,10 @@ __all__ = [
     "search_conversation",
 ]
 
-# Registered eagerly like every other tool, and withheld by
-# `settings.tools.disabled`, which lists all of these by default: no
-# instruction block names them, a chat turn about the documents never reaches
-# them, and the `explore` tool already offers the same history under its
-# `conversations` scope.  A deployment that wants them back drops them from
-# that list, which is a decision an operator can make and tool search could
-# not.
-conversation_toolset: FunctionToolset[UserDeps] = agent_toolset()
+# Registered eagerly like every other tool, and offered by default.  A
+# deployment that wants them gone lists them in `settings.tools.disabled`,
+# which also withholds the `conversations` subagent, a decision an operator
+# can make and tool search could not.
 
 
 _MAX_ARGUMENT_CHARS = 200
@@ -152,7 +149,7 @@ def format_matches(matches: Iterable[ConversationMatch]) -> str:
     return BLOCK_SEP.join(blocks) or "(no matches)"
 
 
-@conversation_toolset.tool
+@effect("read")
 async def list_conversations(
     ctx: RunContext[UserDeps],
 ) -> ToolReturn:
@@ -164,13 +161,10 @@ async def list_conversations(
     conversations = await _list_conversations(ctx.deps.user)
     formatted = "\n".join(map(_header, conversations)) or "(no conversations)"
 
-    return wrap_tool_output(
-        ToolOutput(data=conversations, formatted=formatted),
-        tool_call_id=ctx.tool_call_id,
-    )
+    return tool_return(conversations, formatted)
 
 
-@conversation_toolset.tool
+@effect("read")
 async def get_conversation(
     ctx: RunContext[UserDeps],
     conversation_id: UUID,
@@ -186,13 +180,10 @@ async def get_conversation(
     if conv is None:
         raise ModelRetry(f"conversation '{conversation_id}' not found.")
 
-    return wrap_tool_output(
-        ToolOutput(data=conv, formatted=format_conversation(conv)),
-        tool_call_id=ctx.tool_call_id,
-    )
+    return tool_return(conv, format_conversation(conv))
 
 
-@conversation_toolset.tool
+@effect("read")
 async def search_conversation(
     ctx: RunContext[UserDeps],
     query: QueryArg,
@@ -222,7 +213,15 @@ async def search_conversation(
     found = await _search_conversation(owned, query, _render_parts, limit=limit)
     matches = [ConversationMatch(position, text) for position, text in found]
 
-    return wrap_tool_output(
-        ToolOutput(data=matches, formatted=format_matches(matches)),
-        tool_call_id=ctx.tool_call_id,
-    )
+    return tool_return(matches, format_matches(matches))
+
+
+def conversation_tools(ctx: RunContext[UserDeps]) -> list[ToolFunc]:
+    """The tools over the user's past conversations, the same for every run."""
+    return [list_conversations, get_conversation, search_conversation]
+
+
+conversation_toolset = AgentTools(
+    factory=conversation_tools, people_only=True, derived=True
+)
+"""The conversation tools, which act on one person's own data."""

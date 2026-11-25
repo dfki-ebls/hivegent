@@ -4,6 +4,13 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 
 import pytest
+from exar.agents import session
+from exar.pydantic_ai.compaction import (
+    Compacted,
+    compaction_cut,
+    compaction_window,
+    is_compaction,
+)
 from pydantic_ai import capture_run_messages
 from pydantic_ai.messages import (
     CompactionPart,
@@ -21,18 +28,11 @@ from pydantic_ai.models.function import (
     DeltaToolCalls,
     FunctionModel,
 )
+from pydantic_ai.usage import RunUsage
 
-from hivegent.agents import RunPrefix, user_agent
-from hivegent.agents.compaction import (
-    Compacted,
-    CompactOnOverflow,
-    _boundaries,
-    compaction_cut,
-    is_compaction,
-)
-from hivegent.agents.guards import fence_messages
-from hivegent.agents.summarize import COMPACT_PROMPT
-from hivegent.agents.window import compaction_window
+from hivegent.agents import RunPrefix, chat_agent
+from hivegent.agents.compaction import COMPACT_PROMPT, compact_on_overflow
+from hivegent.agents.guards import TOOL_OUTPUT_FENCE
 from hivegent.db.conversations import is_user_request
 from hivegent.server.turns import Replay
 from tests.helpers import MEMORY_READ, OVERFLOW
@@ -72,26 +72,22 @@ _COMPACTION = ModelResponse(parts=[CompactionPart(content="the gist")])
 
 
 @pytest.mark.parametrize(
-    ("messages", "expected", "cut"),
+    ("messages", "cut"),
     [
-        # After the answered tool round and after the answer, never on a prompt,
-        # so a trailing prompt follows the summary.
-        ([*_TURN, _prompt("And the appendix?")], [3, 4], 4),
+        # After the answer, never on a prompt, so a trailing prompt follows the summary.
+        ([*_TURN, _prompt("And the appendix?")], 4),
         # Never between a call and its return.
-        ([*_TURN[:3], *_tool_round("2")], [3, 5], 5),
+        ([*_TURN[:3], *_tool_round("2")], 5),
         # Only with something new past the latest compaction.
-        ([*_TURN, _COMPACTION, _prompt("go on")], [], None),
-        ([*_TURN, _COMPACTION, *_TURN], [8, 9], 9),
+        ([*_TURN, _COMPACTION, _prompt("go on")], None),
+        ([*_TURN, _COMPACTION, *_TURN], 9),
         # Never ahead of a call still awaiting its answer.
-        (_TURN[:2], [], None),
-        # Never past a prompt before a model answered it.
-        ([*_TURN, _prompt("go on"), *MEMORY_READ], [3, 4], None),
+        (_TURN[:2], None),
+        # Never past a prompt before a model answered it, such as the memory read beside it.
+        ([*_TURN, _prompt("go on"), *MEMORY_READ], None),
     ],
 )
-def test_boundaries(
-    messages: list[ModelMessage], expected: list[int], cut: int | None
-) -> None:
-    assert _boundaries(messages) == expected
+def test_cut(messages: list[ModelMessage], cut: int | None) -> None:
     assert compaction_cut(messages) == cut
 
 
@@ -112,6 +108,7 @@ class _Overflowing:
 
     def __init__(self, run_prefix: RunPrefix, refused: int = 1) -> None:
         self.refused = refused
+        self.usage = RunUsage()
         self.seen: list[list[ModelMessage]] = []
         model = FunctionModel(self._respond, stream_function=self._stream)
         self.run = replace(run_prefix, model=model)
@@ -146,14 +143,21 @@ class _Overflowing:
     ) -> tuple[list[ModelMessage], list[Compacted]]:
 
         with capture_run_messages() as captured:
-            async with user_agent.run_stream_events(
-                prompt,
-                message_history=list(history),
-                deps=self.run.deps,
-                model=self.run.model,
-                instructions=self.run.instructions,
-                capabilities=[*self.run.capabilities, CompactOnOverflow(self.run)],
-            ) as events:
+            async with (
+                session("", self.run.deps.run_config, name="chat", record=False),
+                chat_agent.run_stream_events(
+                    prompt,
+                    message_history=list(history),
+                    deps=self.run.deps,
+                    model=self.run.model,
+                    instructions=self.run.instructions,
+                    capabilities=[
+                        *self.run.capabilities,
+                        compact_on_overflow(self.run),
+                    ],
+                    usage=self.usage,
+                ) as events,
+            ):
                 compacted = [
                     event async for event in events if isinstance(event, Compacted)
                 ]
@@ -182,10 +186,12 @@ async def test_an_overflowing_prompt_is_compacted_ahead_of_it_and_retried(
     captured, compacted = await model.run_turn("next question", _HISTORY)
 
     # The refused turn, the summary asked as its next turn, then the retry.
-    assert model.seen[1][: len(_HISTORY)] == fence_messages(_HISTORY)
+    assert model.seen[1][: len(_HISTORY)] == TOOL_OUTPUT_FENCE.fence_messages(_HISTORY)
     # Summary and prompt merged into the one request the retry sends.
     assert _prompts(model.seen[2][0]) == ["reply 2", "next question"]
     assert [event.part for event in compacted] == [CompactionPart(content="reply 2")]
+    # The summary counts toward the turn beside the retry, the refused request billed nothing.
+    assert model.usage.requests == 2
     # Stored ahead of the prompt it was made for, past the persisted prefix.
     assert captured[: len(_HISTORY)] == _HISTORY
     assert _compaction_index(captured) == len(_HISTORY)
@@ -221,11 +227,12 @@ async def test_a_regenerated_prompt_is_compacted_ahead_of_it(
     model = _Overflowing(run_prefix)
     prefix = [*_HISTORY, _prompt("next question")]
     captured, _ = await model.run_turn(None, prefix)
-    above, delta = Replay.of(prefix).turn(captured)
+    turn = Replay.of(prefix).turn(captured)
 
     assert _compaction_index(captured) == len(_HISTORY)
     assert is_user_request(captured[len(_HISTORY) + 1])
-    # Stored above the persisted prompt, and only the reply below it.
-    assert above is not None and is_compaction(above)
-    assert not any(is_user_request(message) for message in delta)
-    assert isinstance(delta[-1], ModelResponse) and delta[-1].text
+    # Stored above the persisted prompt, the prompt as the run sent it again below it.
+    assert turn.above is not None and is_compaction(turn.above)
+    assert is_user_request(turn.messages[0])
+    assert not any(is_user_request(message) for message in turn.messages[1:])
+    assert isinstance(turn.messages[-1], ModelResponse) and turn.messages[-1].text

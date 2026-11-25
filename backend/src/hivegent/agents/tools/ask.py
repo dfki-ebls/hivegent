@@ -1,18 +1,20 @@
 """Structured questions the agent puts to the user mid-run.
 
-``ask_user`` has no body of its own: it defers the call, so the run ends with
+``ask_user`` has no body of its own: it defers the call as a question, so the run ends with
 the questions pending and the client answers them as the call's output.  The
 chat adapter validates that output against :data:`ANSWERS` and resumes the run
-with it as the call's result (``server/vercel.py``).
+with it as the call's result (``server/vercel/``).
 """
 
 from typing import Annotated, Self
 
+from exar.tools import effect
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
-from pydantic_ai import FunctionToolset
+from pydantic_ai import RunContext
 from pydantic_ai.exceptions import CallDeferred
 
-from ..common import ASK_USER_TOOL, UserDeps, agent_toolset
+from ...tools.base import ToolFunc
+from ..common import AgentTools, UserDeps
 
 __all__ = [
     "ANSWERS",
@@ -120,11 +122,9 @@ QuestionsArg = Annotated[
     Field(min_length=1, max_length=4, description="The questions, asked together."),
 ]
 
-ask_toolset: FunctionToolset[UserDeps] = agent_toolset()
 
-
-@ask_toolset.tool_plain(name=ASK_USER_TOOL)
-def ask_user(questions: QuestionsArg) -> list[AskAnswer]:
+@effect("read")
+async def ask_user(questions: QuestionsArg) -> list[AskAnswer]:
     """Ask the user multiple-choice questions and wait for their answers.
 
     Use it when a decision is the user's to make and you cannot settle it from
@@ -137,4 +137,13 @@ def ask_user(questions: QuestionsArg) -> list[AskAnswer]:
     labels the user picked, ``other`` an answer they typed instead, and
     ``note`` extra context.  Follow what they actually say, notes included.
     """
-    raise CallDeferred
+    raise CallDeferred(kind="question")
+
+
+def ask_tools(ctx: RunContext[UserDeps]) -> list[ToolFunc]:
+    """The tool that asks the user, the same for every run."""
+    return [ask_user]
+
+
+ask_toolset = AgentTools(factory=ask_tools)
+"""The tools that ask the user."""

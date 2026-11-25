@@ -6,6 +6,22 @@ from typing import Any
 
 import httpx2
 import pytest
+from exar.tools import ItemFailure, Retry
+from exar.tools.web import (
+    HostClient,
+    HostSession,
+    KnownUrls,
+    Openserp,
+    SearchBackend,
+    Searxng,
+    WebFetch,
+    WebQuery,
+    WebRead,
+    WebSearch,
+    WebSearchHit,
+    WebSearchResults,
+    WebSession,
+)
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -16,29 +32,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 from hivegent import security
+from hivegent.agents.output import DATA_CHUNK_TYPE
 from hivegent.agents.tools import web as agent_web
-from hivegent.agents.tools.web import record_known_urls
-from hivegent.config import SecuritySettings, UrlPolicySettings
-from hivegent.security import (
-    UrlPolicy,
-    create_safe_async_client,
-    require_safe_external_url,
-)
-from hivegent.tools.base import ItemFailure, ToolRetry
-from hivegent.tools.pydantic_ai import DATA_CHUNK_TYPE
-from hivegent.tools.web import (
-    KnownUrls,
-    OpenserpBackend,
-    SearchBackend,
-    SearxngBackend,
-    WebFetch,
-    WebQuery,
-    WebRead,
-    WebSearch,
-    WebSearchHit,
-    WebSearchResults,
-    build_user_agent,
-)
+from hivegent.agents.tools.web import build_user_agent, record_known_urls
+from hivegent.config.security import SecuritySettings, UrlPolicySettings
+from hivegent.security import UnsafeUrlError, UrlPolicy, create_safe_async_client
+from hivegent.shared.l10n import format_bytes
+from hivegent.tools.base import ToolFunc
 from tests.helpers import single
 
 #: Permits every host, so a fetch test opts out of policy enforcement.
@@ -79,17 +79,17 @@ def _web_client(
 class TestUrlPolicy:
     """Host allow/deny semantics."""
 
-    def test_user_policy_defaults_to_deny_all(self) -> None:
-        with pytest.raises(ValueError, match="allowlist"):
-            SecuritySettings().user_policy().check_host("api.example.com")
+    def test_web_policy_defaults_to_deny_all(self) -> None:
+        with pytest.raises(UnsafeUrlError, match="allowlist"):
+            SecuritySettings().web_policy().check_host("api.example.com")
 
     def test_entry_matches_domain_and_subdomains(self) -> None:
         policy = UrlPolicy(allow_hosts=("example.com",))
         policy.check_host("example.com")
         policy.check_host("docs.example.com")
-        with pytest.raises(ValueError, match="allowlist"):
+        with pytest.raises(UnsafeUrlError, match="allowlist"):
             policy.check_host("evil.com")
-        with pytest.raises(ValueError, match="allowlist"):
+        with pytest.raises(UnsafeUrlError, match="allowlist"):
             policy.check_host("notexample.com")
 
     def test_deny_list_wins_over_allow_list(self) -> None:
@@ -97,53 +97,52 @@ class TestUrlPolicy:
             allow_hosts=("example.com",), deny_hosts=("internal.example.com",)
         )
         policy.check_host("docs.example.com")
-        with pytest.raises(ValueError, match="blocked"):
+        with pytest.raises(UnsafeUrlError, match="blocked"):
             policy.check_host("internal.example.com")
 
-    def test_settings_policies_are_independent(self) -> None:
-        sec = SecuritySettings(
+    def test_settings_resolve_the_web_policy(self) -> None:
+        web = SecuritySettings(
             web_urls=UrlPolicySettings(
                 allow_hosts=["wikipedia.org"], deny_hosts=["test.wikipedia.org"]
             ),
-            user_urls=UrlPolicySettings(
-                allow_hosts=["llm.corp.example"], deny_hosts=["evil.com"]
-            ),
-        )
-        web = sec.web_policy()
+        ).web_policy()
         web.check_host("de.wikipedia.org")
-        with pytest.raises(ValueError, match="blocked"):
+        with pytest.raises(UnsafeUrlError, match="blocked"):
             web.check_host("test.wikipedia.org")
-        # The user URL policy governs LLM/MCP URLs, not browsing.
-        user = sec.user_policy()
-        user.check_host("llm.corp.example")
-        with pytest.raises(ValueError, match="blocked"):
-            user.check_host("evil.com")
 
-    def test_external_url_validation_rejects_unsafe_urls(self) -> None:
-        policy = UrlPolicy(allow_hosts=("*",))
-        require_safe_external_url("https://example.com/page", "url", policy=policy)
-        for url in (
-            "ftp://example.com",
-            "https://user:pw@example.com",
-            "",
-        ):
-            with pytest.raises(ValueError):
-                require_safe_external_url(url, "url", policy=policy)
+    async def test_safe_client_rejects_unsafe_urls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            security,
+            "_egress_transport",
+            lambda *_: httpx2.MockTransport(lambda _request: httpx2.Response(200)),
+        )
 
-        with pytest.raises(ValueError, match="allowlist"):
-            require_safe_external_url("https://example.com", "url", policy=UrlPolicy())
+        async with create_safe_async_client(
+            policy=UrlPolicy(allow_hosts=("*",)),
+            proxy_url="http://127.0.0.1:4750",
+            timeout=1.0,
+        ) as client:
+            await client.get("https://example.com/page")
+            with pytest.raises(UnsafeUrlError, match="credentials"):
+                await client.get("https://user:pw@example.com")
 
 
-def _search_tool(handler: Any, backend: SearchBackend | None = None) -> WebSearch:
-    """Build a WebSearch whose trusted client is backed by a mock transport."""
+def _search_tool(
+    handler: Any, backend: SearchBackend | None = None
+) -> tuple[ToolFunc, KnownUrls]:
+    """Build web_search with a trusted client backed by a mock transport, and its known URLs."""
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-
-    return WebSearch(
-        client=client,
-        backend=backend or SearxngBackend(_SEARCH_URL),
-        known_urls=KnownUrls(),
+    session = WebSession()
+    tool = WebSearch(
+        client=HostClient("search", lambda: client),
+        session=HostSession("web", lambda: session),
+        backend=backend or Searxng(url=_SEARCH_URL),
         timeout_seconds=10.0,
-    )
+    ).tool()
+
+    return tool, session.known
 
 
 _SEARCH_URL = "http://127.0.0.1:8888"
@@ -185,7 +184,7 @@ class TestWebSearch:
 
             return httpx2.Response(200, json={"results": results})
 
-        tool = _search_tool(handler)
+        tool, known = _search_tool(handler)
         out = await tool(
             [
                 WebQuery("jura e7", "news", "de", "week"),
@@ -193,7 +192,7 @@ class TestWebSearch:
                 WebQuery("jura", "news"),
             ]
         )
-        first, second, third = out.data
+        first, second, third = out.metadata
 
         assert not isinstance(first, ItemFailure)
         assert not isinstance(second, ItemFailure)
@@ -203,14 +202,14 @@ class TestWebSearch:
         )
         # A page an earlier search found is not listed again.
         assert [hit.href for hit in second.hits] == ["https://b.example/"]
-        assert "1 page already listed above" in out.text
+        assert "1 page already listed above" in out.return_value
         # The same query with other filters is a search of its own.
         assert not isinstance(third, ItemFailure)
-        assert "==> jura [news] <==" in out.text
-        assert "published 2026-10-17" in out.text
+        assert "==> jura [news] <==" in out.return_value
+        assert "published 2026-10-17" in out.return_value
         # Every listed result may be fetched next.
-        assert "https://a.example/manual" in tool.known_urls
-        assert "https://b.example/" in tool.known_urls
+        assert "https://a.example/manual" in known
+        assert "https://b.example/" in known
 
     async def test_openserp_megasearch_is_translated(self) -> None:
         def handler(request: httpx2.Request) -> httpx2.Response:
@@ -230,18 +229,23 @@ class TestWebSearch:
                 },
             )
 
-        out = await _search_tool(handler, OpenserpBackend(_SEARCH_URL))(
+        tool, _ = _search_tool(handler, Openserp(url=_SEARCH_URL))
+        out = await tool(
             [WebQuery("jura", language="de-AT", time_range="month")], max_results=3
         )
 
-        assert single(out.data).hits == (WebSearchHit("A", "https://a.example/", "s"),)
+        assert single(out.metadata).hits == (
+            WebSearchHit("A", "https://a.example/", "s"),
+        )
 
     async def test_api_failure_raises_tool_retry(self) -> None:
         def handler(request: httpx2.Request) -> httpx2.Response:
             return httpx2.Response(400)
 
-        with pytest.raises(ToolRetry, match="web search failed"):
-            await _search_tool(handler)([WebQuery("anything", language="xx")])
+        tool, _ = _search_tool(handler)
+
+        with pytest.raises(Retry, match="web search failed"):
+            await tool([WebQuery("anything", language="xx")])
 
     async def test_unresponsive_engines_are_reported(self) -> None:
         def handler(request: httpx2.Request) -> httpx2.Response:
@@ -250,8 +254,10 @@ class TestWebSearch:
                 json={"results": [], "unresponsive_engines": [["brave", "CAPTCHA"]]},
             )
 
-        with pytest.raises(ToolRetry, match="brave: CAPTCHA"):
-            await _search_tool(handler)([WebQuery("anything")])
+        tool, _ = _search_tool(handler)
+
+        with pytest.raises(Retry, match="brave: CAPTCHA"):
+            await tool([WebQuery("anything")])
 
 
 _ARTICLE = b"An article needs a few hundred characters to count as main content. " * 5
@@ -276,18 +282,26 @@ def _fetch_tool(
     policy: UrlPolicy = _ANY_HOST,
     max_redirects: int = 5,
     **kwargs: Any,
-) -> WebFetch:
-    """Build a WebFetch whose pooled client is backed by a mock transport.
+) -> tuple[ToolFunc, KnownUrls]:
+    """Build web_fetch with a pooled client backed by a mock transport, and its known URLs.
 
     ``max_redirects`` binds the client, not the tool, because HTTPX accepts
     redirect settings only there.  The pages the tests ask for are known, as if
     the user had named them.
     """
     client = _web_client(monkeypatch, handler, policy, max_redirects)
-    known = KnownUrls()
-    known.add(*(f"https://example.com/{path}" for path in _PATHS))
+    session = WebSession()
+    session.known.add(*(f"https://example.com/{path}" for path in _PATHS))
 
-    return WebFetch(client=client, known_urls=known, timeout_seconds=10.0, **kwargs)
+    tool = WebFetch(
+        client=HostClient("web", lambda: client),
+        session=HostSession("web", lambda: session),
+        timeout_seconds=10.0,
+        size=format_bytes,
+        **kwargs,
+    ).tool()
+
+    return tool, session.known
 
 
 _PATHS = ("start", "final", "gone", "img", "big", "page", "loop", "index")
@@ -306,12 +320,12 @@ class TestWebFetch:
                 200, content=HTML, headers={"content-type": "text/html; charset=utf-8"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler)
+        tool, known = _fetch_tool(monkeypatch, handler)
         out = await tool([WebRead("https://example.com/start")])
 
-        page = single(out.data)
+        page = single(out.metadata)
         # A link on the fetched page may be fetched next.
-        assert "https://example.com/docs/guide" in tool.known_urls
+        assert "https://example.com/docs/guide" in known
         assert page.url == "https://example.com/final"
         assert (page.title, page.published) == ("Hello", "2026-10-17")
         assert "# Hello" in page.content
@@ -322,7 +336,7 @@ class TestWebFetch:
             assert boilerplate not in page.content
         # Formatted output numbers every content line for citations.
         header = "Hello (https://example.com/final), published 2026-10-17"
-        assert f"\n{header}\n1: " in out.text
+        assert f"\n{header}\n1: " in out.return_value
 
     async def test_pages_fail_alone_and_a_page_is_shown_once(
         self, monkeypatch: pytest.MonkeyPatch
@@ -338,15 +352,17 @@ class TestWebFetch:
                 200, content=b"hi", headers={"content-type": "text/plain"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler)
+        tool, _ = _fetch_tool(monkeypatch, handler)
         urls = [f"https://example.com/{path}" for path in ("start", "final", "gone")]
         out = await tool([WebRead(url) for url in urls])
 
-        page, duplicate, gone = out.data
+        page, duplicate, gone = out.metadata
         assert not isinstance(page, ItemFailure)
         assert (page.requested_url, page.url) == (urls[0], urls[1])
-        assert duplicate == ItemFailure(urls[1], f"same result as {urls[0]}")
-        assert gone == ItemFailure(urls[2], "HTTP 403.")
+        assert duplicate == ItemFailure(
+            item=urls[1], reason=f"same result as {urls[0]}"
+        )
+        assert gone == ItemFailure(item=urls[2], reason="HTTP 403.")
 
     async def test_redirect_to_denied_host_is_blocked(
         self, monkeypatch: pytest.MonkeyPatch
@@ -358,12 +374,12 @@ class TestWebFetch:
                 200, content=b"hi", headers={"content-type": "text/plain"}
             )
 
-        tool = _fetch_tool(
+        tool, _ = _fetch_tool(
             monkeypatch,
             handler,
             UrlPolicy(allow_hosts=("example.com",), deny_hosts=("evil.com",)),
         )
-        with pytest.raises(ToolRetry, match="blocked"):
+        with pytest.raises(Retry, match="blocked"):
             await tool([WebRead("https://example.com/start")])
 
     async def test_unsupported_content_type_raises(
@@ -374,8 +390,8 @@ class TestWebFetch:
                 200, content=b"\x89PNG", headers={"content-type": "image/png"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler)
-        with pytest.raises(ToolRetry, match="unsupported content type"):
+        tool, _ = _fetch_tool(monkeypatch, handler)
+        with pytest.raises(Retry, match="unsupported content type"):
             await tool([WebRead("https://example.com/img")])
 
     async def test_content_is_truncated_to_caps(
@@ -386,11 +402,11 @@ class TestWebFetch:
                 200, content=b"a" * 100, headers={"content-type": "text/plain"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler, max_response_bytes=10)
+        tool, _ = _fetch_tool(monkeypatch, handler, max_response_bytes=10)
         out = await tool([WebRead("https://example.com/big")])
-        assert single(out.data).content == "a" * 10
-        assert single(out.data).truncated
-        assert out.text.endswith("[page cut at the 10 B download cap]")
+        assert single(out.metadata).content == "a" * 10
+        assert single(out.metadata).truncated
+        assert out.return_value.endswith("[page cut at the 10 B download cap]")
 
     async def test_long_line_truncated_in_formatted_only(
         self, monkeypatch: pytest.MonkeyPatch
@@ -405,15 +421,15 @@ class TestWebFetch:
                 200, content=body, headers={"content-type": "text/plain"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler, max_line_chars=80)
+        tool, _ = _fetch_tool(monkeypatch, handler, max_line_chars=80)
         out = await tool([WebRead("https://example.com/page")])
-        assert "…" in out.text
-        assert "full_lines=true" in out.text
-        assert len(max(out.text.splitlines(), key=len)) < 200
-        assert long_line in single(out.data).content
+        assert "…" in out.return_value
+        assert "full_lines=true" in out.return_value
+        assert len(max(out.return_value.splitlines(), key=len)) < 200
+        assert long_line in single(out.metadata).content
 
         whole = await tool([WebRead("https://example.com/page")], full_lines=True)
-        assert long_line in whole.text
+        assert long_line in whole.return_value
 
     async def test_a_long_page_is_read_on_from_an_offset(
         self, monkeypatch: pytest.MonkeyPatch
@@ -426,13 +442,16 @@ class TestWebFetch:
                 200, content=b"one\ntwo\nthree", headers={"content-type": "text/plain"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler, max_chars=13)
+        tool, _ = _fetch_tool(monkeypatch, handler, max_chars=13)
         first = await tool([WebRead("https://example.com/page")])
         rest = await tool([WebRead("https://example.com/page", offset=3)])
 
-        assert single(first.data).content == "one\ntwo"
-        assert first.text.endswith("[1 more line, call again with offset=3]")
-        assert (single(rest.data).start_line, single(rest.data).content) == (3, "three")
+        assert single(first.metadata).content == "one\ntwo"
+        assert first.return_value.endswith("[1 more line, call again with offset=3]")
+        assert (single(rest.metadata).start_line, single(rest.metadata).content) == (
+            3,
+            "three",
+        )
         # The turn's pages are kept, so reading on downloads nothing again.
         assert len(requests) == 1
 
@@ -446,13 +465,13 @@ class TestWebFetch:
                 next(statuses), content=b"hi", headers={"content-type": "text/plain"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler)
+        tool, _ = _fetch_tool(monkeypatch, handler)
 
-        with pytest.raises(ToolRetry, match="HTTP 503"):
+        with pytest.raises(Retry, match="HTTP 503"):
             await tool([WebRead("https://example.com/page")])
 
         assert (
-            single((await tool([WebRead("https://example.com/page")])).data).content
+            single((await tool([WebRead("https://example.com/page")])).metadata).content
             == "hi"
         )
 
@@ -462,8 +481,8 @@ class TestWebFetch:
         def handler(request: httpx2.Request) -> httpx2.Response:
             return httpx2.Response(302, headers={"location": "/loop"})
 
-        tool = _fetch_tool(monkeypatch, handler, max_redirects=3)
-        with pytest.raises(ToolRetry, match="redirects"):
+        tool, _ = _fetch_tool(monkeypatch, handler, max_redirects=3)
+        with pytest.raises(Retry, match="redirects"):
             await tool([WebRead("https://example.com/loop")])
 
 
@@ -481,11 +500,11 @@ class TestKnownUrls:
                 200, content=html.encode(), headers={"content-type": "text/html"}
             )
 
-        tool = _fetch_tool(monkeypatch, handler)
+        tool, known = _fetch_tool(monkeypatch, handler)
         out = await tool([WebRead("https://example.com/index")])
 
-        assert "[Page 3](https://example.com/p_3)" in single(out.data).content
-        assert "https://example.com/p_3" in tool.known_urls
+        assert "[Page 3](https://example.com/p_3)" in single(out.metadata).content
+        assert "https://example.com/p_3" in known
 
     async def test_unknown_url_is_refused_without_a_request(
         self, monkeypatch: pytest.MonkeyPatch
@@ -493,9 +512,9 @@ class TestKnownUrls:
         def handler(request: httpx2.Request) -> httpx2.Response:
             raise AssertionError("an unknown URL must not be requested")
 
-        tool = _fetch_tool(monkeypatch, handler)
+        tool, _ = _fetch_tool(monkeypatch, handler)
 
-        with pytest.raises(ToolRetry, match="not appeared in the conversation"):
+        with pytest.raises(Retry, match="not appeared in the conversation"):
             await tool([WebRead("https://example.com/start?secret=1")])
 
     def test_history_counts_only_user_and_web_tool_text(

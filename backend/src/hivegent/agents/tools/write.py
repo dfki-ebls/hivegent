@@ -1,123 +1,132 @@
 """Write-oriented agent tool registrations.
 
 Also the one place the changes a ``run_python`` program makes are wired,
-whose workspace half ``apply_changes`` applies.  Every write commits through
+which ``apply_changes`` applies whole once they are staged.  Every write commits through
 :func:`_gateway` and answers to :func:`_gate`, so a run can never persist by a
 side door what it may not write outright.
 
-Every write resolves against :meth:`~hivegent.agents.common.UserDeps.writable_paths`
+Every write resolves against :meth:`~hivegent.agents.common.UserDeps.writable_roots`
 and commits as one changeset through the one gateway, all of it or nothing,
-whose roots are those paths, the conversation's ``/tmp`` a folder written
-directly, and whose filters are theirs.  Whether to ask is decided per item
-from the root it routes to: a folder (``/tmp``) is the run's own working state
-and asks nothing in any mode, while a workspace is put in front of the user
-first in ``interactive`` and lands at once in ``write``.  A mode that may not
-write leaves the workspaces out of the writable roots, so they are refused
-like any path the run cannot reach.  Before asking, the validator plans the
+whose roots are the ones each search path carries, the conversation's ``/tmp``
+a folder written directly, and whose filters are theirs.  Whether to ask is
+decided per item by the policy of the root it routes to
+(:func:`~hivegent.agents.policy.root_asks`): a :class:`Direct` folder
+(``/tmp``) is the run's own working state and asks nothing in any mode, a
+:class:`ModeGated` workspace is put in front of the user first in
+``interactive`` and lands at once in ``write``, and a :class:`Reviewed` root
+always asks.  A mode that may not write leaves the
+workspaces out of the writable roots, so they are refused like any path the run
+cannot reach.  Before asking, the validator plans the
 very changeset the tool would commit, its ``/tmp`` half included, so the user
 is never asked to approve a batch the gateway would refuse, and the approval
 shows the planner's summary of the workspace half.
 """
 
-from collections.abc import Callable, Container, Iterable, Sequence
-from typing import Any, NoReturn
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from itertools import compress
+from typing import Any
 
-from pydantic_ai import FunctionToolset, RunContext
-from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
-from pydantic_ai.messages import ToolCallPart
+from exar.memory.mounts import strip
+from exar.tools import Retry
+from pydantic_ai import DeferredToolRequests, RunContext
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import ToolDefinition
-from pydantic_core import to_jsonable_python
 
 from ... import staging, workspace
-from ...changes import Changeset, ChangesetSummary, Operation, TextEdit
 from ...db.conversations import OwnedConversation
-from ...tmp import TMP_SCOPE, tmp_root
-from ...tools import (
-    DeleteDocumentsTool,
-    EditDocumentTool,
-    MoveDocumentsTool,
-    WriteDocumentTool,
-)
+from ...tmp import TMP_PREFIX
 from ...tools.base import (
-    PathFilter,
+    Direct,
     SearchPath,
-    ToolRetry,
-    factory_tool_name,
-    translate_tool_retry,
+    ToolFunc,
 )
+from ...tools.changes import Changeset, TextEdit
 from ...tools.changeset import (
     AppliedChanges,
-    ApplyChangesTool,
     ChangesetIdArg,
     ChangesetOutcome,
     CommitChanges,
     PendingChanges,
+    apply_changes,
 )
 from ...tools.mutations import (
-    Commit,
     DocumentMove,
     WriteModeArg,
     delete_changeset,
+    delete_documents,
     edit_changeset,
+    edit_document,
     move_changeset,
+    move_documents,
     mutation_errors,
     write_changeset,
+    write_document,
 )
-from ...tools.pydantic_ai import register_agent_tool
 from ...tools.python import is_python_script
 from ...workspace.operations import Root
-from ..common import UserDeps, agent_toolset
+from ..approval import approved_changes, ask, changes_digest
+from ..common import AgentTools, Hooked, UserDeps
 
 __all__ = [
-    "changeset_committer",
-    "discard_unapproved_changes",
-    "program_paths",
+    "ProgramWrites",
+    "program_writes",
+    "retain_awaited_changes",
     "validate_apply_changes",
     "validate_document_deletions",
     "validate_document_edit",
     "validate_document_moves",
     "validate_document_write",
+    "write_tools",
     "write_toolset",
 ]
+
+APPLY_CHANGES = "apply_changes"
+"""The tool that applies a program's staged changes."""
 
 _RERUN = "Run the program again to stage a fresh changeset."
 
 
-def _gateway(
-    deps: UserDeps, paths: tuple[SearchPath, ...] | None = None
-) -> workspace.Gateway:
-    """The gateway bound to the roots *paths* name with their filters, announcing to the run's user.
+def _search_paths(roots: Sequence[Root]) -> tuple[SearchPath, ...]:
+    """What the path tools of *roots* resolve against."""
+    return tuple(root.search_path for root in roots)
 
-    *paths* default to every root the run may write.  A path's root is the
-    casebase its scope names, or else the conversation's ``/tmp`` folder.
+
+def _asks(
+    deps: UserDeps, gateway: workspace.Gateway, changeset: Changeset[str]
+) -> bool:
+    """Whether *changeset* waits for the user, by the policy of each root it changes."""
+    return any(map(deps.asks, gateway.policies(changeset)))
+
+
+_CHANGED = (
+    "The changes this call would make are no longer the ones the user approved, "
+    "so nothing was changed. Call it again to show the user the current changes."
+)
+
+
+async def _hold(
+    ctx: RunContext[UserDeps], gateway: workspace.Gateway, changeset: Changeset[str]
+) -> None:
+    """Ask about *changeset* if any root it changes asks, or hold an approval to the changes it was given for.
+
+    An approval bound to a summary (``approval.APPROVED_CHANGES``) passes only
+    while the changeset plans to the same one, an unbound one asks nothing.
     """
-    stores = {store.scope.prefix: store for store in deps.user.stores()}
-    roots: list[Root] = []
-    filters: dict[str, PathFilter] = {}
+    approved, bound = ctx.tool_call_approved, approved_changes(ctx)
 
-    for sp in deps.writable_paths() if paths is None else paths:
-        root = stores.get(sp.prefixed("")) or tmp_root(sp.path)
-        roots.append(root)
+    if (approved and bound is None) or (
+        not approved and not _asks(ctx.deps, gateway, changeset)
+    ):
+        return
 
-        if sp.filter_func is not None:
-            filters[root.store_key] = sp.filter_func
+    summary = (await gateway.plan(changeset)).summary
 
-    return workspace.Gateway(tuple(roots), deps.user.id, filters)
+    if not approved:
+        ask(summary)
 
-
-def _committer(deps: UserDeps) -> Commit:
-    """Commit a changeset, every item at once, the commit every write tool shares."""
-    return _gateway(deps).commit
-
-
-def _ask(summary: ChangesetSummary) -> NoReturn:
-    """Ask the user to approve the summary the planner shows."""
-    raise ApprovalRequired(to_jsonable_python(summary))
-
-
-def _asks(ctx: RunContext[UserDeps]) -> bool:
-    """Whether a gated change of this call still needs the user's answer."""
-    return ctx.deps.needs_approval and not ctx.tool_call_approved
+    if changes_digest(summary) != bound:
+        raise ModelRetry(_CHANGED)
 
 
 async def _gate(
@@ -128,22 +137,16 @@ async def _gate(
 
     *build* is the tool's own changeset builder, run on the roots the tool
     resolves against, so the question is asked of exactly what would commit.
-    It is asked when any item routes to a workspace, and only then is the
-    changeset planned, its ``/tmp`` half included, since the commit refuses
-    with the same words.
+    It is asked when any item's root asks, and only then is the changeset
+    planned, its ``/tmp`` half included, since the commit refuses with the
+    same words.  An approved resume asks nothing (:func:`_hold`).
     """
-    paths = ctx.deps.writable_paths()
-    gateway = _gateway(ctx.deps, paths)
+    roots = ctx.deps.writable_roots()
+    paths = _search_paths(roots)
+    gateway = workspace.Gateway(roots)
 
-    with translate_tool_retry(ModelRetry), mutation_errors(ModelRetry):
-        changeset = build(paths)
-
-        if not (_asks(ctx) and any(gateway.gated(changeset))):
-            return
-
-        summary = (await gateway.plan(changeset)).summary
-
-    _ask(summary)
+    with mutation_errors(ModelRetry):
+        await _hold(ctx, gateway, build(paths))
 
 
 def _run_python_pointer(target: str) -> str:
@@ -155,31 +158,10 @@ def _run_python_pointer(target: str) -> str:
     be recalled a turn later: what it saves is the run that pastes the program
     straight back in as inline ``code``.
     """
-    if TMP_SCOPE.strip_prefix(target) is None or not is_python_script(target):
+    if strip(TMP_PREFIX, target) is None or not is_python_script(target):
         return ""
 
     return f"Run it with run_python's `script_path='{target}'`."
-
-
-def _edit_document(deps: UserDeps) -> EditDocumentTool:
-    return EditDocumentTool(
-        paths=deps.writable_paths(), hint=_run_python_pointer, commit=_committer(deps)
-    )
-
-
-def _write_document(deps: UserDeps) -> WriteDocumentTool:
-    """The agent's own writer, which points a stored program at ``run_python``."""
-    return WriteDocumentTool(
-        paths=deps.writable_paths(), hint=_run_python_pointer, commit=_committer(deps)
-    )
-
-
-def _move_documents(deps: UserDeps) -> MoveDocumentsTool:
-    return MoveDocumentsTool(paths=deps.writable_paths(), commit=_committer(deps))
-
-
-def _delete_documents(deps: UserDeps) -> DeleteDocumentsTool:
-    return DeleteDocumentsTool(paths=deps.writable_paths(), commit=_committer(deps))
 
 
 # The validators are called with the whole argument mapping, so naming only the
@@ -227,7 +209,7 @@ async def validate_document_deletions(
     await _gate(ctx, lambda roots: delete_changeset(roots, paths))
 
 
-def program_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
+def _program_roots(deps: UserDeps) -> tuple[Root, ...]:
     """The roots a ``run_python`` program may change.
 
     The workspaces only where ``apply_changes`` is not withheld, by the request
@@ -236,17 +218,10 @@ def program_paths(deps: UserDeps) -> tuple[SearchPath, ...]:
     a side door.  A run without a conversation has nowhere to stage them.
     """
     staging_allowed = (
-        factory_tool_name(_apply_changes) not in deps.withheld_tools
-        and deps.conversation is not None
+        APPLY_CHANGES not in deps.withheld_tools and deps.conversation is not None
     )
 
-    return deps.writable_paths(workspace=staging_allowed)
-
-
-def _picked[T](items: Sequence[T], picks: Sequence[bool], pick: bool) -> tuple[T, ...]:
-    return tuple(
-        item for item, picked in zip(items, picks, strict=True) if picked == pick
-    )
+    return deps.writable_roots(workspace=staging_allowed)
 
 
 def _conversation(deps: UserDeps) -> OwnedConversation:
@@ -261,50 +236,63 @@ def _conversation(deps: UserDeps) -> OwnedConversation:
     return deps.conversation
 
 
-def changeset_committer(deps: UserDeps) -> CommitChanges:
-    """Build what lands a ``run_python`` program's changes.
+def _program_commit(deps: UserDeps, gateway: workspace.Gateway) -> CommitChanges:
+    """Build what lands a ``run_python`` program's changes through *gateway*.
 
-    Each item is gated or not by the root it routes to.  In a mode that needs
-    no approval every item is applied at once, as :func:`_gate` lets every
-    other write through, and the workspace items' reports are returned.
-    Otherwise the whole changeset is planned, so a program whose changes the
-    gateway would refuse is told so at once and leaves ``/tmp`` as it was, and
-    then the direct items are written and the gated ones stored for
-    :func:`validate_apply_changes` to put in front of the user.
+    Each item asks or not by the policy of the root it routes to.  Where none
+    asks every item is applied at once, as :func:`_gate` lets such a write
+    through, and the reports of the items beyond ``/tmp`` are returned.
+    Otherwise the whole changeset, its ``/tmp`` half included, is planned, so a
+    program whose changes the gateway would refuse is told so at once, and
+    stored for :func:`validate_apply_changes` to put in front of the user, so
+    it lands in full once approved or not at all, as :func:`_hold` keeps a
+    single call's.
     """
-    gateway = _gateway(deps, program_paths(deps))
 
     async def commit(changeset: Changeset[str]) -> ChangesetOutcome | None:
-        operations: Sequence[Operation[str]] = changeset.operations
+        with mutation_errors(Retry):
+            policies = gateway.policies(changeset)
+            persistent = tuple(not isinstance(policy, Direct) for policy in policies)
 
-        with mutation_errors(ToolRetry):
-            gated = gateway.gated(changeset)
-
-            if any(gated) and deps.needs_approval:
+            if any(map(deps.asks, policies)):
                 summary = (await gateway.plan(changeset)).summary
-                _ = await gateway.apply(Changeset(_picked(operations, gated, False)))
-                staged = Changeset(_picked(operations, gated, True))
+                changeset_id = await staging.stage(_conversation(deps), changeset)
 
-                return PendingChanges(
-                    await staging.stage(_conversation(deps), staged), summary
-                )
+                return PendingChanges(changeset_id, summary, persistent.count(False))
 
             applied = await gateway.apply(changeset)
 
         return (
-            AppliedChanges(_picked(applied.reports, gated, True))
-            if any(gated)
+            AppliedChanges(tuple(compress(applied.reports, persistent)))
+            if any(persistent)
             else None
         )
 
     return commit
 
 
+@dataclass(frozen=True, slots=True)
+class ProgramWrites:
+    """What a ``run_python`` program may change, and what lands its changes."""
+
+    paths: tuple[SearchPath, ...]
+    commit: CommitChanges
+
+
+def program_writes(deps: UserDeps) -> ProgramWrites:
+    """The roots a ``run_python`` program of *deps* may change, and their commit."""
+    roots = _program_roots(deps)
+
+    return ProgramWrites(
+        _search_paths(roots), _program_commit(deps, workspace.Gateway(roots))
+    )
+
+
 async def _load_staged(deps: UserDeps, changeset_id: str) -> Changeset[str]:
     staged = await staging.load_staged(_conversation(deps), changeset_id)
 
     if staged is None:
-        raise ToolRetry(
+        raise Retry(
             f"No staged changeset '{changeset_id}': it was applied already, "
             f"expired, or never existed. {_RERUN}"
         )
@@ -317,50 +305,55 @@ async def validate_apply_changes(
 ) -> None:
     """Plan a staged changeset again, then put its summary in front of the user.
 
-    An approved resume skips both, since applying it loads and refuses alike.
+    It is asked about by the policy of each root it changes, as when it was
+    staged.  An approved resume skips both, since applying it loads and refuses
+    alike (:func:`_hold`).
     """
-    if not _asks(ctx):
+    if ctx.tool_call_approved and approved_changes(ctx) is None:
         return
 
-    with translate_tool_retry(ModelRetry):
-        staged = await _load_staged(ctx.deps, changeset_id)
+    gateway = workspace.Gateway(ctx.deps.writable_roots())
+    staged = await _load_staged(ctx.deps, changeset_id)
 
     with mutation_errors(ModelRetry, _RERUN):
-        summary = (await _gateway(ctx.deps).plan(staged)).summary
-
-    _ask(summary)
+        await _hold(ctx, gateway, staged)
 
 
-def _apply_changes(deps: UserDeps) -> ApplyChangesTool:
+def _apply_changes(deps: UserDeps, gateway: workspace.Gateway) -> ToolFunc:
     async def apply(changeset_id: str) -> tuple[str, ...]:
         staged = await _load_staged(deps, changeset_id)
 
         try:
-            with mutation_errors(ToolRetry, _RERUN):
-                return (await _gateway(deps).apply(staged)).reports
+            with mutation_errors(Retry, _RERUN):
+                return (await gateway.apply(staged)).reports
         finally:
             await staging.discard_staged(_conversation(deps), changeset_id)
 
-    return ApplyChangesTool(apply=apply)
+    return apply_changes(apply=apply)
 
 
-async def discard_unapproved_changes(
+async def retain_awaited_changes(
     conversation: OwnedConversation,
-    pending: Iterable[ToolCallPart],
-    approved: Container[str],
+    deferred: DeferredToolRequests | None,
+    since: float,
 ) -> None:
-    """Drop the changesets the pending ``apply_changes`` calls name, unless approved.
+    """Keep only the changesets *conversation* staged since *since* or that a pending ``apply_changes`` call names.
 
-    *pending* are the calls a turn left awaiting approval, so a call *approved*
-    does not name was denied or abandoned and can never apply its changeset.
+    *since* is the epoch time the saved turn started at and *deferred* are
+    the calls its history awaits, so an older changeset none of them names
+    was applied, denied, or abandoned, and can never apply.
     """
-    for part in pending:
-        if (
-            part.tool_name == factory_tool_name(_apply_changes)
-            and part.tool_call_id not in approved
+    approvals = () if deferred is None else deferred.approvals
+    await staging.retain_staged(
+        conversation,
+        {
+            changeset_id
+            for part in approvals
+            if part.tool_name == APPLY_CHANGES
             and isinstance(changeset_id := part.args_as_dict().get("changeset_id"), str)
-        ):
-            await staging.discard_staged(conversation, changeset_id)
+        },
+        since,
+    )
 
 
 def _offer_apply_changes(
@@ -373,27 +366,43 @@ def _offer_apply_changes(
     )
 
 
-write_toolset: FunctionToolset[UserDeps] = agent_toolset()
+def write_tools(ctx: RunContext[UserDeps]) -> list[ToolFunc | Hooked]:
+    """The tools that change files through the gateway, for one run.
 
-register_agent_tool(
-    write_toolset, UserDeps, _edit_document, args_validator=validate_document_edit
-)
-register_agent_tool(
-    write_toolset, UserDeps, _write_document, args_validator=validate_document_write
-)
-register_agent_tool(
-    write_toolset, UserDeps, _move_documents, args_validator=validate_document_moves
-)
-register_agent_tool(
-    write_toolset,
-    UserDeps,
-    _delete_documents,
-    args_validator=validate_document_deletions,
-)
-register_agent_tool(
-    write_toolset,
-    UserDeps,
-    _apply_changes,
-    args_validator=validate_apply_changes,
-    prepare=_offer_apply_changes,
-)
+    Each one is gated per call by its validator, which plans the changeset the
+    tool would commit, and ``apply_changes`` is offered only where a program's
+    changes can be staged.
+    """
+    deps = ctx.deps
+    roots = deps.writable_roots()
+    paths = _search_paths(roots)
+    gateway = workspace.Gateway(roots)
+    commit = gateway.commit
+
+    return [
+        Hooked(
+            edit_document(paths, hint=_run_python_pointer, commit=commit),
+            args_validator=validate_document_edit,
+        ),
+        Hooked(
+            write_document(paths, hint=_run_python_pointer, commit=commit),
+            args_validator=validate_document_write,
+        ),
+        Hooked(
+            move_documents(paths, commit=commit),
+            args_validator=validate_document_moves,
+        ),
+        Hooked(
+            delete_documents(paths, commit=commit),
+            args_validator=validate_document_deletions,
+        ),
+        Hooked(
+            _apply_changes(deps, gateway),
+            args_validator=validate_apply_changes,
+            prepare=_offer_apply_changes,
+        ),
+    ]
+
+
+write_toolset = AgentTools(factory=write_tools, gateway=True)
+"""The write tools, every write landing through the changeset gateway."""

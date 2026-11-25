@@ -1,411 +1,151 @@
-"""Unit tests for tool adapter utilities."""
+"""How plain tools are served to pydantic-ai: the toolset, the data channel, and argument repair."""
 
-import inspect
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Annotated, Any, cast, override
+from dataclasses import asdict
+from typing import Annotated
 
 import pytest
-from fastmcp import FastMCP
-from pydantic import BaseModel, Field
-from pydantic_ai import FunctionToolset
-from pydantic_ai.messages import ToolReturn
-from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
+from exar.pydantic_ai.guards import LenientArguments
+from exar.tools import effect
+from exar.tools.batch import batch_field, tool_return, unpack
+from pydantic_ai import ApprovalRequired, FunctionToolset, RunContext
+from pydantic_ai.messages import ToolCallPart, ToolReturn
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk
 
-from hivegent.tools.base import (
-    AsyncTool,
-    SyncTool,
-    ToolOutput,
-    ToolSpec,
-    batch_field,
-    tool_description,
-)
-from hivegent.tools.fastmcp import (
-    for_fastmcp,
-    register_mcp_tools,
-)
-from hivegent.tools.pydantic_ai import (
-    ToolOutputChunk,
-    for_pydantic_ai,
-    invoke_tool,
-    register_agent_tools,
-    unwrap_tool_output,
-    wrap_tool_output,
-)
+from hivegent.agents.common import AgentTools, Hooked, UserDeps, run_context
+from hivegent.agents.guards import HOST_GATE
+from hivegent.agents.output import ToolOutputChunk, with_data_chunk
+from hivegent.agents.policy import HOST_FLAGS, ToolFlags
+from hivegent.store import User
+from hivegent.tools.base import ToolFunc
+from tests.helpers import in_run
 
-# -- Fixtures ----------------------------------------------------------------
 
-QueryArg = Annotated[str, Field(description="A search query.")]
-LimitArg = Annotated[int, Field(description="Max results.", ge=1)]
+@effect("read")
+async def echo(
+    queries: Annotated[list[str], batch_field("Queries.")],
+) -> ToolReturn[list[str]]:
+    """Echo the queries."""
+    return tool_return(queries, ",".join(queries))
 
 
-@dataclass(slots=True, frozen=True)
-class SyncFixtureTool(SyncTool[str]):
-    """A sync tool for testing."""
+@effect("write")
+async def save(text: str) -> str:
+    """Save a text."""
+    return text
 
-    prefix: str = ""
 
-    @override
-    def __call__(self, query: QueryArg, limit: LimitArg = 5) -> ToolOutput[str]:
-        """Search for things."""
-        return ToolOutput(data=f"{self.prefix}{query}:{limit}")
+@effect("read")
+async def look(path: str) -> str:
+    """Look at an image."""
+    return path
 
 
-@dataclass(slots=True, frozen=True)
-class AsyncFixtureTool(AsyncTool[list[str]]):
-    """An async tool for testing."""
+def _offer_nothing(
+    ctx: RunContext[UserDeps], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    return None
 
-    path: Path = Path(".")
 
-    @override
-    async def __call__(self, query: QueryArg) -> ToolOutput[list[str]]:
-        """Fetch results asynchronously."""
-        return ToolOutput(data=[str(self.path), query])
+def _tools(ctx: RunContext[UserDeps]) -> list[ToolFunc | Hooked]:
+    return [echo, save, Hooked(look, prepare=_offer_nothing)]
 
 
-@dataclass(slots=True, frozen=True)
-class ToolOutputTool(SyncTool[list[str]]):
-    """A tool that returns ToolOutput with explicit formatted."""
+def _context() -> RunContext[UserDeps]:
+    return run_context(UserDeps(user=User(id="u"), mode="interactive"))
 
-    @override
-    def __call__(self, query: QueryArg) -> ToolOutput[list[str]]:
-        """Search with structured output."""
-        results = [query]
-        return ToolOutput(data=results, formatted=query)
 
-
-@dataclass(slots=True, frozen=True)
-class GenericFixtureTool[R = str](AsyncTool[list[R]]):
-    """A generic tool with a default result type."""
-
-    @override
-    async def __call__(self, value: R) -> ToolOutput[list[R]]:
-        """Return one value."""
-        return ToolOutput(data=[value])
-
-
-@dataclass(slots=True, frozen=True)
-class IntFixtureTool(GenericFixtureTool[int]):
-    """A concrete subclass of a generic tool."""
-
-
-@dataclass(slots=True, frozen=True)
-class _Deps:
-    value: str = "test"
-
-
-def _sync_with_prefix(d: _Deps) -> SyncFixtureTool:
-    return SyncFixtureTool(prefix=d.value)
-
-
-def _sync_default(_d: _Deps) -> SyncFixtureTool:
-    return SyncFixtureTool()
-
-
-def _async_default(_d: _Deps) -> AsyncFixtureTool:
-    return AsyncFixtureTool()
-
-
-def _tool_output_deps(_d: _Deps) -> ToolOutputTool:
-    return ToolOutputTool()
-
-
-def _generic_default(_d: _Deps) -> GenericFixtureTool:
-    return GenericFixtureTool()
-
-
-def _generic_subclass(_d: _Deps) -> IntFixtureTool:
-    return IntFixtureTool()
-
-
-class Hit(BaseModel):
-    """One matched record."""
-
-    label: str
-
-
-@dataclass(slots=True, frozen=True)
-class ModelTool(SyncTool[list[Hit]]):
-    """A tool whose payload is a model, so its schema carries `$defs`."""
-
-    @override
-    def __call__(self, query: str) -> ToolOutput[list[Hit]]:
-        """Find matching records."""
-        return ToolOutput(data=[Hit(label=query)], formatted=query)
-
-
-@dataclass(slots=True, frozen=True)
-class ListFixtureTool(SyncTool[list[str]]):
-    """A tool taking a list argument, the shape every batched tool declares."""
-
-    @override
-    def __call__(
-        self, queries: Annotated[list[str], batch_field("Queries.")]
-    ) -> ToolOutput[list[str]]:
-        """Echo the queries."""
-        return ToolOutput(data=queries, formatted=",".join(queries))
-
-
-def _list_default(_d: _Deps) -> ListFixtureTool:
-    return ListFixtureTool()
-
-
-def _list_mcp() -> ListFixtureTool:
-    return ListFixtureTool()
-
-
-def _model_mcp() -> ModelTool:
-    return ModelTool()
-
-
-def _sync_mcp() -> SyncFixtureTool:
-    return SyncFixtureTool()
-
-
-def _async_mcp() -> AsyncFixtureTool:
-    return AsyncFixtureTool()
-
-
-def _tool_output_mcp() -> ToolOutputTool:
-    return ToolOutputTool()
-
-
-# -- for_pydantic_ai ---------------------------------------------------------
-
-
-class TestForPydanticAI:
-    """Tests for for_pydantic_ai."""
-
-    def test_sync_wrapper_signature(self) -> None:
-        fn = for_pydantic_ai(_sync_with_prefix, _Deps)
-        sig = inspect.signature(fn)
-        params = list(sig.parameters.keys())
-        assert params[0] == "ctx"
-        assert "query" in params
-        assert "limit" in params
-
-    def test_sync_wrapper_name(self) -> None:
-        fn = for_pydantic_ai(_sync_default, _Deps)
-        assert cast(Any, fn).__name__ == "sync_default"
-
-    def test_sync_wrapper_doc(self) -> None:
-        fn = for_pydantic_ai(_sync_default, _Deps)
-        assert fn.__doc__ == tool_description(SyncFixtureTool)
-
-    def test_async_wrapper_is_coroutine(self) -> None:
-        fn = for_pydantic_ai(_async_default, _Deps)
-        assert inspect.iscoroutinefunction(fn)
-
-    def test_async_wrapper_name(self) -> None:
-        fn = for_pydantic_ai(_async_default, _Deps)
-        assert cast(Any, fn).__name__ == "async_default"
-
-    def test_annotations_include_return(self) -> None:
-        fn = for_pydantic_ai(_sync_default, _Deps)
-        assert "return" in fn.__annotations__
-
-    def test_tool_output_return_rewritten_to_tool_return(self) -> None:
-        fn = for_pydantic_ai(_tool_output_deps, _Deps)
-        assert fn.__annotations__["return"] is ToolReturn
-        assert inspect.signature(fn).return_annotation is ToolReturn
-
-
-class TestToolSpec:
-    """What every adapter is built from, and what it refuses to build from."""
-
-    def test_the_result_type_is_the_bound_tool_output(self) -> None:
-        """Concrete, so the sandbox can name the record its stub declares."""
-        assert ToolSpec.from_factory(_tool_output_deps).data_type == list[str]
-
-    @pytest.mark.parametrize(
-        ("factory", "expected_data", "expected_value"),
-        [
-            (_generic_default, list[str], str),
-            (_generic_subclass, list[int], int),
-        ],
+def test_the_flags_mark_every_tool() -> None:
+    tools = AgentTools(
+        factory=_tools,
+        gateway=False,
+        people_only=True,
+        seeing=frozenset({"look"}),
+        timeout=5,
     )
-    def test_generic_defaults_and_subclasses_bind_the_result_type(
-        self,
-        factory: Callable[[_Deps], GenericFixtureTool[str] | IntFixtureTool],
-        expected_data: Any,
-        expected_value: type[Any],
-    ) -> None:
-        spec = ToolSpec.from_factory(factory)
+    built = tools.build(_context())
 
-        assert spec.data_type == expected_data
-        assert spec.annotations["value"] is expected_value
-        assert spec.params[0].annotation is expected_value
-
-    def test_a_call_that_does_not_return_tool_output_is_refused(self) -> None:
-        """Caught at extraction, where every adapter shares the one message.
-
-        The base classes declare the envelope, so this is reachable only by
-        suppressing both checkers -- as a stand-in for the return annotation
-        that never resolves, which used to surface in the sandbox rather than
-        here at the tool that mis-declared itself.
-        """
-
-        @dataclass(slots=True, frozen=True)
-        class _Bare(SyncTool[str]):
-            """Return the payload without its envelope."""
-
-            @override
-            def __call__(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]  # ty: ignore[incompatible-method-override]
-                return "no envelope"
-
-        def _bare(_d: _Deps) -> _Bare:
-            return _Bare()
-
-        with pytest.raises(TypeError, match="must return ToolOutput"):
-            _ = ToolSpec.from_factory(_bare)
+    assert built.timeout == 5
+    assert built.tools["look"].metadata == {
+        "effect": "read",
+        HOST_FLAGS: asdict(ToolFlags(people_only=True, seeing=True)),
+    }
+    assert built.tools["look"].prepare is _offer_nothing
 
 
-# -- register_agent_tools -----------------------------------------------------
+async def _gate(tool_def: ToolDefinition) -> dict[str, str]:
+    args = {"text": "a"}
+    call = ToolCallPart(tool_def.name, args)
+
+    context = _context()
+
+    return await in_run(
+        context.deps,
+        HOST_GATE.before_tool_execute(context, call=call, tool_def=tool_def, args=args),
+    )
 
 
-class TestRegisterAgentTools:
-    """Tests for register_agent_tools."""
+async def test_the_gate_hides_what_a_mode_does_not_offer_and_asks_before_a_write() -> (
+    None
+):
+    built = AgentTools(factory=_tools).build(_context())
+    tool_defs = [tool.tool_def for tool in built.tools.values()]
+    read = run_context(UserDeps(user=User(id="u"), mode="read"))
+    shown = await in_run(read.deps, HOST_GATE.prepare_tools(read, tool_defs))
 
-    def test_registers_tools(self) -> None:
-        toolset: FunctionToolset[_Deps] = FunctionToolset()
-        register_agent_tools(
-            toolset,
-            _Deps,
-            [
-                _sync_default,
-                _async_default,
-            ],
-        )
-        assert "sync_default" in toolset.tools
-        assert "async_default" in toolset.tools
+    assert {tool_def.name for tool_def in shown} == {"echo", "look"}
 
-    async def test_a_bare_item_is_taken_as_a_one_item_list(self) -> None:
-        """Models often send the item itself, which the schema still calls a list."""
-        toolset: FunctionToolset[_Deps] = FunctionToolset()
-        register_agent_tools(toolset, _Deps, [_list_default])
-        tool = toolset.tools["list_default"]
-
-        result = await invoke_tool(toolset, "list_default", {"queries": "a"}, _Deps())
-
-        assert unwrap_tool_output(result).data == ["a"]
-        schema = tool.function_schema.json_schema["properties"]["queries"]
-        assert schema["type"] == "array"
+    with pytest.raises(ApprovalRequired):
+        await _gate(built.tools["save"].tool_def)
 
 
-# -- wrap_tool_output ---------------------------------------------------------
+async def test_a_gateway_write_is_asked_about_by_its_validator_not_the_gate() -> None:
+    save = AgentTools(factory=_tools, gateway=True).build(_context()).tools["save"]
+
+    assert save.metadata == {
+        "effect": "write",
+        HOST_FLAGS: asdict(ToolFlags(gateway=True)),
+    }
+    assert await _gate(save.tool_def) == {"text": "a"}
 
 
-class TestWrapToolOutput:
-    """Tests for wrap_tool_output structured-data correlation."""
+async def test_a_bare_item_is_taken_as_a_one_item_list() -> None:
+    """Models often send the item itself, which the schema still calls a list."""
+    context = _context()
+    toolset = FunctionToolset[UserDeps](
+        [AgentTools(factory=_tools).build(context).tools["echo"]]
+    )
+    manager = await ToolManager(
+        toolset, root_capability=LenientArguments()
+    ).for_run_step(context)
 
-    def test_the_chunk_streams_the_one_encoding_of_its_data(self) -> None:
-        chunk = wrap_tool_output(
-            ToolOutput(data={"rows": [1, None]}, formatted="x"), tool_call_id="c1"
-        ).metadata
+    result = await manager.handle_call(ToolCallPart("echo", {"queries": '"a"'}))
 
-        assert isinstance(chunk, ToolOutputChunk)
-        assert chunk.data_json() is chunk.data_json()
-        assert chunk.encode(5) == BaseChunk.encode(chunk, 5)
-
-    def test_structured_data_chunk_carries_tool_call_id(self) -> None:
-        # The frontend correlates the data part with its tool part by id,
-        # since the AI SDK appends data parts out of positional order.
-        out = wrap_tool_output(
-            ToolOutput(data=[1, 2, 3], formatted="three"),
-            tool_call_id="call-xyz",
-        )
-        assert isinstance(out.metadata, DataChunk)
-        assert out.metadata.id == "call-xyz"
-        assert out.metadata.data == [1, 2, 3]
-        assert out.return_value == "three"
-
-    def test_string_data_emits_no_metadata_chunk(self) -> None:
-        out = wrap_tool_output(ToolOutput(data="plain"), tool_call_id="call-1")
-        assert out.metadata is None
-        assert out.return_value == "plain"
+    assert unpack(result).data == ["a"]
+    assert (
+        toolset.tools["echo"].function_schema.json_schema["properties"]["queries"][
+            "type"
+        ]
+        == "array"
+    )
 
 
-# -- for_fastmcp --------------------------------------------------------------
+def test_the_data_rides_as_a_chunk_named_by_its_call() -> None:
+    # The frontend correlates the data part with its tool part by id,
+    # since the AI SDK appends data parts out of positional order.
+    out = with_data_chunk(tool_return({"rows": [1, None]}, "x"), "call-xyz")
+    chunk = out.metadata
+
+    assert isinstance(chunk, ToolOutputChunk)
+    assert chunk.id == "call-xyz"
+    assert chunk.data_json() is chunk.data_json()
+    assert chunk.encode(5) == BaseChunk.encode(chunk, 5)
+    assert out.return_value == "x"
 
 
-class TestForFastMCP:
-    """Tests for for_fastmcp."""
+def test_text_data_emits_no_chunk() -> None:
+    out = with_data_chunk(tool_return("plain"), "call-1")
 
-    def test_appends_tool_param(self) -> None:
-        fn = for_fastmcp(_sync_mcp)
-        sig = inspect.signature(fn)
-        assert "_tool_" in sig.parameters
-        param = sig.parameters["_tool_"]
-        assert param.kind == inspect.Parameter.KEYWORD_ONLY
-
-    def test_preserves_call_params(self) -> None:
-        fn = for_fastmcp(_sync_mcp)
-        sig = inspect.signature(fn)
-        assert "query" in sig.parameters
-        assert "limit" in sig.parameters
-
-    def test_name(self) -> None:
-        fn = for_fastmcp(_sync_mcp)
-        assert cast(Any, fn).__name__ == "sync_mcp"
-
-    def test_doc(self) -> None:
-        fn = for_fastmcp(_sync_mcp)
-        assert fn.__doc__ == tool_description(SyncFixtureTool)
-
-    def test_async_wrapper(self) -> None:
-        fn = for_fastmcp(_async_mcp)
-        assert inspect.iscoroutinefunction(fn)
-
-    def test_the_return_annotation_is_the_payload(self) -> None:
-        fn = for_fastmcp(_tool_output_mcp)
-        assert fn.__annotations__["return"] == list[str]
-        assert inspect.signature(fn).return_annotation == list[str]
-
-    async def test_structured_output_matches_the_registered_schema(self) -> None:
-        app = FastMCP("test")
-        register_mcp_tools(app, [_tool_output_mcp])
-        registered = await app.get_tool("tool_output_mcp")
-        assert registered is not None
-
-        result = await app.call_tool("tool_output_mcp", {"query": "match"})
-
-        assert registered.output_schema == {
-            "type": "object",
-            "properties": {"result": {"items": {"type": "string"}, "type": "array"}},
-            "required": ["result"],
-            "x-fastmcp-wrap-result": True,
-        }
-        assert result.structured_content == {"result": ["match"]}
-        assert result.meta == {"fastmcp": {"wrap_result": True}}
-
-    async def test_a_model_payload_keeps_its_definitions_at_the_schema_root(
-        self,
-    ) -> None:
-        """Where a `#/$defs/...` pointer resolves, so the refs are not dangling."""
-        app = FastMCP("test")
-        register_mcp_tools(app, [_model_mcp])
-        registered = await app.get_tool("model_mcp")
-        assert registered is not None
-        schema = registered.output_schema
-        assert schema is not None
-
-        assert "$defs" in schema
-        assert "Hit" in schema["$defs"]
-        assert schema["properties"]["result"]["items"] == {"$ref": "#/$defs/Hit"}
-
-    async def test_a_bare_item_is_taken_as_a_one_item_list(self) -> None:
-        app = FastMCP("test")
-        register_mcp_tools(app, [_list_mcp])
-
-        result = await app.call_tool("list_mcp", {"queries": "a"})
-
-        assert result.structured_content == {"result": ["a"]}
-
-    async def test_a_double_encoded_string_is_unquoted(self) -> None:
-        app = FastMCP("test")
-        register_mcp_tools(app, [_sync_mcp])
-
-        result = await app.call_tool("sync_mcp", {"query": '"needle"'})
-
-        assert result.structured_content == {"result": "needle:5"}
+    assert out.metadata is None
+    assert out.return_value == "plain"

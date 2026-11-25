@@ -1,31 +1,33 @@
 """Run state the model reads as instructions that append their changes.
 
-The mode and the document selection change only between turns, so each is an
-``on_change='append'`` instruction whose change extends the cached prefix
-instead of rewriting it (see "Run state appends its changes" in the README).
+The date, the mode, and the document selection change only between turns, so
+each is an ``on_change='append'`` instruction whose change extends the cached
+prefix instead of rewriting it (see "Run state appends its changes" in the README).
 Instructions carry operator authority, so the model-written memory is a
-``read_memory`` result instead (``agents/tools/memory.py``).
+``read_memory`` result instead (``agents/tools/memory.py``), and only the
+operator's assistant joins them (``agents/tools/assistant.py``).
+Each is an `exar.pydantic_ai.RunNote`, rendered once per run, the document
+scope in a worker thread since it resolves paths on disk.
 """
 
-import asyncio
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field, replace
-from typing import Self
+from collections.abc import Mapping
+from datetime import UTC, datetime
 
+from exar.pydantic_ai import RunNote
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import InstructionPart
 
-from ..l10n import Localized
 from ..prompts import (
     INTERACTIVE_MODE_NOTE,
     READ_MODE_NOTE,
     WRITE_MODE_NOTE,
+    assistant_note,
+    date_note,
 )
+from ..shared.l10n import Localized
 from ..types import Mode
 from .common import UserDeps
 
-__all__ = ["DOCUMENT_SCOPE", "MODE_NOTE", "RunNote"]
+__all__ = ["ASSISTANT_INSTRUCTIONS", "DATE_NOTE", "DOCUMENT_SCOPE", "MODE_NOTE"]
 
 _MODE_NOTES: Mapping[Mode, Localized[str]] = {
     "interactive": INTERACTIVE_MODE_NOTE,
@@ -34,39 +36,41 @@ _MODE_NOTES: Mapping[Mode, Localized[str]] = {
 }
 
 
-@dataclass(slots=True)
-class RunNote(AbstractCapability[UserDeps]):
-    """An appending instruction block rendered once per run from its deps.
-
-    The state it renders is fixed for a run, so it is resolved once rather than
-    before every request, and a literal block stays in the cacheable part of
-    the instructions.  An empty rendering contributes no block.
-    """
-
-    render: Callable[[UserDeps], Awaitable[str]]
-    text: str = ""
-    id: str | None = field(default=None, kw_only=True)
-
-    async def for_run(self, ctx: RunContext[UserDeps]) -> Self:
-        """Render the run's state."""
-        return replace(self, text=await self.render(ctx.deps))
-
-    def get_instructions(self) -> InstructionPart | None:
-        """The state as an appending block, none while it renders empty."""
-        return InstructionPart(self.text, on_change="append") if self.text else None
+def _date_note(ctx: RunContext[UserDeps]) -> str:
+    return date_note(datetime.now(UTC).date())[ctx.deps.language]
 
 
-async def _mode_note(deps: UserDeps) -> str:
-    return _MODE_NOTES[deps.mode][deps.language]
+def _mode_note(ctx: RunContext[UserDeps]) -> str:
+    return _MODE_NOTES[ctx.deps.mode][ctx.deps.language]
 
 
-async def _document_scope(deps: UserDeps) -> str:
-    # Resolves the selected paths on disk.
-    return await asyncio.to_thread(deps.describe_document_scope)
+def _document_scope(ctx: RunContext[UserDeps]) -> str:
+    return ctx.deps.describe_document_scope()
 
 
-MODE_NOTE = RunNote(_mode_note, id="mode")
+def _assistant_instructions(ctx: RunContext[UserDeps]) -> str:
+    assistant = ctx.deps.assistant
+
+    if assistant is None or not assistant.trusted:
+        return ""
+
+    return assistant_note(assistant.name, assistant.spec.instructions)[
+        ctx.deps.language
+    ]
+
+
+DATE_NOTE = RunNote[UserDeps](render=_date_note, id="date")
+"""Today's date, which a conversation running past midnight appends."""
+
+MODE_NOTE = RunNote[UserDeps](render=_mode_note, id="mode")
 """What the run may change, the same tools for both modes that may write."""
 
-DOCUMENT_SCOPE = RunNote(_document_scope, id="documents")
-"""The documents the user selected or hid."""
+DOCUMENT_SCOPE = RunNote[UserDeps](
+    render=_document_scope, blocking=True, id="documents"
+)
+"""The documents the user selected or hid, resolved on disk off the event loop."""
+
+ASSISTANT_INSTRUCTIONS = RunNote[UserDeps](
+    render=_assistant_instructions, id="assistant-instructions"
+)
+"""The operator's assistant the run acts as, nothing for any other."""

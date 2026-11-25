@@ -1,192 +1,197 @@
-"""Compaction in place: a summary stored in the conversation it compacts.
+"""Compaction of a run's history with exar, the summary asked for under the run's own prefix.
 
-A compaction is a ``ModelResponse`` holding one provider-less
-``CompactionPart`` whose content is the summary (see "Compaction is a turn of
-the conversation" in ``backend/README.md``).  It goes where the history before
-it can be closed off (:func:`~.summarize.closed_cuts`), and only past the
-latest compaction with something new to summarize.
+`exar.pydantic_ai.compaction` compacts a history the context window refused
+and sends later requests only the window from the summary on (see
+"Compaction is a turn of the conversation" in ``backend/README.md``).  The
+summary is one more turn of the conversation, under the prefix its turns ran
+under (:class:`~.common.RunPrefix`), so the provider answers everything ahead
+of the prompt from its cache.  The prompt is asked in the run's language.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
-from typing import Any
+from dataclasses import dataclass
 
-from pydantic_ai import ModelRequestNode, RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import (
-    CapabilityEvent,
-    CompactionPart,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    RetryFeedbackPart,
-    ToolReturnPart,
-    post_compaction_window,
+from exar.agents import call
+from exar.pydantic_ai import PydanticAiAgent
+from exar.pydantic_ai.compaction import (
+    COMPACTION,
+    CompactOnOverflow,
+    is_context_overflow,
+    is_server_overflow,
+    run_summary,
+    summarize,
 )
-from pydantic_graph import End
+from pydantic_ai import AgentRunResult, RunContext
+from pydantic_ai.messages import CompactionPart, ModelMessage
+from pydantic_ai.usage import RunUsage, UsageLimits
 
-from ..db.conversations import is_user_request
-from ..llm import is_context_overflow
+from ..llm import SUMMARY_MAX_TOKENS, summary_model_settings
+from ..shared.l10n import Localized
+from .app import summary_agent
 from .common import RunPrefix, UserDeps
-from .summarize import closed_cuts, summarize_conversation
 
 __all__ = [
-    "CompactOnOverflow",
-    "Compacted",
-    "compact",
-    "compaction_cut",
-    "is_compaction",
+    "COMPACT_PROMPT",
+    "PrefixSummary",
+    "compact_on_overflow",
+    "is_overflow",
 ]
 
+# Section structure adapted from pi-mono (MIT), https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/compaction/compaction.ts
+COMPACT_PROMPT = Localized(
+    en="""\
+Summarize the conversation as a handover note for continuing the work in a fresh context.
 
-@dataclass(kw_only=True)
-class Compacted(CapabilityEvent, namespace="hivegent"):
-    """A run compacted its history, so the client shows the summary live."""
+Use this exact structure, keeping every heading even where a section is empty:
 
-    part: CompactionPart
+## Goal
+[What the user is trying to accomplish, in one or two sentences.]
 
+## Constraints and decisions
+- [Preferences, requirements, and choices made, each with its reason, otherwise "(none)"]
 
-async def compact(messages: Sequence[ModelMessage], run: RunPrefix) -> CompactionPart:
-    """The compaction that summarizes *messages*, run under *run*."""
-    return CompactionPart(content=await summarize_conversation(messages, run))
+## Progress
+### Done
+- [Finished work and established findings, otherwise "(none)"]
+### In progress
+- [Work underway or partially applied, otherwise "(none)"]
+### Blocked
+- [Blockers, failures, and unknowns, otherwise "(none)"]
 
+## Documents
+- [Full workspace path: why it matters, otherwise "(none)"]
 
-def is_compaction(message: ModelMessage) -> bool:
-    """Whether *message* is a compaction."""
-    return isinstance(message, ModelResponse) and any(
-        isinstance(part, CompactionPart) for part in message.parts
-    )
+## Next steps
+1. [The immediate concrete action, otherwise "(none)"]
 
+Keep every section to terse bullets rather than prose, and reproduce workspace paths, quoted passages, names, and figures exactly as they appeared.
+Answer from the conversation above alone, and do not call any tools.
+Return only the summary, with no commentary around it.""",
+    de="""\
+Fasse die Konversation als Übergabenotiz zusammen, damit die Arbeit in einem frischen Kontext weitergehen kann.
 
-def _is_prompt(message: ModelMessage) -> bool:
-    """Whether *message* opens a turn, a prompt that answers no call."""
-    return is_user_request(message) and not any(
-        isinstance(part, ToolReturnPart | RetryFeedbackPart) for part in message.parts
-    )
+Verwende genau diese Struktur und behalte jede Überschrift bei, auch wenn ein Abschnitt leer ist:
 
+## Ziel
+[Was die Benutzer:in erreichen möchte, in ein oder zwei Sätzen.]
 
-def _boundaries(messages: Sequence[ModelMessage]) -> list[int]:
-    """Where a compaction can go in *messages*, ascending.
+## Vorgaben und Entscheidungen
+- [Vorlieben, Anforderungen und getroffene Entscheidungen, jeweils mit Begründung, sonst „(keine)“]
 
-    A cut right after the latest compaction is left out, since there is
-    nothing new to summarize, so a window that overflows on its own is not
-    compacted again.  A cut past the latest prompt is left out until a model
-    answered it, so a prompt is never summarized with only what a capability
-    reported beside it, such as :class:`~.tools.memory.MemoryNote`'s read.
-    """
-    start = len(messages) - len(post_compaction_window(messages))
-    prompt = max(
-        (i for i, message in enumerate(messages) if _is_prompt(message)), default=-1
-    )
-    answered = next(
-        (
-            i
-            for i, message in enumerate(messages)
-            if i > prompt and isinstance(message, ModelResponse) and message.model_name
-        ),
-        len(messages),
-    )
+## Fortschritt
+### Erledigt
+- [Abgeschlossene Arbeit und gesicherte Erkenntnisse, sonst „(keine)“]
+### In Arbeit
+- [Laufende oder teilweise umgesetzte Arbeit, sonst „(keine)“]
+### Blockiert
+- [Hindernisse, Fehlschläge und offene Fragen, sonst „(keine)“]
 
-    return [
-        cut
-        for cut in closed_cuts(messages)
-        if cut > start + 1 and (cut <= prompt or cut > answered)
-    ]
+## Dokumente
+- [Vollständiger Pfad im Arbeitsbereich: warum es wichtig ist, sonst „(keine)“]
 
+## Nächste Schritte
+1. [Die unmittelbar nächste konkrete Aktion, sonst „(keine)“]
 
-def compaction_cut(messages: Sequence[ModelMessage]) -> int | None:
-    """Where a compaction of *messages* goes, ``None`` where none can.
+Halte jeden Abschnitt in knappen Aufzählungspunkten statt in Fließtext, und übernimm Pfade im Arbeitsbereich, zitierte Passagen, Namen und Zahlen genau so, wie sie vorkamen.
+Antworte allein aus der Konversation oben und ruf keine Tools auf.
+Gib nur die Zusammenfassung zurück, ohne Kommentar drumherum.""",
+)
+"""The request, appended to the live conversation as its last user turn.
 
-    It goes after them where that closes the history, so it summarizes what the
-    client has already seen.  A trailing prompt is never summarized, so the
-    compaction goes ahead of it and the prompt follows the summary.
+Written in the run's language: an English user turn at the end of a German
+conversation would pull the summary, and every turn continuing from it, into
+English.
 
-    Examples:
-        >>> from pydantic_ai.messages import TextPart, UserPromptPart
-        >>> ask = ModelRequest(parts=[UserPromptPart("hi")])
-        >>> answer = ModelResponse(parts=[TextPart("hello")], model_name="m")
-        >>> compaction_cut([ask, answer]), compaction_cut([ask, answer, ask])
-        (2, 2)
-        >>> compaction_cut([ask]) is None
-        True
-    """
-    boundaries = _boundaries(messages)
+Bounded by structure rather than by a word count, which would make the model
+drop sections instead of tightening them.  The tools stay declared, so the
+closing sentences are what holds the model back from calling one:
+withdrawing them, or sending ``tool_choice='none'``, would rewrite the block
+that sits ahead of the messages and throw away the prefix this path exists for.
+A summary that calls one anyway is asked again with the tools withheld.
+"""
 
-    if len(messages) in boundaries:
-        return len(messages)
-
-    if (
-        messages
-        and isinstance(messages[-1], ModelRequest)
-        and len(messages) - 1 in boundaries
-    ):
-        return len(messages) - 1
-
-    return None
+# The tools stay declared so the prefix stays identical, every call is refused before it runs.
+_LIMITS = UsageLimits(request_limit=1, tool_calls_limit=0)
 
 
-def _retry(request: ModelRequest) -> ModelRequest:
-    """*request* without the instruction state its refused attempt recorded.
-
-    A compaction opens a new instruction window, which the retry records afresh.
-    """
-    return replace(
-        request,
-        parts=[
-            part
-            for part in request.parts
-            if not isinstance(part, InstructionDeltaPart | InstructionBaselinePart)
-        ],
-    )
+def is_overflow(error: Exception, messages: Sequence[ModelMessage]) -> bool:
+    """Whether *error*, with the *messages* its run ended on, means a request did not fit the context window, self-hosted endpoints included."""
+    return is_context_overflow(error, messages) or is_server_overflow(error)
 
 
-@dataclass
-class CompactOnOverflow(AbstractCapability[UserDeps]):
-    """Compact a history the context window refused, then retry the request.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PrefixSummary:
+    """Asks for the summary of a history as its next turn under *prefix*, an `exar` summarizer.
 
-    The compaction goes at :func:`compaction_cut`.  After a refused tool
-    return, the retry is an empty request that continues from the summary.
-    Ahead of a refused prompt, the retry sends that prompt again.
-
-    A regenerated prompt is persisted already, so the turn stores a
-    compaction that took its place ahead of it.
+    Args:
+        prefix: The prefix the history ran under, which the request reproduces.
     """
 
-    run: RunPrefix
+    prefix: RunPrefix
 
-    async def on_node_run_error(
-        self, ctx: RunContext[UserDeps], *, node: Any, error: Exception
-    ) -> ModelRequestNode[UserDeps, Any] | End[Any]:
-        """Compact and retry an overflowing model request, re-raise anything else."""
-        if not isinstance(node, ModelRequestNode) or not is_context_overflow(error):
-            raise error
+    @property
+    def max_tokens(self) -> int:
+        """The output cap of the summary, which a refused summary sheds."""
+        return summary_model_settings(self.prefix.llm).get(
+            "max_tokens", SUMMARY_MAX_TOKENS
+        )
 
-        history = list(ctx.messages)
+    async def ask(self, messages: Sequence[ModelMessage], usage: RunUsage, /) -> str:
+        """The summary of *messages*, which must fit the window, its usage added to *usage*.
 
-        # A stream refused on opening leaves an empty response behind.
-        if history and isinstance(history[-1], ModelResponse) and not history[-1].parts:
-            history.pop()
+        The summary runs on a usage of its own, since a shared one would count
+        the turn's requests against its ``request_limit`` of one.
+        """
+        run = self.prefix
 
-        cut = compaction_cut(history)
+        async def summarize_once(prompt: str) -> AgentRunResult[str]:
+            result = await run_summary(
+                lambda withheld: summary_agent.iter(
+                    prompt,
+                    message_history=list(messages),
+                    **run.run_kwargs(),
+                    model_settings=summary_model_settings(run.llm),
+                    capabilities=[*run.capabilities, *withheld],
+                    usage_limits=_LIMITS,
+                    metadata={COMPACTION: True},
+                )
+            )
+            usage.incr(result.usage)
 
-        if cut is None or not isinstance(refused := history[-1], ModelRequest):
-            raise error
+            return result
 
-        part = await compact(history[:cut], self.run)
-        compaction = ModelResponse(parts=[part])
+        summary = PydanticAiAgent[str, str](run=summarize_once, name="summarize")
 
-        if cut < len(history):
-            # The retry appends the refused request again.
-            history[-1] = compaction
-            retry = _retry(refused)
+        return (await call(summary, COMPACT_PROMPT[run.deps.language])).strip()
 
-        else:
-            history.append(compaction)
-            retry = ModelRequest(parts=[])
+    async def __call__(
+        self, ctx: RunContext[UserDeps], messages: Sequence[ModelMessage], /
+    ) -> str:
+        """The summary of *messages*, counted into the usage of the run it compacts."""
+        return await self.ask(messages, ctx.usage)
 
-        ctx.messages[:] = history
-        await ctx.emit(Compacted(part=part))
+    async def compact(
+        self, messages: Sequence[ModelMessage], usage: RunUsage, /
+    ) -> CompactionPart:
+        """The compaction of *messages*, shedding from their tail while the summary overflows.
 
-        return replace(node, request=retry)
+        The usage of the summary is added to *usage*.
+        """
+
+        async def ask(prefix: Sequence[ModelMessage]) -> str:
+            return await self.ask(prefix, usage)
+
+        summary = await summarize(
+            messages, ask, max_tokens=self.max_tokens, is_overflow=is_overflow
+        )
+
+        return CompactionPart(content=summary)
+
+
+def compact_on_overflow(prefix: RunPrefix) -> CompactOnOverflow[UserDeps]:
+    """The capability that compacts a run of *prefix* the context window refused."""
+    summary = PrefixSummary(prefix=prefix)
+
+    return CompactOnOverflow(
+        summarizer=summary, max_tokens=summary.max_tokens, is_overflow=is_overflow
+    )

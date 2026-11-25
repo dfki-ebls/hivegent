@@ -1,4 +1,4 @@
-"""Unit tests for the roots the agent's mutating tools reach and how each commits.
+"""Unit tests for the roots the agent's write tools reach and how each commits.
 
 The write tools search the personal workspace, the groups the user may write
 to, and ``/tmp``.  Each accepted path is routed back to the root that claimed
@@ -6,15 +6,16 @@ it: a workspace's through the changeset gateway and its approval, ``/tmp``'s
 straight into the conversation's folder.
 """
 
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
-from pydantic_ai import RunContext
+from exar.helpers import get_name
+from exar.tools import Retry
+from pydantic_ai import DeferredToolRequests, RunContext
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
@@ -22,23 +23,26 @@ from pydantic_ai.usage import RunUsage
 
 import hivegent.agents.tools.python as python_tools
 from hivegent import staging
-from hivegent.agents.common import UserDeps
+from hivegent.agents.common import Hooked, UserDeps, probe_context
 from hivegent.agents.tools.write import (
-    _apply_changes,
-    _delete_documents,
-    _edit_document,
-    _move_documents,
-    _write_document,
-    changeset_committer,
-    discard_unapproved_changes,
+    program_writes,
+    retain_awaited_changes,
     validate_apply_changes,
     validate_document_deletions,
     validate_document_edit,
     validate_document_moves,
     validate_document_write,
+    write_tools,
     write_toolset,
 )
-from hivegent.changes import (
+from hivegent.config import settings
+from hivegent.db import documents as db_documents
+from hivegent.store import GlobalScope, GroupScope, User, UserScope
+from hivegent.tmp import tmp_dir
+from hivegent.tools.base import Direct, ToolFunc
+from hivegent.tools.changes import (
+    ChangeReason,
+    ChangeRefused,
     Changeset,
     ChangesetSummary,
     FileDiff,
@@ -48,18 +52,23 @@ from hivegent.changes import (
     WorkspaceChanged,
     Write,
 )
-from hivegent.config import settings
-from hivegent.db import documents as db_documents
-from hivegent.store import User
-from hivegent.tmp import tmp_dir
-from hivegent.tools.base import Direct, PathFilter, ToolRetry
 from hivegent.tools.changeset import AppliedChanges, PendingChanges
 from hivegent.tools.mutations import DocumentMove
 from hivegent.types import DocumentFilter
 from hivegent.workspace import Location, PlannedChangeset
-from hivegent.workspace import changeset as gateway
+from hivegent.workspace.changeset import gateway
 from hivegent.workspace.operations import Item, locations
-from tests.helpers import owned, run_context
+from tests.helpers import doc, owned, run_context
+
+
+def _tool(deps: UserDeps, name: str) -> ToolFunc:
+    """The write tool *name* of a run over *deps*."""
+    tools = [
+        item.func if isinstance(item, Hooked) else item
+        for item in write_tools(run_context(deps))
+    ]
+
+    return {get_name(tool): tool for tool in tools}[name]
 
 
 @pytest.fixture()
@@ -85,12 +94,10 @@ def routed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     async def _apply(
         items: Sequence[Item],
         *,
-        owner: str | None = None,
-        filters: Mapping[str, PathFilter] = MappingProxyType({}),
         host: bool = False,
     ) -> gateway.AppliedChangeset:
         if any(loc.root.store is None for loc in locations(items)):
-            return await apply(items, owner=owner, filters=filters, host=host)
+            return await apply(items, host=host)
 
         calls.extend((loc.root.store_key, loc.path) for loc in locations(items))
 
@@ -106,11 +113,11 @@ def routed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
 async def test_writes_to_the_addressed_workspace(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
-    tool = _write_document(deps)
+    tool = _tool(deps, "write_document")
 
-    assert (await tool("@team/notes/a.md", "hi")).data == "written"
-    assert (await tool("~/notes/a.md", "hi")).data == "written"
-    assert (await tool("notes/b.md", "hi")).data == "written"
+    assert (await tool("@team/notes/a.md", "hi")).metadata == "written"
+    assert (await tool("~/notes/a.md", "hi")).metadata == "written"
+    assert (await tool("notes/b.md", "hi")).metadata == "written"
     assert routed == [
         ("group:team", "notes/a.md"),
         ("user:u", "notes/a.md"),
@@ -125,31 +132,39 @@ async def test_tmp_is_written_directly_and_a_program_there_is_pointed_at_run_pyt
     folder = tmp_dir(settings.data_dir, owned("c1"))
     pointer = "Run it with run_python's `script_path='/tmp/report.py'`."
 
-    written = (await _write_document(deps)("/tmp/report.py", "print(1)")).data
-    edited = (await _edit_document(deps)("/tmp/report.py", [TextEdit("1", "2")])).data
+    written = (
+        await _tool(deps, "write_document")("/tmp/report.py", "print(1)")
+    ).metadata
+    edited = (
+        await _tool(deps, "edit_document")("/tmp/report.py", [TextEdit("1", "2")])
+    ).metadata
 
     assert written == f"Wrote 8 characters to '/tmp/report.py'. {pointer}"
     assert edited == f"Replaced 1 occurrence in '/tmp/report.py'. {pointer}"
     assert (folder / "report.py").read_text() == "print(2)"
 
-    with pytest.raises(ToolRetry, match="changed since it was read"):
-        await _edit_document(deps)("/tmp/report.py", [TextEdit("2", "3")], "stale")
+    with pytest.raises(Retry, match="changed since it was read"):
+        await _tool(deps, "edit_document")(
+            "/tmp/report.py", [TextEdit("2", "3")], "stale"
+        )
 
     # Anything else carries no pointer back to run_python.
-    assert (await _write_document(deps)("/tmp/rows.json", "[]")).data == (
+    assert (await _tool(deps, "write_document")("/tmp/rows.json", "[]")).metadata == (
         "Wrote 2 characters to '/tmp/rows.json'."
     )
 
     # Moves and deletes reach `/tmp` too, and land at once.
-    _ = await _move_documents(deps)(
+    _ = await _tool(deps, "move_documents")(
         [DocumentMove("/tmp/rows.json", "/tmp/old/rows.json")]
     )
     assert (folder / "old" / "rows.json").read_text() == "[]"
-    _ = await _delete_documents(deps)(["/tmp/old/rows.json"])
+    _ = await _tool(deps, "delete_documents")(["/tmp/old/rows.json"])
     assert not (folder / "old" / "rows.json").exists()
 
-    with pytest.raises(ToolRetry, match="only one of them is written directly"):
-        await _move_documents(deps)([DocumentMove("/tmp/report.py", "~/report.py")])
+    with pytest.raises(Retry, match="only one of them is written directly"):
+        await _tool(deps, "move_documents")(
+            [DocumentMove("/tmp/report.py", "~/report.py")]
+        )
 
     assert routed == []
 
@@ -159,10 +174,10 @@ async def test_tmp_refuses_what_would_outgrow_it(
 ) -> None:
     """The cap counts what a write replaces, so a full folder may still shrink."""
     monkeypatch.setattr(settings.tmp, "max_bytes", 4)
-    tool = _write_document(deps)
+    tool = _tool(deps, "write_document")
     _ = await tool("/tmp/a.txt", "1234")
 
-    with pytest.raises(ToolRetry, match="over the"):
+    with pytest.raises(Retry, match="over the"):
         await tool("/tmp/b.txt", "5")
 
     _ = await tool("/tmp/a.txt", "12")
@@ -173,10 +188,11 @@ async def test_unknown_root_is_refused_with_the_roots_named(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
     """A sigil-led path is never read as relative, so it cannot land under ``~``."""
-    tool = _write_document(deps)
+    tool = _tool(deps, "write_document")
 
     with pytest.raises(
-        ToolRetry, match=r"addresses ~, @team, /tmp; give the full path"
+        Retry,
+        match=r"addresses ~, @team, /skills/~, /skills/@team, /tmp; give the full path",
     ):
         await tool("@nope/a.md", "hi")
 
@@ -186,51 +202,55 @@ async def test_unknown_root_is_refused_with_the_roots_named(
 async def test_refuses_a_group_the_user_may_only_read(
     deps: UserDeps, routed: list[tuple[str, str]]
 ) -> None:
-    tool = _write_document(deps)
+    tool = _tool(deps, "write_document")
 
-    with pytest.raises(ToolRetry, match="not accessible"):
+    with pytest.raises(Retry, match="not accessible"):
         await tool("@archive/notes/a.md", "hi")
 
     assert routed == []
 
 
-def test_run_python_paths_are_lazy_and_end_with_the_conversation_s_tmp(
-    deps: UserDeps, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_python_paths_end_with_the_conversation_s_tmp(deps: UserDeps) -> None:
     filtered = replace(
         deps,
-        document_filter=DocumentFilter(excluded=frozenset({"other.md"})),
-        group_filters={
-            "team": DocumentFilter(excluded=frozenset({"other.md"})),
-            "archive": DocumentFilter(excluded=frozenset({"other.md"})),
+        document_filters={
+            scope: DocumentFilter(excluded=frozenset({doc("other.md")}))
+            for scope in (
+                GlobalScope(),
+                GroupScope("archive"),
+                GroupScope("team"),
+                UserScope("u"),
+            )
         },
     )
-    pool = object()
-    monkeypatch.setattr(python_tools, "get_monty_pool", lambda: pool)
+    paths = filtered.search_paths()
 
-    tool = python_tools._run_python(run_context(filtered))
-
-    assert tool.pool is pool
-    assert all(not path.path.exists() for path in tool.resolved_paths)
-    *workspaces, tmp = tool.resolved_paths
-    assert len(workspaces) == 3
+    assert all(not path.path.exists() for path in paths)
+    *workspaces, own, archive, team, tmp = paths
+    assert len(workspaces) == 4
+    assert [own.mount.render(""), archive.mount.render(""), team.mount.render("")] == [
+        "/skills/~",
+        "/skills/@archive",
+        "/skills/@team",
+    ]
 
     for path in workspaces:
         assert path.filter_func is not None
         assert path.filter_func("report.md")
         assert not path.filter_func("other.md")
 
-    assert tmp.prefixed("") == "/tmp"
+    assert tmp.mount.render("") == "/tmp"
     assert tmp.policy == Direct(reserved=".tool-results")
-    assert tool.environ["TMPDIR"] == "/tmp"
-    assert len(tool.writable) == 3
+    assert python_tools._environ(filtered)["TMPDIR"] == "/tmp"
+    # The writable workspaces and skill libraries, and `/tmp`.
+    assert len(program_writes(filtered).paths) == 5
 
     # Read mode, or a withheld apply_changes, changes no workspace and keeps `/tmp`.
     for narrowed in (
         replace(filtered, mode="read"),
         replace(filtered, disabled_tools=frozenset({"apply_changes"})),
     ):
-        assert python_tools._run_python(run_context(narrowed)).writable == (tmp,)
+        assert program_writes(narrowed).paths == (tmp,)
 
 
 def _asked(exc: pytest.ExceptionInfo[ApprovalRequired]) -> dict[str, Any]:
@@ -262,15 +282,19 @@ def _context(
         ({"code": "1", "script_path": "/tmp/run.py"}, "both given"),
     ],
 )
-def test_invalid_program_is_refused_before_it_runs(
+async def test_invalid_program_is_refused_before_it_runs(
     deps: UserDeps, arguments: dict[str, str | None], message: str
 ) -> None:
-    tool = python_tools.python_toolset.tools["run_python"]
+    tool = python_tools.python_toolset.build(probe_context()).tools["run_python"]
     validated = tool.function_schema.validator.validate_python(arguments)
-    assert tool.args_validator is python_tools.validate_run_python
+    assert getattr(tool.args_validator, "__wrapped__", None) is (
+        python_tools.validate_run_python
+    )
 
-    with pytest.raises(ModelRetry, match=message):
-        python_tools.validate_run_python(_context(deps, "interactive"), **validated)
+    with pytest.raises(Retry, match=message):
+        await python_tools.validate_run_python(
+            _context(deps, "interactive"), **validated
+        )
 
 
 @pytest.mark.parametrize(
@@ -282,11 +306,11 @@ def test_invalid_program_is_refused_before_it_runs(
         ("1 + 1", " "),
     ],
 )
-def test_a_program_runs_without_asking(
+async def test_a_program_runs_without_asking(
     deps: UserDeps, code: str | None, script_path: str | None
 ) -> None:
     """What a program changes is approved afterwards, through apply_changes."""
-    python_tools.validate_run_python(
+    await python_tools.validate_run_python(
         _context(deps, "interactive"), code=code, script_path=script_path
     )
 
@@ -317,10 +341,10 @@ async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
     assert [create["path"] for create in _asked(exc)["creates"]] == ["@team/tmp/run.py"]
 
     # A traversal reaches neither another conversation's folder nor a document.
-    with pytest.raises(ModelRetry, match="not accessible"):
+    with pytest.raises(Retry, match="not accessible"):
         await write("interactive", "/tmp/../c2/state.json")
 
-    with pytest.raises(ModelRetry, match="not accessible"):
+    with pytest.raises(Retry, match="not accessible"):
         await validate_document_write(
             _context(replace(deps, conversation=None), "interactive"),
             file_path="/tmp/state.json",
@@ -334,7 +358,7 @@ async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
 async def test_an_edit_that_cannot_apply_is_refused_before_the_approval(
     deps: UserDeps,
 ) -> None:
-    workspace_dir = deps.user.store.workspace_dir(settings.data_dir)
+    workspace_dir = deps.user.home.workspace_dir()
     (workspace_dir / "notes.md").write_text("alpha beta")
     edits = [TextEdit("alpha", "gamma"), TextEdit("missing", "x")]
 
@@ -367,11 +391,13 @@ def test_write_tools_gate_every_call_rather_than_the_tool() -> None:
         "apply_changes": validate_apply_changes,
     }
 
-    assert set(write_toolset.tools) == set(validators)
+    tools = write_toolset.build(probe_context()).tools
+
+    assert set(tools) == set(validators)
 
     for name, validator in validators.items():
-        tool = write_toolset.tools[name]
-        assert tool.args_validator is validator
+        tool = tools[name]
+        assert getattr(tool.args_validator, "__wrapped__", None) is validator
         assert tool.requires_approval is False
 
 
@@ -387,7 +413,7 @@ def documents(deps: UserDeps, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(db_documents, "get_entry_metadata", _no_metadata)
     monkeypatch.setattr(db_documents, "get_entries_metadata", _no_rows)
-    workspace_dir = deps.user.store.workspace_dir(settings.data_dir)
+    workspace_dir = deps.user.home.workspace_dir()
     (workspace_dir / "a.md").write_text("a")
     (workspace_dir / "b.md").write_text("b")
 
@@ -428,7 +454,20 @@ async def test_a_batch_of_moves_is_one_approval_of_the_planner_s_summary(
         ],
         "deletes": [],
         "mkdirs": [],
+        "reasons": [],
     }
+
+
+async def test_a_move_into_a_group_workspace_asks_only_in_interactive_mode(
+    deps: UserDeps, documents: Path
+) -> None:
+    _ = documents
+    moves = [DocumentMove("~/b.md", "@team/b.md")]
+
+    with pytest.raises(ApprovalRequired):
+        await validate_document_moves(_context(deps, "interactive"), moves=moves)
+
+    await validate_document_moves(_context(deps, "write"), moves=moves)
 
 
 async def test_overlapping_moves_are_refused_before_the_approval(
@@ -483,19 +522,20 @@ async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
     folder = tmp_dir(settings.data_dir, owned("c1"))
     with_tmp = Changeset((*_STAGED.operations, Write("/tmp/state.json", "{}")))
 
-    staged = await changeset_committer(deps)(with_tmp)
-    applied = await changeset_committer(replace(deps, mode="write"))(_STAGED)
+    staged = await program_writes(deps).commit(with_tmp)
+    applied = await program_writes(replace(deps, mode="write")).commit(_STAGED)
 
+    # The `/tmp` half waits with the rest, so it lands whole or not at all.
     assert isinstance(staged, PendingChanges)
-    assert staged.summary == _SUMMARY
+    assert (staged.summary, staged.held) == (_SUMMARY, 1)
     assert (
         await staging.load_staged(owned("c1", deps.user), staged.changeset_id)
-        == _STAGED
+        == with_tmp
     )
     assert (
         await staging.load_staged(owned("c2", deps.user), staged.changeset_id) is None
     )
-    assert (folder / "state.json").read_text() == "{}"
+    assert not (folder / "state.json").exists()
     assert applied == AppliedChanges(("written", "written"))
     assert len(planned) == 1
     assert routed == [
@@ -506,7 +546,7 @@ async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
 
     # A program that changed only `/tmp` has nothing to approve.
     only_tmp = Changeset((Write("/tmp/state.json", "[]"),))
-    assert await changeset_committer(replace(deps, mode="read"))(only_tmp) is None
+    assert await program_writes(replace(deps, mode="read")).commit(only_tmp) is None
     assert (folder / "state.json").read_text() == "[]"
 
 
@@ -515,7 +555,9 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
     planned: list[Changeset[Location]],
     routed: list[tuple[str, str]],
 ) -> None:
-    changeset_id = await staging.stage(owned("c1", deps.user), _STAGED)
+    reason = ChangeReason("remove", 2, "A duplicate of case 1.")
+    staged = replace(_STAGED, reasons=(reason,))
+    changeset_id = await staging.stage(owned("c1", deps.user), staged)
 
     with pytest.raises(ApprovalRequired) as exc:
         await validate_apply_changes(
@@ -535,13 +577,14 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
         ],
         "deletes": [],
         "mkdirs": [],
+        "reasons": [{"action": "remove", "key": 2, "reason": "A duplicate of case 1."}],
     }
 
     approved = _context(deps, "interactive", approved=True)
     await validate_apply_changes(approved, changeset_id=changeset_id)
-    result = await _apply_changes(deps)(changeset_id)
+    result = await _tool(deps, "apply_changes")(changeset_id)
 
-    assert result.data == "written\nwritten"
+    assert result.metadata == "written\nwritten"
     assert len(planned) == 1
     assert routed == [
         ("user:u", "a.md"),
@@ -549,8 +592,26 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
         ("user:u", "notes/a.md"),
     ]
 
-    with pytest.raises(ToolRetry, match="No staged changeset"):
-        await _apply_changes(deps)(changeset_id)
+    with pytest.raises(Retry, match="No staged changeset"):
+        await _tool(deps, "apply_changes")(changeset_id)
+
+
+async def test_a_staged_changeset_reaches_nothing_the_current_run_hides(
+    deps: UserDeps, documents: Path
+) -> None:
+    _ = documents
+    changeset_id = await staging.stage(owned("c1", deps.user), _STAGED)
+    hidden = replace(
+        deps,
+        document_filters={
+            UserScope("u"): DocumentFilter(excluded=frozenset({doc("a.md")}))
+        },
+    )
+
+    with pytest.raises(ModelRetry, match="not accessible"):
+        await validate_apply_changes(
+            _context(hidden, "interactive"), changeset_id=changeset_id
+        )
 
 
 async def test_a_stale_changeset_asks_for_a_new_run(
@@ -559,7 +620,7 @@ async def test_a_stale_changeset_asks_for_a_new_run(
     async def _stale(
         _changeset: Changeset[Location], **_options: object
     ) -> PlannedChangeset:
-        raise HTTPException(status_code=409, detail="'~/a.md' changed")
+        raise ChangeRefused(status_code=409, detail="'~/a.md' changed")
 
     monkeypatch.setattr(gateway, "plan_changeset", _stale)
     changeset_id = await staging.stage(owned("c1", deps.user), _STAGED)
@@ -570,20 +631,27 @@ async def test_a_stale_changeset_asks_for_a_new_run(
         )
 
 
-async def test_unapproved_changesets_are_discarded(data_dir: Path) -> None:
-    _ = data_dir
+async def test_only_awaited_or_new_changesets_stay_staged(data_dir: Path) -> None:
     mine, other = owned("c1"), owned("c2")
-    approved = await staging.stage(mine, _STAGED)
-    denied = await staging.stage(mine, _STAGED)
+    awaited = await staging.stage(mine, _STAGED)
+    orphan = await staging.stage(mine, _STAGED)
     foreign = await staging.stage(other, _STAGED)
-    pending = [
-        ToolCallPart("apply_changes", {"changeset_id": approved}, "call-1"),
-        ToolCallPart("apply_changes", {"changeset_id": denied}, "call-2"),
-        ToolCallPart("apply_changes", {"changeset_id": foreign}, "call-3"),
-    ]
+    pending = DeferredToolRequests(
+        approvals=[ToolCallPart("apply_changes", {"changeset_id": awaited}, "call-1")]
+    )
+    started = time.time() + 60
 
-    await discard_unapproved_changes(mine, pending, {"call-1"})
+    await retain_awaited_changes(mine, pending, started)
 
-    assert await staging.load_staged(mine, approved) == _STAGED
-    assert await staging.load_staged(mine, denied) is None
+    assert await staging.load_staged(mine, awaited) == _STAGED
+    assert await staging.load_staged(mine, orphan) is None
     assert await staging.load_staged(other, foreign) == _STAGED
+
+    fresh = await staging.stage(mine, _STAGED)
+    await retain_awaited_changes(mine, None, started - 120)
+
+    assert await staging.load_staged(mine, fresh) == _STAGED
+
+    await retain_awaited_changes(mine, None, started)
+
+    assert not (mine.folder(data_dir) / staging.CHANGESETS_FOLDER).exists()

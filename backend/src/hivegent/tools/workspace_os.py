@@ -31,12 +31,13 @@ append, rename, unlink, ``mkdir``, and ``rmdir`` is recorded in an overlay
 sees its own changes exactly as a filesystem would show them.  Once the program
 succeeds the overlay is turned into one changeset
 (:func:`hivegent.tools.changeset.stage_changes`), and a program that fails
-changes nothing at all.  How each change lands is its root's
-:class:`~hivegent.tools.base.CommitPolicy`: a gated root's changes are staged
-for approval and count against :class:`ChangesetLimits`, while a direct root's
-(``/tmp``) are written straight into its folder.  No one commit carries a file
-from one root to another of the other policy, so a rename between them is a
-write of the text and a removal, while one within a root is a rename.
+changes nothing at all.  How the changeset lands is decided by the
+:class:`~hivegent.tools.base.CommitPolicy` of each root it changes: it is staged
+whole for approval when any of them asks, ``/tmp`` included, and applied at once
+otherwise.  Only a gated root's changes count against :class:`ChangesetLimits`,
+while a direct root (``/tmp``) answers to its own quota.  No one commit carries
+a file from one root to another of the other policy, so a rename between them
+is a write of the text and a removal, while one within a root is a rename.
 """
 
 import errno
@@ -47,6 +48,14 @@ from pathlib import Path, PurePosixPath
 from stat import S_ISDIR, S_ISREG
 from typing import Any, NamedTuple, NoReturn, TypeGuard, override
 
+from exar.memory.mounts import entry_stat, targets
+from exar.text import NOT_TEXT_REASON, decode
+from exar.tools import Retry
+from exar.tools.common import (
+    DEFAULT_EXCLUDE_DIRS,
+    MAX_DOCUMENT_CHARS,
+    check_read_budget,
+)
 from pydantic_monty import (
     AbstractOS,
     MontyFileHandle,
@@ -55,9 +64,21 @@ from pydantic_monty import (
 )
 from pydantic_monty.os_access import path_from_arg
 
-from ..config import normalize_unicode
-from ..converters import BINARY_WRITE_REASON, writes_as_text
-from ..entries import (
+from ..shared.formats import BINARY_WRITE_REASON, writes_as_text
+from ..shared.text import normalize_unicode
+from .base import (
+    CommitPolicy,
+    Direct,
+    ModeGated,
+    SearchPath,
+    entry_visible,
+    match_scope,
+    mounts_of,
+    resolve_accessible_file,
+    resolve_search_path,
+    sidecar_hint,
+)
+from .entries import (
     ContentStat,
     Listdir,
     TreeStat,
@@ -67,22 +88,6 @@ from ..entries import (
     list_names,
     path_key,
     rebase,
-)
-from ..text import NOT_TEXT_REASON, read_text_file
-from .base import (
-    DEFAULT_EXCLUDE_DIRS,
-    CommitPolicy,
-    Direct,
-    SearchPath,
-    addressable_roots,
-    check_read_budget,
-    entry_stat,
-    entry_visible,
-    match_scope,
-    policy_of,
-    resolve_accessible_file,
-    sidecar_hint,
-    translate_tool_retry,
 )
 
 __all__ = [
@@ -146,7 +151,7 @@ class Entry(NamedTuple):
     @property
     def canonical(self) -> str:
         """The path as tools spell it, prefix included."""
-        return self.search_path.prefixed(self.local)
+        return self.search_path.mount.render(self.local)
 
     @property
     def is_dir(self) -> bool:
@@ -249,7 +254,7 @@ def _root_hint(paths: tuple[SearchPath, ...]) -> str:
     :func:`~hivegent.tools.base.workspace_root_hint` in the sandbox's own
     words, over the roots that function names.
     """
-    roots = addressable_roots(paths)
+    roots = targets(mounts_of(paths))
     if not roots:
         return ""
 
@@ -318,7 +323,7 @@ class WorkspaceOS(AbstractOS):
     workspace, which is what refuses every such change as it is made.
     """
 
-    max_document_chars: int = 5_000_000
+    max_document_chars: int = MAX_DOCUMENT_CHARS
     """Cap on one document, read or written.
 
     Per document rather than per run, because a decoded document is what the
@@ -372,8 +377,13 @@ class WorkspaceOS(AbstractOS):
         return str(pure) if match_scope(self.paths, str(pure)) is not None else None
 
     def policy(self, key: str) -> CommitPolicy:
-        """How a change to the canonical *key* commits, which is its root's to say."""
-        return policy_of(self.paths, key)
+        """How a change to the canonical *key* commits, which is its root's to say.
+
+        An unclaimed path is gated because the gateway is what refuses one.
+        """
+        resolved = resolve_search_path(self.paths, key)
+
+        return ModeGated() if resolved is None else resolved[0].policy
 
     def _mounted(self, arg: object) -> bool:
         """Whether one dispatched argument addresses the workspace.
@@ -497,7 +507,7 @@ class WorkspaceOS(AbstractOS):
         for sp in self.paths:
             if directory.is_relative_to(sp.path):
                 local = directory.relative_to(sp.path).as_posix()
-                parent = sp.prefixed("" if local == "." else local)
+                parent = sp.mount.render("" if local == "." else local)
                 break
 
         live = [
@@ -521,7 +531,7 @@ class WorkspaceOS(AbstractOS):
 
         resolved = _resolve(self.paths, canonical, self._names)
 
-        return None if resolved is None else resolved[0].prefixed(resolved[1])
+        return None if resolved is None else resolved[0].mount.render(resolved[1])
 
     def lookup(self, key: str, *, below: bool = False) -> _View:
         """What a canonical path is in the program's view.
@@ -588,7 +598,7 @@ class WorkspaceOS(AbstractOS):
     @override
     def path_iterdir(self, path: PurePosixPath) -> list[PurePosixPath]:
         if self._at_root(path):
-            roots = (PurePosixPath(sp.prefixed("")) for sp in self.paths)
+            roots = (PurePosixPath(sp.mount.render("")) for sp in self.paths)
 
             return [root for root in roots if not root.is_absolute()]
 
@@ -673,6 +683,7 @@ class WorkspaceOS(AbstractOS):
                     return StatResult.dir_stat(mtime=st.st_mtime)
 
                 return StatResult.file_stat(size=st.st_size, mtime=st.st_mtime)
+        return None
 
     @override
     def path_open(self, path: PurePosixPath, mode: str) -> MontyFileHandle:
@@ -718,7 +729,7 @@ class WorkspaceOS(AbstractOS):
         text = self.decode(self._remember(view))
 
         if text is None:
-            # The exception types are the mount's own, since a `ToolRetry`
+            # The exception types are the mount's own, since a `Retry`
             # reaches the program as a bare `Exception`, but the sentence
             # is every reader's, sidecar included.
             raise ValueError(
@@ -754,12 +765,21 @@ class WorkspaceOS(AbstractOS):
         upper bound on a character count, so the exact length is checked once
         the text is in hand.
         """
-        with translate_tool_retry(MemoryError):
-            check_read_budget(
-                entry.canonical, entry.stat.st_size, self.max_document_chars
-            )
 
-        decoded = read_text_file(entry.absolute)
+        def check(size: int) -> None:
+            try:
+                check_read_budget(entry.canonical, size, self.max_document_chars)
+            except Retry as refusal:
+                raise MemoryError(str(refusal)) from refusal
+
+        try:
+            data = entry.search_path.mount.read_bytes(entry.local, check)
+        except OSError as error:
+            raise _os_error(
+                type(error), error.errno or errno.EIO, entry.canonical
+            ) from error
+
+        decoded = decode(data)
 
         if decoded is None:
             return None
@@ -826,7 +846,7 @@ class WorkspaceOS(AbstractOS):
         )
 
         if resolved is None:
-            roots = ", ".join(addressable_roots(self.writable)) or "nothing"
+            roots = ", ".join(targets(mounts_of(self.writable))) or "nothing"
             raise PermissionError(
                 f"'{canonical}' cannot be changed by this run, which may change {roots}."
             )
@@ -840,7 +860,7 @@ class WorkspaceOS(AbstractOS):
                 "can be read but not changed."
             )
 
-        return sp.prefixed(local)
+        return sp.mount.render(local)
 
     def _charge(self, key: str, *, deleting: bool = False, chars: int = 0) -> None:
         """Count a change to *key*, and the *chars* it writes, against the run's limits.
@@ -1076,33 +1096,14 @@ class WorkspaceOS(AbstractOS):
         if view is None:
             self._missing(path)
 
-        replaced = None
+        resolved = self._destination(target, source, destination)
 
-        if destination == source:
-            name = PurePosixPath(_text(target)).name
-            current = PurePosixPath(source).name
+        if resolved is None:
+            return
 
-            if name == current or path_key(name, folded=True) != path_key(
-                current, folded=True
-            ):
-                return
-
-            destination = str(PurePosixPath(source).with_name(name))
-        else:
-            replaced = self.lookup(destination)
-
+        destination, replaced = resolved
         is_dir = _is_dir(view)
-
-        if is_dir and is_below(destination, source):
-            raise OSError(errno.EINVAL, "Cannot move a directory into itself", source)
-
-        if replaced is not None and (is_dir or _is_dir(replaced)):
-            raise FileExistsError(
-                errno.EEXIST,
-                "File exists, and a directory neither replaces nor is replaced by "
-                "a rename. Pick a free name",
-                destination,
-            )
+        self._check_destination(source, destination, is_dir=is_dir, replaced=replaced)
 
         if direct == {False}:
             self._check_rename(source, destination, is_dir=is_dir)
@@ -1141,6 +1142,46 @@ class WorkspaceOS(AbstractOS):
                 self.nodes[destination] = Ref(origin)
             case _:
                 pass
+
+    def _destination(
+        self, target: PurePosixPath, source: str, destination: str
+    ) -> tuple[str, _View] | None:
+        """Where a rename of *source* lands and what it replaces.
+
+        ``None`` for a case-only rename that keeps the name the source has.
+        """
+        if destination != source:
+            return destination, self.lookup(destination)
+
+        name = PurePosixPath(_text(target)).name
+        current = PurePosixPath(source).name
+
+        if name == current or path_key(name, folded=True) != path_key(
+            current, folded=True
+        ):
+            return None
+
+        return str(PurePosixPath(source).with_name(name)), None
+
+    @staticmethod
+    def _check_destination(
+        source: str,
+        destination: str,
+        *,
+        is_dir: bool,
+        replaced: _View,
+    ) -> None:
+        """Refuse a rename into itself or onto a directory, or of a directory onto a file."""
+        if is_dir and is_below(destination, source):
+            raise OSError(errno.EINVAL, "Cannot move a directory into itself", source)
+
+        if replaced is not None and (is_dir or _is_dir(replaced)):
+            raise FileExistsError(
+                errno.EEXIST,
+                "File exists, and a directory neither replaces nor is replaced by "
+                "a rename. Pick a free name",
+                destination,
+            )
 
     def _origin(
         self, source: str, node: Node | None, view: Text | Dir | Entry
