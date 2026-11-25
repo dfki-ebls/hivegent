@@ -11,7 +11,7 @@ Sein Agent durchsucht, liest und durchdenkt die hochgeladenen Dateien und gibt d
 
 - Mit Ihren Dokumenten chatten und Antworten mit Quellenangaben erhalten.
 - PDFs, Office-Dateien, Bilder und mehr hochladen, die Hivegent umwandelt und indexiert.
-- Dokumente in einem privaten und in geteilten Gruppen-Arbeitsbereichen ablegen.
+- Dokumente in einem privaten und in geteilten Gruppen-Arbeitsbereichen ablegen und den Arbeitsbereich lesen, den alle teilen.
 - Den Agenten in mehreren Schritten arbeiten, bei Aktivierung im Web suchen und sich Kontext über Unterhaltungen hinweg merken lassen.
 - Ihren Editor oder andere Werkzeuge über das Model Context Protocol (MCP) anbinden.
 

@@ -5,6 +5,8 @@
 - [How Hivegent Works](concepts.md)
 - [Architecture](architecture.md)
 - [Setup](setup.md)
+- [Upgrade notes](upgrading.md)
+- [Plugins](plugins.md)
 - [Usage](usage.md)
 - [AI transparency](ai-transparency.md)
 - [Troubleshooting](troubleshooting.md)

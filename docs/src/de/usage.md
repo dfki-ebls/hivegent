@@ -31,7 +31,8 @@ Deckt Ihr Material eine Frage nicht ab, sagt er das.
 
 ### Hochladen
 
-- Ziehen Sie Dateien, Ordner oder ein ZIP-Archiv auf den Upload-Bereich, oder nutzen Sie den Dateidialog.
+- Ziehen Sie Dateien, Ordner oder ein ZIP-Archiv auf den Upload-Bereich oder auf einen Ordner im Baum, oder nutzen Sie den Dateidialog.
+- Uploads und neue Dokumente landen in dem Ordner, den Sie zuletzt im Baum ausgewählt haben.
 - Hivegent wandelt jede Datei in Text um, teilt sie in Abschnitte und indexiert sie.
 - Die Aufgabenleiste in der oberen Leiste zeigt den Fortschritt.
 
@@ -42,13 +43,33 @@ Markdown-Dokumente können Sie auch direkt im Browser erstellen und bearbeiten.
 
 - Ihre Dokumente ist Ihr privater Arbeitsbereich.
 - Gruppen-Arbeitsbereiche werden mit einer Gruppe geteilt, mit Lese- oder Schreibzugriff je nach Mitgliedschaft.
+- Organisation ist der Arbeitsbereich, den alle Benutzer teilen, den alle lesen und Administratoren bearbeiten.
 
 ### Dokumente verwalten
 
-Sie können jedes Dokument ansehen, herunterladen, verschieben oder löschen.
+Sie können jedes Dokument ansehen, herunterladen, verschieben, umbenennen oder löschen.
+Alle Arbeitsbereiche teilen sich einen Baum.
+
+- Klicken Sie auf einen Ordner, um ihn zu öffnen oder zu schließen, und auf ein Dokument, um es anzusehen. Setzen Sie das Häkchen oder halten Sie beim Klicken Strg (Cmd unter macOS) oder Umschalt gedrückt, um Einträge auszuwählen.
+- Ziehen Sie die Auswahl auf einen Ordner, um sie dorthin zu verschieben, auch in einen anderen Arbeitsbereich.
+- Drücken Sie F2 oder klicken Sie auf den Stift, um einen Eintrag direkt umzubenennen.
+- Navigieren Sie mit den Pfeiltasten, und verschieben Sie die Auswahl mit Strg+Umschalt+D per Tastatur.
+
 Ein Dokument, dessen Original der Browser anzeigen kann, etwa ein PDF, ein Word-Dokument, eine Tabelle, ein Bild oder ein Video, öffnet sich im Tab Vorschau mit dem Original, neben dem Tab Text mit dem umgewandelten Text.
 Eine Passage, die der Assistent gelesen hat, öffnet sich im Tab Text, im Dokument hervorgehoben.
 Außerdem können Sie Dokumente in die aktuelle Unterhaltung einschließen oder daraus ausschließen.
+
+### Ähnliche Fälle
+
+Eine Tabelle, eine JSON-Datei, ein Ordner mit JSON-Dateien oder BPMN-Prozessmodelle bilden eine Fallbasis: Bitten Sie den Assistenten um die Datensätze oder Prozesse, die einem Beispiel am ähnlichsten sind, und er ordnet sie und erklärt jeden Treffer, Attribut für Attribut oder bei Prozessen Knoten für Knoten.
+Der Tab Ähnlichkeit eines solchen Dokuments zeigt, wie jedes Attribut verglichen wird, wer das entschieden hat (aus den Daten abgeleitet, die KI oder Sie) und warum.
+Ändern Sie dort ein Maß oder ein Gewicht und speichern Sie es, probieren Sie die Konfiguration mit einer Testanfrage aus, oder lassen Sie die KI die Entscheidungen verfeinern, die niemand getroffen hat, anhand von Statistiken und einigen Werten jedes Attributs.
+Bis Sie sie speichern, wird die Konfiguration aus den Daten abgeleitet und nichts geschrieben, und Auf abgeleitet zurücksetzen löscht eine gespeicherte.
+Die Konfiguration liegt neben den Daten, wird mit ihnen verschoben und gelöscht und gilt für alle, die die Daten lesen.
+Datensätze werden nach ihrer Zeile geschlüsselt, außer Sie wählen unter Schlüssel eine Schlüsselspalte, deren Werte vorhanden und eindeutig sein müssen, und dann erhalten neue Fälle den nächsten Schlüssel darin.
+Der Dokumentbaum markiert die Dateien und Ordner mit gespeicherter Konfiguration, und die Ähnlichkeit jedes Ordners mit JSON- oder BPMN-Dateien, auch in Unterordnern, öffnet sich über seine Zeile.
+Der Assistent kann außerdem akzeptierte Lösungen in einer Fallbasis speichern und sie bereinigen, soweit die Abschnitte `retain` und `maintain` der Konfiguration es erlauben, die Sie im Tab Ähnlichkeit einschalten und anpassen, und nennt den Grund für jeden Fall, den er hinzufügt, ändert oder entfernt.
+Im Modus Interaktiv bittet er um Ihre Freigabe, bevor sich eine Datei ändert, im Modus Schreiben ändert er die Fallbasis direkt, und im Modus Lesen kann er Ihre Arbeitsbereiche nicht ändern.
 
 ## Unterhaltungen
 
@@ -70,17 +91,47 @@ Eine Trennlinie markiert, wo die Zusammenfassung beginnt, und zeigt sie beim Öf
 
 ## Den Assistenten anpassen
 
-- Persönlichkeit: Standard, Knapp, Ausführlich, Strukturiert oder eine eigene Systemnachricht.
+- Modell: Bietet der Betreiber mehrere an, wählen Sie eines im Eingabefeld.
+  Bildanhänge und der Denkaufwand erscheinen nur für ein Modell, das sie unterstützt.
 - Denkaufwand: Niedrig, Mittel (Standard) oder Hoch, ein Abwägen von Tiefe gegen Geschwindigkeit und Kosten.
-- Modus: Interaktiv fragt vor jeder Änderung im Arbeitsbereich, Schreiben ändert ohne Rückfrage, und Lesen erlaubt keine Änderungen.
+- Modus: Interaktiv fragt vor jeder Änderung im Arbeitsbereich, Schreiben ändert jeden Arbeitsbereich, den Sie beschreiben dürfen, ohne Rückfrage, und Lesen erlaubt keine Änderungen.
+  Änderungen an Skills und am Gedächtnis fragen immer nach, in jedem Modus, da sie spätere Konversationen prägen.
+- Assistent: Gibt es Assistenten, wählen Sie einen im Eingabefeld (siehe unten).
 
 ## Gedächtnis
 
 Der Assistent kann sich Fakten über Unterhaltungen hinweg merken.
-Im Einstellungsdialog können Sie das gesamte Gedächtnis jederzeit löschen.
+Vor jeder Änderung seines Gedächtnisses fragt er nach, in jedem Modus, da alles dort Gespeicherte jede spätere Unterhaltung erreicht.
+Unter Einstellungen, Account können Sie das gesamte Gedächtnis jederzeit löschen.
+
+## Skills
+
+Skills bringen dem Assistenten eine Aufgabe bei, etwa einen Hausstil oder eine Checkliste, als Ordner mit einer `SKILL.md` im Format [Agent Skills](https://agentskills.io).
+Der Assistent sieht Namen und Beschreibung jedes Skills, den Sie nutzen können, und lädt einen, wenn eine Aufgabe dazu passt.
+Beginnen Sie eine Nachricht mit `/<name>`, damit der Assistent diesen Skill zuerst lädt, das Eingabefeld schlägt beim Tippen passende Skills vor.
+Skills verschiedener Bereiche dürfen denselben Namen tragen, ein solcher Skill wird deshalb über seinen Verweis aufgerufen, etwa `/~/<name>`, `/@<gruppe>/<name>` oder `/srv/<name>`, den die Vorschläge einfügen.
+Der Text nach dem Befehl ersetzt jedes `$ARGUMENTS` in den Anweisungen des Skills, sodass `/review src/app.py` einem Skill, der `$ARGUMENTS` prüft, `src/app.py` übergibt.
+Das Frontmatter eines Skills kann `disable-model-invocation: true` enthalten, sodass nur Sie und Assistenten ihn laden, nie der Assistent von sich aus, oder `user-invocable: false`, sodass er nicht als Befehl angeboten wird und der Assistent ihn lädt, wenn eine Aufgabe passt.
+Jeder Wert im Frontmatter wird so gelesen, wie er dasteht, sodass `version: 1.0` Text bleibt, und ein doppelter Schlüssel macht den Skill ungültig.
+Einstellungen, Skills listet die Skills der Organisation, Ihrer Gruppen und Ihre eigenen, öffnet die `SKILL.md` jedes Skills und zeigt, warum ein Skill nicht nutzbar ist.
+Laden Sie einen Skill-Ordner oder sein ZIP-Archiv zu Ihren eigenen Skills oder zu einer Gruppe hoch, in die Sie schreiben dürfen, wo er einen gleichnamigen Skill ersetzt, und löschen Sie ihn dort.
+Der Assistent kann auf Ihren Wunsch auch selbst einen Skill schreiben und fragt vor jeder Änderung nach, in jedem Modus.
+Skripte eines Skills laufen in der Python-Sandbox, wenn sie eine Funktion `main` definieren, andere bleiben zum Lesen.
+Ein geladener Skill bleibt geladen, wenn eine lange Unterhaltung zusammengefasst wird.
+
+## Assistenten
+
+Ein Assistent ist ein benannter Satz von Anweisungen für eine wiederkehrende Art von Arbeit, etwa Antworten aus dem Personalhandbuch.
+Er kann auch Skills laden, Tools ausschalten, den höchsten Modus senken und Dokumente in den Fokus nehmen oder ausblenden, erlaubt aber nie mehr, als Sie ohne ihn dürften.
+Er kann außerdem die einzigen Dokumente und Ordner nennen, die ein Chat mit ihm erreicht, was anders als Ihre eigene Auswahl im Dateibrowser verbindlich ist.
+Wählen Sie einen im Eingabefeld, das die Auswahl nur zeigt, wenn es Assistenten gibt.
+Einstellungen, Assistenten listet die Assistenten der Organisation, Ihrer Gruppen und Ihre eigenen und legt Ihre eigenen und die von Gruppen, in die Sie schreiben dürfen, an, bearbeitet und löscht sie.
+Die Auswahl nennt jeden Assistenten mit Bereich und Namen, etwa `~/recht` oder `@team/recht`, sodass der einer Gruppe nie an die Stelle Ihres eigenen tritt.
+Die Assistenten der Organisation sprechen mit der Autorität des Betriebs, die Anweisungen Ihrer eigenen oder der einer Gruppe erreichen den Assistenten dagegen als zitierter Inhalt, der seine Regeln nicht außer Kraft setzen kann.
 
 ## Über die Weboberfläche hinaus
 
 - MCP: wenn der Betreiber es aktiviert, verbinden sich MCP-Clients wie Editoren mit derselben Anmeldung über `/mcp`.
   Sie können Dokumente suchen, lesen, erkunden und ändern, wobei jede Änderung zuerst zur Bestätigung angezeigt wird.
-- API und Kommandozeile: die REST-API und das Kommandozeilenwerkzeug `hivegent` können sich anmelden und Dokumente hochladen, auflisten, herunterladen oder löschen.
+- API: Skripte laden Dokumente über die REST-API oder den MCP-Endpunkt hoch, listen sie auf, laden sie herunter oder löschen sie, wie [Skripte](setup.md#skripte) zeigt.
+  Das Kommandozeilenwerkzeug `hivegent` meldet sich nicht mehr an und verwaltet keine Dokumente, es administriert nur den Server auf seinem Host.

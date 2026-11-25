@@ -14,7 +14,7 @@ flowchart TD
     llm["Language model<br/>(OpenAI-compatible)"]
     search["Web search<br/>(SearXNG or OpenSERP, optional)"]
     egress["Outbound proxy<br/>(Smokescreen)"]
-    external["User-selected<br/>LLM, MCP, and web hosts"]
+    external["Public web hosts"]
     engines["Public search engines"]
 
     user --> browser
@@ -34,13 +34,13 @@ flowchart TD
 
 - Frontend: a React single-page app for login, chat, documents, and streamed responses.
 - Backend: a FastAPI service that authenticates every request, runs the agent, and performs retrieval.
-- Agent runtime: Pydantic AI, which gives the model tools for search, reading, web lookup, memory, and sub-agents.
+- Agent runtime: Pydantic AI, which gives the model tools for search, reading, web lookup, memory, and subagents.
 - PostgreSQL with pgvector: the only datastore, holding the document index, embeddings, conversations, and memory.
   Document files live on disk.
 - Identity provider: any OIDC service such as Rauthy, Keycloak, or Authentik.
   Group and admin permissions come from the token claims.
-- Language model: any OpenAI-compatible endpoint, hosted or local.
-- Outbound proxy: Smokescreen carries every user or model-chosen connection and rejects private and reserved addresses.
+- Language model: any OpenAI-compatible endpoint, hosted or local, from the operator's model catalog.
+- Outbound proxy: Smokescreen carries every model-chosen connection and rejects private and reserved addresses.
   Operator-configured services connect directly.
 - Web search: an optional SearXNG or OpenSERP instance, run beside Hivegent like the database, which queries public search engines for the agent.
 
@@ -49,6 +49,8 @@ flowchart TD
 - REST for documents, conversations, and settings.
 - Chat streams over the Vercel AI Data Stream protocol, and job progress over Server-Sent Events.
 - MCP: an optional endpoint at `/mcp` lets editors and other agents search, read, and change documents with the same login.
+- External MCP servers: the operator can connect remote MCP servers, whose tools the assistant may then use, every action only with approval.
+- External sources: the operator can mirror file stores such as a Nextcloud folder, which their members then search and read at `/mnt/<id>`, kept up to date in the background and read-only, since the mirror is a copy.
 
 ## Deployment
 

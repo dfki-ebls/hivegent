@@ -37,12 +37,16 @@ flowchart LR
 
 Der Agent wählt für jede Anfrage aus diesen Werkzeuggruppen.
 
-| Werkzeuggruppe       | Was sie dem Assistenten ermöglicht                                                                 | Verfügbarkeit                |
-| -------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------- |
-| Suchen und Lesen     | Dokumente nach Bedeutung oder exaktem Text durchsuchen und Dokumente oder Stellen öffnen           | Immer                        |
-| Berechnungen         | Ein kleines Python-Programm in einer Sandbox für Zahlen, Daten und Anzahlen ausführen              | Immer                        |
-| Delegierte Erkundung | Unteragenten Dokumente, frühere Unterhaltungen oder das Web erkunden lassen                        | Immer                        |
-| Unterhaltungsverlauf | Frühere Unterhaltungen direkt öffnen                                                               | Wenn vom Betreiber aktiviert |
-| Gedächtnis           | Fakten für spätere Unterhaltungen speichern                                                        | Nicht im Modus Lesen         |
-| Dokumentbearbeitung  | Dokumente anlegen, bearbeiten, verschieben oder löschen, im Modus Interaktiv nach Ihrer Zustimmung | Nicht im Modus Lesen         |
-| Web                  | Im Web suchen und Seiten abrufen                                                                   | Wenn vom Betreiber aktiviert |
+| Werkzeuggruppe       | Was sie dem Assistenten ermöglicht                                                                                              | Verfügbarkeit                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| Suchen und Lesen     | Dokumente nach Bedeutung oder exaktem Text durchsuchen, Dokumente oder Stellen öffnen und ähnliche Fälle einer Fallbasis ordnen | Immer                            |
+| Berechnungen         | Ein kleines Python-Programm in einer Sandbox für Zahlen, Daten und Anzahlen ausführen                                           | Immer                            |
+| Delegierte Erkundung | Unteragenten Dokumente, frühere Unterhaltungen oder das Web erkunden lassen                                                     | Immer                            |
+| Unterhaltungsverlauf | Frühere Unterhaltungen direkt öffnen                                                                                            | Außer vom Betreiber abgeschaltet |
+| Gedächtnis           | Fakten für spätere Unterhaltungen speichern                                                                                     | Nicht im Modus Lesen             |
+| Skills               | Anweisungen und Skripte eines Skills laden, der zur Aufgabe passt                                                               | Immer                            |
+| Assistent            | Den Anweisungen des gewählten Assistenten folgen                                                                                | Wenn Sie einen wählen            |
+| Dokumentbearbeitung  | Dokumente anlegen, bearbeiten, verschieben oder löschen, im Modus Interaktiv nach Ihrer Zustimmung                              | Nicht im Modus Lesen             |
+| Fallbasen            | Akzeptierte Lösungen in einer Fallbasis speichern und sie bereinigen, im Modus Interaktiv nach Ihrer Zustimmung                 | Nicht im Modus Lesen             |
+| Web                  | Im Web suchen und Seiten abrufen                                                                                                | Wenn vom Betreiber aktiviert     |
+| Externe Dienste      | Die Tools von Diensten nutzen, die der Betreiber über MCP angebunden hat, jede Aktion nur nach Ihrer Zustimmung                 | Wenn vom Betreiber eingerichtet  |

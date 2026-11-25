@@ -14,7 +14,7 @@ flowchart TD
     llm["Sprachmodell<br/>(OpenAI-kompatibel)"]
     search["Websuche<br/>(SearXNG oder OpenSERP, optional)"]
     egress["Ausgehender Proxy<br/>(Smokescreen)"]
-    external["Vom Benutzer gewählte<br/>LLM-, MCP- und Web-Ziele"]
+    external["Öffentliche<br/>Web-Ziele"]
     engines["Öffentliche Suchmaschinen"]
 
     user --> browser
@@ -39,8 +39,8 @@ flowchart TD
   Die Dokumentdateien liegen auf der Festplatte.
 - Identitätsanbieter: ein beliebiger OIDC-Dienst wie Rauthy, Keycloak oder Authentik.
   Gruppen- und Administratorrechte stammen aus den Token-Claims.
-- Sprachmodell: ein beliebiger OpenAI-kompatibler Endpunkt, gehostet oder lokal.
-- Ausgehender Proxy: Smokescreen führt jede vom Benutzer oder Modell gewählte Verbindung und lehnt private und reservierte Adressen ab.
+- Sprachmodell: ein beliebiger OpenAI-kompatibler Endpunkt, gehostet oder lokal, aus dem Modellkatalog des Betreibers.
+- Ausgehender Proxy: Smokescreen führt jede vom Modell gewählte Verbindung und lehnt private und reservierte Adressen ab.
   Vom Betreiber konfigurierte Dienste verbinden sich direkt.
 - Websuche: eine optionale SearXNG- oder OpenSERP-Instanz, die wie die Datenbank neben Hivegent läuft und für den Agenten öffentliche Suchmaschinen abfragt.
 
@@ -49,6 +49,8 @@ flowchart TD
 - REST für Dokumente, Unterhaltungen und Einstellungen.
 - Chats werden über das Vercel AI Data Stream Protokoll gestreamt, der Fortschritt von Aufgaben über Server-Sent Events.
 - MCP: ein optionaler Endpunkt unter `/mcp` erlaubt Editoren und anderen Agenten, mit derselben Anmeldung Dokumente zu suchen, zu lesen und zu ändern.
+- Externe MCP-Server: der Betreiber kann entfernte MCP-Server anbinden, deren Tools der Assistent dann nutzen darf, jede Aktion nur nach Zustimmung.
+- Externe Quellen: der Betreiber kann Dateiablagen wie einen Nextcloud-Ordner spiegeln, die ihre Mitglieder dann unter `/mnt/<id>` durchsuchen und lesen, im Hintergrund aktuell gehalten und schreibgeschützt, da der Spiegel eine Kopie ist.
 
 ## Bereitstellung
 

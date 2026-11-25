@@ -11,10 +11,10 @@
 # `./result | docker load` works too. The image is provider-agnostic: the SPA
 # reads its OIDC issuer/client at runtime from the backend's `/api/v1/config`, which
 # the backend derives from HIVEGENT_AUTH__ISSUER (and HIVEGENT_AUTH__FRONTEND_CLIENT_ID,
-# default "hivegent-spa"). Point those at whichever provider you run — Rauthy,
-# Keycloak, Authentik, Auth0, ... — with no rebuild.
+# default "hivegent-spa"). Point those at whichever provider you run (Rauthy,
+# Keycloak, Authentik, Auth0, ...) with no rebuild.
 #
-# First-run OIDC setup (each consumer does this themselves — the stack ships no
+# First-run OIDC setup (each consumer does this themselves, since the stack ships no
 # client bootstrap): `docker compose up -d`, read the one-time admin password
 # from `docker compose logs rauthy`, log in at http://auth.localhost:8081, and
 # create a public `hivegent-spa` client (PKCE/S256) with redirect + allowed
@@ -24,15 +24,16 @@
 # bridge as a third in-container service behind the same Caddy. Build the variant
 # with `docker.override { enableBridge = true; }` (the `docker` package already
 # threads the `bridge` package in), then on the `hivegent` service below: mount a
-# `bridge-config.json` at `/data/bridge-config.json` (non-secrets: `hivegentUrl`,
-# `oidc.issuer`, `oidc.clientId`, `adapters.teams`) and pass the secrets like
+# `bridge-config.json` at `/data/bridge-config.json` (non-secrets:
+# `backendUrl = "http://127.0.0.1:8000"`, `oidc.issuer`, `oidc.clientId`,
+# `adapters.teams`, and `teams.appId`, `teams.tenantId`, and `teams.allowedTenants`,
+# the Entra tenant ids the bot answers) and pass the secrets like
 # the backend's below as `hivegent-bridge.<NAME>`
 # (`POSTGRES_URL=postgres://hivegent:hivegent@postgresql:5432/hivegent`,
-# `OIDC_CLIENT_SECRET`, and `TEAMS_APP_ID/PASSWORD/TENANT_ID` for Teams). Caddy then
+# `OIDC_CLIENT_SECRET`, and `TEAMS_APP_PASSWORD` for Teams). Caddy then
 # routes `/api/webhooks/*` to the bridge. Create a `hivegent-bot` client-credentials
-# client in Rauthy (`CLIENT_CREDENTIALS_MAP_SUB = true` and a static custom `groups`
-# claim `["team-kb:read"]`); the backend reads `custom.groups` by default, so no
-# extra `[claims]` config is needed for the bot's group to be honoured.
+# client in Rauthy (`CLIENT_CREDENTIALS_MAP_SUB = true`), which `auth.service_client_id`
+# below makes a read-only service principal over the global workspace.
 
 name: hivegent
 
@@ -77,7 +78,7 @@ services:
       HQL_NODES: "1 localhost:8100 localhost:8200"
       HQL_SECRET_RAFT: ChangeMeRaftSecretAtLeast16Chars
       HQL_SECRET_API: ChangeMeApiSecretAtLeast16Chars
-      # Encryption keys — DEMO ONLY, generate your own for any real deployment.
+      # Encryption keys. DEMO ONLY, generate your own for any real deployment.
       ENC_KEYS: bVCyTsGaggVy5yqQ/UzluN29DZW41M3hTSkx6Y3NtZmRuQkR2TnJxUTYzcjQ=
       ENC_KEY_ACTIVE: bVCyTsGaggVy5yqQ
       # WebAuthn / passkeys.
@@ -121,8 +122,12 @@ services:
       # OIDC discovery/JWKS from the same URL the browser uses.
       - "auth.localhost:host-gateway"
     environment:
-      # Caddy's listen address — read by the proxy, not the backend's TOML.
-      HIVEGENT_SITE_ADDRESS: ":8080"
+      # Caddy's listen address. Read by the proxy, not the backend's TOML.
+      CADDY_SITE_ADDRESS: ":8080"
+      # The identity provider's origins, space-separated, which Caddy's
+      # Content-Security-Policy lets the SPA reach for the sign-in. The image
+      # refuses to start without them.
+      CADDY_IDP_ORIGINS: "http://auth.localhost:8081"
       # Set to "true" to accept the additional terms of use (TERMS in the
       # repository), the backend refuses to start otherwise.
       HIVEGENT_ACCEPT_TERMS: "false"
@@ -133,26 +138,18 @@ services:
         target: /data/config.toml
     # Secrets are files `hivegent.<NAME>` for the env var `HIVEGENT_<NAME>` they
     # replace, mounted under /run/secrets and readable by uid 65534. The demo
-    # needs none, a hosted LLM would take its key from the top-level `secrets`
-    # entry below:
+    # needs none, a hosted LLM would take its provider's key from the top-level
+    # `secrets` entry below:
     # secrets:
-    #   - hivegent.LLM__API_KEY
+    #   - hivegent.LLM__PROVIDERS__LOCAL__API_KEY
     ports:
       - "8080:8080"
     volumes:
       - hivegent-data:/data
     restart: unless-stopped
-    # CUDA document/OCR models need the host GPU; uncomment for nvidia runtime.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
 
 # secrets:
-#   hivegent.LLM__API_KEY:
+#   hivegent.LLM__PROVIDERS__LOCAL__API_KEY:
 #     file: ./secrets/llm-api-key
 
 volumes:
@@ -177,17 +174,39 @@ configs:
       [db]
       url = "postgresql+psycopg://hivegent:hivegent@postgresql:5432/hivegent"
 
-      # Point at an OpenAI-compatible inference server on the Docker host.
+      # The model catalog, served by an OpenAI-compatible inference server on
+      # the Docker host.
       [llm]
-      model = "qwen3.8-27b"
-      aux_model = "qwen3.5-0.8b"
+      default = "qwen"
+      aux = "small"
+
+      [llm.providers.local]
       base_url = "http://host.docker.internal:18000/v1"
       inference_provider = "llama.cpp"
 
-      # Validate tokens Rauthy issues for the hivegent-* clients.
+      [llm.models.qwen]
+      provider = "local"
+      model = "qwen3.8-27b"
+      family = "qwen"
+      label = "Qwen 3.8 27B"
+      reasoning = ["low", "medium", "high"]
+      # Qwen3.8 implements xhigh in place of high.
+      reasoning_overrides = { high = "xhigh" }
+      vision = true
+
+      [llm.models.small]
+      provider = "local"
+      model = "qwen3.5-0.8b"
+      family = "qwen"
+      vision = true
+      chat = false
+
+      # Validate tokens Rauthy issues for the SPA and the bridge bot.
+      # The issuer exactly as Rauthy names it in its tokens, trailing slash included.
       [auth]
-      issuer = "http://auth.localhost:8081/auth/v1"
-      audience = ["hivegent-*"]
+      issuer = "http://auth.localhost:8081/auth/v1/"
+      audience = ["hivegent-spa", "hivegent-bot"]
+      service_client_id = "hivegent-bot"
 
       # Enables web search through the SearXNG service.
       [tools]

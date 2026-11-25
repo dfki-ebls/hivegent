@@ -11,7 +11,7 @@ Its agent searches, reads, and reasons over the files you upload, and cites the 
 
 - Chat with your documents and get answers with source citations.
 - Upload PDFs, Office files, images, and more, which Hivegent converts and indexes.
-- Keep documents in a private workspace and in shared group workspaces.
+- Keep documents in a private workspace, in shared group workspaces, and read the workspace everyone shares.
 - Let the agent work in several steps, search the web if enabled, and remember context across conversations.
 - Connect your editor or other tools through the Model Context Protocol (MCP).
 

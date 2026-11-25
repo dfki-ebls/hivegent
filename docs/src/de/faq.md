@@ -56,7 +56,8 @@ Ein Administrator nimmt Sie in Ihrem Identitätsanbieter in eine Gruppe auf, die
 ### Wer kann administrative Aktionen ausführen?
 
 Benutzer mit der Rolle `admin`.
-Sie können den Wartungsmodus aktivieren, den Arbeitsbereich neu indexieren und Daten zurücksetzen.
+Sie sehen die Übersicht der Benutzer und Gruppen, aktivieren den Wartungsmodus und indexieren den Arbeitsbereich neu.
+Daten löscht `hivegent reset` auf dem Host, und kein Admin kann als anderer Benutzer handeln.
 
 ## Betrieb
 
@@ -72,7 +73,7 @@ Migrationen laufen beim Start automatisch.
 ### Hohe CPU- oder Speicherauslastung.
 
 Das ist normal bei der Dokumentverarbeitung, besonders bei OCR, und mit einem lokalen Modell.
-Verarbeiten Sie weniger Dokumente gleichzeitig, nutzen Sie eine GPU oder ein gehostetes Modell.
+Verarbeiten Sie weniger Dokumente gleichzeitig oder nutzen Sie ein gehostetes Modell.
 
 ### Wann lohnen sich lokale Modelle?
 

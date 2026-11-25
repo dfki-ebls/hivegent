@@ -24,7 +24,17 @@ Editing or regenerating forks a sibling branch server-side, but there is no UI t
 `ChatProvider` (`components/chat/chat-context.tsx`) provides the `Chat` and the conversation id, so components read what they need instead of receiving status, messages, and callbacks as props.
 `MessageList` and the debug console subscribe to every chunk with `useChat`, everything else derives a value with `useChatSelector`, which renders again only once that value changes.
 `useLive(message)` tells where a message stands, `streaming` while the chat streams into it, `waiting` while it is last and the chat is idle, and `stale` otherwise, and `MessageLiveProvider` hands it to the parts below.
-The pure logic lives in `lib/chat`: `toolLineState` and `Live` in `tool-part.ts`, `partLayout` and `blocksOf` in `layout.ts`, and `liveOf`, `placeCompactions`, and `shouldContinueRun` in `chat-utils.ts`.
+The pure logic lives in `lib/chat`: `toolLineState` and `Live` in `tool-part.ts`, `partLayout` and `blocksOf` in `layout.ts`, and `liveOf`, `settleTurn`, and `shouldContinueRun` in `chat-utils.ts`.
+
+## Every turn ends as a reload shows it
+
+The backend's projection of the stored messages is the one transcript, see "The transcript is one projection of the tree" in `../backend/README.md`.
+A turn's stream ends on a transient `data-turn` part carrying that stored turn, which `useHivegentChat` swaps in for what streamed (`settleTurn`), so ids, steps, and states are those of a reload, and a message queued meanwhile stays after it.
+`turn-parity.test.ts` replays the golden turns the backend records and checks that the swap changes nothing on screen.
+
+A turn runs on at the server, so leaving the chat, reloading, or closing the tab only stops following it, and nothing asks before leaving.
+Only messages queued to steer a running turn live in the tab alone, so while any wait, leaving the conversation or the page asks first (`useSteeringQueue`).
+A reload follows the running turn again, and the history lists a conversation whose first turn still runs, so opening it there follows the turn too.
 
 ## AI Elements are composed, not vendored
 
@@ -37,7 +47,7 @@ The CLI's Base UI variants and animations are vendored unchanged as `src/shadcn.
 Each run of steps between two blocks is one Chain of Thought that opens to its `Trace`.
 Every step is a trace line that expands to its detail, including subagents, changesets, and the steering queue.
 An approval or `ask_user` question is a block, an `Item` outside the trace, until it is answered or a later message abandons it.
-The live state decides whether a line still runs, so a stopped call and an abandoned prompt read as stopped.
+The live state decides whether a line still runs, so a call a stop cut off reads as stopped, and an abandoned prompt as the backend closes it, an approval as denied and a question as failed.
 A failed or stopped step is routine for an agent, so its line stays muted and only says so, with the error in its detail, while red is left to errors that end the run.
 While nothing on screen shows the model working, a "Processing" line closes the running trace or stands where the next one starts (`isProcessing`).
 Only the last user message is a scroll anchor, since the scroller jumps to the first anchor it never scrolled to whenever one item swaps for another.
@@ -45,29 +55,59 @@ Only the last user message is a scroll anchor, since the scroller jumps to the f
 Replies render with Streamdown, but fenced code goes to the shared `CodeBlock` (`MarkdownCode` in `chat/markdown/markdown-text.tsx`).
 It uses the Shiki core with the JavaScript regex engine and the languages in `lib/highlighter.tsx`, which avoids a chunk per language and the Oniguruma WASM.
 Mermaid is imported lazily on the first diagram.
+Model output is untrusted, since a prompt injection can make it spell a URL that carries conversation data.
+So raw HTML in a reply renders only the elements markdown itself produces plus `<cite>` and `<imgref>` (`rehypePlugins` in `chat/markdown/config.ts`), an image keeps only its alt text, and pictures come from `<imgref>`, which fetches workspace assets from the API.
+Links keep Streamdown's confirmation before they open.
+The sanitizer prefixes ids and names with `user-content-`, so model output cannot clobber globals of the page.
+`csp.json` holds the Content-Security-Policy, which the build adds to `index.html` as a meta tag and `nix/vhost.nix` sends as a header together with `frame-ancestors` and the identity provider's origin.
+It allows scripts only from the app's own files, so the theme script lives in `public/theme.js`, while styles stay `'unsafe-inline'` for Mermaid's SVG and `object-src` allows `blob:` for Chrome's PDF viewer in the preview.
+Zod's probe for `new Function` is refused and reported once, after which it parses without it.
+oidc-spa hands scripts placeholders instead of tokens, which only requests to the app's own origin swap back, and freezes the browser APIs that do so (`vite.config.ts`).
+DPoP stays off, since the backend accepts bearer tokens only.
 
 Workspace documents render with markdown-to-jsx, since Streamdown is too slow for documents of hundreds of pages.
 They are styled by shadcn/typeset, vendored unchanged as `src/typeset.css`, so refresh it from the URL in its header.
+Their links open in a new tab, except those within the page, so a document never replaces the app.
 Replies keep Streamdown's own styles, since it has no unstyled mode.
+
+## The React Compiler memoizes
+
+`@vitejs/plugin-react` runs the Rust port of the React Compiler (`oxc-transform-react`), so components and hooks carry a hand-written `useMemo`, `useCallback`, or `memo` only where the compiler falls short.
+The compiler ignores TypeScript types, so it treats every value it does not create as mutable and takes every call on it, a method call included, as a possible mutation.
+A value whose last possible mutation comes after a hook call is not memoized, so hooks come first and derived values after them.
+Hook results are immutable to the compiler, which is why a hook that derives data around another one splits off a small hook of its own, such as `useTreeIndex` or `useDocumentContent`.
+`MessageBubble` stays wrapped in `memo`, since the compiler caches the elements of a list as a whole, and the message list changes with every streamed chunk.
+`TreeRow` does too, and opts out of the compiler with `"use no memo"`, since it reads the mutable tree item while rendering.
+An explicit `useMemo` remains only for the search index in `useFuzzySearch`, since the compiler takes a search for a mutation of the index and would rebuild it with every keystroke.
+Setting `compiler: { logDiagnostics: true }` in `vite.config.ts` lists the components and hooks it skips, currently only the generated toast.
 
 ## Server state lives in TanStack Query, client state in Zustand
 
 Each resource is a module in `src/api` with its fetchers, its zod schemas, and its `<resource>Queries` and `<resource>Mutations`, built on the HTTP core in `api/client.ts`.
+The zod schemas are written by hand, so `contract.test.ts` holds every enum and constant they mirror against the backend's JSON Schemas, and every tool name the backend registers against an icon and a label in each language, both from the contract `backend/tests/unit/test_contract.py` records.
 Every query is keyed under a scope that `Register` restricts (`lib/query-client.ts`), and every mutation that changes one names the keys it affects in `meta.invalidates`.
 Routes load their data in `loader` through the `queryClient` of the router context, after `enforceLogin`, and components read it with `useSuspenseQuery`.
 The mutation cache refetches those before the mutation settles and raises a toast on failure unless the mutation renders it (`meta.inlineError`) or has its own `onError`, so components neither refetch by hand nor copy server data into state.
-Zustand keeps what the browser owns: settings, overrides, chunks the model read, and dialog state.
-The composer store holds the agent mode and reasoning effort, which carry over from one conversation to the next, while the draft lives in the composer.
+Zustand keeps what the browser owns: settings, chunks the model read, and dialog state.
+The assistant, agent mode, reasoning effort, and chat model are the user's preferences, which the server keeps (`api/preferences`), so a choice applies to every conversation and client at once, set optimistically and reconciled with what the server stored, while the draft lives in the composer and the browser keeps only the expanded folders (`settings-store`).
+
+Binary previews such as asset images and PDF originals are queries too, whose data is an object URL flagged `meta.objectUrl`, so every view of one file shares a URL and the cache revokes it once the entry drops or holds a new one.
+A conversation's stored messages load through `conversationQueries.messages` without being kept, since the chat owns them once it starts.
 
 Two stores still hold server data, since neither fits a query: the jobs store is fed by the event stream, and the upload queue tracks progress of requests in flight.
-Every workspace change the feed reports refetches the workspace queries (`syncWorkspaceQueries`).
+An upload the rate limit refused waits for its `Retry-After` and goes again, holding its slot in the queue.
+An uploaded or replaced document sends its file's `lastModified` as `modified_at`, and a collection zipped in the browser dates each entry the same way, a dropped archive's entries keeping their own date, since JSZip writes the DOS date in UTC as the backend reads it.
+Every workspace change the feed reports refetches the workspace queries (`syncWorkspaceQueries`), except asset images, which refetch only for a path the change moved or deleted.
 A directory tree read walks the whole workspace, so `refreshTrees` never cancels a read in flight but marks it stale, and the read repeats once for any burst of changes.
 Tree mutations publish their change rather than invalidating, and stay pending until the refreshed tree lands, so the rows they touch spin until then.
 
 ## Chat settings ride on every request
 
-`prepareSendMessagesRequest` stamps the chat settings (`chatSettings`: document scope, model, tools, personality, mode) onto every request.
+A sent user message names its documents in its metadata (`selectionMetadata`), and `prepareSendMessagesRequest` adds only what addresses the turn, since the server applies the user's preferences.
 The SDK issues the post-approval continuation itself, so per-call settings would resume that turn with server defaults.
+
+The model is a catalog id from `GET /settings`, never an endpoint, and the composer offers what that model supports: the model selector only with more than one model, the reasoning effort only with the levels the model lists, and image attachments only for a vision model, at most its `max_images` per turn (`useChatModel`).
+The server enforces each of these, so the composer only hides what would be refused.
 
 ## Compaction is a part of the reply
 
@@ -75,11 +115,11 @@ A summary that replaces the earlier history arrives as a `data-compaction` part 
 `CompactionPart` renders it as a divider that opens to the summary.
 The backend compacts and retries on its own when a turn overflows the context window, so the part can also appear in the middle of a reply.
 
-A compaction made for a prompt is stored ahead of it, so `placeCompactions` moves one that opens a reply to the end of the reply before that prompt, live and in the SDK state once the stream finishes.
+A compaction shows where it streamed, in the reply to the prompt it was made for, which is where the stored transcript shows it too.
 
 The compact button sends a request without a message, whose per-call body adds `compact: true` (`compact` in `hooks/chat/use-chat-actions.ts`).
 It is disabled while an approval or question is open, which a compaction would leave unanswerable.
-The SDK streams the response into the last reply, or into a new one after a failed prompt, which `placeCompactions` moves ahead of that prompt, just as a reload shows it.
+The SDK streams the response into the last reply, or into a new one after a failed prompt, just as a reload shows it.
 The chat status shows the wait, so compaction needs no progress indicator of its own.
 
 ## Tool approvals
@@ -88,10 +128,10 @@ The SDK dispatches a continuation only if the chat is idle when the decision is 
 The buttons therefore stay disabled while the message streams and only answer while it waits (`useApprovalBlockedReason`).
 
 The prompt is derived from stored history, since a tool call without a result is an open approval.
-An approval overtaken by a new message reads as stopped, since its message is stale, and the backend declines it on the next request.
+An approval overtaken by a new message reads as denied, since its message is stale, and the backend denies it on the next request.
 
-The changeset summary arrives as message metadata keyed by tool call id, live and after a reload.
-`ApprovalScope` provides it, and `ToolCard` reads it with `useApprovalMetadata(part, schema)`.
+The changeset summary arrives as message metadata keyed by tool call id, live and after a reload, beside the arguments each call runs with once approved.
+`ApprovalScope` provides both, and `ToolCard` reads the summary with `useApprovalMetadata(part, schema)` and shows the arguments of `useApprovalArgs(part)` in place of those the model sent, which the backend may have repaired.
 `ChangesetView` (`components/chat/tools/changeset.tsx`) lists each change as a line that opens to its diff, and `run-python.tsx` reuses it for staged programs.
 A `/tmp` file is read through the document route with the conversation id from `useConversationId`, none outside a conversation.
 
@@ -108,7 +148,7 @@ A note travels as the decision's `reason` for both approvals and denials, and th
 It composes the shadcn/ui `Questionnaire`, one step per question, and sends all answers from the last step.
 `shouldContinueRun` (`lib/chat/chat-utils.ts`) resumes the run, instead of `lastAssistantMessageIsCompleteWithToolCalls`, which would also resend a stopped step of server tools.
 The prompt shows once the run waits for its answers.
-A dismissal is an `output-error`, and an overtaken question reads as stopped like an approval.
+A dismissal is an `output-error`, and an overtaken question reads as failed, as the backend dismisses it.
 
 ## Replies transfer to RAGold through its tab
 
@@ -120,7 +160,53 @@ The transfer ships a complete entry, so nothing is preselected: the question typ
 RAGold keeps its data in the browser, so Hivegent cannot upload to it: the click opens `<ragold_url>#import` synchronously, which popup blockers allow, while the backend builds the zip.
 `sendToRagold` waits for `ragold:ready` from that tab and origin, posts `ragold:import` with the zip, and reports `ragold:result`, failing when the tab closes, stays silent for 30 seconds, or the zip fails, which also closes the tab.
 
+## Deployment settings are read at runtime
+
+Before rendering, `BootstrapGate` loads the public `/api/v1/config`, which names the OIDC client and the handbook URL, so one bundle serves every deployment without a rebuild.
+No OIDC client means the backend runs as `hivegent dev` with its development user, which oidc-spa then mocks, and no handbook URL hides the "Documentation" link.
+`runtimeConfig()` hands the loaded config to the components below the gate.
+
+## The debugging consoles follow the server
+
+The tool and chat debugger appear in the user menu and under `/debug` only when `/settings` reports `debug`, which the server sets for an admin of a deployment that enabled the consoles, and otherwise `/debug` shows the not-found screen.
+The chat debugger opens only the user's own conversations, since the server finds them by the same ownership check as every conversation route.
+
+## Settings and administration are routed pages
+
+`/settings` holds every user's own pages, profile, assistants, skills, and account, and `/admin` the read-only view of what the operator configured, models, plugins, integrations, pipelines, global skills, plus the maintenance switch and the reindex.
+Both are one `SettingsShell` with a side navigation over an `Outlet`, and their pages compose the same `Section` card and `DangerZone`, whose every action runs behind one confirmation.
+The admin pages render for an admin only, as the `admin` role in `/settings` says, while the server refuses everyone else on every route, so the gate spares the rest only failed requests.
+Nothing the server configures is spelled in the client: models, plugins, servers, pipelines, skills, assistants, and tools all come from their listings.
+
+## External MCP servers are read-only here
+
+The host configuration declares the external MCP servers, so `/admin/integrations` only lists them (`GET /admin/integrations`) by kind, MCP servers, databases, and APIs, with each one's host, groups, and tools by effect, and an MCP server's status as well.
+Their tools are listed under the server's id wherever tools are, such as the assistant dialog, and since they come and go with the connection, `GET /tools` is refetched on every visit rather than cached for the process like the debug schemas.
+
+## Sources are listed, synced on demand
+
+The host configuration declares the external sources, so `/admin/sources` lists them (`GET /admin/sources`) with their last sync, file count, and error, and its one action starts a sync (`POST /admin/sources/{id}/sync`), which the job tray follows like any job, since admins follow the jobs of every admin.
+A source's mirror arrives as a workspace of kind `source` named by its id, so the tree, previews, and citations need nothing of their own, and `splitScopePath` takes `/mnt/<id>` whole as its scope.
+
+## Skills are listed, never edited here
+
+`/settings/skills` lists the skills of every scope the user sees (`GET /skills`), uploads a folder, zipped in the browser with the collection upload's helper, or a ZIP archive into the user's own library or a group's they write, and deletes one behind a confirmation.
+A skill's `SKILL.md` opens in the document viewer like a `/tmp` file, through `GET /documents/{path}`, since a skill is no workspace entry and has no chunks.
+The global skills come from the operator, so they get no upload or delete, and `/admin/skills` lists only them.
+A draft that is a slash and one word suggests the skills it may invoke, and the server loads the skill named by the first word after a message's leading slash, so the client sends the text as typed.
+A `library-changed` feed event refetches the skills and the assistants wherever someone changed them.
+
+## Assistants are picked, the server applies them
+
+`/settings/assistants` lists the assistants of every scope the user sees (`GET /assistants`) and creates, edits, and deletes those of the scopes the user writes in one form.
+The composer offers them only when there are any, and a chat request carries the chosen name alone, which the server resolves and applies, so the client never sends an assistant's tools, mode, or documents itself.
+The assistant form edits the enforced `allowed_documents`, beside the advisory include and hide lists, as rows of a path and a directory toggle, which the form sends as `{path, directory}` like every filter entry.
+A chosen assistant that disappears is dropped, so no request names one the server no longer knows.
+
 ## Interface language
+
+Pipelines are ids the server lists for the admin pages with their label and description in the interface language (`GET /admin/pipelines/{stage}`), since plugins add their own, so no pipeline name is spelled in the client.
+A stored pick the server no longer lists is sent as `auto` (`useOfferedPipeline`).
 
 All text lives in typed catalogs under `src/i18n/locales/{en,de}`, read with the react-i18next selector API (`t(($) => $.chat.composer.placeholder)`).
 Each German section is declared `satisfies Translation<typeof en>`, so a missing or extra key fails the type check.
@@ -143,39 +229,69 @@ It walks the JS module graph, so CSS has to be imported from JS to be listed, li
 The tabs only appear when the original has a renderer, picked by `previewKind` (`lib/original-preview.ts`) from its media type, else its extension, and a highlighted chunk opens on the text.
 Images and videos load through the asset route as before.
 A PDF goes to the browser's own viewer in an unsandboxed `iframe`, since Chromium refuses PDFs in sandboxed frames, on an object URL retyped as `application/pdf`, so no pdf.js is bundled.
-A DOCX is converted by `mammoth` and sanitized by `dompurify`, and an XLSX is read by `read-excel-file` into a plain table of its first 500 rows, one sheet at a time.
+A DOCX is converted by `mammoth` and sanitized by `dompurify` without styles, forms, ids, or names, its links opening in a new tab, and an XLSX is read by `read-excel-file` into a plain table of its first 500 rows, one sheet at a time.
 Only the active tab mounts, so `documentQueries.original` fetches the original from `/documents/original` only once the preview is opened, and the parsers are imported dynamically, keeping them out of the main bundle.
+
+## The similarity of a case base
+
+A document whose original may be a case base, as the server reports it by cbrkit's rule (`case_base_candidate` of its chunks), gets a Similarity tab in the document dialog (`components/documents/similarity-view.tsx`), loaded from `/case-bases` under the `workspace` query key, so the feed refreshes it with its workspace.
+A folder the tree reports as a possible case base (`case_base_candidate`, `lib/document-tree.ts` `isCaseBaseFolder`) opens the same view in a dialog from its row in the document tree.
+The view is read-only, since the server infers the configuration from the data and persists none while cbrkit's format still evolves (`components/documents/similarity/config-view.tsx`): every decision with its measure, weight, provenance, and reason, and each phase of the cycle (`retrieve`, `reuse`, `revise`, `retain`, `maintain`) as JSON or off.
+The test query ranks by a record built by `SchemaForm` from the case base's query schema, by a case key, or by a graph file, and a graph match draws the case graph as Mermaid, its mapped nodes highlighted, through the chat's Streamdown plugin, loaded lazily.
 
 ## Moves and deletes are one request
 
 Every move, delete, and new directory is one `applyChanges` request that the backend applies all or nothing.
-Affected rows spin until their scope reloads, every scope in the returned `WorkspaceChanged` refreshes, and a refusal names the offending path.
+Affected rows spin until their scope reloads, every scope the feed announces refreshes, and a refusal names the offending path.
 A delete states whether it expects a document or a folder, so a stale view cannot delete the wrong kind.
 Only rechunk and reconvert are background jobs, and both take a list of files.
 
+## One headless tree spans every workspace
+
+The documents panel is one `@headless-tree` instance (`hooks/use-document-tree.ts`), its invisible root holding a folder per workspace and every item keyed by canonical path, so a move between workspaces is a plain drop.
+`lib/document-tree.ts` indexes the workspace trees into the items, and filters them to the fuzzy matches and their folders while searching.
+The workspaces and whether each is writable come from the server (`user.workspaces` of `GET /settings`), in its scope order personal, groups, global, so the client never derives a grant, the admin's write on the global one included.
+The selection drives both the bulk actions and the dragged entries, renames happen inline, and OS files dropped onto a folder upload into it.
+A row's own controls leave the row alone, and a plain click on a file opens it, both handled by a small feature of the tree rather than by each control.
+Tree mutations take canonical paths, so one request covers a selection spanning workspaces.
+The focused item is the upload target, so no separate armed folder exists.
+A fresh tree from the server rebuilds the item list during the render that brings it, since the expanded items handed to the tree are new with it, so no row of a vanished entry renders against the new data.
+The selection and focus the tree gets leave out ids without an entry, which a kept path holds until the feed follows a change or while its workspace fails to load.
+A folder toggled meanwhile keeps the persisted expansion of a workspace still loading or failing to, which the tree cannot know yet.
+The tree is a mutable instance, so it comes from the React Compiler entrypoint of `@headless-tree/react` as a getter, and each row renders uncompiled, memoized on the item state its parent reads from the tree.
+
 ## Kept paths follow every workspace change
 
-The document filter, a scope's selection, and its open document dialog keep paths that must follow what the backend applied.
-Every change arrives as one `WorkspaceChanged` through `onWorkspaceChanged` in the jobs store.
-It comes from the `applyChanges` response for the acting tab (via `publishWorkspaceChanged`) and from the feed's `workspace-changed` event for everything else.
-The SPA sends its client id, so each change arrives once.
+The document filter and the tree's selection, focus, expansion, and open document keep canonical paths that must follow what the backend applied.
+Every change arrives once as the feed's `workspace-changed` event through `onWorkspaceChanged` in the jobs store, whoever made it, other tabs and group members included.
+This tab's own change arrives from the answer to `POST /changes` as well, since the feed may be reconnecting, and the server-assigned id of the change lets whichever comes second pass, as applying a chain or swap twice would carry paths on.
+The change drives every refresh, a tree mutation only joins its scope's read in flight, or starts one, so its rows spin until it lands.
 `followPath` in `lib/utils` drops paths under a deleted one and carries paths under a moved source to the destination, all moves at once.
-Group members other than the actor get no feed event yet.
+The conversation list follows the feed's `conversations-changed` event the same way (`syncConversationQueries`), once for a burst of events.
+Its mutations refetch it too, and a rename writes the new title at once, since the feed may be reconnecting.
 
 ## TODO: branch-navigation UI
 
-Branch navigation is ephemeral client state.
-The newest leaf is always active, and a choice becomes durable only when the user appends to that branch.
-`GET /conversations/{id}/messages` already returns `metadata.branch = { branchCount, branchIndex, siblingIds }` on forking nodes.
+The backend keeps every branch in its `ConversationStore`: a conversation's record names its active history by `head_id`, and the tips of the histories an edit or a regenerate left in `branches`.
 
-Backend, read-only and without schema changes:
+Backend:
 
-- Add `?branch={messageId}` to `GET /conversations/{id}/messages` to project the active path from a chosen leaf.
-- Let a chat request carry a continuation anchor, so `resolve_fork` forks at the viewed branch instead of the newest.
+- Answer the branches with `GET /conversations/{id}/messages`, each tip with the UI message it forks at.
+- Switch the active history with the store's `branch(from_entry=...)`, which persists the choice and keeps the left history a branch.
 
 Frontend:
 
-- Add a branch query to `src/api/conversations.ts` and `branch` to the metadata schema in `lib/chat/message.ts`.
-- Render a prev and next selector in `MessageFooter` when `branchCount > 1`, on user and assistant bubbles.
-- On selection, load the branch and `setMessages`, disabled while streaming.
-- Send the continuation anchor when the user continues, edits, or regenerates on a viewed branch.
+- Render a prev and next selector in `MessageFooter` where a branch forks, on user and assistant bubbles.
+- On selection, switch the branch and load its messages, disabled while streaming.
+
+## TODO: virtualize the document tree
+
+The tree renders every shown row, which stays cheap until an expanded workspace or a broad search shows thousands of them.
+`@tanstack/react-virtual` would render only the rows in view, as headless-tree documents.
+
+- Window `tree().getItems()` with `useVirtualizer` at a fixed row size, the rows being flat and of one height.
+- Route the tree's `scrollToItem` through `scrollToIndex`, so keyboard navigation reaches rows out of view.
+- Give the tree its own scroll container, or offset it by the header above it with `scrollMargin`, since both share the manager's scroll container today.
+- Accept that find in page only sees the rendered rows.
+
+No other list pays off yet: the conversation list wants server pagination with `useInfiniteQuery` first, the chat varies too much in height while it streams, and the rest stay small or capped.

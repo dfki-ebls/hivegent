@@ -37,12 +37,16 @@ flowchart LR
 
 The agent picks from these toolsets for each request.
 
-| Toolset               | What it lets the assistant do                                                   | Availability                 |
-| --------------------- | ------------------------------------------------------------------------------- | ---------------------------- |
-| Search and read       | Search documents by meaning or exact text and open documents or passages        | Always                       |
-| Calculations          | Run a small Python program in a sandbox for numbers, dates, and counts          | Always                       |
-| Delegated exploration | Let sub-agents explore documents, past conversations, or the web                | Always                       |
-| Conversation history  | Open earlier conversations directly                                             | When enabled by the operator |
-| Memory                | Save facts to recall in later conversations                                     | Not in Read mode             |
-| Document editing      | Create, edit, move, or delete documents, with your approval in Interactive mode | Not in Read mode             |
-| Web                   | Search the web and fetch pages                                                  | When enabled by the operator |
+| Toolset               | What it lets the assistant do                                                                                | Availability                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------- |
+| Search and read       | Search documents by meaning or exact text, open documents or passages, and rank similar cases of a case base | Always                          |
+| Calculations          | Run a small Python program in a sandbox for numbers, dates, and counts                                       | Always                          |
+| Delegated exploration | Let subagents explore documents, past conversations, or the web                                              | Always                          |
+| Conversation history  | Open earlier conversations directly                                                                          | Unless disabled by the operator |
+| Memory                | Save facts to recall in later conversations                                                                  | Not in Read mode                |
+| Skills                | Load the instructions and scripts of a skill that matches the task                                           | Always                          |
+| Assistant             | Follow the instructions of the assistant you picked                                                          | When you pick one               |
+| Document editing      | Create, edit, move, or delete documents, with your approval in Interactive mode                              | Not in Read mode                |
+| Case bases            | Store accepted solutions in a case base and clean it up, with your approval in Interactive mode              | Not in Read mode                |
+| Web                   | Search the web and fetch pages                                                                               | When enabled by the operator    |
+| External services     | Use the tools of services the operator connected over MCP, every action only with your approval              | When configured by the operator |

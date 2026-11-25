@@ -56,7 +56,8 @@ An administrator adds you to a group in your identity provider, which grants acc
 ### Who can perform administrative actions?
 
 Users with the `admin` role.
-They can enable maintenance mode, reindex the workspace, and reset data.
+They see the overview of users and groups, enable maintenance mode, and reindex the workspace.
+Wiping data runs on the host with `hivegent reset`, and no admin can act as another user.
 
 ## Operations
 
@@ -72,7 +73,7 @@ Migrations run automatically on startup.
 ### High CPU or memory usage.
 
 This is normal during document processing, especially OCR, and with a local model.
-Process fewer documents at once, use a GPU, or use a hosted model.
+Process fewer documents at once or use a hosted model.
 
 ### When are local models worth it?
 
