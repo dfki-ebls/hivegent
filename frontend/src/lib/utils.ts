@@ -1,14 +1,10 @@
 import { i18n } from "@/i18n";
 import type { WorkspaceChanged } from "@/api/jobs";
 
-export { cn, type ClassValue } from "cn";
+export { cn } from "cn";
 
 /** The product name, the same in every language. */
 export const PRODUCT_NAME = "Hivegent";
-
-/** Handbook URL from `VITE_DOCS_URL`, or `undefined` when no handbook is served,
- * which hides the "Documentation" link. */
-export const DOCS_URL = import.meta.env.VITE_DOCS_URL;
 
 /** Filename without its extension (the logical document stem). */
 export function fileStem(name: string): string {
@@ -60,24 +56,11 @@ export function followPath(
   return path;
 }
 
-/** *paths* each mapped by *follow*, the null ones dropped, or *paths* itself when none changed. */
-export function followEach(paths: string[], follow: (path: string) => string | null): string[] {
-  const next = paths.flatMap((path) => follow(path) ?? []);
+/** *items* each mapped by *follow*, the null ones dropped, or *items* itself when none changed. */
+export function followEach<T>(items: T[], follow: (item: T) => T | null): T[] {
+  const next = items.flatMap((item) => follow(item) ?? []);
 
-  return next.length === paths.length && next.every((path, i) => path === paths[i]) ? paths : next;
-}
-
-/** Longest common parent directory of *paths*, as `""` or a `dir/`-style prefix. */
-export function commonParentDir(paths: string[]): string {
-  return paths.map(parentDir).reduce(
-    (prefix, dir) => {
-      while (!dir.startsWith(prefix)) {
-        prefix = parentDir(prefix.slice(0, -1));
-      }
-      return prefix;
-    },
-    parentDir(paths[0] ?? ""),
-  );
+  return next.length === items.length && next.every((item, i) => item === items[i]) ? items : next;
 }
 
 /** Convert a snake_case string to Title Case. */
@@ -90,7 +73,9 @@ export function snakeCaseToTitleCase(s: string): string {
 
 /** Check whether a filename is an external web URL. */
 export function isWebUrl(value: string): boolean {
-  return value.startsWith("http://") || value.startsWith("https://");
+  const protocol = URL.parse(value)?.protocol;
+
+  return protocol === "http:" || protocol === "https:";
 }
 
 /** Format a URL for display as `hostname/path`. Falls back to the raw value. */
@@ -134,4 +119,15 @@ export const isAbortError = (err: unknown): boolean =>
 /** A thrown value's message, or a localized generic one when it is no `Error`. */
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : i18n.t(($) => $.common.states.unknownError);
+}
+
+/** *value* parsed when it is a JSON string, undefined when it does not parse, and as is otherwise. */
+export function parseJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
 }

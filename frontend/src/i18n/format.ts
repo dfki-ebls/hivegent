@@ -5,6 +5,11 @@ const decimal = new Intl.NumberFormat(LANGUAGE, {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 });
+const score = new Intl.NumberFormat(LANGUAGE, {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const percent = new Intl.NumberFormat(LANGUAGE, { style: "percent" });
 const relative = new Intl.RelativeTimeFormat(LANGUAGE, { numeric: "auto", style: "short" });
 const date = new Intl.DateTimeFormat(LANGUAGE, { dateStyle: "medium" });
 const dateTime = new Intl.DateTimeFormat(LANGUAGE, { dateStyle: "medium", timeStyle: "short" });
@@ -17,6 +22,16 @@ export function formatNumber(value: number): string {
 /** A number with exactly one decimal, e.g. `12.5` or `12,5`. */
 export function formatDecimal(value: number): string {
   return decimal.format(value);
+}
+
+/** A score with exactly two decimals, e.g. `0.85` or `0,85`. */
+export function formatScore(value: number): string {
+  return score.format(value);
+}
+
+/** A fraction as a whole percentage, e.g. `85%` or `85 %`. */
+export function formatPercent(value: number): string {
+  return percent.format(value);
 }
 
 /** A byte count as a human-readable file size, e.g. `1.5 KB` or `1,5 KB`. */

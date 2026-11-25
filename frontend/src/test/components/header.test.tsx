@@ -15,6 +15,10 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@/components/job-tray", () => ({ JobTray: () => null }));
 
+vi.mock("@/runtime-config", () => ({
+  runtimeConfig: () => ({ oidc: null, docs_url: "/docs" }),
+}));
+
 vi.mock("@/oidc", () => ({
   useOidc: () => ({
     isUserLoggedIn: true,
@@ -23,14 +27,17 @@ vi.mock("@/oidc", () => ({
   }),
 }));
 
-it("opens the user menu with the account and links its entries", async () => {
+it("opens the user menu with the settings and links its entries", async () => {
   renderWithQueries(<Header />);
 
   fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace" }));
 
   expect(await screen.findByText("ada@example.com")).toBeTruthy();
-  expect(screen.getByRole("menuitem", { name: "Account" }).getAttribute("href")).toBe(
-    "/settings/account",
+  expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe("/settings");
+  // The server says who is an admin, and these settings never loaded.
+  expect(screen.queryByRole("menuitem", { name: "Administration" })).toBeNull();
+  expect(screen.getByRole("menuitem", { name: "Documentation" }).getAttribute("href")).toBe(
+    "/docs/en/",
   );
   expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
 });

@@ -17,7 +17,7 @@ function isLanguage(value: string | undefined): value is Language {
  * matching its base language, and English when none is supported.
  */
 export function browserLanguage(tags: readonly string[]): Language {
-  return tags.map((tag) => tag.split("-")[0]).find(isLanguage) ?? "en";
+  return tags.map((tag) => new Intl.Locale(tag).language).find(isLanguage) ?? "en";
 }
 
 /** The interface language, fixed for the page's lifetime since only the browser decides it. */

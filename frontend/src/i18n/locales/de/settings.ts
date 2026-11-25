@@ -2,129 +2,104 @@ import type { settings as en } from "@/i18n/locales/en/settings";
 import type { Translation } from "@/i18n/translation";
 
 export const settings = {
-  dialog: {
+  nav: {
     title: "Einstellungen",
+    profile: "Profil",
+    skills: "Skills",
+    assistants: "Assistenten",
+    account: "Account",
+  },
+  danger: {
+    done: "{{action}}: Fertig",
+    failed: "{{action}}: Fehlgeschlagen",
+  },
+  profile: {
+    title: "Profil",
+    description: "Als wer du angemeldet bist und was deine Anmeldung dir erlaubt.",
+    name: "Name",
+    email: "E-Mail",
+    id: "Benutzer-ID",
+    roles: "Rollen",
+    noRoles: "Keine Rollen",
+    workspaces: "Arbeitsbereiche",
+    writable: "Lesen und schreiben",
+    readOnly: "Nur lesen",
+  },
+  skills: {
+    title: "Skills",
     description:
-      "Konfiguriere deinen LLM-Anbieter und die Einstellungen des Assistenten. Diese Einstellungen werden lokal in deinem Browser gespeichert.",
-    provider: {
-      label: "LLM-Anbieter",
-      description: "Welche Modelle antworten und welcher Endpunkt sie bereitstellt.",
+      "Anweisungen und Skripte, die der Assistent für passende Aufgaben lädt oder wenn eine Nachricht mit /name beginnt. Lade einen Skill-Ordner oder sein ZIP-Archiv zu deinen eigenen Skills oder denen einer Gruppe hoch, die der Organisation stellt der Betrieb bereit.",
+    empty: "Noch keine Skills.",
+    uploadArchive: "ZIP hochladen",
+    uploadFolder: "Ordner hochladen",
+    installed: "Skill {{name}} installiert",
+    notRunnable_one: "{{count}} Skript läuft nicht in der Sandbox und bleibt zum Nachlesen.",
+    notRunnable_other: "{{count}} Skripte laufen nicht in der Sandbox und bleiben zum Nachlesen.",
+    delete: {
+      label: "Löschen",
+      title: "Skill {{name}} löschen?",
+      description: "Der Skill und alle seine Dateien werden für alle gelöscht, die ihn sehen.",
     },
-    assistant: {
-      label: "Assistent",
-      description: "Wie sich der Assistent in jedem Chat verhält.",
+  },
+  assistants: {
+    title: "Assistenten",
+    description:
+      "Benannte Anweisungen, die du im Chat auswählst, mit den Skills, die sie laden, und den Tools, dem Modus und den Dokumenten, auf die sie den Assistenten beschränken. Die der Organisation stellt der Betrieb bereit, die einer Gruppe teilen sich ihre Mitglieder.",
+    empty: "Noch keine Assistenten.",
+    create: "Neuer Assistent",
+    edit: "Bearbeiten",
+    saved: "Assistent {{name}} gespeichert",
+    delete: {
+      label: "Löschen",
+      title: "Assistent {{name}} löschen?",
+      description: "Der Assistent wird für alle gelöscht, die ihn sehen.",
     },
-    model: {
-      label: "Modell",
-      description:
-        "Das Hauptmodell für den Chat. Lass das Feld leer, um den Standard des Servers zu verwenden.",
-      placeholder: "Modell-ID deines Anbieters",
+    form: {
+      createTitle: "Neuer Assistent",
+      editTitle: "{{name}} bearbeiten",
+      description: "Alles außer den Anweisungen schränkt nur ein, was ein Chat mit ihm tun darf.",
+      name: "Name",
+      nameHint: "Kleinbuchstaben, Ziffern und Bindestriche, etwa support-team.",
+      summary: "Beschreibung",
+      instructions: "Anweisungen",
+      instructionsHint:
+        "Anweisungen einer Gruppe oder deine eigenen erreichen den Assistenten als zitierter Inhalt, nie als Regeln, die die des Betriebs außer Kraft setzen.",
+      skills: "Zu ladende Skills",
+      disabledTools: "Auszuschaltende Tools",
+      maxMode: "Höchster Modus",
+      includedDocuments: "Dokumente im Fokus",
+      excludedDocuments: "Auszublendende Dokumente",
+      allowedDocuments: "Nur diese Dokumente",
+      documentsHint: "Pfade wie ~/handbuch oder @team/faq.md.",
+      allowedDocumentsHint:
+        "Verbindlich, solange der Assistent gewählt ist, keine für keine Einschränkung.",
+      directory: "Verzeichnis",
+      addPath: "Pfad hinzufügen",
+      removePath: "Pfad entfernen",
+      save: "Speichern",
+      cancel: "Abbrechen",
     },
-    apiKey: {
-      label: "API-Schlüssel (optional)",
-      serverDescription:
-        "Auf dem Server ist ein API-Schlüssel konfiguriert. Überschreibe ihn hier oder lass das Feld leer, um den Schlüssel des Servers zu verwenden.",
-      description: "Nur für Anbieter erforderlich, die eine Authentifizierung verlangen.",
-      serverPlaceholder: "API-Schlüssel des Servers wird verwendet",
-      placeholder: "Gib deinen API-Schlüssel ein (falls erforderlich)",
-    },
-    baseUrl: {
-      label: "Basis-URL",
-      description: "API-Endpunkt des LLM-Anbieters.",
-      placeholder: "z. B. http://localhost:11434/v1",
-    },
-    auxModel: {
-      label: "Hilfsmodell (optional)",
-      description:
-        "Muss klein, schnell und bildfähig sein. Übernimmt Dokumentkonvertierung, Alternativtexte, Titel und LLM-gestütztes Chunking. Bei diesen umfangreichen Aufgaben zählen Kosten und Latenz mehr als ein ausgeprägter Denkprozess. Verwendet dieselben Anbietereinstellungen wie das Hauptmodell.",
-      placeholder: "Modell-ID deines Anbieters",
-    },
-    personality: {
-      label: "Persönlichkeit",
-      description: "Wähle aus, wie der Assistent antwortet.",
-    },
-    customSystemMessage: {
-      label: "Eigene Systemnachricht",
-      description: "Gib eigene Systemanweisungen für den Assistenten vor.",
-      placeholder: "Du bist ein hilfreicher Assistent, der …",
-    },
-    tools: {
-      label: "Tools",
-      description: "Lege fest, welche Tools der Assistent verwenden darf.",
-    },
-    toolGroups: {
-      explore: "Erkunden",
-      python: "Python",
-      subagent: "Subagent",
-      write: "Schreiben",
-      memory: "Gedächtnis",
-      web: "Web",
-      conversation: "Konversation",
-      ask: "Rückfragen",
-    },
-    mcp: {
-      label: "MCP-Server",
-      description:
-        "Verbinde externe Tool-Server über das Model Context Protocol (Streamable HTTP). Ein Präfix ordnet alle Tools eines Servers einem Namensraum zu (z. B. macht das Präfix „jira“ aus „search“ den Namen „jira_search“) und verhindert so Namenskonflikte, wenn mehrere Server ähnlich benannte Tools anbieten.",
-      prefix: "Präfix: {{prefix}}",
-      connectionFailed: "Verbindung fehlgeschlagen",
-      toolCount_one: "{{count}} Tool",
-      toolCount_other: "{{count}} Tools",
-      testConnection: "Verbindung testen",
-      removeServer: "Server entfernen",
-      url: "Server-URL",
-      prefixPlaceholder: "Präfix",
-      auth: "Authentifizierung",
-      authNone: "Keine",
-      authHeaders: "Header",
-      authOAuth2: "OAuth2-Client-Credentials",
-      headerName: "Header-Name",
-      headerValue: "Wert",
-      removeHeader: "Header entfernen",
-      addHeader: "Header hinzufügen",
-      clientId: "Client-ID",
-      clientSecret: "Client-Secret",
-      scopes: "Scopes (optional, durch Leerzeichen getrennt)",
-      newServer: "Neuer Server",
-      addServer: "Server hinzufügen",
-    },
-    clear: "Leeren",
-    clearMemory: {
-      label: "Gedächtnis leeren",
-      title: "Gedächtnis leeren?",
-      description:
-        "Dadurch wird das gesamte gespeicherte Gedächtnis endgültig gelöscht. Der Assistent erinnert sich dann nicht mehr an Informationen aus früheren Konversationen.",
-    },
-    clearTmp: {
-      label: "Temporäre Dateien leeren",
-      title: "Temporäre Dateien löschen?",
-      description:
-        "Dadurch werden die Arbeitsdateien gelöscht, die der Assistent für jede deiner Konversationen ablegt. Laufende Konversationen verlieren ihren abgelegten Zustand, und deine Dokumente bleiben unverändert.",
-      done_one: "{{count}} temporäre Datei gelöscht",
-      done_other: "{{count}} temporäre Dateien gelöscht",
-    },
-    resetDefaults: "Auf Serverstandards zurücksetzen",
   },
   account: {
     title: "Account",
-    description: "Verwalte die Daten deines Accounts und als Admin das gesamte Deployment.",
-    done: "{{action}}: Fertig",
-    failed: "{{action}}: Fehlgeschlagen",
-    noUsers: "Noch keine Benutzer:innen haben Spuren hinterlassen.",
-    noGroups: "Noch keine Gruppen registriert.",
-    userMeta: "{{documents}}, {{conversations}}",
-    documentCount_one: "{{count}} Dokument",
-    documentCount_other: "{{count}} Dokumente",
-    conversationCount_one: "{{count}} Konversation",
-    conversationCount_other: "{{count}} Konversationen",
-    userDanger: {
-      title: "Gefahrenbereich (Benutzer:in)",
+    description:
+      "Setze deine Einstellungen zurück, leere, was der Assistent für dich aufbewahrt, oder lösche die Daten deines Accounts.",
+    clear: "Leeren",
+    clearMemory: {
+      label: "Gedächtnis leeren",
+      description:
+        "Lösche das gesamte gespeicherte Gedächtnis endgültig. Der Assistent erinnert sich dann nicht mehr an Informationen aus früheren Konversationen.",
+    },
+    clearTmp: {
+      label: "Temporäre Dateien leeren",
+      description:
+        "Lösche die Arbeitsdateien, die der Assistent für jede deiner Konversationen ablegt. Laufende Konversationen verlieren ihren abgelegten Zustand, und deine Dokumente bleiben unverändert.",
+      done_one: "{{count}} temporäre Datei gelöscht",
+      done_other: "{{count}} temporäre Dateien gelöscht",
+    },
+    danger: {
+      title: "Gefahrenbereich",
       description: "Unumkehrbare Aktionen für deinen Account. Sie betreffen nur dich.",
-      resetLocal: {
-        label: "Lokale Einstellungen zurücksetzen",
-        description:
-          "Verwirf deine Anpassungen im Browser und kehre zu den Standards des Servers zurück. Daten auf dem Server bleiben unverändert.",
-      },
       deleteChats: {
         label: "Alle Chats löschen",
         description:
@@ -138,66 +113,123 @@ export const settings = {
       resetEverything: {
         label: "Alles zurücksetzen",
         description:
-          "Lösche endgültig alle Spuren deines Accounts auf dem Server (Konversationen, Dokumente, Tokens, Gedächtnis) und alle lokalen Browserdaten. Diese Aktion kann nicht widerrufen werden.",
+          "Lösche endgültig alle Spuren deines Accounts auf dem Server (Konversationen, Dokumente, Gedächtnis, Skills, Assistenten) und alle lokalen Browserdaten. Diese Aktion kann nicht widerrufen werden.",
       },
     },
-    maintenance: {
-      title: "Wartung (Admin)",
-      label: "Wartungsmodus",
+  },
+  admin: {
+    title: "Administration",
+    readOnly:
+      "All das konfiguriert der Betrieb auf dem Host, diese Seiten zeigen also nur, was gilt.",
+    everyone: "Alle",
+    nav: {
+      overview: "Übersicht",
+      models: "Modelle",
+      plugins: "Plugins",
+      integrations: "Integrationen",
+      sources: "Quellen",
+      pipelines: "Pipelines",
+      skills: "Skills",
+      maintenance: "Wartung",
+    },
+    overview: {
+      title: "Übersicht",
       description:
-        "Sperre alle Benutzer:innen ohne Admin-Rechte aus und zeige ihnen statt der App einen Wartungshinweis. Admins behalten vollen Zugriff. Die Einstellung wird gespeichert und bleibt auch nach Neustarts des Servers aktiv, bis ein Admin sie ausschaltet.",
+        "Die Benutzer und Gruppen, die hier etwas gespeichert haben. Die Mitgliedschaft verwaltet der Identitätsanbieter, daher erscheint eine Gruppe oder ein Benutzer, sobald der Arbeitsbereich oder die Unterhaltungen Daten enthalten.",
+      users: "Benutzer",
+      groups: "Gruppen",
+      noUsers: "Noch kein Benutzer hat etwas gespeichert.",
+      noGroups: "Noch keine Gruppe hat etwas gespeichert.",
+      documents_one: "{{count}} Dokument",
+      documents_other: "{{count}} Dokumente",
+      conversations_one: "{{count}} Unterhaltung",
+      conversations_other: "{{count}} Unterhaltungen",
+    },
+    models: {
+      title: "Modelle",
+      description:
+        "Die Chat-Modelle aus dem Katalog des Betriebs, unter denen Benutzer:innen wählen.",
+      empty: "Es ist kein Chat-Modell konfiguriert.",
+      default: "Standard",
+      vision: "Bilder",
+      contextWindow: "{{tokens}} Tokens Kontext",
+    },
+    plugins: {
+      title: "Plugins",
+      description:
+        "Die aktivierten Plugins und was jedes beiträgt. Ein Tool, das nur liest, läuft in jedem Modus, jedes andere folgt den Freigaberegeln seiner Wirkung.",
+      empty: "Es ist kein Plugin aktiviert.",
+      converters: "Konverter",
+      chunkers: "Chunker",
+      skills: "Skills",
+    },
+    integrations: {
+      title: "Integrationen",
+      description:
+        "Die auf dem Host konfigurierten MCP-Server, Datenbanken und APIs, deren Tools der Assistent als <id>_<tool> angeboten bekommt. Tools, die nur lesen, laufen in jedem Modus, jedes andere fragt zuerst nach.",
+      empty: "Es ist keine Integration konfiguriert.",
+      mcp: "MCP-Server",
+      database: "Datenbanken",
+      api: "APIs",
+      connected: "Verbunden",
+      unreachable: "Nicht erreichbar",
+      trusted: "Vertrauenswürdig",
+      tools_one: "{{count}} Tool",
+      tools_other: "{{count}} Tools",
+    },
+    sources: {
+      title: "Quellen",
+      description:
+        "Die auf dem Host konfigurierten externen Quellen, nach /mnt/<id> gespiegelt und für die Suche indexiert. Quellen sind schreibgeschützt, der Assistent und alle Benutzer:innen lesen sie nur.",
+      empty: "Es ist keine Quelle konfiguriert.",
+      synced: "Zuletzt abgeglichen {{when}}",
+      never: "Noch nie abgeglichen",
+      running: "Wird abgeglichen",
+      progress: "Abgleich {{done}} von {{total}}",
+      waiting: "Abgleich angefordert",
+      held_one: "{{formatted}} Löschung zurückgehalten",
+      held_other: "{{formatted}} Löschungen zurückgehalten",
+      confirmDeletes: "Löschungen bestätigen",
+      confirmTitle: "Die zurückgehaltenen Dateien von {{id}} löschen?",
+      confirmDescription:
+        "Das Löschen von Dateien, die in der Quelle fehlen, wurde zurückgehalten, da so viele wie ein Ausfall aussehen. Bestätige nur, wenn sie in der Quelle absichtlich entfernt wurden.",
+      items_one: "{{formatted}} Datei",
+      items_other: "{{formatted}} Dateien",
+      interval: "Alle {{minutes}} Min.",
+      syncNow: "Jetzt abgleichen",
+      requested: "Abgleich von {{id}} angefordert",
+      syncFailed: "Der Abgleich konnte nicht gestartet werden",
+    },
+    pipelines: {
+      title: "Pipelines",
+      description:
+        "Die installierten Pipelines für Konvertierung und Chunking, unter denen Uploads wählen.",
+      conversion: "Konvertierung",
+      chunking: "Chunking",
+    },
+    skills: {
+      title: "Skills",
+      description:
+        "Die Skills der Organisation aus dem Verzeichnis des Betriebs und den aktivierten Plugins, die alle Benutzer:innen sehen.",
+    },
+    maintenance: {
+      title: "Wartung",
+      description: "Betriebsschalter, die ohne Neustart wirken.",
+      label: "Wartungsmodus",
+      hint: "Sperre alle Benutzer:innen ohne Admin-Rechte aus und zeige ihnen statt der App einen Wartungshinweis. Admins behalten vollen Zugriff. Die Einstellung wird gespeichert und bleibt auch nach Neustarts des Servers aktiv, bis ein Admin sie ausschaltet.",
       toggleFailed: "Wartungsmodus konnte nicht umgeschaltet werden",
       enabled: "Wartungsmodus aktiviert",
       disabled: "Wartungsmodus deaktiviert",
-    },
-    impersonation: {
-      title: "Ansicht als Benutzer:in (Admin)",
-      description:
-        "Nutze die App als andere:r Benutzer:in, um gemeldete Probleme nachzustellen. Die Sitzung hat die Rechte der gewählten Person, nie deine Admin-Rechte, und oben bleibt ein Banner mit einer Taste zum Beenden sichtbar.",
-      list: "Als Benutzer:in ansehen",
-      start: "Ansicht starten",
-    },
-    adminDanger: {
-      title: "Gefahrenbereich (Admin)",
-      description:
-        "Unumkehrbare Aktionen für das gesamte Deployment. Sie betreffen alle Benutzer:innen.",
-      resetWorkspace: {
-        label: "Arbeitsbereichsdateien zurücksetzen",
-        confirm: "Arbeitsbereich zurücksetzen",
+      danger: {
+        title: "Index",
         description:
-          "Löscht alle Dateien der Arbeitsbereiche auf dem Datenträger und die zugehörigen Dokumentzeilen in SQL, da beide synchron bleiben müssen. Chunks (Text und Vektor) werden mit den Dokumentzeilen entfernt. Konversationen, Tokens, Gedächtnis, Benutzer:innen und Gruppen bleiben erhalten.",
+          "Aktionen auf dem gesamten Index. Das Löschen der Daten anderer Personen, einer Gruppe oder des gesamten Deployments läuft auf dem Host mit `hivegent reset`.",
       },
       reindex: {
         label: "Wissen neu indexieren",
         confirm: "Neu indexieren",
         description:
-          "Gleicht jede Fallbasis ab: Übernimmt manuell in den Arbeitsbereich kopierte Dateien, entfernt verwaiste SQL-Einträge und vereinheitlicht die Unicode-Schreibweise von Dateinamen, damit der Assistent sie ansprechen kann. Es wird nichts gelöscht oder neu eingebettet. Jederzeit sicher ausführbar und nützlich nach manuellen Dateiänderungen oder einer geänderten Embedding-Konfiguration.",
-      },
-      resetDatabase: {
-        label: "Datenbank zurücksetzen",
-        description:
-          "Löscht alle Benutzer- und Gruppenzeilen samt allem, was davon abhängt: Tokens, Gedächtnis, Konversationen, Dokumente und Chunks. Dateien der Arbeitsbereiche auf dem Datenträger bleiben erhalten.",
-      },
-      factoryReset: {
-        label: "Auf Werkseinstellungen zurücksetzen",
-        description:
-          "Löscht alle Dateien der Arbeitsbereiche auf dem Datenträger, alle Benutzer:innen und Gruppen und alle abhängigen Zeilen (Dokumente, Chunks, Konversationen, Tokens, Gedächtnis). Auch die lokalen Browserdaten werden gelöscht. Das Deployment kehrt in den Zustand einer frischen Installation zurück. Diese Aktion kann nicht widerrufen werden.",
-      },
-      wipeUser: {
-        list: "Daten einer Person löschen",
-        title: "Daten von {{user}} löschen",
-        description:
-          "Löscht alle Dokumente, Chunks, Originale, Konversationen, Tokens und Gedächtniseinträge von {{user}}. {{documents}} und {{conversations}} werden entfernt. Diese Aktion kann nicht widerrufen werden.",
-        confirm: "Benutzerdaten löschen",
-      },
-      wipeGroup: {
-        list: "Daten einer Gruppe löschen",
-        title: "Daten der Gruppe {{group}} löschen",
-        description_one:
-          "Löscht alle Dokumente, Chunks und Originale der Gruppe {{group}}. {{count}} Dokument wird entfernt. Die Gruppe erscheint wieder, sobald eines ihrer Mitglieder (laut OIDC-Token) etwas in sie hochlädt. Diese Aktion kann nicht widerrufen werden.",
-        description_other:
-          "Löscht alle Dokumente, Chunks und Originale der Gruppe {{group}}. {{count}} Dokumente werden entfernt. Die Gruppe erscheint wieder, sobald eines ihrer Mitglieder (laut OIDC-Token) etwas in sie hochlädt. Diese Aktion kann nicht widerrufen werden.",
-        confirm: "Gruppendaten löschen",
+          "Gleicht jeden Arbeitsbereich ab: Übernimmt manuell dorthin kopierte Dateien, entfernt verwaiste SQL-Einträge und vereinheitlicht die Unicode-Schreibweise von Dateinamen, damit der Assistent sie ansprechen kann. Es wird nichts gelöscht oder neu eingebettet. Jederzeit sicher ausführbar und nützlich nach manuellen Dateiänderungen oder einer geänderten Embedding-Konfiguration.",
       },
     },
   },

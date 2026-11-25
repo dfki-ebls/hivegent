@@ -1,4 +1,4 @@
-import { type ComponentProps, type ReactNode, useMemo } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { CopyButton } from "@/components/common/copy-button";
 import {
   CodeBlock,
@@ -70,10 +70,7 @@ interface ValueCodeProps extends Omit<HighlightedCodeProps, "code" | "language">
 /** A value as a code block, a string as plain text and anything else as JSON. */
 export function ValueCode({ value, ...props }: ValueCodeProps) {
   const isText = typeof value === "string";
-  const code = useMemo(
-    () => (isText ? value : (JSON.stringify(value, null, 2) ?? String(value))),
-    [isText, value],
-  );
+  const code = isText ? value : (JSON.stringify(value, null, 2) ?? String(value));
 
   return <HighlightedCode code={code} language={isText ? "text" : "json"} {...props} />;
 }

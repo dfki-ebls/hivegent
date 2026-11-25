@@ -3,7 +3,8 @@ import {
   BugIcon,
   LogOutIcon,
   ScanSearchIcon,
-  UserCogIcon,
+  SettingsIcon,
+  ShieldIcon,
   UserIcon,
   WrenchIcon,
 } from "lucide-react";
@@ -17,7 +18,7 @@ import { LicensesLink } from "@/components/licenses-link";
 import { JobTray } from "@/components/job-tray";
 import { Logo } from "@/components/logo";
 import { VersionBadge } from "@/components/version-badge";
-import { useIsAdmin, useServerSettings } from "@/api/settings";
+import { useDebugConsoles, useIsAdmin, useServerSettings } from "@/api/settings";
 import { PRODUCT_NAME } from "@/lib/utils";
 import { useUserName } from "@/hooks/use-user-name";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,8 @@ import { Item, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/i
 function UserMenu() {
   const { t } = useTranslation();
   const oidc = useOidc();
-  const isAdmin = useIsAdmin();
+  const debug = useDebugConsoles();
+  const admin = useIsAdmin();
   const transparency = useServerSettings((s) => s.transparency);
   const userName = useUserName();
   const [debugChatOpen, setDebugChatOpen] = useState(false);
@@ -66,10 +68,16 @@ function UserMenu() {
                 </ItemContent>
               </Item>
             </DropdownMenuLabel>
-            <DropdownMenuItem render={<Link to="/settings/account" />}>
-              <UserCogIcon />
-              {t(($) => $.app.userMenu.account)}
+            <DropdownMenuItem render={<Link to="/settings" />}>
+              <SettingsIcon />
+              {t(($) => $.app.userMenu.settings)}
             </DropdownMenuItem>
+            {admin && (
+              <DropdownMenuItem render={<Link to="/admin" />}>
+                <ShieldIcon />
+                {t(($) => $.app.userMenu.admin)}
+              </DropdownMenuItem>
+            )}
             {transparency?.enabled && (
               <DropdownMenuItem onClick={() => setTransparencyOpen(true)}>
                 <ScanSearchIcon />
@@ -78,7 +86,7 @@ function UserMenu() {
             )}
             <DropdownMenuItem render={<DocsLink />} />
             <DropdownMenuItem render={<LicensesLink />} />
-            {isAdmin && (
+            {debug && (
               <>
                 <DropdownMenuItem render={<Link to="/debug/tools" />}>
                   <WrenchIcon />
@@ -98,7 +106,7 @@ function UserMenu() {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      {isAdmin && <DebugChatDialog open={debugChatOpen} onOpenChange={setDebugChatOpen} />}
+      {debug && <DebugChatDialog open={debugChatOpen} onOpenChange={setDebugChatOpen} />}
       {transparency?.enabled && (
         <AiTransparencyDialog
           open={transparencyOpen}

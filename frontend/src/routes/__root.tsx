@@ -2,7 +2,6 @@ import { type QueryClient, useQuery } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 
 import { Header } from "@/components/header";
-import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { MaintenanceScreen } from "@/components/maintenance-screen";
 import { Toaster } from "@/components/ui/toast";
 import { MaintenanceError } from "@/api/client";
@@ -23,7 +22,6 @@ function RootComponent() {
     <>
       <Toaster />
       <div className="flex h-dvh flex-col">
-        <ImpersonationBanner />
         <Header />
         <main className="flex-1 overflow-y-auto">
           <Outlet />

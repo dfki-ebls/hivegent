@@ -1,13 +1,14 @@
 /**
- * Generic JSON Schema form renderer.
+ * Generic JSON Schema form renderer for a tool's parameters.
  *
- * Renders top-level scalar properties from a JSON Schema as form fields.
- * Nested objects are rendered as field sets with their own scalar fields.
- * Deeply nested or unsupported types are skipped (handled by the Advanced JSON editor).
+ * Renders each top-level property as a form field: a scalar, an enum, or a
+ * list of strings gets its own control, an optional one (`anyOf` with `null`)
+ * the control of its other branch, and anything else a JSON editor, so no
+ * parameter is ever left out.
  */
 
 import type { TFunction } from "i18next";
-import { type ReactNode, useId } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -16,11 +17,10 @@ import {
   FieldDescription,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { OptionSelect } from "@/components/option-select";
 
 /** A single property definition from a JSON Schema. */
@@ -34,8 +34,8 @@ interface SchemaProperty {
   maximum?: number;
   exclusiveMinimum?: number;
   exclusiveMaximum?: number;
-  properties?: Record<string, SchemaProperty>;
   items?: SchemaProperty;
+  anyOf?: SchemaProperty[];
   $ref?: string;
 }
 
@@ -48,7 +48,7 @@ export interface JsonSchema {
 }
 
 /** Whether a value is a plain JSON object rather than an array or a scalar. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -73,14 +73,55 @@ function resolveRef(
   return resolved ? { ...resolved, ...prop, $ref: undefined } : prop;
 }
 
-function isObjectProperty(prop: SchemaProperty): boolean {
-  return prop.type === "object" || (prop.properties !== undefined && !prop.type);
+/** *prop* with its references and its items' resolved, and an optional one as its one other branch. */
+function normalize(
+  prop: SchemaProperty,
+  defs: Record<string, SchemaProperty> | undefined,
+): SchemaProperty {
+  const ref = resolveRef(prop, defs);
+  const resolved = ref.items ? { ...ref, items: resolveRef(ref.items, defs) } : ref;
+  const branches = resolved.anyOf?.filter((branch) => branch.type !== "null") ?? [];
+  const [only] = branches;
+
+  if (branches.length !== 1 || !only) return resolved;
+
+  return { ...resolveRef(only, defs), ...resolved, anyOf: undefined };
 }
 
 const scalarText = (value: unknown) =>
   typeof value === "string" || typeof value === "number" ? String(value) : "";
 
-/** The control of a scalar property, or `null` for an unsupported type. */
+/** A JSON editor for a value no other control fits, passing on text that does not parse yet. */
+function JsonControl({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const [text, setText] = useState(() => (value === undefined ? "" : JSON.stringify(value)));
+
+  return (
+    <Textarea
+      id={id}
+      className="font-mono"
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+
+        try {
+          onChange(JSON.parse(e.target.value));
+        } catch {
+          onChange(e.target.value);
+        }
+      }}
+    />
+  );
+}
+
+/** The control of a scalar or string list property, or `null` for a type only JSON can express. */
 function scalarControl(
   id: string,
   prop: SchemaProperty,
@@ -148,8 +189,8 @@ function scalarControl(
   return null;
 }
 
-/** Render a single form field for a scalar property. */
-function ScalarField({
+/** Render a single form field for a property. */
+function PropertyField({
   name,
   prop,
   value,
@@ -177,9 +218,9 @@ function ScalarField({
     );
   }
 
-  const control = scalarControl(id, prop, value, onChange, t);
-
-  if (!control) return null;
+  const control = scalarControl(id, prop, value, onChange, t) ?? (
+    <JsonControl id={id} value={value ?? prop.default} onChange={onChange} />
+  );
 
   return (
     <Field>
@@ -187,39 +228,6 @@ function ScalarField({
       {control}
       {description}
     </Field>
-  );
-}
-
-/** Render form fields for an object's scalar properties, skipping nested objects. */
-function ObjectFields({
-  properties,
-  defs,
-  values,
-  onChange,
-}: {
-  properties: Record<string, SchemaProperty>;
-  defs?: Record<string, SchemaProperty>;
-  values: Record<string, unknown>;
-  onChange: (values: Record<string, unknown>) => void;
-}) {
-  return (
-    <FieldGroup className="gap-4">
-      {Object.entries(properties).map(([key, rawProp]) => {
-        const prop = resolveRef(rawProp, defs);
-
-        if (isObjectProperty(prop)) return null;
-
-        return (
-          <ScalarField
-            key={key}
-            name={key}
-            prop={prop}
-            value={values[key]}
-            onChange={(v) => onChange({ ...values, [key]: v })}
-          />
-        );
-      })}
-    </FieldGroup>
   );
 }
 
@@ -233,30 +241,16 @@ export function SchemaForm({ schema, values, onChange }: SchemaFormProps) {
   }
 
   return (
-    <FieldGroup className="gap-6">
-      <ObjectFields properties={properties} defs={defs} values={values} onChange={onChange} />
-      {Object.entries(properties).map(([key, rawProp]) => {
-        const prop = resolveRef(rawProp, defs);
-
-        if (!isObjectProperty(prop) || !prop.properties) return null;
-
-        const nested = values[key];
-
-        return (
-          <FieldSet key={key} className="gap-3">
-            <FieldLegend variant="label" className="mb-0">
-              {prop.title || key}
-            </FieldLegend>
-            {prop.description && <FieldDescription>{prop.description}</FieldDescription>}
-            <ObjectFields
-              properties={prop.properties}
-              defs={defs}
-              values={isRecord(nested) ? nested : {}}
-              onChange={(next) => onChange({ ...values, [key]: next })}
-            />
-          </FieldSet>
-        );
-      })}
+    <FieldGroup className="gap-4">
+      {Object.entries(properties).map(([key, prop]) => (
+        <PropertyField
+          key={key}
+          name={key}
+          prop={normalize(prop, defs)}
+          value={values[key]}
+          onChange={(v) => onChange({ ...values, [key]: v })}
+        />
+      ))}
     </FieldGroup>
   );
 }

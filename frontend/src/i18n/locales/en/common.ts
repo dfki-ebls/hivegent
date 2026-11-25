@@ -7,7 +7,6 @@ export const common = {
     delete: "Delete",
     dismiss: "Dismiss",
     edit: "Edit",
-    remove: "Remove",
     rename: "Rename",
     retry: "Retry",
     save: "Save",

@@ -31,6 +31,75 @@ export const documents = {
     sheet: "Tabellenblatt",
     truncated: "Angezeigt werden die ersten {{rows}} Zeilen",
   },
+  similarity: {
+    tab: "Ähnlichkeit",
+    summary_one: "{{count}} Fall, verglichen als {{kind}}",
+    summary_other: "{{count}} Fälle, verglichen als {{kind}}",
+    records: "Datensätze",
+    graphs: "Graphen",
+    readOnly: "Du kannst diese Konfiguration lesen, aber nicht ändern",
+    inferred:
+      "Aus den Daten abgeleitet und nicht gespeichert, speichere sie, um sie so zu behalten.",
+    merged: "Die Daten haben neue Elemente, deren Maße abgeleitet und noch nicht gespeichert sind.",
+    reset: "Auf abgeleitet zurücksetzen",
+    resetHint:
+      "Löscht die gespeicherte Konfiguration, sodass sie wieder aus den Daten abgeleitet wird. Deine Entscheidungen und die der KI gehen verloren.",
+    decisions: "Maße",
+    decisionsHint:
+      "Jede Zeile ist eine Entscheidung der Konfiguration, mit Angabe, wer sie getroffen hat und warum.",
+    element: "Element",
+    measure: "Maß",
+    weight: "Gewicht",
+    whole: "Ganzer Fall",
+    source: {
+      heuristic: "Abgeleitet",
+      llm: "KI",
+      user: "Du",
+    },
+    absent: "Fehlt in den Daten",
+    keyColumn: {
+      title: "Schlüssel",
+      hint: "Welche Spalte einen Fall bezeichnet, von dir gewählt und nie erkannt.",
+      label: "Schlüsselspalte",
+      position: "Zeilenposition",
+      description:
+        "Die Fälle werden nach dieser Spalte geschlüsselt, neue Fälle erhalten also den nächsten Schlüssel darin. Ihre Werte müssen vorhanden und eindeutig sein.",
+    },
+    enabled: "Aktiviert",
+    sections: {
+      retrieve: {
+        title: "Abruf",
+        hint: "Wie viele Fälle eine Anfrage liefert und wie ähnlich sie sein müssen.",
+      },
+      retain: {
+        title: "Speichern",
+        hint: "Ob und wie der Assistent angenommene Lösungen als neue Fälle speichern darf.",
+      },
+      maintain: {
+        title: "Pflege",
+        hint: "Ob und wie der Assistent Duplikate zusammenführen und Fälle entfernen darf, die die Fallbasis nicht braucht.",
+      },
+    },
+    save: "Speichern",
+    discard: "Änderungen verwerfen",
+    refine: "Mit KI verfeinern",
+    refineHint:
+      "Die KI sieht Statistiken und einige Werte jedes Attributs und ändert nur, was keine Person entschieden hat.",
+    domain: "Wofür die Fallbasis dient (optional)",
+    rejected: "Nicht übernommene Vorschläge",
+    test: "Testanfrage",
+    testHint:
+      "Ordne die Fälle nach einem Beispiel, um zu sehen, wie sich die Konfiguration verhält.",
+    caseKey: "Schlüssel eines Falls zum Vergleich",
+    graphPath: "Pfad einer BPMN- oder Graphdatei",
+    run: "Fälle ordnen",
+    noMatches: "Keine ähnlichen Fälle",
+    coverage: "{{nodes}} der Knoten und {{edges}} der Kanten der Anfrage zugeordnet",
+    approximate: "näherungsweise",
+    unmapped: "Nicht zugeordnet: {{nodes}}",
+    query: "Anfrage",
+    case: "Fall",
+  },
   filter: {
     include: "Chat hierauf lenken",
     stopIncluding: "Chat nicht mehr hierauf lenken",
@@ -38,8 +107,10 @@ export const documents = {
     stopExcluding: "Nicht mehr vom Chat ausschließen",
   },
   manager: {
+    globalWorkspace: "Organisation",
     searchPlaceholder: "Dokumente durchsuchen …",
     droppedItems: "Abgelegte Objekte",
+    noMatches: "Keine passenden Dokumente",
   },
   upload: {
     dropHint: "Dateien zum Hochladen hier ablegen",
@@ -48,43 +119,11 @@ export const documents = {
     file: "Datei",
     folder: "Ordner",
     targetHint:
-      "Uploads, neue Dateien und Ordner landen hier. Klicke im Baum auf einen Ordner, um das Ziel zu ändern.",
+      "Uploads, neue Dateien und Ordner landen hier. Wähle im Baum einen Eintrag aus, um das Ziel zu ändern.",
     workingIn: "Speicherort",
     resetTarget: "Auf Stammordner zurücksetzen",
   },
-  pipelines: {
-    conversion: "Konvertierung",
-    chunking: "Chunking",
-    assets: "Assets",
-    select: {
-      conversion: "Konvertierung auswählen",
-      chunking: "Chunking auswählen",
-    },
-    selectAssetMode: "Modus auswählen",
-    assetMode: {
-      ignore: "Ignorieren",
-      store: "Speichern",
-      describe: "Beschreiben",
-    },
-  },
-  pipelineConfig: {
-    configure: "{{pipeline}} konfigurieren",
-    title: {
-      conversion: "Konvertierungseinstellungen für {{pipeline}}",
-      chunking: "Chunking-Einstellungen für {{pipeline}}",
-    },
-    description: "Konfiguriere die Optionen der Pipeline „{{pipeline}}“.",
-    showAdvanced: "Erweitertes JSON einblenden",
-    hideAdvanced: "Erweitertes JSON ausblenden",
-    advancedJson: "Erweitertes JSON",
-    invalidJson: "Ungültiges JSON",
-    resetDefaults: "Auf Standardwerte zurücksetzen",
-  },
-  scope: {
-    setUploadTarget: "Als Upload-Ziel festlegen",
-    empty: "Keine Dokumente in diesem Arbeitsbereich",
-    noMatches: "Keine passenden Dokumente",
-    selectAll: "Alle auswählen",
+  selection: {
     selected: "{{count}} ausgewählt",
     clearSelection: "Auswahl aufheben",
   },
@@ -95,21 +134,27 @@ export const documents = {
     delete: "Löschen",
   },
   tree: {
+    caseBase: "Fallbasis mit gespeicherter Ähnlichkeitskonfiguration",
     expand: "Aufklappen",
     collapse: "Zuklappen",
+    expandAll: "Alle aufklappen",
+    collapseAll: "Alle zuklappen",
     deleteFolder: "Ordner löschen",
+    moveHint: "Drücke {{start}}, um die ausgewählten Einträge zu verschieben",
+    moveStarted:
+      "Verschiebe {{items}} nach {{target}}. Drücke {{up}} und {{down}}, um einen Ordner zu wählen, {{drop}} zum Ablegen und {{cancel}} zum Abbrechen.",
+    moveDragging: "{{items}} nach {{target}}",
+    moveCompleted: "Verschoben. Drücke {{start}}, um die ausgewählten Einträge zu verschieben",
+    moveAborted:
+      "Verschieben abgebrochen. Drücke {{start}}, um die ausgewählten Einträge zu verschieben",
   },
   confirm: {
     deleteDocument: "Dokument löschen?",
     deleteFolder: "Ordner löschen?",
-    deleteDocuments_one: "{{count}} Dokument löschen?",
-    deleteDocuments_other: "{{count}} Dokumente löschen?",
+    deleteEntries_one: "{{count}} Eintrag löschen?",
+    deleteEntries_other: "{{count}} Einträge löschen?",
     deleteDescription:
       "Diese Aktion löscht die ausgewählten Inhalte und ihre Chunks dauerhaft. Sie kann nicht widerrufen werden.",
-    renameDocument: "Dokument umbenennen",
-    renameFolder: "Ordner umbenennen",
-    renameDescription: "Gib einen neuen Namen für „{{name}}“ ein.",
-    name: "Name",
     createFolder: "Ordner erstellen",
     createFolderDescription: "Erstelle einen neuen Ordner in {{target}}.",
     folderName: "Ordnername",

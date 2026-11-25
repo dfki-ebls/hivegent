@@ -1,7 +1,7 @@
 import { mutationOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { checkedResponse, requestJson, requestVoid } from "@/api/client";
+import { checkedResponse, requestVoid } from "@/api/client";
 import { apiUrl } from "@/lib/health";
 
 /** Lifecycle status of a background job. */
@@ -22,7 +22,6 @@ export const JobViewSchema = z.object({
   id: z.string(),
   kind: z.string(),
   title: z.string(),
-  scope: z.string().nullable(),
   status: JobStatusSchema,
   stage: z.string().nullable(),
   progress: JobProgressSchema.nullable(),
@@ -48,20 +47,54 @@ export const PathMoveSchema = z.object({
 
 /**
  * The workspaces a change touched and the paths it moved and deleted (see
- * backend `WorkspaceChanged`), both as the feed announces it and as a change
- * route answers. Sources and deletes name the workspace before the change and
- * destinations the one after it, so they apply at once.
+ * backend `WorkspaceChanged`), as the feed announces it to everyone who can
+ * see them and `POST /changes` answers, both under the same server-assigned id.
+ * Sources and deletes name the workspace before the change and destinations
+ * the one after it, so they apply at once.
  */
 export const WorkspaceChangedSchema = z.object({
   type: z.literal("workspace-changed"),
+  id: z.string(),
   scopes: z.array(z.string()),
   moves: z.array(PathMoveSchema),
   deletes: z.array(z.string()),
 });
 export type WorkspaceChanged = z.infer<typeof WorkspaceChangedSchema>;
 
+/** Marks a change to the user's conversations (see backend `ConversationsChanged`). */
+const ConversationsChangedSchema = z.object({ type: z.literal("conversations-changed") });
+
+/** The libraries the feed announces changes of, each named like the root of its query keys. */
+export type LibraryKind = "skills" | "assistants";
+
+/** Marks a change to a skill or assistant library the user sees (see backend `LibraryChanged`). */
+const LibraryChangedSchema = z.object({
+  type: z.literal("library-changed"),
+  kind: z.enum(["skills", "assistants"]),
+});
+
+/** Marks a change to the sync state of a source, which only admins' feeds carry (see backend `SourceChanged`). */
+const SourceChangedSchema = z.object({ type: z.literal("source-changed") });
+
 /** A job feed event: a job snapshot, the seed-complete marker, or a change. */
-const FeedEventSchema = z.union([JobViewSchema, FeedReadySchema, WorkspaceChangedSchema]);
+export const FeedEventSchema = z.union([
+  JobViewSchema,
+  FeedReadySchema,
+  WorkspaceChangedSchema,
+  ConversationsChangedSchema,
+  LibraryChangedSchema,
+  SourceChangedSchema,
+]);
+
+/** What {@link subscribeJobs} calls for each kind of feed event. */
+export interface FeedHandlers {
+  onJob: (job: JobView) => void;
+  onReady: () => void;
+  onWorkspaceChanged: (changed: WorkspaceChanged) => void;
+  onConversationsChanged: () => void;
+  onLibraryChanged: (kind: LibraryKind) => void;
+  onSourcesChanged: () => void;
+}
 
 /** Terminal job statuses, after which no further updates arrive. */
 export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
@@ -72,11 +105,6 @@ export const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
 
 /** Active job statuses, the complement of the terminal ones. */
 export const ACTIVE_JOB_STATUSES: ReadonlySet<JobStatus> = new Set(["queued", "running"]);
-
-/** List the caller's known background jobs. */
-export function listJobs(): Promise<JobView[]> {
-  return requestJson(apiUrl("/jobs"), "listJobs", z.array(JobViewSchema));
-}
 
 /** Request cancellation of a background job. Idempotent server-side. */
 function cancelJob(id: string): Promise<void> {
@@ -132,16 +160,24 @@ async function readSseEvents<T>(
 
 /**
  * Subscribe to the caller's job feed, invoking `onJob` for every snapshot,
- * `onReady` once the initial replay of current jobs is complete, and
- * `onWorkspaceChanged` for every change that never was a job, until the
- * connection ends or `signal` aborts. The feed seeds the current jobs on
- * connect, so a reconnect re-converges on live state while the caller tells
- * the seed apart from later transitions.
+ * `onReady` once the initial replay of current jobs is complete,
+ * `onWorkspaceChanged` for every change to a workspace the user may read,
+ * `onConversationsChanged` for every change to the user's conversations, and
+ * `onLibraryChanged` for every change to a library the user sees,
+ * `onSourcesChanged` for every change to the sync state of a source (admins only),
+ * whoever made them, until the connection ends or `signal` aborts. The feed
+ * seeds the current jobs on connect, so a reconnect re-converges on live state
+ * while the caller tells the seed apart from later transitions.
  */
 export async function subscribeJobs(
-  onJob: (job: JobView) => void,
-  onReady: () => void,
-  onWorkspaceChanged: (changed: WorkspaceChanged) => void,
+  {
+    onJob,
+    onReady,
+    onWorkspaceChanged,
+    onConversationsChanged,
+    onLibraryChanged,
+    onSourcesChanged,
+  }: FeedHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await checkedResponse(apiUrl("/jobs/events"), "jobFeed", { signal });
@@ -151,6 +187,9 @@ export async function subscribeJobs(
   await readSseEvents(res, FeedEventSchema, (event) => {
     if (!("type" in event)) onJob(event);
     else if (event.type === "ready") onReady();
+    else if (event.type === "conversations-changed") onConversationsChanged();
+    else if (event.type === "library-changed") onLibraryChanged(event.kind);
+    else if (event.type === "source-changed") onSourcesChanged();
     else onWorkspaceChanged(event);
   });
 

@@ -1,15 +1,17 @@
 /**
- * Backend origin and readiness probing — the foundational connection layer the
+ * Backend origin and readiness probing. The foundational connection layer the
  * rest of the app builds on. Deliberately free of app-module imports (no auth,
  * no OIDC) so both the API client and the pre-render OIDC bootstrap can gate on
  * backend readiness without forming an import cycle.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
-
-/** The URL of the API route *path*, which starts with a slash. */
+/** The same-origin URL of the API route *path*, which starts with a slash.
+ *
+ * Always same-origin, since the CSP allows `connect-src 'self'` and the OIDC
+ * token substitution only applies to same-origin requests.
+ */
 export function apiUrl(path: string): string {
-  return `${API_BASE_URL}/api/v1${path}`;
+  return `/api/v1${path}`;
 }
 
 /** Probe the public readiness endpoint, aborting after `timeoutMs` so
@@ -37,8 +39,8 @@ let readyProbe: Promise<void> | null = null;
 /**
  * Resolve once the backend reports healthy, polling `/api/v1/health` until then.
  *
- * The probe runs once per app lifetime — the promise is cached and shared by
- * every caller — so startup fetches such as settings can gate on readiness
+ * The probe runs once per app lifetime. The promise is cached and shared by
+ * every caller, so startup fetches such as settings can gate on readiness
  * without each racing the backend with their own retry loop. The health route
  * is exempt from the maintenance gate, so this still resolves during
  * maintenance and lets gated callers observe their own 503.

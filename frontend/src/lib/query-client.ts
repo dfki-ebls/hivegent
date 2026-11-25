@@ -7,11 +7,15 @@ import { errorMessage } from "@/lib/utils";
 /** The first segment of every query and mutation key, so a stray key fails to type-check. */
 type KeyScope =
   | "admin"
+  | "assistants"
+  | "case-bases"
   | "conversations"
   | "debug"
   | "jobs"
+  | "preferences"
   | "pipelines"
   | "settings"
+  | "skills"
   | "tools"
   | "workspace";
 
@@ -21,6 +25,10 @@ declare module "@tanstack/react-query" {
   interface Register {
     queryKey: AppKey;
     mutationKey: AppKey;
+    queryMeta: {
+      /** The data is an object URL, revoked once the entry drops or holds another one. */
+      objectUrl?: boolean;
+    };
     mutationMeta: {
       /**
        * The queries a success refetches before the mutation settles, `"all"`
@@ -36,6 +44,30 @@ declare module "@tanstack/react-query" {
 /** Retry server and network failures, never a request the backend rejected as invalid. */
 const retry = (failures: number, error: Error) =>
   failures < 3 && !(error instanceof HttpError && error.status < 500);
+
+/**
+ * Tie the object URLs that queries flagged `objectUrl` hold to their cache
+ * entries, so each URL lives exactly as long as some entry holds it.
+ */
+function revokeObjectUrls(client: QueryClient) {
+  const held = new Map<string, string>();
+
+  client.getQueryCache().subscribe((event) => {
+    const { queryHash, meta, state } = event.query;
+
+    if (!meta?.objectUrl) return;
+
+    const previous = held.get(queryHash);
+    const current = event.type === "removed" ? undefined : state.data;
+
+    if (previous === current) return;
+
+    if (previous !== undefined) URL.revokeObjectURL(previous);
+
+    if (typeof current === "string") held.set(queryHash, current);
+    else held.delete(queryHash);
+  });
+}
 
 /**
  * The cache of server state.  A mutation declares what it changes through
@@ -69,6 +101,8 @@ export function createQueryClient(): QueryClient {
       },
     }),
   });
+
+  revokeObjectUrls(client);
 
   return client;
 }

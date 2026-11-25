@@ -3,13 +3,14 @@ import { z } from "zod";
 
 import { jsonRequest, requestJson } from "@/api/client";
 import { apiUrl } from "@/lib/health";
-import { featureFlags } from "@/lib/feature-flags";
 
 /** Metadata about an available agent tool. */
 const ToolInfoSchema = z.object({
   name: z.string(),
   description: z.string(),
   group: z.string(),
+  /** Whether a list of withheld tools may name it. */
+  switchable: z.boolean().default(true),
 });
 type ToolInfo = z.infer<typeof ToolInfoSchema>;
 
@@ -29,93 +30,11 @@ const ToolRunResultSchema = z.object({
 });
 export type ToolRunResult = z.infer<typeof ToolRunResultSchema>;
 
-/** OAuth2 Client Credentials configuration for an MCP server. */
-const McpOAuth2ConfigSchema = z.object({
-  clientId: z.string(),
-  clientSecret: z.string(),
-  scopes: z.string().optional(),
-});
-export type McpOAuth2Config = z.infer<typeof McpOAuth2ConfigSchema>;
+/** Fetch the agent tools a user can switch off, which a list of withheld tools may name. */
+async function listTools(): Promise<ToolInfo[]> {
+  const tools = await requestJson(apiUrl("/tools"), "fetchTools", z.array(ToolInfoSchema));
 
-/** A user-provided MCP server entry (HTTP transport only). */
-const McpServerEntrySchema = z.object({
-  /** Stable identity of the entry, minted for entries persisted without one. */
-  id: z.string().default(() => crypto.randomUUID()),
-  url: z.string(),
-  headers: z.record(z.string(), z.string()).default({}),
-  toolPrefix: z.string().optional(),
-  oauth2: McpOAuth2ConfigSchema.optional(),
-});
-export type McpServerEntry = z.infer<typeof McpServerEntrySchema>;
-
-/** Bundled tool configuration: disabled built-in tools and custom MCP servers. */
-const ToolsSpecSchema = z.object({
-  disabledTools: z.array(z.string()).default([]),
-  mcpServers: z.array(McpServerEntrySchema).default([]),
-});
-export type ToolsSpec = z.infer<typeof ToolsSpecSchema>;
-
-/** Persisted subset of {@link ToolsSpec}: MCP header values and OAuth secrets never reach disk. */
-export const PersistedToolsSpecSchema = z.object({
-  disabledTools: z.array(z.string()).default([]),
-  mcpServers: z.array(McpServerEntrySchema.omit({ headers: true, oauth2: true })).default([]),
-});
-export type PersistedToolsSpec = z.infer<typeof PersistedToolsSpecSchema>;
-
-/** The snake_case wire form of an MCP server entry. */
-interface McpServerPayload {
-  url: string;
-  headers: Record<string, string>;
-  tool_prefix: string | null;
-  oauth2: {
-    client_id: string;
-    client_secret: string;
-    scopes: string | null;
-  } | null;
-}
-
-/** The snake_case wire form of {@link ToolsSpec}, built by `buildToolsPayload`. */
-export interface ToolsPayload {
-  disabled_tools: string[];
-  mcp_servers: McpServerPayload[];
-}
-
-function mcpServerPayload(server: McpServerEntry): McpServerPayload {
-  return {
-    url: server.url,
-    headers: server.headers,
-    tool_prefix: server.toolPrefix ?? null,
-    oauth2: server.oauth2
-      ? {
-          client_id: server.oauth2.clientId,
-          client_secret: server.oauth2.clientSecret,
-          scopes: server.oauth2.scopes ?? null,
-        }
-      : null,
-  };
-}
-
-/**
- * Convert a frontend ToolsSpec to the snake_case backend payload.
- *
- * Empty while the {@link featureFlags.toolsSpec} flag is disabled, since tool
- * and MCP customization is a frontend-only feature, so the data then leaves
- * every request without touching the backend.
- */
-export function buildToolsPayload(spec: ToolsSpec): ToolsPayload {
-  if (!featureFlags.toolsSpec) {
-    return { disabled_tools: [], mcp_servers: [] };
-  }
-
-  return {
-    disabled_tools: spec.disabledTools,
-    mcp_servers: spec.mcpServers.map(mcpServerPayload),
-  };
-}
-
-/** Fetch available agent tools from the backend. */
-function listTools(): Promise<ToolInfo[]> {
-  return requestJson(apiUrl("/tools"), "fetchTools", z.array(ToolInfoSchema));
+  return tools.filter((tool) => tool.switchable);
 }
 
 /** Fetch every agent tool with its parameter JSON Schema (admin only). */
@@ -133,32 +52,12 @@ export function runTool(name: string, args: Record<string, unknown>): Promise<To
   );
 }
 
-/** Response from testing an MCP server connection. */
-const McpTestResultSchema = z.object({
-  ok: z.boolean(),
-  tool_count: z.number().nullable(),
-  error: z.string().nullable(),
-});
-
-/** Test connectivity to an MCP server. */
-export function testMcpServer(server: McpServerEntry) {
-  const { url, headers, tool_prefix, oauth2 } = mcpServerPayload(server);
-
-  return requestJson(
-    apiUrl("/mcp/test"),
-    "testMcpServer",
-    McpTestResultSchema,
-    jsonRequest("POST", { url, headers, tool_prefix, oauth2 }),
-  );
-}
-
 const all = ["tools"] as const;
 
-// The built-in tools are fixed per server process, so they never go stale.
 export const toolQueries = {
-  /** The built-in tools a user can switch off. */
-  list: () => queryOptions({ queryKey: [...all, "list"], queryFn: listTools, staleTime: "static" }),
-  /** The built-in tools with their parameter schemas, for the admin console. */
+  /** The tools a user can switch off, an external server's only while it is connected. */
+  list: () => queryOptions({ queryKey: [...all, "list"], queryFn: listTools }),
+  /** The built-in tools with their parameter schemas, for the admin console, fixed per server process. */
   schemas: () =>
     queryOptions({ queryKey: [...all, "schemas"], queryFn: listToolSchemas, staleTime: "static" }),
 };

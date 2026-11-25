@@ -1,0 +1,5386 @@
+{
+  "schemas": {
+    "AdminGroupInfo": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id",
+          "description": "Group identifier"
+        },
+        "document_count": {
+          "type": "integer",
+          "title": "Document Count",
+          "description": "Entries in the group's workspace"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "document_count"
+      ],
+      "title": "AdminGroupInfo",
+      "description": "A group whose workspace or library was used, membership living in the token alone."
+    },
+    "AdminMaintenanceState": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "description": "Whether maintenance mode is active"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled"
+      ],
+      "title": "AdminMaintenanceState",
+      "description": "State of the global maintenance flag (request body and response).\n\nPersisted in the ``ApplicationSettings`` singleton and cached on\n``app.state``.  See ``hivegent.server.maintenance``."
+    },
+    "AdminOverviewResponse": {
+      "properties": {
+        "users": {
+          "items": {
+            "$ref": "#/components/schemas/AdminUserInfo"
+          },
+          "type": "array",
+          "title": "Users",
+          "description": "Users with local data"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/components/schemas/AdminGroupInfo"
+          },
+          "type": "array",
+          "title": "Groups",
+          "description": "Groups with local data"
+        }
+      },
+      "type": "object",
+      "required": [
+        "users",
+        "groups"
+      ],
+      "title": "AdminOverviewResponse",
+      "description": "Response for the admin overview endpoint."
+    },
+    "AdminReindexResponse": {
+      "properties": {
+        "message": {
+          "type": "string",
+          "title": "Message",
+          "description": "Human-readable status message"
+        }
+      },
+      "type": "object",
+      "required": [
+        "message"
+      ],
+      "title": "AdminReindexResponse",
+      "description": "Response for the global reindex action."
+    },
+    "AdminUserInfo": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id",
+          "description": "User identifier"
+        },
+        "document_count": {
+          "type": "integer",
+          "title": "Document Count",
+          "description": "Entries in the user's workspace"
+        },
+        "conversation_count": {
+          "type": "integer",
+          "title": "Conversation Count",
+          "description": "Conversations the user owns"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "document_count",
+        "conversation_count"
+      ],
+      "title": "AdminUserInfo",
+      "description": "A user who stored something, Hivegent being no identity store that lists every account."
+    },
+    "Answerability": {
+      "type": "string",
+      "enum": [
+        "answerable",
+        "partial",
+        "unanswerable"
+      ]
+    },
+    "AppliedChanges": {
+      "description": "A program's workspace changes, applied at once since nobody had to approve them.\n\nAttributes:\n    reports: The gateway's report of each change.",
+      "properties": {
+        "reports": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reports",
+          "type": "array"
+        },
+        "status": {
+          "const": "applied",
+          "default": "applied",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reports"
+      ],
+      "title": "AppliedChanges",
+      "type": "object"
+    },
+    "AssetEntry": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name",
+          "description": "Path relative to the assets directory"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "Workspace-relative path to the asset file"
+        },
+        "description_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Description Path",
+          "description": "Workspace-relative path to the companion .md description file"
+        },
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "description": "Content of the companion .md file",
+          "default": ""
+        },
+        "size_bytes": {
+          "type": "integer",
+          "title": "Size Bytes",
+          "description": "File size in bytes"
+        },
+        "media_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Media Type",
+          "description": "MIME type of the asset file"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "path",
+        "size_bytes"
+      ],
+      "title": "AssetEntry",
+      "description": "Information about a single file in a document's assets directory."
+    },
+    "AssetListResponse": {
+      "properties": {
+        "assets": {
+          "items": {
+            "$ref": "#/components/schemas/AssetEntry"
+          },
+          "type": "array",
+          "title": "Assets",
+          "description": "Asset files in the directory"
+        },
+        "assets_dir": {
+          "type": "string",
+          "title": "Assets Dir",
+          "description": "Workspace-relative assets directory path"
+        }
+      },
+      "type": "object",
+      "required": [
+        "assets",
+        "assets_dir"
+      ],
+      "title": "AssetListResponse",
+      "description": "Response for listing a document's assets."
+    },
+    "AssistantInfo": {
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 1024,
+          "title": "Description",
+          "default": ""
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Instructions"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/components/schemas/LibraryRef"
+          },
+          "type": "array",
+          "title": "Skills",
+          "description": "The references of the skills it loads when a window starts"
+        },
+        "disabled_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Disabled Tools",
+          "description": "The tools it withholds"
+        },
+        "included_documents": {
+          "items": {
+            "$ref": "#/components/schemas/FilterEntry"
+          },
+          "type": "array",
+          "title": "Included Documents"
+        },
+        "excluded_documents": {
+          "items": {
+            "$ref": "#/components/schemas/FilterEntry"
+          },
+          "type": "array",
+          "title": "Excluded Documents"
+        },
+        "allowed_documents": {
+          "items": {
+            "$ref": "#/components/schemas/FilterEntry"
+          },
+          "type": "array",
+          "title": "Allowed Documents",
+          "description": "The only paths a run with it reaches, none for no restriction"
+        },
+        "max_mode": {
+          "$ref": "#/components/schemas/Mode",
+          "description": "The mode a run with it may at most take",
+          "default": "write"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "ref": {
+          "type": "string",
+          "title": "Ref",
+          "description": "The reference a chat names it by, such as ~/name"
+        },
+        "scope": {
+          "type": "string",
+          "title": "Scope",
+          "description": "The prefix of the scope owning it: ~, @<group>, or /srv"
+        },
+        "writable": {
+          "type": "boolean",
+          "title": "Writable",
+          "description": "Whether the user may replace or delete it"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "instructions",
+        "name",
+        "ref",
+        "scope",
+        "writable"
+      ],
+      "title": "AssistantInfo",
+      "description": "An assistant a user sees."
+    },
+    "AssistantSpec": {
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 1024,
+          "title": "Description",
+          "default": ""
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Instructions"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/components/schemas/LibraryRef"
+          },
+          "type": "array",
+          "title": "Skills",
+          "description": "The references of the skills it loads when a window starts"
+        },
+        "disabled_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Disabled Tools",
+          "description": "The tools it withholds"
+        },
+        "included_documents": {
+          "items": {
+            "$ref": "#/components/schemas/FilterEntry"
+          },
+          "type": "array",
+          "title": "Included Documents"
+        },
+        "excluded_documents": {
+          "items": {
+            "$ref": "#/components/schemas/FilterEntry"
+          },
+          "type": "array",
+          "title": "Excluded Documents"
+        },
+        "allowed_documents": {
+          "items": {
+            "$ref": "#/components/schemas/FilterEntry"
+          },
+          "type": "array",
+          "title": "Allowed Documents",
+          "description": "The only paths a run with it reaches, none for no restriction"
+        },
+        "max_mode": {
+          "$ref": "#/components/schemas/Mode",
+          "description": "The mode a run with it may at most take",
+          "default": "write"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "instructions"
+      ],
+      "title": "AssistantSpec",
+      "description": "What an assistant is, as its file holds it and a client writes it.\n\nEverything but its instructions only narrows a run: it withholds tools,\ncaps the mode, adds to the document selection, and confines the documents\na run reaches."
+    },
+    "AttachmentLimits": {
+      "properties": {
+        "media_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Media Types",
+          "description": "Media types the chat composer accepts, sorted"
+        },
+        "max_bytes": {
+          "type": "integer",
+          "title": "Max Bytes",
+          "description": "Size cap for a single attachment"
+        }
+      },
+      "type": "object",
+      "required": [
+        "media_types",
+        "max_bytes"
+      ],
+      "title": "AttachmentLimits",
+      "description": "What a chat turn may attach, so the client can enforce it locally.\n\nThe composer renders ``media_types`` as its file picker's ``accept``\nfilter and checks ``max_bytes`` before upload, and the image cap of the\nselected model, ``ModelInfo.max_images``.  The chat route validates the\nsame values, since that filter is a convenience and never the gate."
+    },
+    "Body_create_transcription_api_v1_transcription_post": {
+      "properties": {
+        "audio": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "Audio"
+        }
+      },
+      "type": "object",
+      "required": [
+        "audio"
+      ],
+      "title": "Body_create_transcription_api_v1_transcription_post"
+    },
+    "Body_put_skill_api_v1_skills__scope__put": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_put_skill_api_v1_skills__scope__put"
+    },
+    "Body_replace_original_api_v1_documents_original__filepath__put": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        },
+        "modified_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Modified At"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_replace_original_api_v1_documents_original__filepath__put"
+    },
+    "Body_upload_collection_api_v1_documents_collections__target__post": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_upload_collection_api_v1_documents_collections__target__post"
+    },
+    "Body_upload_document_api_v1_documents__filepath__put": {
+      "properties": {
+        "file": {
+          "type": "string",
+          "contentMediaType": "application/octet-stream",
+          "title": "File"
+        },
+        "modified_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Modified At"
+        }
+      },
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "title": "Body_upload_document_api_v1_documents__filepath__put"
+    },
+    "CaseBaseResponse": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "Canonical path of the case base"
+        },
+        "sidecar": {
+          "type": "string",
+          "title": "Sidecar",
+          "description": "Canonical path of its similarity configuration"
+        },
+        "count": {
+          "type": "integer",
+          "title": "Count",
+          "description": "Number of cases"
+        },
+        "graphs": {
+          "type": "boolean",
+          "title": "Graphs",
+          "description": "Whether the cases are graphs"
+        },
+        "status": {
+          "$ref": "#/components/schemas/Status",
+          "description": "Where the configuration comes from: inferred without a sidecar, merged when new elements were inferred beside the sidecar, or saved"
+        },
+        "writable": {
+          "type": "boolean",
+          "title": "Writable",
+          "description": "Whether the caller may change the configuration"
+        },
+        "config": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Config",
+          "description": "The configuration, see GET /case-base-schema"
+        },
+        "query_schema": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Query Schema",
+          "description": "JSON Schema of a query, every attribute optional"
+        },
+        "leaves": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Leaves",
+          "description": "The kinds of the deterministic leaf measures a person may choose"
+        },
+        "key_candidates": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Key Candidates",
+          "description": "The columns a person may key the records by, see `source.key_column`"
+        },
+        "embedding": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Embedding",
+          "description": "The embedding measure of the bound embedder, none without one"
+        },
+        "revision": {
+          "type": "string",
+          "title": "Revision",
+          "description": "Identifies the sidecar this was read from, empty without one"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "sidecar",
+        "count",
+        "graphs",
+        "status",
+        "writable",
+        "config",
+        "query_schema",
+        "leaves",
+        "key_candidates",
+        "embedding",
+        "revision"
+      ],
+      "title": "CaseBaseResponse",
+      "description": "A case base with the configuration a query is ranked by."
+    },
+    "CaseBaseUpdate": {
+      "properties": {
+        "config": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Config"
+        },
+        "revision": {
+          "type": "string",
+          "title": "Revision",
+          "description": "The revision of the case base the edit started from"
+        }
+      },
+      "type": "object",
+      "required": [
+        "config",
+        "revision"
+      ],
+      "title": "CaseBaseUpdate",
+      "description": "A configuration edited by the caller."
+    },
+    "CaseMatch": {
+      "properties": {
+        "key": {
+          "$ref": "#/components/schemas/Key",
+          "description": "Key of the case in the casebase."
+        },
+        "value": {
+          "$ref": "#/components/schemas/JsonValue",
+          "description": "The case."
+        },
+        "score": {
+          "type": "number",
+          "title": "Score",
+          "description": "Similarity of the case to the query, with details such as the scores of the attributes or the issues of a critique."
+        },
+        "explanation": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Explanation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Breakdown of the similarity by attribute or graph element, if requested."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "key",
+        "value",
+        "score"
+      ],
+      "title": "Hit[Key, JsonValue, float]",
+      "description": "A case with its similarity to a query.\n\n`model_dump(mode=\"json\")` gives plain JSON, with graphs and `cbrkit.helpers.frozendict` cases in their serialized form."
+    },
+    "CaseQueryRequest": {
+      "properties": {
+        "query": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Query",
+          "description": "A partial record, or an inline graph"
+        },
+        "query_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Query Path",
+          "description": "A BPMN or cbrkit graph file"
+        },
+        "query_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Query Key",
+          "description": "A case of the case base"
+        },
+        "limit": {
+          "type": "integer",
+          "maximum": 50.0,
+          "minimum": 1.0,
+          "title": "Limit",
+          "default": 5
+        }
+      },
+      "type": "object",
+      "title": "CaseQueryRequest",
+      "description": "An example to rank the cases by, exactly one of the three."
+    },
+    "CaseQueryResponse": {
+      "properties": {
+        "matches": {
+          "items": {
+            "$ref": "#/components/schemas/CaseMatch"
+          },
+          "type": "array",
+          "title": "Matches"
+        },
+        "query": {
+          "$ref": "#/components/schemas/JsonValue",
+          "description": "The query graph, none for a record"
+        }
+      },
+      "type": "object",
+      "required": [
+        "matches"
+      ],
+      "title": "CaseQueryResponse",
+      "description": "The most similar cases, each with its explanation."
+    },
+    "CaseRefineRequest": {
+      "properties": {
+        "domain": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Domain"
+        }
+      },
+      "type": "object",
+      "title": "CaseRefineRequest",
+      "description": "What the case base is for, to guide the language model."
+    },
+    "CaseRefineResponse": {
+      "properties": {
+        "case_base": {
+          "$ref": "#/components/schemas/CaseBaseResponse"
+        },
+        "rejections": {
+          "items": {
+            "$ref": "#/components/schemas/Rejection"
+          },
+          "type": "array",
+          "title": "Rejections"
+        }
+      },
+      "type": "object",
+      "required": [
+        "case_base",
+        "rejections"
+      ],
+      "title": "CaseRefineResponse",
+      "description": "The refined case base and the proposals that were not applied."
+    },
+    "ChangeOperation": {
+      "oneOf": [
+        {
+          "$ref": "#/components/schemas/MoveOperation"
+        },
+        {
+          "$ref": "#/components/schemas/DeleteOperation"
+        },
+        {
+          "$ref": "#/components/schemas/CreateDirOperation"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "kind",
+        "mapping": {
+          "delete": "#/components/schemas/DeleteOperation",
+          "mkdir": "#/components/schemas/CreateDirOperation",
+          "move": "#/components/schemas/MoveOperation"
+        }
+      }
+    },
+    "ChangeReason": {
+      "description": "Why a planner such as cbrkit's retain or maintenance changes one case.\n\nAttributes:\n    action: What the change does to the case.\n    key: The key of the case, ``None`` for an addition its storage has\n        not allocated one for yet.\n    reason: Why the change is made, for people.",
+      "properties": {
+        "action": {
+          "$ref": "#/components/schemas/ReasonAction"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Key"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "key",
+        "reason"
+      ],
+      "title": "ChangeReason",
+      "type": "object"
+    },
+    "ChangesRequest": {
+      "properties": {
+        "operations": {
+          "items": {
+            "$ref": "#/components/schemas/ChangeOperation"
+          },
+          "type": "array",
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Operations"
+        }
+      },
+      "type": "object",
+      "required": [
+        "operations"
+      ],
+      "title": "ChangesRequest",
+      "description": "Workspace changes that apply as one changeset, all of them or none."
+    },
+    "ChangesetOutcome": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/PendingChanges"
+        },
+        {
+          "$ref": "#/components/schemas/AppliedChanges"
+        }
+      ]
+    },
+    "ChangesetSummary": {
+      "description": "What a changeset does, as a person approving it reads it.\n\nAttributes:\n    creates: The new files with their capped diffs.\n    updates: The changed files with their capped diffs.\n    moves: The moved files and directories, as a commit reports them.\n    deletes: The deleted files and directories, as a commit reports them.\n    mkdirs: The new directories.\n    reasons: Why the planner of the changeset made its changes, see\n        :attr:`Changeset.reasons`.",
+      "properties": {
+        "creates": {
+          "default": [],
+          "items": {
+            "$ref": "#/components/schemas/FileDiff"
+          },
+          "title": "Creates",
+          "type": "array"
+        },
+        "updates": {
+          "default": [],
+          "items": {
+            "$ref": "#/components/schemas/FileDiff"
+          },
+          "title": "Updates",
+          "type": "array"
+        },
+        "moves": {
+          "default": [],
+          "items": {
+            "$ref": "#/components/schemas/PathMove"
+          },
+          "title": "Moves",
+          "type": "array"
+        },
+        "deletes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Deletes",
+          "type": "array"
+        },
+        "mkdirs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Mkdirs",
+          "type": "array"
+        },
+        "reasons": {
+          "default": [],
+          "items": {
+            "$ref": "#/components/schemas/ChangeReason"
+          },
+          "title": "Reasons",
+          "type": "array"
+        }
+      },
+      "title": "ChangesetSummary",
+      "type": "object"
+    },
+    "ChatRequest": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id",
+          "description": "The AI SDK's chat id, the path names the conversation"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/components/schemas/UIMessage"
+          },
+          "type": "array",
+          "title": "Messages",
+          "description": "The messages the turn sends, see the route for which"
+        },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "submit-message",
+            "regenerate-message"
+          ],
+          "title": "Trigger",
+          "description": "Whether the turn submits a new or edited message or regenerates one",
+          "default": "submit-message"
+        },
+        "messageId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Messageid",
+          "description": "The message the turn edits (submit) or regenerates"
+        },
+        "compact": {
+          "type": "boolean",
+          "title": "Compact",
+          "description": "Compact the active history instead of running a turn",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "messages"
+      ],
+      "title": "ChatRequest",
+      "description": "A turn of a conversation: the AI SDK's body.\n\nThe server owns the history, so ``messages`` holds only what is new: the\nuser message a submit sends under a fresh UUID, its metadata naming the\ndocuments it is about (:class:`DocumentSelection`), none for a regenerate or a\ncompaction, or, to resume a turn that paused, the assistant message\ncarrying the user's approvals and answers.  Everything else a run applies\nis the user's :class:`Preferences`."
+    },
+    "ChunkData": {
+      "properties": {
+        "text": {
+          "type": "string",
+          "title": "Text",
+          "description": "The chunk text content"
+        },
+        "token_count": {
+          "type": "integer",
+          "title": "Token Count",
+          "description": "Number of tokens in the chunk"
+        },
+        "start_index": {
+          "type": "integer",
+          "title": "Start Index",
+          "description": "Start character index in original document"
+        },
+        "end_index": {
+          "type": "integer",
+          "title": "End Index",
+          "description": "End character index in original document"
+        },
+        "start_line": {
+          "type": "integer",
+          "title": "Start Line",
+          "description": "1-based line number in the original document",
+          "default": 0
+        },
+        "end_line": {
+          "type": "integer",
+          "title": "End Line",
+          "description": "1-based line number in the original document",
+          "default": 0
+        },
+        "index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Index",
+          "description": "Zero-based chunk index within the document when available"
+        }
+      },
+      "type": "object",
+      "required": [
+        "text",
+        "token_count",
+        "start_index",
+        "end_index"
+      ],
+      "title": "ChunkData",
+      "description": "A single chunk used by chunkers and persisted chunk metadata."
+    },
+    "ClientConversation": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/components/schemas/UIMessage"
+          },
+          "type": "array",
+          "title": "Messages"
+        },
+        "exported_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exported At"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        }
+      },
+      "type": "object",
+      "title": "ClientConversation",
+      "description": "A conversation exactly as the browser tab held it, errors included."
+    },
+    "ConversationArchive": {
+      "properties": {
+        "backend": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ServerConversation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontend": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ClientConversation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "title": "ConversationArchive",
+      "description": "The interchange shape of ``GET`` and ``PUT /conversations/{id}/archive``.\n\nBoth halves are optional and describe the same conversation from the two\nplaces it lives: ``backend`` is what was persisted (with the system prompts),\n``frontend`` is what the user was looking at. A draft that never reached the\nserver has only the latter; the API route, which has no browser state, emits\nonly the former.\n\nImport restores ``backend`` when it carries messages and falls back to\n``frontend``, so an archive of a conversation that failed before persisting\nstill round-trips."
+    },
+    "ConversationListResponse": {
+      "properties": {
+        "conversations": {
+          "items": {
+            "$ref": "#/components/schemas/ConversationSummary"
+          },
+          "type": "array",
+          "title": "Conversations",
+          "description": "List of conversation summaries"
+        }
+      },
+      "type": "object",
+      "required": [
+        "conversations"
+      ],
+      "title": "ConversationListResponse",
+      "description": "Response for listing conversations."
+    },
+    "ConversationSummary": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Id"
+        },
+        "title": {
+          "type": "string",
+          "title": "Title"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Updated At"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ConversationSummary",
+      "description": "Lightweight conversation row for list views."
+    },
+    "ConversationsChanged": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "conversations-changed",
+          "title": "Type",
+          "default": "conversations-changed"
+        }
+      },
+      "type": "object",
+      "title": "ConversationsChanged",
+      "description": "Marks a change to the owner's conversations, which a client lists again."
+    },
+    "CreateDirOperation": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "Canonical path of the document or directory"
+        },
+        "kind": {
+          "type": "string",
+          "const": "mkdir",
+          "title": "Kind"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "kind"
+      ],
+      "title": "CreateDirOperation",
+      "description": "Create an empty directory."
+    },
+    "DataIntegration": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "database",
+            "api"
+          ],
+          "title": "Kind"
+        },
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "host": {
+          "type": "string",
+          "title": "Host"
+        },
+        "groups": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Groups"
+        },
+        "tools": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "type": "object",
+          "title": "Tools"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "host",
+        "groups",
+        "tools"
+      ],
+      "title": "DataIntegration",
+      "description": "A configured SQL database or OpenAPI API as the admin listing shows it, without secrets.\n\n``host`` is empty for a database without one, and ``tools`` maps each\ntool, by its name as the model sees it, to its effect."
+    },
+    "DataUIPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^data-",
+          "title": "Type"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "data": {
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "data"
+      ],
+      "title": "DataUIPart",
+      "description": "Data part with dynamic type based on data name."
+    },
+    "DeleteKind": {
+      "type": "string",
+      "enum": [
+        "entry",
+        "dir"
+      ]
+    },
+    "DeleteOperation": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "Canonical path of the document or directory"
+        },
+        "kind": {
+          "type": "string",
+          "const": "delete",
+          "title": "Kind"
+        },
+        "expect": {
+          "$ref": "#/components/schemas/DeleteKind",
+          "description": "What the path has to be, refused when it is the other kind"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "kind",
+        "expect"
+      ],
+      "title": "DeleteOperation",
+      "description": "Delete a document with everything derived from it, or a whole directory."
+    },
+    "DirectoryEntry": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "file",
+            "directory"
+          ],
+          "title": "Type"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name",
+          "description": "Basename of the entry"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "Relative path from documents root"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Size Bytes",
+          "description": "File size in bytes"
+        },
+        "modified_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Modified At",
+          "description": "Last modification timestamp"
+        },
+        "chunk_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Chunk Count",
+          "description": "Number of chunks, if chunked"
+        },
+        "has_original": {
+          "type": "boolean",
+          "title": "Has Original",
+          "description": "Whether an original binary file exists",
+          "default": false
+        },
+        "original_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Original Path",
+          "description": "Workspace-relative original file path when present"
+        },
+        "assets_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Assets Dir",
+          "description": "Workspace-relative child-assets directory when present"
+        },
+        "case_base": {
+          "type": "boolean",
+          "title": "Case Base",
+          "description": "Whether it is a case base with a saved similarity configuration",
+          "default": false
+        },
+        "case_base_candidate": {
+          "type": "boolean",
+          "title": "Case Base Candidate",
+          "description": "Whether it may be a case base by cbrkit's rule, which offers its similarity",
+          "default": false
+        },
+        "children": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/components/schemas/DirectoryEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Children",
+          "description": "Child entries for directories"
+        }
+      },
+      "type": "object",
+      "required": [
+        "type",
+        "name",
+        "path"
+      ],
+      "title": "DirectoryEntry",
+      "description": "A logical file or directory entry in the document tree."
+    },
+    "DirectoryTreeResponse": {
+      "properties": {
+        "root": {
+          "$ref": "#/components/schemas/DirectoryEntry"
+        },
+        "total_files": {
+          "type": "integer",
+          "title": "Total Files",
+          "description": "Total number of files"
+        },
+        "total_directories": {
+          "type": "integer",
+          "title": "Total Directories",
+          "description": "Total number of directories"
+        }
+      },
+      "type": "object",
+      "required": [
+        "root",
+        "total_files",
+        "total_directories"
+      ],
+      "title": "DirectoryTreeResponse",
+      "description": "Response for the directory tree endpoint."
+    },
+    "DocumentChunksResponse": {
+      "properties": {
+        "entry_kind": {
+          "$ref": "#/components/schemas/EntryKind",
+          "description": "Logical entry kind for the chunked markdown",
+          "default": "user_markdown"
+        },
+        "stem_path": {
+          "type": "string",
+          "title": "Stem Path",
+          "description": "Workspace-relative logical stem path for the entry"
+        },
+        "description_path": {
+          "type": "string",
+          "title": "Description Path",
+          "description": "Workspace-relative markdown path for the entry"
+        },
+        "original_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Original Path",
+          "description": "Workspace-relative original file path for the entry"
+        },
+        "assets_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Assets Dir",
+          "description": "Workspace-relative child-assets directory for the entry"
+        },
+        "origin": {
+          "$ref": "#/components/schemas/EntryOrigin",
+          "description": "How the logical entry was created",
+          "default": "upload"
+        },
+        "generated_by": {
+          "$ref": "#/components/schemas/EntryGeneratedBy",
+          "description": "How the markdown content was produced",
+          "default": "user"
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Id",
+          "description": "The document's row id"
+        },
+        "pipeline": {
+          "type": "string",
+          "title": "Pipeline",
+          "description": "The chunking pipeline used"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Created At",
+          "description": "When the metadata was created"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Size Bytes",
+          "description": "On-disk byte size of the chunked description, when known"
+        },
+        "chunks": {
+          "items": {
+            "$ref": "#/components/schemas/ChunkData"
+          },
+          "type": "array",
+          "title": "Chunks",
+          "description": "The document chunks"
+        },
+        "mime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mime",
+          "description": "Media type the original's name declares, else the description's"
+        },
+        "content_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Content Digest",
+          "description": "Full SHA-256 digest of the chunked markdown. Lets the reconciler and the future shell fold-back skip re-indexing an entry whose on-disk bytes are unchanged."
+        },
+        "case_base_candidate": {
+          "type": "boolean",
+          "title": "Case Base Candidate",
+          "description": "Whether its original may be a case base by cbrkit's rule, which offers its similarity",
+          "default": false
+        }
+      },
+      "type": "object",
+      "required": [
+        "stem_path",
+        "description_path",
+        "id",
+        "pipeline",
+        "created_at",
+        "chunks"
+      ],
+      "title": "DocumentChunksResponse",
+      "description": "A processed entry with whether its original may be a case base."
+    },
+    "DocumentLineCountsRequest": {
+      "properties": {
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 10000,
+          "title": "Files",
+          "description": "Workspace paths to look up line counts for"
+        }
+      },
+      "type": "object",
+      "required": [
+        "files"
+      ],
+      "title": "DocumentLineCountsRequest",
+      "description": "Request a batch of document line counts by workspace path."
+    },
+    "DocumentLineCountsResponse": {
+      "properties": {
+        "line_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object",
+          "title": "Line Counts",
+          "description": "Requested path → line count; unknown paths are omitted"
+        }
+      },
+      "type": "object",
+      "required": [
+        "line_counts"
+      ],
+      "title": "DocumentLineCountsResponse",
+      "description": "Batch document line counts, keyed by the requested workspace path."
+    },
+    "DynamicToolApprovalRequestedPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dynamic-tool",
+          "title": "Type",
+          "default": "dynamic-tool"
+        },
+        "toolName": {
+          "type": "string",
+          "title": "Toolname"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "approval-requested",
+          "title": "State",
+          "default": "approval-requested"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "toolName",
+        "toolCallId",
+        "input"
+      ],
+      "title": "DynamicToolApprovalRequestedPart",
+      "description": "Dynamic tool part in approval-requested state (awaiting user decision)."
+    },
+    "DynamicToolApprovalRespondedPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dynamic-tool",
+          "title": "Type",
+          "default": "dynamic-tool"
+        },
+        "toolName": {
+          "type": "string",
+          "title": "Toolname"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "approval-responded",
+          "title": "State",
+          "default": "approval-responded"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "toolName",
+        "toolCallId",
+        "input"
+      ],
+      "title": "DynamicToolApprovalRespondedPart",
+      "description": "Dynamic tool part in approval-responded state (user approved/denied, execution pending)."
+    },
+    "DynamicToolInputAvailablePart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dynamic-tool",
+          "title": "Type",
+          "default": "dynamic-tool"
+        },
+        "toolName": {
+          "type": "string",
+          "title": "Toolname"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "input-available",
+          "title": "State",
+          "default": "input-available"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "toolName",
+        "toolCallId",
+        "input"
+      ],
+      "title": "DynamicToolInputAvailablePart",
+      "description": "Dynamic tool part in input-available state."
+    },
+    "DynamicToolInputStreamingPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dynamic-tool",
+          "title": "Type",
+          "default": "dynamic-tool"
+        },
+        "toolName": {
+          "type": "string",
+          "title": "Toolname"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "input-streaming",
+          "title": "State",
+          "default": "input-streaming"
+        },
+        "input": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "toolName",
+        "toolCallId"
+      ],
+      "title": "DynamicToolInputStreamingPart",
+      "description": "Dynamic tool part in input-streaming state."
+    },
+    "DynamicToolOutputAvailablePart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dynamic-tool",
+          "title": "Type",
+          "default": "dynamic-tool"
+        },
+        "toolName": {
+          "type": "string",
+          "title": "Toolname"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "output-available",
+          "title": "State",
+          "default": "output-available"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "output": {
+          "title": "Output"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "preliminary": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Preliminary"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "toolName",
+        "toolCallId",
+        "input",
+        "output"
+      ],
+      "title": "DynamicToolOutputAvailablePart",
+      "description": "Dynamic tool part in output-available state."
+    },
+    "DynamicToolOutputDeniedPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dynamic-tool",
+          "title": "Type",
+          "default": "dynamic-tool"
+        },
+        "toolName": {
+          "type": "string",
+          "title": "Toolname"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "output-denied",
+          "title": "State",
+          "default": "output-denied"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "toolName",
+        "toolCallId",
+        "input"
+      ],
+      "title": "DynamicToolOutputDeniedPart",
+      "description": "Dynamic tool part in output-denied state (tool was denied, terminal state)."
+    },
+    "DynamicToolOutputErrorPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dynamic-tool",
+          "title": "Type",
+          "default": "dynamic-tool"
+        },
+        "toolName": {
+          "type": "string",
+          "title": "Toolname"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "output-error",
+          "title": "State",
+          "default": "output-error"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "errorText": {
+          "type": "string",
+          "title": "Errortext"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "toolName",
+        "toolCallId",
+        "input",
+        "errorText"
+      ],
+      "title": "DynamicToolOutputErrorPart",
+      "description": "Dynamic tool part in output-error state."
+    },
+    "Effect": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "execute"
+      ]
+    },
+    "EntryGeneratedBy": {
+      "type": "string",
+      "enum": [
+        "user",
+        "converter",
+        "vision",
+        "stub"
+      ]
+    },
+    "EntryKind": {
+      "type": "string",
+      "enum": [
+        "user_markdown",
+        "image",
+        "video",
+        "convertible",
+        "binary_stub"
+      ]
+    },
+    "EntryOrigin": {
+      "type": "string",
+      "enum": [
+        "upload",
+        "collection",
+        "extracted",
+        "imported",
+        "synced"
+      ]
+    },
+    "Explanation": {
+      "properties": {
+        "similarity": {
+          "type": "number",
+          "title": "Similarity",
+          "description": "The similarity."
+        },
+        "query": {
+          "title": "Query",
+          "description": "The compared query value, or the key of a query node or edge."
+        },
+        "case": {
+          "title": "Case",
+          "description": "The compared case value, or the key of a case node or edge."
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weight",
+          "description": "Relative importance within the parent attribute-value similarity."
+        },
+        "contribution": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Contribution",
+          "description": "Share of the parent similarity, only defined for mean pooling."
+        },
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/Explanation"
+          },
+          "type": "object",
+          "title": "Attributes",
+          "description": "Breakdown of an attribute-value similarity by attribute."
+        },
+        "graph": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/GraphExplanation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Breakdown of a graph similarity by mapped element."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "similarity"
+      ],
+      "title": "Explanation",
+      "description": "Breakdown of a similarity, by attribute for records and by mapping for graphs."
+    },
+    "FeedEvent": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/JobView"
+        },
+        {
+          "$ref": "#/components/schemas/FeedReady"
+        },
+        {
+          "$ref": "#/components/schemas/WorkspaceChanged"
+        },
+        {
+          "$ref": "#/components/schemas/ConversationsChanged"
+        },
+        {
+          "$ref": "#/components/schemas/LibraryChanged"
+        },
+        {
+          "$ref": "#/components/schemas/SourceChanged"
+        }
+      ]
+    },
+    "FeedReady": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ready",
+          "title": "Type",
+          "default": "ready"
+        }
+      },
+      "type": "object",
+      "title": "FeedReady",
+      "description": "Sentinel marking the end of a subscription's initial replay.\n\nEmitted once, after every retained job has been replayed on connect and\nbefore any live change, so a (re)connecting client can tell the seed of\ncurrent state apart from later transitions: it can show jobs that were\nalready running without re-announcing them, and ignore jobs that finished\nbefore it connected instead of flashing a stale completion."
+    },
+    "FileDiff": {
+      "description": "A created or updated file and its unified diff, capped.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "diff": {
+          "title": "Diff",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "diff"
+      ],
+      "title": "FileDiff",
+      "type": "object"
+    },
+    "FileUIPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "file",
+          "title": "Type",
+          "default": "file"
+        },
+        "mediaType": {
+          "type": "string",
+          "title": "Mediatype"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Filename"
+        },
+        "url": {
+          "type": "string",
+          "title": "Url"
+        },
+        "providerMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providermetadata"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "mediaType",
+        "url"
+      ],
+      "title": "FileUIPart",
+      "description": "A file part of a message."
+    },
+    "FilterEntry": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "directory": {
+          "type": "boolean",
+          "title": "Directory"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "directory"
+      ],
+      "title": "FilterEntry",
+      "description": "A document or a directory a selection names, by its path.\n\nA request names it by its canonical path, a bare scope root as a directory\nbeing the whole workspace, and a :class:`DocumentFilter` by its local path,\nthe empty one being the whole store."
+    },
+    "FrontendConfigResponse": {
+      "properties": {
+        "oidc": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/OidcPublicConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "OIDC client configuration, or null when hivegent dev runs the server as the development user"
+        },
+        "docs_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Docs Url",
+          "description": "Where the handbook is served, or null when none is linked"
+        }
+      },
+      "type": "object",
+      "required": [
+        "oidc",
+        "docs_url"
+      ],
+      "title": "FrontendConfigResponse",
+      "description": "Runtime configuration the browser SPA fetches at startup.\n\nServed unauthenticated and carrying only public values, this is the\nfrontend's single source of truth.  It reads its OIDC config from here\ninstead of baking it in at build time."
+    },
+    "GenerateAssetDescriptionRequest": {
+      "properties": {
+        "asset_name": {
+          "type": "string",
+          "title": "Asset Name",
+          "description": "Path of the asset within its assets directory"
+        }
+      },
+      "type": "object",
+      "required": [
+        "asset_name"
+      ],
+      "title": "GenerateAssetDescriptionRequest",
+      "description": "Request to generate an asset's companion .md description with the vision model."
+    },
+    "GenerateTitleResponse": {
+      "properties": {
+        "title": {
+          "type": "string",
+          "title": "Title",
+          "description": "The generated title"
+        }
+      },
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "title": "GenerateTitleResponse",
+      "description": "Response from title generation."
+    },
+    "GraphExplanation": {
+      "properties": {
+        "exact": {
+          "type": "boolean",
+          "title": "Exact",
+          "description": "Whether the mapping is proven optimal."
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/components/schemas/Explanation"
+          },
+          "type": "array",
+          "title": "Nodes",
+          "description": "The mapped query nodes, with the node keys as query and case."
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/components/schemas/Explanation"
+          },
+          "type": "array",
+          "title": "Edges",
+          "description": "The mapped query edges, with the edge keys as query and case."
+        },
+        "unmapped_nodes": {
+          "items": {},
+          "type": "array",
+          "title": "Unmapped Nodes",
+          "description": "Keys of the query nodes without a counterpart."
+        },
+        "unmapped_edges": {
+          "items": {},
+          "type": "array",
+          "title": "Unmapped Edges",
+          "description": "Keys of the query edges without a counterpart."
+        },
+        "node_coverage": {
+          "type": "number",
+          "title": "Node Coverage",
+          "description": "Share of query nodes that are mapped."
+        },
+        "edge_coverage": {
+          "type": "number",
+          "title": "Edge Coverage",
+          "description": "Share of query edges that are mapped."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "exact",
+        "nodes",
+        "edges",
+        "unmapped_nodes",
+        "unmapped_edges",
+        "node_coverage",
+        "edge_coverage"
+      ],
+      "title": "GraphExplanation",
+      "description": "Mapping of a graph similarity in the order of the query elements."
+    },
+    "InstructionsSnapshot": {
+      "properties": {
+        "message_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Message Ids",
+          "description": "UI ids of the messages sent under this prompt, in order"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text",
+          "description": "The fully composed system prompt"
+        }
+      },
+      "type": "object",
+      "required": [
+        "message_ids",
+        "text"
+      ],
+      "title": "InstructionsSnapshot",
+      "description": "One composed system prompt and the messages sent under it.\n\nSnapshots are deduplicated by text, so a conversation whose scope or mode\nchanged mid-way carries one entry per distinct prompt rather\nthan one per message, and *when* it changed is legible from the ids."
+    },
+    "Integration": {
+      "oneOf": [
+        {
+          "$ref": "#/components/schemas/McpIntegration"
+        },
+        {
+          "$ref": "#/components/schemas/DataIntegration"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "kind",
+        "mapping": {
+          "api": "#/components/schemas/DataIntegration",
+          "database": "#/components/schemas/DataIntegration",
+          "mcp": "#/components/schemas/McpIntegration"
+        }
+      }
+    },
+    "JobProgress": {
+      "properties": {
+        "current": {
+          "type": "integer",
+          "title": "Current"
+        },
+        "total": {
+          "type": "integer",
+          "title": "Total"
+        }
+      },
+      "type": "object",
+      "required": [
+        "current",
+        "total"
+      ],
+      "title": "JobProgress",
+      "description": "Discrete progress of a job, e.g. files processed in a collection."
+    },
+    "JobView": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "kind": {
+          "type": "string",
+          "title": "Kind"
+        },
+        "title": {
+          "type": "string",
+          "title": "Title"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "cancelled"
+          ],
+          "title": "Status"
+        },
+        "created_at": {
+          "type": "number",
+          "title": "Created At"
+        },
+        "updated_at": {
+          "type": "number",
+          "title": "Updated At"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stage"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/JobProgress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "status",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "JobView",
+      "description": "Immutable, JSON-serialisable snapshot of a job, used as the wire model.\n\nThe single shape the SSE feed and REST listing emit and the client\nrenders.  Carries only generic fields so the same model serves every\nfeature that submits jobs.\n\n``created_at``/``updated_at`` are monotonic timestamps (:func:`time.monotonic`),\nused purely to order snapshots and drop stale ones.  They are never displayed as\nwall-clock time, so a backward clock adjustment cannot freeze a job's UI."
+    },
+    "JsonValue": {},
+    "Key": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "KeyFact": {
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Text"
+        },
+        "importance": {
+          "$ref": "#/components/schemas/KeyFactImportance"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "text",
+        "importance"
+      ],
+      "title": "KeyFact",
+      "description": "A verbatim excerpt of the gold response that a good answer has to state."
+    },
+    "KeyFactImportance": {
+      "type": "string",
+      "enum": [
+        "must",
+        "nice"
+      ]
+    },
+    "LibraryChanged": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "library-changed",
+          "title": "Type",
+          "default": "library-changed"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "skills",
+            "assistants"
+          ],
+          "title": "Kind"
+        }
+      },
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "title": "LibraryChanged",
+      "description": "Marks a change to a library the subscriber sees, whose list a client reads again."
+    },
+    "LibraryRef": {
+      "type": "string"
+    },
+    "McpIntegration": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "mcp",
+          "title": "Kind",
+          "default": "mcp"
+        },
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "host": {
+          "type": "string",
+          "title": "Host"
+        },
+        "groups": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Groups"
+        },
+        "trusted": {
+          "type": "boolean",
+          "title": "Trusted"
+        },
+        "connected": {
+          "type": "boolean",
+          "title": "Connected"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        },
+        "tools": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "type": "object",
+          "title": "Tools"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "host",
+        "groups",
+        "trusted",
+        "connected",
+        "error",
+        "tools"
+      ],
+      "title": "McpIntegration",
+      "description": "A configured external MCP server as the admin listing shows it, without secrets.\n\n``tools`` maps each tool the server offers, by its name there, to its\neffect, and is empty while the server is not ``connected``."
+    },
+    "Mode": {
+      "type": "string",
+      "enum": [
+        "interactive",
+        "read",
+        "write"
+      ]
+    },
+    "ModelId": {
+      "type": "string"
+    },
+    "ModelInfo": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id",
+          "description": "Catalog id a chat request names the model by"
+        },
+        "label": {
+          "type": "string",
+          "title": "Label",
+          "description": "Display name"
+        },
+        "vision": {
+          "type": "boolean",
+          "title": "Vision",
+          "description": "Whether the model accepts image attachments"
+        },
+        "max_images": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Max Images",
+          "description": "Maximum images per turn, or null for no limit"
+        },
+        "reasoning": {
+          "items": {
+            "$ref": "#/components/schemas/ReasoningEffort"
+          },
+          "type": "array",
+          "title": "Reasoning",
+          "description": "Reasoning efforts the model offers, none when it does not reason"
+        },
+        "context_window": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Context Window",
+          "description": "Context window in tokens"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "label",
+        "vision",
+        "max_images",
+        "reasoning",
+        "context_window"
+      ],
+      "title": "ModelInfo",
+      "description": "A chat model of the catalog as the composer offers it."
+    },
+    "MoveDestination": {
+      "properties": {
+        "destination": {
+          "type": "string",
+          "title": "Destination",
+          "description": "Canonical path it ends up at, or an existing directory to move into"
+        }
+      },
+      "type": "object",
+      "required": [
+        "destination"
+      ],
+      "title": "MoveDestination",
+      "description": "Where a moved document or directory ends up."
+    },
+    "MoveOperation": {
+      "properties": {
+        "destination": {
+          "type": "string",
+          "title": "Destination",
+          "description": "Canonical path it ends up at, or an existing directory to move into"
+        },
+        "source": {
+          "type": "string",
+          "title": "Source",
+          "description": "Canonical path of the document or directory"
+        },
+        "kind": {
+          "type": "string",
+          "const": "move",
+          "title": "Kind"
+        }
+      },
+      "type": "object",
+      "required": [
+        "destination",
+        "source",
+        "kind"
+      ],
+      "title": "MoveOperation",
+      "description": "Move or rename a document or directory, into another workspace too."
+    },
+    "MovePaths": {
+      "properties": {
+        "destination": {
+          "type": "string",
+          "title": "Destination",
+          "description": "Canonical path it ends up at, or an existing directory to move into"
+        },
+        "source": {
+          "type": "string",
+          "title": "Source",
+          "description": "Canonical path of the document or directory"
+        }
+      },
+      "type": "object",
+      "required": [
+        "destination",
+        "source"
+      ],
+      "title": "MovePaths",
+      "description": "A document or directory and where it ends up."
+    },
+    "OidcPublicConfig": {
+      "properties": {
+        "issuer_uri": {
+          "type": "string",
+          "title": "Issuer Uri",
+          "description": "OIDC issuer the SPA authenticates against"
+        },
+        "client_id": {
+          "type": "string",
+          "title": "Client Id",
+          "description": "Public OIDC client id the SPA registers as"
+        }
+      },
+      "type": "object",
+      "required": [
+        "issuer_uri",
+        "client_id"
+      ],
+      "title": "OidcPublicConfig",
+      "description": "Public OIDC parameters the SPA needs to start a login flow."
+    },
+    "PassageGrade": {
+      "type": "string",
+      "enum": [
+        "needed",
+        "helpful",
+        "misleading"
+      ]
+    },
+    "PathMove": {
+      "description": "A document file or directory, where it moves, and whether that replaces a file.",
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "destination": {
+          "title": "Destination",
+          "type": "string"
+        },
+        "is_dir": {
+          "default": false,
+          "title": "Is Dir",
+          "type": "boolean"
+        },
+        "replaces": {
+          "default": false,
+          "title": "Replaces",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "destination"
+      ],
+      "title": "PathMove",
+      "type": "object"
+    },
+    "PendingChanges": {
+      "description": "A program's workspace changes awaiting ``apply_changes``.\n\nAttributes:\n    changeset_id: What ``apply_changes`` applies them by.\n    summary: What the user is asked to approve.\n    held: How many changes to a direct root (``/tmp``) wait with them, left\n        out of *summary* since nobody approves them.",
+      "properties": {
+        "changeset_id": {
+          "title": "Changeset Id",
+          "type": "string"
+        },
+        "summary": {
+          "$ref": "#/components/schemas/ChangesetSummary"
+        },
+        "held": {
+          "title": "Held",
+          "type": "integer"
+        },
+        "status": {
+          "const": "pending",
+          "default": "pending",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "changeset_id",
+        "summary",
+        "held"
+      ],
+      "title": "PendingChanges",
+      "type": "object"
+    },
+    "PipelineInfo": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "label": {
+          "type": "string",
+          "title": "Label"
+        },
+        "description": {
+          "type": "string",
+          "title": "Description"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "label",
+        "description"
+      ],
+      "title": "PipelineInfo",
+      "description": "An installed pipeline as the admin pages list it, in the request's language."
+    },
+    "PluginFeatureInfo": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "tools": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "type": "object",
+          "title": "Tools"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "tools"
+      ],
+      "title": "PluginFeatureInfo",
+      "description": "A feature a plugin contributes, each tool by name with its effect."
+    },
+    "PluginInfo": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "features": {
+          "items": {
+            "$ref": "#/components/schemas/PluginFeatureInfo"
+          },
+          "type": "array",
+          "title": "Features"
+        },
+        "converters": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Converters"
+        },
+        "chunkers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Chunkers"
+        },
+        "skills": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Skills"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "features",
+        "converters",
+        "chunkers",
+        "skills"
+      ],
+      "title": "PluginInfo",
+      "description": "An enabled plugin and every id it contributes, as the admin listing shows it."
+    },
+    "Preferences": {
+      "properties": {
+        "assistant": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/LibraryRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The reference of the assistant runs apply, such as ~/name, which only narrows the rest"
+        },
+        "mode": {
+          "$ref": "#/components/schemas/Mode",
+          "description": "Agent mode selecting the offered tools and how writes are gated",
+          "default": "interactive"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModelId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Catalog id of the chat model, the default if null"
+        },
+        "reasoning_effort": {
+          "$ref": "#/components/schemas/ReasoningEffort",
+          "description": "Reasoning effort level",
+          "default": "medium"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "Preferences",
+      "description": "The choices a user made for their runs, which every turn of theirs applies, whatever client sends it.\n\nThe server keeps them, only the fields a user set, so a default the\noperator changes reaches everyone who never chose (:meth:`stored`)."
+    },
+    "PrincipalKind": {
+      "type": "string",
+      "enum": [
+        "person",
+        "service"
+      ]
+    },
+    "PrincipalView": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "person",
+            "service"
+          ],
+          "title": "Kind"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "title": "PrincipalView",
+      "description": "Who a token authenticates as."
+    },
+    "QuestionType": {
+      "type": "string",
+      "enum": [
+        "simple",
+        "simple_w_condition",
+        "comparison",
+        "aggregation",
+        "set",
+        "multi-hop",
+        "post-processing",
+        "false_premise"
+      ]
+    },
+    "RagoldPassage": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "Canonical workspace path of the document"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text",
+          "description": "Markdown, shipped as plain text"
+        },
+        "grade": {
+          "$ref": "#/components/schemas/PassageGrade"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "text",
+        "grade"
+      ],
+      "title": "RagoldPassage",
+      "description": "A passage of a document that bears on the answer, named by its workspace path."
+    },
+    "RagoldRequest": {
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Query"
+        },
+        "response": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Response"
+        },
+        "questionType": {
+          "$ref": "#/components/schemas/QuestionType"
+        },
+        "answerability": {
+          "$ref": "#/components/schemas/Answerability"
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Origin",
+          "description": "URL of the conversation the entry comes from"
+        },
+        "notes": {
+          "type": "string",
+          "title": "Notes",
+          "default": ""
+        },
+        "keyFacts": {
+          "items": {
+            "$ref": "#/components/schemas/KeyFact"
+          },
+          "type": "array",
+          "title": "Keyfacts",
+          "default": []
+        },
+        "passages": {
+          "items": {
+            "$ref": "#/components/schemas/RagoldPassage"
+          },
+          "type": "array",
+          "title": "Passages"
+        },
+        "documents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Documents",
+          "description": "Canonical workspace paths of the shipped documents"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "query",
+        "response",
+        "questionType",
+        "answerability",
+        "origin"
+      ],
+      "title": "RagoldRequest",
+      "description": "One conversation turn as a RAGold entry, with the documents it ships."
+    },
+    "ReasonAction": {
+      "enum": [
+        "add",
+        "update",
+        "remove"
+      ],
+      "type": "string"
+    },
+    "ReasoningEffort": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "ReasoningUIPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "reasoning",
+          "title": "Type",
+          "default": "reasoning"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "streaming",
+                "done"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "State"
+        },
+        "providerMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providermetadata"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "title": "ReasoningUIPart",
+      "description": "A reasoning part of a message."
+    },
+    "RechunkRequest": {
+      "properties": {
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Files",
+          "description": "Workspace paths of the documents, all in one scope"
+        }
+      },
+      "type": "object",
+      "required": [
+        "files"
+      ],
+      "title": "RechunkRequest",
+      "description": "Request to rechunk documents with the operator's chunking pipeline."
+    },
+    "ReconvertRequest": {
+      "properties": {
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Files",
+          "description": "Workspace paths of the documents, all in one scope"
+        }
+      },
+      "type": "object",
+      "required": [
+        "files"
+      ],
+      "title": "ReconvertRequest",
+      "description": "Request to reconvert documents from their originals."
+    },
+    "Rejection": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "JSON pointer of the decision."
+        },
+        "reason": {
+          "type": "string",
+          "title": "Reason",
+          "description": "Why the patch was rejected."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "reason"
+      ],
+      "title": "Rejection",
+      "description": "A patch that was not applied."
+    },
+    "ScopeKind": {
+      "type": "string",
+      "enum": [
+        "global",
+        "group",
+        "user",
+        "source"
+      ]
+    },
+    "ServerConversation": {
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/components/schemas/UIMessage"
+          },
+          "type": "array",
+          "title": "Messages"
+        },
+        "instructions": {
+          "items": {
+            "$ref": "#/components/schemas/InstructionsSnapshot"
+          },
+          "type": "array",
+          "title": "Instructions"
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Provenance",
+          "description": "Compact Ed25519-signed JWT marking the conversation as AI-generated"
+        }
+      },
+      "type": "object",
+      "title": "ServerConversation",
+      "description": "A persisted active history and the system prompts it ran under."
+    },
+    "SettingsResponse": {
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/components/schemas/ModelInfo"
+          },
+          "type": "array",
+          "title": "Models",
+          "description": "The chat models a request may name"
+        },
+        "default_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Default Model",
+          "description": "The model a request naming none runs on, null without a catalog"
+        },
+        "transcription": {
+          "type": "boolean",
+          "title": "Transcription",
+          "description": "Whether the speech input fallback can transcribe audio"
+        },
+        "user": {
+          "$ref": "#/components/schemas/UserResponse",
+          "description": "Authenticated user information"
+        },
+        "attachments": {
+          "$ref": "#/components/schemas/AttachmentLimits",
+          "description": "Constraints the chat composer enforces on attachments"
+        },
+        "transparency": {
+          "$ref": "#/components/schemas/TransparencyConfig",
+          "description": "AI-generated text marking and detection configuration"
+        },
+        "ragold_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ragold Url",
+          "description": "Where RAGold is served, or null when the transfer is hidden"
+        },
+        "debug": {
+          "type": "boolean",
+          "title": "Debug",
+          "description": "Whether the debugging consoles serve the user"
+        }
+      },
+      "type": "object",
+      "required": [
+        "models",
+        "default_model",
+        "transcription",
+        "user",
+        "attachments",
+        "transparency",
+        "ragold_url",
+        "debug"
+      ],
+      "title": "SettingsResponse",
+      "description": "What the server offers the user, with their own context."
+    },
+    "SkillInfo": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name",
+          "description": "The skill's name, its folder's"
+        },
+        "ref": {
+          "type": "string",
+          "title": "Ref",
+          "description": "The reference it is loaded and invoked by, such as ~/name"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "The canonical path of its folder, such as /skills/~/name"
+        },
+        "scope": {
+          "type": "string",
+          "title": "Scope",
+          "description": "The prefix of the scope owning it: ~, @<group>, or /srv"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Description",
+          "description": "What it does, none when it is invalid"
+        },
+        "problem": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Problem",
+          "description": "Why it is invalid, none when it is valid"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Warnings",
+          "description": "What its frontmatter holds beyond the format"
+        },
+        "writable": {
+          "type": "boolean",
+          "title": "Writable",
+          "description": "Whether the user may replace or delete it"
+        },
+        "model_invocable": {
+          "type": "boolean",
+          "title": "Model Invocable",
+          "description": "Whether the model may load it, false for disable-model-invocation"
+        },
+        "user_invocable": {
+          "type": "boolean",
+          "title": "User Invocable",
+          "description": "Whether a prompt may invoke it by /<ref>, false for user-invocable: false"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "ref",
+        "path",
+        "scope",
+        "description",
+        "problem",
+        "warnings",
+        "writable",
+        "model_invocable",
+        "user_invocable"
+      ],
+      "title": "SkillInfo",
+      "description": "A skill a user sees, valid or with the reason it is not."
+    },
+    "SkillInstalledResponse": {
+      "properties": {
+        "skill": {
+          "$ref": "#/components/schemas/SkillInfo"
+        },
+        "scripts": {
+          "items": {
+            "$ref": "#/components/schemas/SkillScriptInfo"
+          },
+          "type": "array",
+          "title": "Scripts"
+        }
+      },
+      "type": "object",
+      "required": [
+        "skill",
+        "scripts"
+      ],
+      "title": "SkillInstalledResponse",
+      "description": "A skill just installed, with the check of every script it holds."
+    },
+    "SkillScriptInfo": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "Its path in the skill folder"
+        },
+        "signature": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Signature",
+          "description": "Its main function as defined"
+        },
+        "problem": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Problem",
+          "description": "Why it does not run, none when it does"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "signature",
+        "problem"
+      ],
+      "title": "SkillScriptInfo",
+      "description": "Whether a script of a skill runs by the main convention."
+    },
+    "SourceChanged": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "source-changed",
+          "title": "Type",
+          "default": "source-changed"
+        }
+      },
+      "type": "object",
+      "title": "SourceChanged",
+      "description": "Marks a change to the sync state of a source, which an admin's client lists again."
+    },
+    "SourceDocumentUIPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "source-document",
+          "title": "Type",
+          "default": "source-document"
+        },
+        "sourceId": {
+          "type": "string",
+          "title": "Sourceid"
+        },
+        "mediaType": {
+          "type": "string",
+          "title": "Mediatype"
+        },
+        "title": {
+          "type": "string",
+          "title": "Title"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Filename"
+        },
+        "providerMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providermetadata"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sourceId",
+        "mediaType",
+        "title"
+      ],
+      "title": "SourceDocumentUIPart",
+      "description": "A document source part of a message."
+    },
+    "SourceStatus": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "connector": {
+          "type": "string",
+          "title": "Connector"
+        },
+        "host": {
+          "type": "string",
+          "title": "Host"
+        },
+        "groups": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Groups"
+        },
+        "interval_minutes": {
+          "type": "number",
+          "title": "Interval Minutes"
+        },
+        "requested": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "sync",
+                "confirm"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Requested"
+        },
+        "running": {
+          "type": "boolean",
+          "title": "Running"
+        },
+        "done": {
+          "type": "integer",
+          "title": "Done"
+        },
+        "total": {
+          "type": "integer",
+          "title": "Total"
+        },
+        "synced_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Synced At"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Error"
+        },
+        "held_deletes": {
+          "type": "integer",
+          "title": "Held Deletes"
+        },
+        "items": {
+          "type": "integer",
+          "title": "Items"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "connector",
+        "host",
+        "groups",
+        "interval_minutes",
+        "requested",
+        "running",
+        "done",
+        "total",
+        "synced_at",
+        "error",
+        "held_deletes",
+        "items"
+      ],
+      "title": "SourceStatus",
+      "description": "A configured external source as the admin listing shows it, without secrets.\n\n``synced_at`` is when its last sync ended, ``error`` why it failed or\nwhich files it could not mirror, ``held_deletes`` how many deletions wait\nfor an admin to confirm, and ``items`` how many files the mirror holds.\n``requested`` is the sync an admin asked for that no sync has finished,\nand ``running`` whether a sync runs, ``done`` of ``total`` files in."
+    },
+    "SourceUrlUIPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "source-url",
+          "title": "Type",
+          "default": "source-url"
+        },
+        "sourceId": {
+          "type": "string",
+          "title": "Sourceid"
+        },
+        "url": {
+          "type": "string",
+          "title": "Url"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "providerMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providermetadata"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sourceId",
+        "url"
+      ],
+      "title": "SourceUrlUIPart",
+      "description": "A source part of a message."
+    },
+    "Status": {
+      "type": "string",
+      "enum": [
+        "inferred",
+        "merged",
+        "saved"
+      ]
+    },
+    "StepStartUIPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "step-start",
+          "title": "Type",
+          "default": "step-start"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "StepStartUIPart",
+      "description": "A step boundary part of a message."
+    },
+    "SubagentStep": {
+      "description": "One coarse action of a subagent: reasoning, a message, or a tool call.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "reasoning",
+            "message",
+            "tool"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "SubagentStep",
+      "type": "object"
+    },
+    "SubagentTranscript": {
+      "description": "The steps of the subagent a call delegated to, tagged so the client recognizes it on any tool.",
+      "properties": {
+        "transcript": {
+          "const": "subagent",
+          "title": "Transcript",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/components/schemas/SubagentStep"
+          },
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "transcript",
+        "steps"
+      ],
+      "title": "SubagentTranscript",
+      "type": "object"
+    },
+    "SubagentUpdate": {
+      "description": "A live transcript addressed to the call that delegated to the subagent.",
+      "properties": {
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "transcript": {
+          "$ref": "#/components/schemas/SubagentTranscript"
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "transcript"
+      ],
+      "title": "SubagentUpdate",
+      "type": "object"
+    },
+    "TextUIPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "text",
+          "title": "Type",
+          "default": "text"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "streaming",
+                "done"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "State"
+        },
+        "providerMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providermetadata"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "title": "TextUIPart",
+      "description": "A text part of a message."
+    },
+    "TmpClearedResponse": {
+      "properties": {
+        "files_removed": {
+          "type": "integer",
+          "title": "Files Removed",
+          "description": "Number of temporary files deleted"
+        }
+      },
+      "type": "object",
+      "required": [
+        "files_removed"
+      ],
+      "title": "TmpClearedResponse",
+      "description": "Result of clearing the ``/tmp`` folders of the caller's conversations."
+    },
+    "ToolApprovalRequested": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "title": "ToolApprovalRequested",
+      "description": "Tool approval in requested state (awaiting user response)."
+    },
+    "ToolApprovalRequestedPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^tool-",
+          "title": "Type"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "approval-requested",
+          "title": "State",
+          "default": "approval-requested"
+        },
+        "input": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "toolCallId"
+      ],
+      "title": "ToolApprovalRequestedPart",
+      "description": "Tool part in approval-requested state (awaiting user decision)."
+    },
+    "ToolApprovalResponded": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "approved": {
+          "type": "boolean",
+          "title": "Approved"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "approved"
+      ],
+      "title": "ToolApprovalResponded",
+      "description": "Tool approval in responded state (user has approved or denied)."
+    },
+    "ToolApprovalRespondedPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^tool-",
+          "title": "Type"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "approval-responded",
+          "title": "State",
+          "default": "approval-responded"
+        },
+        "input": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "toolCallId"
+      ],
+      "title": "ToolApprovalRespondedPart",
+      "description": "Tool part in approval-responded state (user approved/denied, execution pending)."
+    },
+    "ToolInfo": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "description": {
+          "type": "string",
+          "title": "Description"
+        },
+        "group": {
+          "type": "string",
+          "title": "Group"
+        },
+        "switchable": {
+          "type": "boolean",
+          "title": "Switchable",
+          "description": "Whether a list of withheld tools may name it.",
+          "default": true
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "description",
+        "group"
+      ],
+      "title": "ToolInfo",
+      "description": "Metadata about an available agent tool, or a subagent the model delegates to."
+    },
+    "ToolInputAvailablePart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^tool-",
+          "title": "Type"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "input-available",
+          "title": "State",
+          "default": "input-available"
+        },
+        "input": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "toolCallId"
+      ],
+      "title": "ToolInputAvailablePart",
+      "description": "Tool part in input-available state."
+    },
+    "ToolInputStreamingPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^tool-",
+          "title": "Type"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "input-streaming",
+          "title": "State",
+          "default": "input-streaming"
+        },
+        "input": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "toolCallId"
+      ],
+      "title": "ToolInputStreamingPart",
+      "description": "Tool part in input-streaming state."
+    },
+    "ToolOutputAvailablePart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^tool-",
+          "title": "Type"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "output-available",
+          "title": "State",
+          "default": "output-available"
+        },
+        "input": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input"
+        },
+        "output": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "preliminary": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Preliminary"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "toolCallId"
+      ],
+      "title": "ToolOutputAvailablePart",
+      "description": "Tool part in output-available state."
+    },
+    "ToolOutputDeniedPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^tool-",
+          "title": "Type"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "output-denied",
+          "title": "State",
+          "default": "output-denied"
+        },
+        "input": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "toolCallId"
+      ],
+      "title": "ToolOutputDeniedPart",
+      "description": "Tool part in output-denied state (tool was denied, terminal state)."
+    },
+    "ToolOutputErrorPart": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^tool-",
+          "title": "Type"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "Toolcallid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        },
+        "state": {
+          "type": "string",
+          "const": "output-error",
+          "title": "State",
+          "default": "output-error"
+        },
+        "input": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input"
+        },
+        "rawInput": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rawinput"
+        },
+        "errorText": {
+          "type": "string",
+          "title": "Errortext"
+        },
+        "providerExecuted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Providerexecuted"
+        },
+        "callProviderMetadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Callprovidermetadata"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolApprovalRequested"
+            },
+            {
+              "$ref": "#/components/schemas/ToolApprovalResponded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approval"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "toolCallId",
+        "errorText"
+      ],
+      "title": "ToolOutputErrorPart",
+      "description": "Tool part in output-error state."
+    },
+    "TranscriptionResponse": {
+      "properties": {
+        "text": {
+          "type": "string",
+          "title": "Text",
+          "description": "The transcribed text"
+        }
+      },
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "title": "TranscriptionResponse",
+      "description": "Response from audio transcription."
+    },
+    "TransparencyConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "description": "Whether watermark detection is available"
+        },
+        "contact_email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Contact Email",
+          "description": "Operator contact for external expert detector access"
+        },
+        "minimum_watermark_tokens": {
+          "type": "integer",
+          "title": "Minimum Watermark Tokens",
+          "description": "Minimum scored tokens for a conclusive negative detection result"
+        }
+      },
+      "type": "object",
+      "required": [
+        "enabled",
+        "contact_email",
+        "minimum_watermark_tokens"
+      ],
+      "title": "TransparencyConfig",
+      "description": "Public AI-generated text marking and detection configuration."
+    },
+    "TransparencyDetectionRequest": {
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 1000000,
+          "minLength": 1,
+          "title": "Text",
+          "description": "Text to verify"
+        }
+      },
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "title": "TransparencyDetectionRequest",
+      "description": "Free-form text submitted for watermark verification."
+    },
+    "TransparencyDetectionResponse": {
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "detected",
+            "not_detected",
+            "inconclusive"
+          ],
+          "title": "Status"
+        },
+        "method": {
+          "type": "string",
+          "const": "watermark",
+          "title": "Method",
+          "default": "watermark"
+        },
+        "message": {
+          "type": "string",
+          "title": "Message"
+        },
+        "signed_report": {
+          "type": "string",
+          "title": "Signed Report",
+          "description": "Compact, Ed25519-signed JWT report"
+        }
+      },
+      "type": "object",
+      "required": [
+        "status",
+        "message",
+        "signed_report"
+      ],
+      "title": "TransparencyDetectionResponse",
+      "description": "Watermark verification result and its signed report."
+    },
+    "TransparencyJwk": {
+      "properties": {
+        "kty": {
+          "type": "string",
+          "const": "OKP",
+          "title": "Kty",
+          "default": "OKP"
+        },
+        "crv": {
+          "type": "string",
+          "const": "Ed25519",
+          "title": "Crv",
+          "default": "Ed25519"
+        },
+        "x": {
+          "type": "string",
+          "title": "X"
+        },
+        "kid": {
+          "type": "string",
+          "title": "Kid"
+        },
+        "use": {
+          "type": "string",
+          "const": "sig",
+          "title": "Use",
+          "default": "sig"
+        },
+        "alg": {
+          "type": "string",
+          "const": "Ed25519",
+          "title": "Alg",
+          "default": "Ed25519"
+        }
+      },
+      "type": "object",
+      "required": [
+        "x",
+        "kid"
+      ],
+      "title": "TransparencyJwk",
+      "description": "Public Ed25519 key for detection reports and export provenance."
+    },
+    "TransparencyJwks": {
+      "properties": {
+        "keys": {
+          "items": {
+            "$ref": "#/components/schemas/TransparencyJwk"
+          },
+          "type": "array",
+          "title": "Keys"
+        }
+      },
+      "type": "object",
+      "required": [
+        "keys"
+      ],
+      "title": "TransparencyJwks",
+      "description": "JSON Web Key Set for detection report and export provenance verification."
+    },
+    "UIMessage": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "system",
+            "user",
+            "assistant"
+          ],
+          "title": "Role"
+        },
+        "metadata": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Metadata"
+        },
+        "parts": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextUIPart"
+              },
+              {
+                "$ref": "#/components/schemas/ReasoningUIPart"
+              },
+              {
+                "$ref": "#/components/schemas/ToolInputStreamingPart"
+              },
+              {
+                "$ref": "#/components/schemas/ToolInputAvailablePart"
+              },
+              {
+                "$ref": "#/components/schemas/ToolOutputAvailablePart"
+              },
+              {
+                "$ref": "#/components/schemas/ToolOutputErrorPart"
+              },
+              {
+                "$ref": "#/components/schemas/ToolApprovalRequestedPart"
+              },
+              {
+                "$ref": "#/components/schemas/ToolApprovalRespondedPart"
+              },
+              {
+                "$ref": "#/components/schemas/ToolOutputDeniedPart"
+              },
+              {
+                "$ref": "#/components/schemas/DynamicToolInputStreamingPart"
+              },
+              {
+                "$ref": "#/components/schemas/DynamicToolInputAvailablePart"
+              },
+              {
+                "$ref": "#/components/schemas/DynamicToolOutputAvailablePart"
+              },
+              {
+                "$ref": "#/components/schemas/DynamicToolOutputErrorPart"
+              },
+              {
+                "$ref": "#/components/schemas/DynamicToolApprovalRequestedPart"
+              },
+              {
+                "$ref": "#/components/schemas/DynamicToolApprovalRespondedPart"
+              },
+              {
+                "$ref": "#/components/schemas/DynamicToolOutputDeniedPart"
+              },
+              {
+                "$ref": "#/components/schemas/SourceUrlUIPart"
+              },
+              {
+                "$ref": "#/components/schemas/SourceDocumentUIPart"
+              },
+              {
+                "$ref": "#/components/schemas/FileUIPart"
+              },
+              {
+                "$ref": "#/components/schemas/DataUIPart"
+              },
+              {
+                "$ref": "#/components/schemas/StepStartUIPart"
+              }
+            ]
+          },
+          "type": "array",
+          "title": "Parts"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "role",
+        "parts"
+      ],
+      "title": "UIMessage",
+      "description": "A message as displayed in the UI by Vercel AI Elements."
+    },
+    "UpdateAssetDescriptionRequest": {
+      "properties": {
+        "asset_name": {
+          "type": "string",
+          "title": "Asset Name",
+          "description": "Path of the asset within its assets directory"
+        },
+        "content": {
+          "type": "string",
+          "title": "Content",
+          "description": "New content for the .md description file"
+        }
+      },
+      "type": "object",
+      "required": [
+        "asset_name",
+        "content"
+      ],
+      "title": "UpdateAssetDescriptionRequest",
+      "description": "Request to update an asset's companion .md description."
+    },
+    "UpdateTitleRequest": {
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 200,
+          "title": "Title",
+          "description": "The new title for the conversation"
+        }
+      },
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "title": "UpdateTitleRequest",
+      "description": "Request to update a conversation title."
+    },
+    "UserResponse": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id",
+          "description": "User identifier"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Email",
+          "description": "User email address"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Name",
+          "description": "User display name"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/components/schemas/WorkspaceInfo"
+          },
+          "type": "array",
+          "title": "Workspaces",
+          "description": "Workspaces the user sees, in scope order, with the grant on each"
+        },
+        "roles": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Roles",
+          "description": "Global roles held by the user"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "title": "UserResponse",
+      "description": "Serializable user information for API responses.\n\nAdmin status is intentionally not on the wire.  The client derives\nit the same way the server does, by checking for the fixed ``admin``\nrole in ``roles``."
+    },
+    "WorkspaceChanged": {
+      "properties": {
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Scopes"
+        },
+        "moves": {
+          "items": {
+            "$ref": "#/components/schemas/PathMove"
+          },
+          "type": "array",
+          "title": "Moves",
+          "default": []
+        },
+        "deletes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Deletes",
+          "default": []
+        },
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "type": {
+          "type": "string",
+          "const": "workspace-changed",
+          "title": "Type",
+          "default": "workspace-changed"
+        }
+      },
+      "type": "object",
+      "required": [
+        "scopes"
+      ],
+      "title": "WorkspaceChanged",
+      "description": "The workspaces a change touched, and the paths it moved and deleted.\n\nWhat a commit of the gateway returns and announces, and what a mutation\noutside it announces with no moves or deletes, so a client refreshes the\nscopes and follows the paths at once.  Paths are canonical and name\nworkspace files and directories only, since a folder such as ``/tmp``\nholds nothing a client tracks: an entry's description and original each,\nand a directory as a whole.  Sources and deletes name the workspace before\nthe change and destinations the one after it.\n\nAttributes:\n    scopes: The prefix of every workspace it touched, such as ``~``.\n    moves: Every moved file and directory.\n    deletes: Every deleted file and directory.\n    id: Names the change, so a client that applied a commit's answer\n        skips its announcement and vice versa.\n    type: The feed's discriminator."
+    },
+    "WorkspaceInfo": {
+      "properties": {
+        "scope": {
+          "type": "string",
+          "title": "Scope",
+          "description": "Path prefix, used to build paths"
+        },
+        "kind": {
+          "$ref": "#/components/schemas/ScopeKind",
+          "description": "Who owns it, or the external source it mirrors"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name",
+          "description": "A group's display label or a source's id, empty for the others"
+        },
+        "writable": {
+          "type": "boolean",
+          "title": "Writable",
+          "description": "Whether the principal may write to it, never for a source"
+        }
+      },
+      "type": "object",
+      "required": [
+        "scope",
+        "kind",
+        "name",
+        "writable"
+      ],
+      "title": "WorkspaceInfo",
+      "description": "One workspace a principal sees, with the grant it holds on it.\n\n``scope`` is the prefix every path and request uses (``~``, ``@<id>``,\n``/mnt/<id>``, or the global one), ``name`` a group's display label,\nfalling back to its ID, a source's id, and empty for the personal and the\nglobal workspace, which the client names itself."
+    },
+    "WriteDocumentRequest": {
+      "properties": {
+        "content": {
+          "type": "string",
+          "title": "Content",
+          "description": "New full content for the document"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "create"
+          ],
+          "title": "Mode",
+          "description": "'replace' overwrites or creates; 'create' rejects an existing path",
+          "default": "replace"
+        }
+      },
+      "type": "object",
+      "required": [
+        "content"
+      ],
+      "title": "WriteDocumentRequest",
+      "description": "Request to write a text document, replacing it or creating it fresh."
+    },
+    "WriteMode": {
+      "enum": [
+        "replace",
+        "create",
+        "append",
+        "prepend"
+      ],
+      "type": "string"
+    }
+  },
+  "tools": [
+    "answer_task",
+    "apply_changes",
+    "ask_user",
+    "cancel_task",
+    "check_task",
+    "complete",
+    "delegate_task",
+    "delete_documents",
+    "edit_document",
+    "get_conversation",
+    "grep",
+    "jq",
+    "list_conversations",
+    "list_documents",
+    "list_tasks",
+    "load_skill",
+    "maintain_case_base",
+    "message_task",
+    "move_documents",
+    "query_table",
+    "read_assistant",
+    "read_binary_document",
+    "read_document",
+    "read_memory",
+    "retain_cases",
+    "run_python",
+    "search",
+    "search_conversation",
+    "similar_cases",
+    "write_document",
+    "write_memory"
+  ]
+}

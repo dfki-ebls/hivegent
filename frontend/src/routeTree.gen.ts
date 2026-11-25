@@ -10,21 +10,91 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as DebugRouteImport } from './routes/debug'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminIntegrationsRouteImport } from './routes/admin.integrations'
+import { Route as AdminMaintenanceRouteImport } from './routes/admin.maintenance'
+import { Route as AdminModelsRouteImport } from './routes/admin.models'
+import { Route as AdminOverviewRouteImport } from './routes/admin.overview'
+import { Route as AdminPipelinesRouteImport } from './routes/admin.pipelines'
+import { Route as AdminPluginsRouteImport } from './routes/admin.plugins'
+import { Route as AdminSkillsRouteImport } from './routes/admin.skills'
+import { Route as AdminSourcesRouteImport } from './routes/admin.sources'
 import { Route as ConversationsIdRouteImport } from './routes/conversations.$id'
 import { Route as DebugChatRouteImport } from './routes/debug.chat'
 import { Route as DebugToolsRouteImport } from './routes/debug.tools'
+import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
+import { Route as SettingsAssistantsRouteImport } from './routes/settings.assistants'
+import { Route as SettingsProfileRouteImport } from './routes/settings.profile'
+import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DebugRoute = DebugRouteImport.update({
   id: '/debug',
   path: '/debug',
   getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminIntegrationsRoute = AdminIntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminMaintenanceRoute = AdminMaintenanceRouteImport.update({
+  id: '/maintenance',
+  path: '/maintenance',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminModelsRoute = AdminModelsRouteImport.update({
+  id: '/models',
+  path: '/models',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminOverviewRoute = AdminOverviewRouteImport.update({
+  id: '/overview',
+  path: '/overview',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPipelinesRoute = AdminPipelinesRouteImport.update({
+  id: '/pipelines',
+  path: '/pipelines',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPluginsRoute = AdminPluginsRouteImport.update({
+  id: '/plugins',
+  path: '/plugins',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminSkillsRoute = AdminSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminSourcesRoute = AdminSourcesRouteImport.update({
+  id: '/sources',
+  path: '/sources',
+  getParentRoute: () => AdminRoute,
 } as any)
 const ConversationsIdRoute = ConversationsIdRouteImport.update({
   id: '/conversations/$id',
@@ -41,69 +111,176 @@ const DebugToolsRoute = DebugToolsRouteImport.update({
   path: '/tools',
   getParentRoute: () => DebugRoute,
 } as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsAccountRoute = SettingsAccountRouteImport.update({
-  id: '/settings/account',
-  path: '/settings/account',
-  getParentRoute: () => rootRouteImport,
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsAssistantsRoute = SettingsAssistantsRouteImport.update({
+  id: '/assistants',
+  path: '/assistants',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsProfileRoute = SettingsProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => SettingsRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteWithChildren
   '/debug': typeof DebugRouteWithChildren
+  '/settings': typeof SettingsRouteWithChildren
+  '/admin/integrations': typeof AdminIntegrationsRoute
+  '/admin/maintenance': typeof AdminMaintenanceRoute
+  '/admin/models': typeof AdminModelsRoute
+  '/admin/overview': typeof AdminOverviewRoute
+  '/admin/pipelines': typeof AdminPipelinesRoute
+  '/admin/plugins': typeof AdminPluginsRoute
+  '/admin/skills': typeof AdminSkillsRoute
+  '/admin/sources': typeof AdminSourcesRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/debug/chat': typeof DebugChatRoute
   '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
+  '/settings/assistants': typeof SettingsAssistantsRoute
+  '/settings/profile': typeof SettingsProfileRoute
+  '/settings/skills': typeof SettingsSkillsRoute
+  '/admin/': typeof AdminIndexRoute
+  '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/debug': typeof DebugRouteWithChildren
+  '/admin/integrations': typeof AdminIntegrationsRoute
+  '/admin/maintenance': typeof AdminMaintenanceRoute
+  '/admin/models': typeof AdminModelsRoute
+  '/admin/overview': typeof AdminOverviewRoute
+  '/admin/pipelines': typeof AdminPipelinesRoute
+  '/admin/plugins': typeof AdminPluginsRoute
+  '/admin/skills': typeof AdminSkillsRoute
+  '/admin/sources': typeof AdminSourcesRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/debug/chat': typeof DebugChatRoute
   '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
+  '/settings/assistants': typeof SettingsAssistantsRoute
+  '/settings/profile': typeof SettingsProfileRoute
+  '/settings/skills': typeof SettingsSkillsRoute
+  '/admin': typeof AdminIndexRoute
+  '/settings': typeof SettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteWithChildren
   '/debug': typeof DebugRouteWithChildren
+  '/settings': typeof SettingsRouteWithChildren
+  '/admin/integrations': typeof AdminIntegrationsRoute
+  '/admin/maintenance': typeof AdminMaintenanceRoute
+  '/admin/models': typeof AdminModelsRoute
+  '/admin/overview': typeof AdminOverviewRoute
+  '/admin/pipelines': typeof AdminPipelinesRoute
+  '/admin/plugins': typeof AdminPluginsRoute
+  '/admin/skills': typeof AdminSkillsRoute
+  '/admin/sources': typeof AdminSourcesRoute
   '/conversations/$id': typeof ConversationsIdRoute
   '/debug/chat': typeof DebugChatRoute
   '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
+  '/settings/assistants': typeof SettingsAssistantsRoute
+  '/settings/profile': typeof SettingsProfileRoute
+  '/settings/skills': typeof SettingsSkillsRoute
+  '/admin/': typeof AdminIndexRoute
+  '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
     | '/debug'
+    | '/settings'
+    | '/admin/integrations'
+    | '/admin/maintenance'
+    | '/admin/models'
+    | '/admin/overview'
+    | '/admin/pipelines'
+    | '/admin/plugins'
+    | '/admin/skills'
+    | '/admin/sources'
     | '/conversations/$id'
     | '/debug/chat'
     | '/debug/tools'
     | '/settings/account'
+    | '/settings/assistants'
+    | '/settings/profile'
+    | '/settings/skills'
+    | '/admin/'
+    | '/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/debug'
+    | '/admin/integrations'
+    | '/admin/maintenance'
+    | '/admin/models'
+    | '/admin/overview'
+    | '/admin/pipelines'
+    | '/admin/plugins'
+    | '/admin/skills'
+    | '/admin/sources'
     | '/conversations/$id'
     | '/debug/chat'
     | '/debug/tools'
     | '/settings/account'
+    | '/settings/assistants'
+    | '/settings/profile'
+    | '/settings/skills'
+    | '/admin'
+    | '/settings'
   id:
     | '__root__'
     | '/'
+    | '/admin'
     | '/debug'
+    | '/settings'
+    | '/admin/integrations'
+    | '/admin/maintenance'
+    | '/admin/models'
+    | '/admin/overview'
+    | '/admin/pipelines'
+    | '/admin/plugins'
+    | '/admin/skills'
+    | '/admin/sources'
     | '/conversations/$id'
     | '/debug/chat'
     | '/debug/tools'
     | '/settings/account'
+    | '/settings/assistants'
+    | '/settings/profile'
+    | '/settings/skills'
+    | '/admin/'
+    | '/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRouteWithChildren
   DebugRoute: typeof DebugRouteWithChildren
+  SettingsRoute: typeof SettingsRouteWithChildren
   ConversationsIdRoute: typeof ConversationsIdRoute
-  SettingsAccountRoute: typeof SettingsAccountRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -115,12 +292,89 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/debug': {
       id: '/debug'
       path: '/debug'
       fullPath: '/debug'
       preLoaderRoute: typeof DebugRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/integrations': {
+      id: '/admin/integrations'
+      path: '/integrations'
+      fullPath: '/admin/integrations'
+      preLoaderRoute: typeof AdminIntegrationsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/maintenance': {
+      id: '/admin/maintenance'
+      path: '/maintenance'
+      fullPath: '/admin/maintenance'
+      preLoaderRoute: typeof AdminMaintenanceRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/models': {
+      id: '/admin/models'
+      path: '/models'
+      fullPath: '/admin/models'
+      preLoaderRoute: typeof AdminModelsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/overview': {
+      id: '/admin/overview'
+      path: '/overview'
+      fullPath: '/admin/overview'
+      preLoaderRoute: typeof AdminOverviewRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/pipelines': {
+      id: '/admin/pipelines'
+      path: '/pipelines'
+      fullPath: '/admin/pipelines'
+      preLoaderRoute: typeof AdminPipelinesRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/plugins': {
+      id: '/admin/plugins'
+      path: '/plugins'
+      fullPath: '/admin/plugins'
+      preLoaderRoute: typeof AdminPluginsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/skills': {
+      id: '/admin/skills'
+      path: '/skills'
+      fullPath: '/admin/skills'
+      preLoaderRoute: typeof AdminSkillsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/sources': {
+      id: '/admin/sources'
+      path: '/sources'
+      fullPath: '/admin/sources'
+      preLoaderRoute: typeof AdminSourcesRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/conversations/$id': {
       id: '/conversations/$id'
@@ -143,15 +397,69 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DebugToolsRouteImport
       parentRoute: typeof DebugRoute
     }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/account': {
       id: '/settings/account'
-      path: '/settings/account'
+      path: '/account'
       fullPath: '/settings/account'
       preLoaderRoute: typeof SettingsAccountRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/assistants': {
+      id: '/settings/assistants'
+      path: '/assistants'
+      fullPath: '/settings/assistants'
+      preLoaderRoute: typeof SettingsAssistantsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/profile': {
+      id: '/settings/profile'
+      path: '/profile'
+      fullPath: '/settings/profile'
+      preLoaderRoute: typeof SettingsProfileRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/skills': {
+      id: '/settings/skills'
+      path: '/skills'
+      fullPath: '/settings/skills'
+      preLoaderRoute: typeof SettingsSkillsRouteImport
+      parentRoute: typeof SettingsRoute
     }
   }
 }
+
+interface AdminRouteChildren {
+  AdminIntegrationsRoute: typeof AdminIntegrationsRoute
+  AdminMaintenanceRoute: typeof AdminMaintenanceRoute
+  AdminModelsRoute: typeof AdminModelsRoute
+  AdminOverviewRoute: typeof AdminOverviewRoute
+  AdminPipelinesRoute: typeof AdminPipelinesRoute
+  AdminPluginsRoute: typeof AdminPluginsRoute
+  AdminSkillsRoute: typeof AdminSkillsRoute
+  AdminSourcesRoute: typeof AdminSourcesRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminIntegrationsRoute: AdminIntegrationsRoute,
+  AdminMaintenanceRoute: AdminMaintenanceRoute,
+  AdminModelsRoute: AdminModelsRoute,
+  AdminOverviewRoute: AdminOverviewRoute,
+  AdminPipelinesRoute: AdminPipelinesRoute,
+  AdminPluginsRoute: AdminPluginsRoute,
+  AdminSkillsRoute: AdminSkillsRoute,
+  AdminSourcesRoute: AdminSourcesRoute,
+  AdminIndexRoute: AdminIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface DebugRouteChildren {
   DebugChatRoute: typeof DebugChatRoute
@@ -165,11 +473,32 @@ const DebugRouteChildren: DebugRouteChildren = {
 
 const DebugRouteWithChildren = DebugRoute._addFileChildren(DebugRouteChildren)
 
+interface SettingsRouteChildren {
+  SettingsAccountRoute: typeof SettingsAccountRoute
+  SettingsAssistantsRoute: typeof SettingsAssistantsRoute
+  SettingsProfileRoute: typeof SettingsProfileRoute
+  SettingsSkillsRoute: typeof SettingsSkillsRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+}
+
+const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsAccountRoute: SettingsAccountRoute,
+  SettingsAssistantsRoute: SettingsAssistantsRoute,
+  SettingsProfileRoute: SettingsProfileRoute,
+  SettingsSkillsRoute: SettingsSkillsRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+}
+
+const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
+  SettingsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRouteWithChildren,
   DebugRoute: DebugRouteWithChildren,
+  SettingsRoute: SettingsRouteWithChildren,
   ConversationsIdRoute: ConversationsIdRoute,
-  SettingsAccountRoute: SettingsAccountRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

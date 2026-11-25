@@ -2,30 +2,31 @@ import { queryOptions, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
 import { MaintenanceError, requestJson } from "@/api/client";
+import { REASONING_EFFORTS } from "@/api/conversations";
 import { apiUrl } from "@/lib/health";
-import { featureFlags } from "@/lib/feature-flags";
 import { initOidc, useOidc } from "@/oidc";
 
 /**
- * One group the user belongs to, with the permission they hold on it.
+ * One workspace the user sees, with the grant the server derived for it.
  *
- * `id` is what every path and request uses (`@<id>/notes.md`), `name` is a
- * display label only, falling back to the id when the identity provider
- * supplied no display name.
+ * `scope` is the prefix every path and request uses (`~`, `@<id>`, `/mnt/<id>`,
+ * the global one), `name` a group's display label or a source's id, empty for
+ * the personal and the global workspace, which the client names itself.
  */
-const GroupInfoSchema = z.object({
-  id: z.string(),
+const WorkspaceInfoSchema = z.object({
+  scope: z.string(),
+  kind: z.enum(["global", "group", "user", "source"]),
   name: z.string(),
   writable: z.boolean(),
 });
-export type GroupInfo = z.infer<typeof GroupInfoSchema>;
+export type WorkspaceInfo = z.infer<typeof WorkspaceInfoSchema>;
 
 /** The authenticated user, whose admin status the fixed `admin` role grants as on the server. */
 const UserResponseSchema = z.object({
   id: z.string(),
   email: z.string().nullable().optional(),
   name: z.string().nullable().optional(),
-  groups: z.array(GroupInfoSchema).default([]),
+  workspaces: z.array(WorkspaceInfoSchema).default([]),
   roles: z.array(z.string()).default([]),
 });
 
@@ -33,8 +34,6 @@ const UserResponseSchema = z.object({
 const AttachmentLimitsSchema = z.object({
   media_types: z.array(z.string()),
   max_bytes: z.number(),
-  /** Images one turn may attach: the model server's per-request cap, or null for none. */
-  max_count: z.number().nullable(),
 });
 type AttachmentLimits = z.infer<typeof AttachmentLimitsSchema>;
 
@@ -44,66 +43,37 @@ const TransparencyConfigSchema = z.object({
   minimum_watermark_tokens: z.number(),
 });
 
+/** A chat model of the operator's catalog, with what the composer offers for it. */
+const ModelInfoSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  vision: z.boolean(),
+  /** Images one turn may attach: its server's per-request cap, or null for none. */
+  max_images: z.number().nullable(),
+  /** The reasoning efforts it offers, none for a model that does not reason. */
+  reasoning: z.array(z.enum(REASONING_EFFORTS)),
+  context_window: z.number().nullable(),
+});
+export type ModelInfo = z.infer<typeof ModelInfoSchema>;
+
 /** Settings exposed by the backend. */
-const BackendSettingsSchema = z.object({
-  model: z.string(),
-  aux_model: z.string().nullable(),
-  stt_model: z.string().nullable(),
-  has_api_key: z.boolean(),
-  base_url: z.string(),
+export const BackendSettingsSchema = z.object({
+  models: z.array(ModelInfoSchema),
+  /** The model a request naming none runs on, null without a catalog. */
+  default_model: z.string().nullable(),
+  /** Whether the speech input fallback can transcribe audio. */
+  transcription: z.boolean(),
   user: UserResponseSchema,
   attachments: AttachmentLimitsSchema,
   transparency: TransparencyConfigSchema,
   /** Where RAGold is served, null while the transfer is hidden. */
   ragold_url: z.string().nullable(),
+  /** Whether the debugging consoles serve the user, which only an operator enables. */
+  debug: z.boolean(),
 });
-type BackendSettings = z.infer<typeof BackendSettingsSchema>;
+export type BackendSettings = z.infer<typeof BackendSettingsSchema>;
 
-/** LLM provider configuration sent to the backend. */
-export interface LlmConfig {
-  model?: string;
-  api_key?: string;
-  base_url?: string | null;
-}
-
-/**
- * Build a sparse LlmConfig from frontend settings.
- *
- * Empty while the {@link featureFlags.llmSpec} flag is disabled, since LLM
- * provider customization is a frontend-only feature, so every request then uses
- * the backend's configured defaults.
- */
-export function buildLlmConfig(s: {
-  model?: string;
-  apiKey?: string;
-  baseUrl?: string;
-}): LlmConfig {
-  if (!featureFlags.llmSpec) return {};
-
-  const config: LlmConfig = {};
-
-  if (s.model) config.model = s.model;
-  if (s.apiKey) config.api_key = s.apiKey;
-  if (s.baseUrl) config.base_url = s.baseUrl;
-
-  return config;
-}
-
-/** LLM config for auxiliary tasks (titles, captions): prefer aux model, fall back to primary. */
-export function buildAuxLlmConfig(overrides: {
-  model: string;
-  auxModel: string;
-  apiKey: string;
-  baseUrl: string;
-}): LlmConfig {
-  return buildLlmConfig({
-    model: overrides.auxModel || overrides.model,
-    apiKey: overrides.apiKey,
-    baseUrl: overrides.baseUrl,
-  });
-}
-
-/** Fetch server-side LLM settings. */
+/** Fetch what the server offers and the current user. */
 export function getSettings(): Promise<BackendSettings> {
   return requestJson(apiUrl("/settings"), "fetchSettings", BackendSettingsSchema);
 }
@@ -154,11 +124,8 @@ export function useServerSettings<T = BackendSettings>(
 const ADMIN_ROLE = "admin";
 
 /** Whether the user is an administrator, the same rule as the server's `User.is_admin`. */
-const selectIsAdmin = (settings: BackendSettings): boolean =>
+export const selectIsAdmin = (settings: BackendSettings): boolean =>
   settings.user.roles.includes(ADMIN_ROLE);
-
-/** The current user's backend id, which shares the id space of the admin listings. */
-export const selectUserId = (settings: BackendSettings): string => settings.user.id;
 
 /**
  * The constraints the composer enforces on attachments. Undefined until the
@@ -171,4 +138,9 @@ export const selectAttachmentLimits = (settings: BackendSettings): AttachmentLim
 /** Whether the user is an administrator, `false` until the settings load. */
 export function useIsAdmin(): boolean {
   return useServerSettings(selectIsAdmin) ?? false;
+}
+
+/** Whether the debugging consoles serve the user, `false` until the settings load. */
+export function useDebugConsoles(): boolean {
+  return useServerSettings((settings) => settings.debug) ?? false;
 }

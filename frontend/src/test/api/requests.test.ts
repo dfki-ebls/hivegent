@@ -10,19 +10,9 @@ vi.mock("@/oidc", () => ({
     .mockResolvedValue({ isUserLoggedIn: false } as Awaited<ReturnType<typeof getOidcFn>>),
 }));
 
-// buildLlmConfig zeroes out its payload when the llmSpec flag is off, so
-// enable it to exercise the field-mapping logic.
-vi.mock("@/lib/feature-flags", () => ({
-  featureFlags: {
-    llmSpec: true,
-    pipelineSpec: false,
-    assetSpec: false,
-    toolsSpec: false,
-  },
-}));
-
-import { buildLlmConfig, getSettings } from "@/api/settings";
-import { getDirectories, getDocumentContent, requiresConversion } from "@/api/documents";
+import { chatFetch } from "@/api/client";
+import { getSettings } from "@/api/settings";
+import { getDirectories, getDocumentContent } from "@/api/documents";
 import { waitForBackendReady } from "@/lib/health";
 
 // authFetch gates every request on backend readiness; resolve the cached probe
@@ -44,42 +34,6 @@ describe("getDocumentContent", () => {
   });
 });
 
-describe("requiresConversion", () => {
-  it("returns false for .md files", () => {
-    expect(requiresConversion("report.md")).toBe(false);
-  });
-
-  it("returns true for non-markdown files", () => {
-    expect(requiresConversion("document.pdf")).toBe(true);
-  });
-});
-
-describe("buildLlmConfig", () => {
-  it("returns empty config for empty input", () => {
-    expect(buildLlmConfig({})).toEqual({});
-  });
-
-  it("maps model field", () => {
-    expect(buildLlmConfig({ model: "gpt-4" })).toEqual({ model: "gpt-4" });
-  });
-
-  it("maps apiKey to api_key", () => {
-    expect(buildLlmConfig({ apiKey: "sk-123" })).toEqual({
-      api_key: "sk-123",
-    });
-  });
-
-  it("maps baseUrl to base_url", () => {
-    expect(buildLlmConfig({ baseUrl: "https://api.example.com" })).toEqual({
-      base_url: "https://api.example.com",
-    });
-  });
-
-  it("skips empty strings", () => {
-    expect(buildLlmConfig({ model: "", apiKey: "" })).toEqual({});
-  });
-});
-
 describe("getSettings", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
@@ -87,22 +41,28 @@ describe("getSettings", () => {
 
   it("fetches and parses settings", async () => {
     const mockSettings = {
-      model: "gpt-4",
-      aux_model: "gpt-4o-mini",
-      stt_model: "whisper-1",
-      has_api_key: true,
-      base_url: "https://api.openai.com",
+      models: [
+        {
+          id: "big",
+          label: "Big",
+          vision: true,
+          max_images: 2,
+          reasoning: ["low"],
+          context_window: null,
+        },
+      ],
+      default_model: "big",
+      transcription: true,
       user: {
         id: "user1",
         email: "user@test.com",
         name: "Test User",
-        groups: [],
+        workspaces: [],
         roles: [],
       },
       attachments: {
         media_types: ["image/jpeg", "image/png"],
         max_bytes: 10 * 1024 * 1024,
-        max_count: 2,
       },
       transparency: {
         enabled: true,
@@ -110,6 +70,7 @@ describe("getSettings", () => {
         minimum_watermark_tokens: 200,
       },
       ragold_url: null,
+      debug: false,
     };
 
     vi.mocked(fetch).mockResolvedValueOnce(
@@ -120,7 +81,7 @@ describe("getSettings", () => {
     );
 
     const result = await getSettings();
-    expect(result.model).toBe("gpt-4");
+    expect(result.models[0]?.reasoning).toEqual(["low"]);
     expect(result.user.id).toBe("user1");
   });
 
@@ -163,5 +124,20 @@ describe("getDirectories", () => {
 
     vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 503 }));
     await expect(getDirectories("~")).rejects.toThrow(/temporarily unavailable.*\(HTTP 503\)/);
+  });
+});
+
+describe("chatFetch", () => {
+  it("sends a rate-limited turn again once its Retry-After passed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
+        .mockResolvedValueOnce(new Response("ok")),
+    );
+
+    expect(await (await chatFetch("/chat", { method: "POST" })).text()).toBe("ok");
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,44 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
-
-type FuseConstructor = typeof import("fuse.js").default;
+import Fuse from "fuse.js";
+import { useMemo } from "react";
 
 const KEY_SEPARATOR = "\0";
 
 /**
  * Fuzzy-filter `items` by `query` over the given object keys.
  *
- * A blank query passes `items` through untouched, so neither the fuse.js
- * download nor the index happens until the user actually types. The index is
- * then rebuilt only when `items` change, not on every keystroke.
+ * A blank query passes `items` through untouched without building an index,
+ * which is then rebuilt only when `items` change, not on every keystroke.
  */
 export function useFuzzySearch<T>(
   items: readonly T[],
   query: string,
   ...keys: (keyof T & string)[]
 ): readonly T[] {
-  const [Fuse, setFuse] = useState<FuseConstructor | null>(null);
-  const trimmed = query.trim();
-  const isSearching = trimmed.length > 0;
   // Joined so callers can pass keys inline, without a stable array identity.
   const keyList = keys.join(KEY_SEPARATOR);
-
-  useEffect(() => {
-    if (!isSearching || Fuse) return;
-    void import("fuse.js").then((module) => setFuse(() => module.default));
-  }, [isSearching, Fuse]);
-
-  // Keyed on whether a search is running rather than on the query itself, so
-  // typing another character reuses the index instead of rebuilding it.
+  const isSearching = query.trim() !== "";
+  // Explicit, since the React Compiler takes a search for a mutation and would rebuild the index with it.
   const fuse = useMemo(
     () =>
-      Fuse && isSearching
-        ? new Fuse(items, { keys: keyList.split(KEY_SEPARATOR), threshold: 0.4 })
-        : null,
-    [Fuse, isSearching, items, keyList],
+      isSearching ? new Fuse(items, { keys: keyList.split(KEY_SEPARATOR), threshold: 0.4 }) : null,
+    [items, keyList, isSearching],
   );
 
-  return useMemo(
-    () => (fuse ? fuse.search(trimmed).map((result) => result.item) : items),
-    [fuse, trimmed, items],
-  );
+  return fuse ? fuse.search(query.trim()).map((result) => result.item) : items;
 }
