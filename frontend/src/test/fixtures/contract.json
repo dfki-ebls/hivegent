@@ -497,11 +497,6 @@
           "title": "Path",
           "description": "Canonical path of the case base"
         },
-        "sidecar": {
-          "type": "string",
-          "title": "Sidecar",
-          "description": "Canonical path of its similarity configuration"
-        },
         "count": {
           "type": "integer",
           "title": "Count",
@@ -512,22 +507,13 @@
           "title": "Graphs",
           "description": "Whether the cases are graphs"
         },
-        "status": {
-          "$ref": "#/components/schemas/Status",
-          "description": "Where the configuration comes from: inferred without a sidecar, merged when new elements were inferred beside the sidecar, or saved"
-        },
-        "writable": {
-          "type": "boolean",
-          "title": "Writable",
-          "description": "Whether the caller may change the configuration"
-        },
         "config": {
           "additionalProperties": {
             "$ref": "#/components/schemas/JsonValue"
           },
           "type": "object",
           "title": "Config",
-          "description": "The configuration, see GET /case-base-schema"
+          "description": "The configuration inferred from the data, a `cbrkit.spec.Config`"
         },
         "query_schema": {
           "additionalProperties": {
@@ -536,84 +522,18 @@
           "type": "object",
           "title": "Query Schema",
           "description": "JSON Schema of a query, every attribute optional"
-        },
-        "leaves": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "title": "Leaves",
-          "description": "The kinds of the deterministic leaf measures a person may choose"
-        },
-        "key_candidates": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "title": "Key Candidates",
-          "description": "The columns a person may key the records by, see `source.key_column`"
-        },
-        "embedding": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "$ref": "#/components/schemas/JsonValue"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Embedding",
-          "description": "The embedding measure of the bound embedder, none without one"
-        },
-        "revision": {
-          "type": "string",
-          "title": "Revision",
-          "description": "Identifies the sidecar this was read from, empty without one"
         }
       },
       "type": "object",
       "required": [
         "path",
-        "sidecar",
         "count",
         "graphs",
-        "status",
-        "writable",
         "config",
-        "query_schema",
-        "leaves",
-        "key_candidates",
-        "embedding",
-        "revision"
+        "query_schema"
       ],
       "title": "CaseBaseResponse",
-      "description": "A case base with the configuration a query is ranked by."
-    },
-    "CaseBaseUpdate": {
-      "properties": {
-        "config": {
-          "additionalProperties": {
-            "$ref": "#/components/schemas/JsonValue"
-          },
-          "type": "object",
-          "title": "Config"
-        },
-        "revision": {
-          "type": "string",
-          "title": "Revision",
-          "description": "The revision of the case base the edit started from"
-        }
-      },
-      "type": "object",
-      "required": [
-        "config",
-        "revision"
-      ],
-      "title": "CaseBaseUpdate",
-      "description": "A configuration edited by the caller."
+      "description": "A case base with the configuration inferred from its data that a query is ranked by."
     },
     "CaseMatch": {
       "properties": {
@@ -725,46 +645,6 @@
       ],
       "title": "CaseQueryResponse",
       "description": "The most similar cases, each with its explanation."
-    },
-    "CaseRefineRequest": {
-      "properties": {
-        "domain": {
-          "anyOf": [
-            {
-              "type": "string",
-              "maxLength": 2000
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Domain"
-        }
-      },
-      "type": "object",
-      "title": "CaseRefineRequest",
-      "description": "What the case base is for, to guide the language model."
-    },
-    "CaseRefineResponse": {
-      "properties": {
-        "case_base": {
-          "$ref": "#/components/schemas/CaseBaseResponse"
-        },
-        "rejections": {
-          "items": {
-            "$ref": "#/components/schemas/Rejection"
-          },
-          "type": "array",
-          "title": "Rejections"
-        }
-      },
-      "type": "object",
-      "required": [
-        "case_base",
-        "rejections"
-      ],
-      "title": "CaseRefineResponse",
-      "description": "The refined case base and the proposals that were not applied."
     },
     "ChangeOperation": {
       "oneOf": [
@@ -1378,12 +1258,6 @@
           ],
           "title": "Assets Dir",
           "description": "Workspace-relative child-assets directory when present"
-        },
-        "case_base": {
-          "type": "boolean",
-          "title": "Case Base",
-          "description": "Whether it is a case base with a saved similarity configuration",
-          "default": false
         },
         "case_base_candidate": {
           "type": "boolean",
@@ -3471,28 +3345,6 @@
       "title": "ReconvertRequest",
       "description": "Request to reconvert documents from their originals."
     },
-    "Rejection": {
-      "properties": {
-        "path": {
-          "type": "string",
-          "title": "Path",
-          "description": "JSON pointer of the decision."
-        },
-        "reason": {
-          "type": "string",
-          "title": "Reason",
-          "description": "Why the patch was rejected."
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "path",
-        "reason"
-      ],
-      "title": "Rejection",
-      "description": "A patch that was not applied."
-    },
     "ScopeKind": {
       "type": "string",
       "enum": [
@@ -4000,14 +3852,6 @@
       ],
       "title": "SourceUrlUIPart",
       "description": "A source part of a message."
-    },
-    "Status": {
-      "type": "string",
-      "enum": [
-        "inferred",
-        "merged",
-        "saved"
-      ]
     },
     "StepStartUIPart": {
       "properties": {

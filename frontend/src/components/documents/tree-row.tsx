@@ -1,6 +1,5 @@
 import type { ItemInstance, ItemMeta } from "@headless-tree/core";
 import {
-  Database,
   FileText,
   Folder,
   FolderOpen,
@@ -150,12 +149,6 @@ export const TreeRow = memo(function TreeRow({
             aria-label={t(($) => $.common.actions.rename)}
             className="h-7"
           />
-        )}
-        {node.kind !== "workspace" && node.caseBase && (
-          <span title={t(($) => $.documents.tree.caseBase)} className="flex shrink-0">
-            <Database aria-hidden className="size-3.5 text-muted-foreground" />
-            <span className="sr-only">{t(($) => $.documents.tree.caseBase)}</span>
-          </span>
         )}
         {(isMutating || (node.kind === "workspace" && !node.loaded)) && (
           <Spinner

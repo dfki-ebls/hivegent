@@ -45,6 +45,7 @@ export const app = {
   schemaForm: {
     commaSeparated: "Durch Kommas getrennte Werte",
     noOptions: "Keine Konfigurationsoptionen verfügbar.",
+    none: "Keine",
   },
   chatDebugger: {
     title: "Chat-Debugger",
@@ -151,13 +152,11 @@ export const app = {
       listPlugins: "Plugins konnten nicht geladen werden",
       fetchAssistants: "Assistenten konnten nicht geladen werden",
       saveAssistant: "Der Assistent konnte nicht gespeichert werden",
+      fetchPreferences: "Ihre Einstellungen konnten nicht geladen werden",
+      updatePreferences: "Ihre Einstellungen konnten nicht gespeichert werden",
       deleteAssistant: "Der Assistent konnte nicht gelöscht werden",
       fetchCaseBase: "Die Fallbasis konnte nicht geladen werden",
-      fetchCaseBaseSchema: "Das Schema der Ähnlichkeitskonfiguration konnte nicht geladen werden",
-      saveCaseBase: "Die Ähnlichkeitskonfiguration konnte nicht gespeichert werden",
       queryCaseBase: "Die Fälle konnten nicht geordnet werden",
-      resetCaseBase: "Die Ähnlichkeitskonfiguration konnte nicht zurückgesetzt werden",
-      refineCaseBase: "Die Ähnlichkeitskonfiguration konnte nicht verfeinert werden",
     },
   },
 } as const satisfies Translation<typeof en>;

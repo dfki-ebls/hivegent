@@ -43,6 +43,7 @@ export const app = {
   schemaForm: {
     commaSeparated: "Comma-separated values",
     noOptions: "No configuration options available.",
+    none: "None",
   },
   chatDebugger: {
     title: "Chat Debugger",
@@ -148,13 +149,11 @@ export const app = {
       listPlugins: "Failed to list the plugins",
       fetchAssistants: "Failed to fetch assistants",
       saveAssistant: "Failed to save the assistant",
+      fetchPreferences: "Failed to fetch your preferences",
+      updatePreferences: "Failed to save your preferences",
       deleteAssistant: "Failed to delete the assistant",
       fetchCaseBase: "Failed to load the case base",
-      fetchCaseBaseSchema: "Failed to load the similarity configuration schema",
-      saveCaseBase: "Failed to save the similarity configuration",
       queryCaseBase: "Failed to rank the cases",
-      refineCaseBase: "Failed to refine the similarity configuration",
-      resetCaseBase: "Failed to reset the similarity configuration",
     },
   },
 } as const;

@@ -37,39 +37,28 @@ export const documents = {
     summary_other: "{{count}} Fälle, verglichen als {{kind}}",
     records: "Datensätze",
     graphs: "Graphen",
-    readOnly: "Du kannst diese Konfiguration lesen, aber nicht ändern",
-    inferred:
-      "Aus den Daten abgeleitet und nicht gespeichert, speichere sie, um sie so zu behalten.",
-    merged: "Die Daten haben neue Elemente, deren Maße abgeleitet und noch nicht gespeichert sind.",
-    reset: "Auf abgeleitet zurücksetzen",
-    resetHint:
-      "Löscht die gespeicherte Konfiguration, sodass sie wieder aus den Daten abgeleitet wird. Deine Entscheidungen und die der KI gehen verloren.",
+    inferred: "Bei jedem Lesen der Fallbasis aus den Daten abgeleitet, sie wird nicht gespeichert.",
+    off: "Aus",
     decisions: "Maße",
     decisionsHint:
-      "Jede Zeile ist eine Entscheidung der Konfiguration, mit Angabe, wer sie getroffen hat und warum.",
+      "Jede Zeile ist eine aus den Daten abgeleitete Entscheidung der Konfiguration, mit ihrer Begründung.",
     element: "Element",
     measure: "Maß",
     weight: "Gewicht",
     whole: "Ganzer Fall",
-    source: {
-      heuristic: "Abgeleitet",
-      llm: "KI",
-      user: "Du",
-    },
     absent: "Fehlt in den Daten",
-    keyColumn: {
-      title: "Schlüssel",
-      hint: "Welche Spalte einen Fall bezeichnet, von dir gewählt und nie erkannt.",
-      label: "Schlüsselspalte",
-      position: "Zeilenposition",
-      description:
-        "Die Fälle werden nach dieser Spalte geschlüsselt, neue Fälle erhalten also den nächsten Schlüssel darin. Ihre Werte müssen vorhanden und eindeutig sein.",
-    },
-    enabled: "Aktiviert",
     sections: {
       retrieve: {
         title: "Abruf",
         hint: "Wie viele Fälle eine Anfrage liefert und wie ähnlich sie sein müssen.",
+      },
+      reuse: {
+        title: "Wiederverwendung",
+        hint: "Wie abgerufene Fälle zu Lösungen der Anfrage angepasst werden.",
+      },
+      revise: {
+        title: "Überprüfung",
+        hint: "Wie Lösungen repariert und bewertet werden, bevor sie angenommen werden.",
       },
       retain: {
         title: "Speichern",
@@ -80,13 +69,6 @@ export const documents = {
         hint: "Ob und wie der Assistent Duplikate zusammenführen und Fälle entfernen darf, die die Fallbasis nicht braucht.",
       },
     },
-    save: "Speichern",
-    discard: "Änderungen verwerfen",
-    refine: "Mit KI verfeinern",
-    refineHint:
-      "Die KI sieht Statistiken und einige Werte jedes Attributs und ändert nur, was keine Person entschieden hat.",
-    domain: "Wofür die Fallbasis dient (optional)",
-    rejected: "Nicht übernommene Vorschläge",
     test: "Testanfrage",
     testHint:
       "Ordne die Fälle nach einem Beispiel, um zu sehen, wie sich die Konfiguration verhält.",
@@ -134,7 +116,6 @@ export const documents = {
     delete: "Löschen",
   },
   tree: {
-    caseBase: "Fallbasis mit gespeicherter Ähnlichkeitskonfiguration",
     expand: "Aufklappen",
     collapse: "Zuklappen",
     expandAll: "Alle aufklappen",

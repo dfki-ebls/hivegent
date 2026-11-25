@@ -95,8 +95,6 @@ export interface DirectoryEntry {
   has_original?: boolean;
   original_path?: string | null;
   assets_dir?: string | null;
-  /** Whether it is a case base with a saved similarity configuration. */
-  case_base?: boolean;
   /** Whether it may be a case base by cbrkit's rule, which offers its similarity. */
   case_base_candidate?: boolean;
   children?: DirectoryEntry[] | null;
@@ -112,7 +110,6 @@ const DirectoryEntrySchema: z.ZodType<DirectoryEntry> = z.object({
   has_original: z.boolean().optional(),
   original_path: z.string().nullable().optional(),
   assets_dir: z.string().nullable().optional(),
-  case_base: z.boolean().optional(),
   case_base_candidate: z.boolean().optional(),
   children: z
     .lazy(() => z.array(DirectoryEntrySchema))

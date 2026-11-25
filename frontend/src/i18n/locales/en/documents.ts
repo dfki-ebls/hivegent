@@ -35,37 +35,27 @@ export const documents = {
     summary_other: "{{count}} cases, compared as {{kind}}",
     records: "records",
     graphs: "graphs",
-    readOnly: "You can read but not change this configuration",
-    inferred: "Inferred from the data and not saved, save it to keep it as it is.",
-    merged: "The data gained elements whose measures are inferred and not saved yet.",
-    reset: "Reset to inferred",
-    resetHint:
-      "Deletes the saved configuration, so it is inferred from the data again. Your decisions and those of the AI are lost.",
+    inferred: "Inferred from the data whenever the case base is read, it is not saved.",
+    off: "Off",
     decisions: "Measures",
-    decisionsHint: "Each row is one decision of the configuration, with who took it and why.",
+    decisionsHint: "Each row is one decision of the configuration inferred from the data, with its reason.",
     element: "Element",
     measure: "Measure",
     weight: "Weight",
     whole: "Whole case",
-    source: {
-      heuristic: "Inferred",
-      llm: "AI",
-      user: "You",
-    },
     absent: "Absent from the data",
-    keyColumn: {
-      title: "Key",
-      hint: "Which column identifies a case, chosen by you and never detected.",
-      label: "Key column",
-      position: "Row position",
-      description:
-        "Cases are keyed by this column, so new cases get the next key in it. Its values must be present and unique.",
-    },
-    enabled: "Enabled",
     sections: {
       retrieve: {
-        title: "Retrieval",
+        title: "Retrieve",
         hint: "How many cases a query returns and how similar they must be.",
+      },
+      reuse: {
+        title: "Reuse",
+        hint: "How retrieved cases are adapted into solutions of the query.",
+      },
+      revise: {
+        title: "Revise",
+        hint: "How solutions are repaired and assessed before they are accepted.",
       },
       retain: {
         title: "Retain",
@@ -76,13 +66,6 @@ export const documents = {
         hint: "Whether and how the assistant may merge duplicates and remove cases the case base does not need.",
       },
     },
-    save: "Save",
-    discard: "Discard changes",
-    refine: "Refine with AI",
-    refineHint:
-      "The AI sees statistics and a few values of each attribute and only changes what no person decided.",
-    domain: "What the case base is for (optional)",
-    rejected: "Proposals not applied",
     test: "Test query",
     testHint: "Rank the cases by an example to see how the configuration behaves.",
     caseKey: "Key of a case to compare with",
@@ -129,7 +112,6 @@ export const documents = {
     delete: "Delete",
   },
   tree: {
-    caseBase: "Case base with a saved similarity configuration",
     expand: "Expand",
     collapse: "Collapse",
     expandAll: "Expand all",

@@ -25,4 +25,28 @@ describe("SchemaForm", () => {
     fireEvent.change(screen.getByLabelText("Pages"), { target: { value: '[{"path": "a"}]' } });
     expect(onChange).toHaveBeenLastCalledWith({ pages: [{ path: "a" }] });
   });
+
+  it("maps an emptied optional control to null and offers none for an optional enum", () => {
+    const onChange = vi.fn<(values: Record<string, unknown>) => void>();
+    render(
+      <SchemaForm
+        schema={{
+          properties: {
+            limit: { title: "Max Limit", anyOf: [{ type: "integer" }, { type: "null" }] },
+            kind: {
+              anyOf: [{ type: "string", enum: ["a_b"] }, { type: "null" }],
+            },
+            extra: { anyOf: [{}, { type: "null" }], default: null },
+          },
+        }}
+        values={{ limit: 3, kind: null, extra: null }}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Max limit"), { target: { value: "" } });
+    expect(onChange).toHaveBeenLastCalledWith({ limit: null, kind: null, extra: null });
+    expect((screen.getByLabelText("Extra") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.queryByDisplayValue("null")).toBeNull();
+  });
 });

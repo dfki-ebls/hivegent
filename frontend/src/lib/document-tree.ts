@@ -38,9 +38,8 @@ interface EntryBase extends NodeBase {
   writable: boolean;
 }
 
-/** A file or folder, marked when it may be a case base and when it has a saved similarity configuration. */
+/** A file or folder, marked when it may be a case base. */
 interface PathBase extends EntryBase {
-  caseBase: boolean;
   caseBaseCandidate: boolean;
 }
 
@@ -93,7 +92,6 @@ export function buildTreeIndex(
         name: child.name,
         scope,
         writable,
-        caseBase: child.case_base ?? false,
         caseBaseCandidate: child.case_base_candidate ?? false,
       };
 

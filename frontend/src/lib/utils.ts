@@ -12,6 +12,19 @@ export function fileStem(name: string): string {
   return dot > 0 ? name.slice(0, dot) : name;
 }
 
+/** An identifier such as `title_status` or `maxLimit` as a sentence-case label, acronyms kept. */
+export function humanize(identifier: string): string {
+  const words = identifier
+    .replaceAll(/[_-]+/g, " ")
+    .replaceAll(/([a-z\d])([A-Z])/g, "$1 $2")
+    .trim()
+    .split(/\s+/)
+    .map((word) => (word.length > 1 && word === word.toUpperCase() ? word : word.toLowerCase()));
+  const text = words.join(" ");
+
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** Last segment of a path (the file or directory name). */
 export function basename(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);

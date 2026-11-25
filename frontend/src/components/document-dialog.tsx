@@ -58,7 +58,7 @@ export function DocumentDialog({ open, onOpenChange, ...props }: DocumentDialogP
   // target) starts from fresh state instead of resetting it in an effect.
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <ScrollDialogContent className="h-[90dvh] gap-0 overflow-hidden p-0 sm:max-w-5xl">
+      <ScrollDialogContent className="h-[90dvh] gap-0 overflow-hidden p-0 sm:max-w-[min(96rem,calc(100%-4rem))]">
         <DocumentDialogBody
           key={props.chunk?.id ?? props.filename}
           onOpenChange={onOpenChange}
@@ -146,8 +146,10 @@ function DocumentDialogBody({
       : null;
   const mediaEntry = isManagedMode && preview?.kind === "media" ? preview : null;
   const hasAssets = contentModel.assetsDir != null;
+  // The similarity of a case base is about the whole of it, so it takes the sidebar's width too.
+  const showsSimilarity = tab === "similarity" && caseBasePath != null && !activeAsset;
   const hasSidebar =
-    !(isNew || loading || mediaEntry) &&
+    !(isNew || loading || mediaEntry || showsSimilarity) &&
     (!isManagedMode || contentModel.chunks.length > 0 || hasAssets || contentModel.error != null);
 
   // Switch the main pane, leaving any asset description edit behind.

@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { OptionSelect } from "@/components/option-select";
+import { cn, humanize } from "@/lib/utils";
 
 /** A single property definition from a JSON Schema. */
 interface SchemaProperty {
@@ -35,8 +36,11 @@ interface SchemaProperty {
   exclusiveMinimum?: number;
   exclusiveMaximum?: number;
   items?: SchemaProperty;
+  properties?: Record<string, SchemaProperty>;
   anyOf?: SchemaProperty[];
   $ref?: string;
+  /** Set by `normalize` for a property that may be null, where an empty control means null. */
+  nullable?: boolean;
 }
 
 /** Top-level JSON Schema structure. */
@@ -59,6 +63,12 @@ export function isJsonSchema(value: unknown): value is JsonSchema {
 
 interface SchemaFormProps {
   schema: JsonSchema;
+  /**
+   * A form of a record of data, such as a query: enum options are data values kept as they are,
+   * a property of no type is text, a number where it reads as one, and descriptions are left out.
+   */
+  data?: boolean;
+  className?: string;
   values: Record<string, unknown>;
   onChange: (values: Record<string, unknown>) => void;
 }
@@ -80,16 +90,29 @@ function normalize(
 ): SchemaProperty {
   const ref = resolveRef(prop, defs);
   const resolved = ref.items ? { ...ref, items: resolveRef(ref.items, defs) } : ref;
+  const nullable = resolved.anyOf?.some((branch) => branch.type === "null") ?? false;
   const branches = resolved.anyOf?.filter((branch) => branch.type !== "null") ?? [];
   const [only] = branches;
 
-  if (branches.length !== 1 || !only) return resolved;
+  if (branches.length !== 1 || !only) return { ...resolved, nullable };
 
-  return { ...resolveRef(only, defs), ...resolved, anyOf: undefined };
+  return { ...resolveRef(only, defs), ...resolved, anyOf: undefined, nullable };
 }
 
 const scalarText = (value: unknown) =>
   typeof value === "string" || typeof value === "number" ? String(value) : "";
+
+/** The option standing for null in an enum select, which no enum value equals. */
+const NONE = "\0none";
+
+/** *text* as a number where it reads as one, else as it is, null where empty. */
+function parseUntyped(text: string): string | number | null {
+  const trimmed = text.trim();
+
+  if (trimmed === "") return null;
+
+  return Number.isFinite(Number(trimmed)) ? Number(trimmed) : text;
+}
 
 /** A JSON editor for a value no other control fits, passing on text that does not parse yet. */
 function JsonControl({
@@ -101,7 +124,9 @@ function JsonControl({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
-  const [text, setText] = useState(() => (value === undefined ? "" : JSON.stringify(value)));
+  const [text, setText] = useState(() =>
+    value === undefined || value === null ? "" : JSON.stringify(value),
+  );
 
   return (
     <Textarea
@@ -110,6 +135,12 @@ function JsonControl({
       value={text}
       onChange={(e) => {
         setText(e.target.value);
+
+        if (e.target.value.trim() === "") {
+          onChange(null);
+
+          return;
+        }
 
         try {
           onChange(JSON.parse(e.target.value));
@@ -128,14 +159,25 @@ function scalarControl(
   value: unknown,
   onChange: (value: unknown) => void,
   t: TFunction,
+  { data }: Pick<SchemaFormProps, "data">,
 ): ReactNode {
   if (prop.type === "string" && prop.enum) {
+    const options = prop.enum.map((option) => ({
+      value: option,
+      label: data ? option : humanize(option),
+    }));
+    const chosen = scalarText(value === undefined ? prop.default : value);
+
     return (
       <OptionSelect
         id={id}
-        value={scalarText(value ?? prop.default)}
-        options={prop.enum.map((option) => ({ value: option, label: option }))}
-        onChange={onChange}
+        value={prop.nullable ? chosen || NONE : chosen || null}
+        options={
+          prop.nullable
+            ? [{ value: NONE, label: t(($) => $.app.schemaForm.none) }, ...options]
+            : options
+        }
+        onChange={(next) => onChange(next === NONE ? null : next)}
       />
     );
   }
@@ -146,25 +188,43 @@ function scalarControl(
         id={id}
         type="number"
         value={scalarText(value)}
+        placeholder={scalarText(prop.default)}
         min={prop.minimum ?? prop.exclusiveMinimum}
         max={prop.maximum ?? prop.exclusiveMaximum}
         step={prop.type === "integer" ? 1 : undefined}
         onChange={(e) => {
           const v = e.target.value;
-          onChange(
-            v === ""
-              ? (prop.default ?? 0)
-              : prop.type === "integer"
-                ? parseInt(v, 10)
-                : parseFloat(v),
-          );
+
+          if (v === "") {
+            onChange(prop.nullable ? null : (prop.default ?? null));
+
+            return;
+          }
+
+          onChange(prop.type === "integer" ? parseInt(v, 10) : parseFloat(v));
         }}
       />
     );
   }
 
   if (prop.type === "string") {
-    return <Input id={id} value={scalarText(value)} onChange={(e) => onChange(e.target.value)} />;
+    return (
+      <Input
+        id={id}
+        value={scalarText(value)}
+        onChange={(e) => onChange(e.target.value === "" && prop.nullable ? null : e.target.value)}
+      />
+    );
+  }
+
+  if (data && !prop.type && !prop.anyOf && !prop.$ref && !prop.properties) {
+    return (
+      <Input
+        id={id}
+        value={scalarText(value)}
+        onChange={(e) => onChange(parseUntyped(e.target.value))}
+      />
+    );
   }
 
   // Array of strings, edited as comma-separated values.
@@ -174,14 +234,14 @@ function scalarControl(
         id={id}
         value={Array.isArray(value) ? value.join(", ") : ""}
         placeholder={t(($) => $.app.schemaForm.commaSeparated)}
-        onChange={(e) =>
-          onChange(
-            e.target.value
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
-          )
-        }
+        onChange={(e) => {
+          const items = e.target.value
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+          onChange(items.length === 0 && prop.nullable ? null : items);
+        }}
       />
     );
   }
@@ -195,7 +255,8 @@ function PropertyField({
   prop,
   value,
   onChange,
-}: {
+  data,
+}: Pick<SchemaFormProps, "data"> & {
   name: string;
   prop: SchemaProperty;
   value: unknown;
@@ -203,8 +264,12 @@ function PropertyField({
 }) {
   const { t } = useTranslation();
   const id = useId();
-  const label = <FieldLabel htmlFor={id}>{prop.title || name}</FieldLabel>;
-  const description = prop.description && <FieldDescription>{prop.description}</FieldDescription>;
+  const shown = value === undefined ? prop.default : value;
+  const label = <FieldLabel htmlFor={id}>{humanize(prop.title || name)}</FieldLabel>;
+  // Docstrings may carry a long URL, which would otherwise overflow a narrow column.
+  const description = !data && prop.description && (
+    <FieldDescription className="wrap-anywhere">{prop.description}</FieldDescription>
+  );
 
   if (prop.type === "boolean") {
     return (
@@ -213,13 +278,13 @@ function PropertyField({
           {label}
           {description}
         </FieldContent>
-        <Switch id={id} size="sm" checked={value === true} onCheckedChange={onChange} />
+        <Switch id={id} size="sm" checked={shown === true} onCheckedChange={onChange} />
       </Field>
     );
   }
 
-  const control = scalarControl(id, prop, value, onChange, t) ?? (
-    <JsonControl id={id} value={value ?? prop.default} onChange={onChange} />
+  const control = scalarControl(id, prop, shown, onChange, t, { data }) ?? (
+    <JsonControl id={id} value={shown} onChange={onChange} />
   );
 
   return (
@@ -232,7 +297,7 @@ function PropertyField({
 }
 
 /** Main component: renders a JSON Schema as a form. */
-export function SchemaForm({ schema, values, onChange }: SchemaFormProps) {
+export function SchemaForm({ schema, values, onChange, className, data }: SchemaFormProps) {
   const { t } = useTranslation();
   const { properties, $defs: defs } = schema;
 
@@ -241,7 +306,7 @@ export function SchemaForm({ schema, values, onChange }: SchemaFormProps) {
   }
 
   return (
-    <FieldGroup className="gap-4">
+    <FieldGroup className={cn("gap-4", className)}>
       {Object.entries(properties).map(([key, prop]) => (
         <PropertyField
           key={key}
@@ -249,6 +314,7 @@ export function SchemaForm({ schema, values, onChange }: SchemaFormProps) {
           prop={normalize(prop, defs)}
           value={values[key]}
           onChange={(v) => onChange({ ...values, [key]: v })}
+          data={data}
         />
       ))}
     </FieldGroup>
