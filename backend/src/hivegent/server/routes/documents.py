@@ -13,50 +13,49 @@ import asyncio
 import logging
 import shutil
 import tempfile
-from collections.abc import Awaitable, Callable, Iterable
-from datetime import datetime
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Annotated
 from uuid import UUID
 
+from exar.memory.mounts import strip
+from exar.text import plural
 from fastapi import APIRouter, Form, Header, HTTPException, UploadFile, status
+from pydantic import AwareDatetime
 from starlette.responses import Response
 
 from ... import workspace
 from ...auth import CurrentUser
-from ...changes import WorkspaceChanged, Write
-from ...chunkers.base import DocumentMetadata
 from ...config import settings
 from ...db.conversations import OwnedConversation, owned_conversation
 from ...db.documents import get_document, get_line_counts
-from ...entries import entry_exists
-from ...humanize import format_bytes, pluralize
 from ...jobs import JobContext, JobView, JobWork, manager
-from ...l10n import Localized
-from ...llm_config import LlmConfig
-from ...store import Casebase, User
-from ...tmp import TMP_SCOPE, tmp_search_path
+from ...shared.l10n import Localized, format_bytes
+from ...skills import SKILLS_PREFIX, skill_search_paths
+from ...store import User, Workspace
+from ...tmp import TMP_PREFIX, tmp_dir, tmp_root
 from ...tools.base import resolve_accessible_file
+from ...tools.changes import WorkspaceChanged, Write
+from ...tools.entries import entry_exists, is_case_base_file
 from ...types import (
     AssetEntry,
     AssetListResponse,
     CollectionCompleteEvent,
     CollectionProgressEvent,
     DirectoryTreeResponse,
+    DocumentChunksResponse,
     DocumentLineCountsResponse,
     GenerateAssetDescriptionRequest,
     ProgressReporter,
     UpdateAssetDescriptionRequest,
     WriteDocumentRequest,
 )
-from ...workspace.operations import Location
+from ...workspace.operations import Location, Root
 from ...workspace.paths import already_exists, document_not_found, file_too_large
-from ...workspace_events import announce_workspace_changed
 from ..common import (
-    ClientId,
-    parse_pipeline_spec,
-    prepare_llm_config,
+    resolve_workspace,
     resolve_workspace_path,
 )
 from ..models import (
@@ -80,7 +79,9 @@ from ..operations import (
     run_bulk_document_job,
     spool_dir,
     summarize_failed_files,
+    upload_body_limit,
 )
+from ..rate_limit import GENERATION_LIMIT, UPLOAD_LIMIT
 
 __all__ = ["router"]
 
@@ -100,8 +101,8 @@ def _collection_too_large(limit: int) -> Localized[str]:
 
 def _documents(count: int) -> Localized[str]:
     return Localized(
-        en=f"{count} {pluralize(count, 'document')}",
-        de=f"{count} {pluralize(count, 'Dokument', 'Dokumente')}",
+        en=f"{count} {plural(count, 'document')}",
+        de=f"{count} {plural(count, 'Dokument', 'Dokumente')}",
     )
 
 
@@ -126,13 +127,15 @@ _RECONVERTED = Localized(en="Reconverted", de="Neu konvertiert")
 
 def _not_imported(count: int, summary: str) -> Localized[str]:
     return Localized(
-        en=f"{count} {pluralize(count, 'file')} not imported. {summary}",
-        de=(
-            f"{count} {pluralize(count, 'Datei', 'Dateien')} nicht importiert. {summary}"
-        ),
+        en=f"{count} {plural(count, 'file')} not imported. {summary}",
+        de=(f"{count} {plural(count, 'Datei', 'Dateien')} nicht importiert. {summary}"),
     )
 
 
+_TOO_MANY_JOBS = Localized(
+    en="Too many of your uploads are still waiting or running. Try again once some have finished.",
+    de="Zu viele deiner Uploads warten noch oder laufen. Versuche es erneut, sobald einige fertig sind.",
+)
 _NO_CHUNKS = Localized(
     en="No chunks found for this document",
     de="Für dieses Dokument wurden keine Chunks gefunden",
@@ -140,21 +143,34 @@ _NO_CHUNKS = Localized(
 _STAGE_CHUNKING = Localized(en="Chunking document", de="Dokument wird gechunkt")
 
 
-async def _spool_payload(
-    file: UploadFile, *, limit: int, too_large: Callable[[int], Localized[str]]
-) -> Path:
+@asynccontextmanager
+async def _spooled(
+    file: UploadFile,
+    user: User,
+    *,
+    limit: int,
+    too_large: Callable[[int], Localized[str]],
+) -> AsyncGenerator[Path]:
     """Persist an upload to a temp file so a queued job needn't pin it in RAM.
 
     Starlette has already spooled the upload to ``file.file`` (rolling it to
     disk past its in-memory threshold); this copies it to a file we own so it
     survives past the request, which closes Starlette's temp file.  The job
     reads it back when it runs and its ``on_settled`` finalizer unlinks it, so a
-    job waiting behind the concurrency limit holds only a path — not the whole
-    payload — which bounds memory when many uploads are enqueued.  Spool files
-    live in a managed directory swept at startup (:func:`cleanup_spool_dir`), so
-    a restart that cuts a job short cannot leak them.
+    job waiting behind the concurrency limit holds only a path (not the whole
+    payload), which bounds memory when many uploads are enqueued.  Spool files
+    live in the transient folder emptied at boot (:func:`~hivegent.files.reset_transient`), so
+    a restart that cuts a job short cannot leak them.  The user's unfinished
+    jobs bound how many and how large these may be
+    (:meth:`~hivegent.jobs.JobManager.reserve`), the room held from before the
+    copy until the block ends, in which the caller submits its job, so
+    parallel uploads cannot all pass the bound.  The file is removed when the
+    block raises.
     """
     enforce_upload_size(file, limit=limit, too_large=too_large)
+
+    if (reservation := manager.reserve(user.id, file.size or 0)) is None:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, _TOO_MANY_JOBS.current)
 
     def _write() -> Path:
         file.file.seek(0)
@@ -169,16 +185,20 @@ async def _spool_payload(
 
         return Path(tmp.name)
 
-    return await asyncio.to_thread(_write)
+    try:
+        spool = await asyncio.to_thread(_write)
+
+        try:
+            yield spool
+        except BaseException:
+            spool.unlink(missing_ok=True)
+            raise
+    finally:
+        manager.release(reservation)
 
 
 class DocumentJobKind(StrEnum):
-    """Kinds of document background jobs — the closed set the routes submit.
-
-    Every value is prefixed ``document.``: the client keys its scope refresh on
-    that prefix, so this enum is the single source of truth for the contract and
-    keeps the ``kind`` strings out of the route bodies.
-    """
+    """Kinds of document background jobs, which keeps the ``kind`` strings out of the route bodies."""
 
     UPLOAD = "document.upload"
     REPLACE_ORIGINAL = "document.replace_original"
@@ -190,24 +210,20 @@ class DocumentJobKind(StrEnum):
 def _submit_document_job(
     *,
     user: User,
-    store: Casebase,
     safe: str,
     kind: DocumentJobKind,
     work: JobWork,
     on_settled: Callable[[], None] | None = None,
+    spooled: int = 0,
 ) -> JobView:
-    """Submit a single-document job, deriving the standard title/owner/scope.
-
-    The title is the document's filename and the scope its workspace, so the
-    client attributes the job and refreshes the right view when it settles.
-    """
+    """Submit a single-document job, titled by the document's filename."""
     return manager.submit(
         kind=kind,
         title=PurePosixPath(safe).name,
         owner=user.id,
-        scope=store.scope.prefix,
         work=work,
         on_settled=on_settled,
+        spooled=spooled,
     )
 
 
@@ -223,16 +239,13 @@ def _submit_bulk_job(
     """Submit a per-file mutation over documents as a single background job.
 
     A lone file runs as a plain single-document job that fails with its own
-    error. A batch takes its scope from the first entry, since a selection
-    always comes from one scope's view, and resolving it doubles as an early
-    access check.
+    error.  Resolving the first entry doubles as an early access check.
     """
-    store, safe = resolve_workspace_path(user, files[0], write=True)
+    _, safe = resolve_workspace_path(user, files[0], write=True)
 
     if len(files) == 1:
         return _submit_document_job(
             user=user,
-            store=store,
             safe=safe,
             kind=kind,
             work=lambda ctx: process_one(files[0], ctx),
@@ -245,7 +258,6 @@ def _submit_bulk_job(
         kind=kind,
         title=title(len(files)).current,
         owner=user.id,
-        scope=store.scope.prefix,
         work=work,
     )
 
@@ -261,14 +273,16 @@ async def download_original(
     return attachment_response(original)
 
 
-@router.put("/documents/original/{filepath:path}")
+@router.put(
+    "/documents/original/{filepath:path}",
+    dependencies=[UPLOAD_LIMIT],
+    max_body_size=upload_body_limit(settings.limits.max_file_size_bytes),
+)
 async def replace_original(
     filepath: str,
     file: UploadFile,
     user: CurrentUser,
-    pipeline_spec: Annotated[str, Form()] = "{}",
-    llm_config: Annotated[str, Form()] = "{}",
-    modified_at: Annotated[datetime | None, Form()] = None,
+    modified_at: Annotated[AwareDatetime | None, Form()] = None,
 ) -> JobView:
     """Replace the original binary file and reconvert the document as a job.
 
@@ -276,44 +290,42 @@ async def replace_original(
     the request, observable and cancellable through the ``/jobs`` endpoints.
     """
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    spec = parse_pipeline_spec(pipeline_spec)
-    llm = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     new_filename = file.filename
-    spool = await _spool_payload(
-        file, limit=settings.limits.max_file_size_bytes, too_large=file_too_large
-    )
+    async with _spooled(
+        file, user, limit=settings.limits.max_file_size_bytes, too_large=file_too_large
+    ) as spool:
 
-    async def work(ctx: JobContext) -> None:
-        content = await asyncio.to_thread(spool.read_bytes)
-        await workspace.replace_original(
-            store,
-            safe,
-            content,
-            new_filename=new_filename,
-            modified_at=modified_at,
-            spec=spec,
-            llm=llm,
-            ctx=ctx,
+        async def work(ctx: JobContext) -> None:
+            content = await asyncio.to_thread(spool.read_bytes)
+            await workspace.replace_original(
+                store,
+                safe,
+                content,
+                new_filename=new_filename,
+                modified_at=modified_at,
+                ctx=ctx,
+            )
+
+        return _submit_document_job(
+            user=user,
+            safe=safe,
+            kind=DocumentJobKind.REPLACE_ORIGINAL,
+            work=work,
+            on_settled=lambda: spool.unlink(missing_ok=True),
+            spooled=file.size or 0,
         )
 
-    return _submit_document_job(
-        user=user,
-        store=store,
-        safe=safe,
-        kind=DocumentJobKind.REPLACE_ORIGINAL,
-        work=work,
-        on_settled=lambda: spool.unlink(missing_ok=True),
-    )
 
-
-@router.put("/documents/{filepath:path}")
+@router.put(
+    "/documents/{filepath:path}",
+    dependencies=[UPLOAD_LIMIT],
+    max_body_size=upload_body_limit(settings.limits.max_file_size_bytes),
+)
 async def upload_document(
     filepath: str,
     file: UploadFile,
     user: CurrentUser,
-    pipeline_spec: Annotated[str, Form()] = "{}",
-    llm_config: Annotated[str, Form()] = "{}",
-    modified_at: Annotated[datetime | None, Form()] = None,
+    modified_at: Annotated[AwareDatetime | None, Form()] = None,
     if_none_match: Annotated[
         str | None,
         Header(description="`*` creates the document only, refused while one exists"),
@@ -336,127 +348,118 @@ async def upload_document(
             status.HTTP_412_PRECONDITION_FAILED, already_exists(filepath).current
         )
 
-    spec = parse_pipeline_spec(pipeline_spec)
-    llm = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
-    spool = await _spool_payload(
-        file, limit=settings.limits.max_file_size_bytes, too_large=file_too_large
-    )
+    async with _spooled(
+        file, user, limit=settings.limits.max_file_size_bytes, too_large=file_too_large
+    ) as spool:
 
-    async def work(ctx: JobContext) -> None:
-        content = await asyncio.to_thread(spool.read_bytes)
-        await workspace.upload(
-            store,
-            safe,
-            content,
-            modified_at=modified_at,
-            spec=spec,
-            llm=llm,
-            overwrite=not create_only,
-            ctx=ctx,
+        async def work(ctx: JobContext) -> None:
+            content = await asyncio.to_thread(spool.read_bytes)
+            await workspace.upload(
+                store,
+                safe,
+                content,
+                modified_at=modified_at,
+                overwrite=not create_only,
+                ctx=ctx,
+            )
+
+        return _submit_document_job(
+            user=user,
+            safe=safe,
+            kind=DocumentJobKind.UPLOAD,
+            work=work,
+            on_settled=lambda: spool.unlink(missing_ok=True),
+            spooled=file.size or 0,
         )
 
-    return _submit_document_job(
-        user=user,
-        store=store,
-        safe=safe,
-        kind=DocumentJobKind.UPLOAD,
-        work=work,
-        on_settled=lambda: spool.unlink(missing_ok=True),
-    )
 
-
-@router.post("/documents/collections/{target:path}")
+@router.post(
+    "/documents/collections/{target:path}",
+    dependencies=[UPLOAD_LIMIT],
+    max_body_size=upload_body_limit(settings.limits.max_collection_size_bytes),
+)
 async def upload_collection(
     target: str,
     file: UploadFile,
     user: CurrentUser,
-    pipeline_spec: Annotated[str, Form()] = "{}",
-    llm_config: Annotated[str, Form()] = "{}",
 ) -> JobView:
     """Accept a ZIP collection and process it as a background job.
 
     Each file flows through its own upload, so the job reports per-file
     progress and the workspace stays usable while a large archive processes.
-    ``target`` is a canonical directory — a scope root (``~``, ``@<group>``) or a
-    subdir under it — so a drop can target a folder, not just the workspace root;
+    ``target`` is a canonical directory: a scope root (``~``, ``@<group>``) or a
+    subdir under it, so a drop can target a folder, not just the workspace root;
     it resolves to the store and destination subdir like every other item route.
     """
-    spec = parse_pipeline_spec(pipeline_spec)
-    resolved = prepare_llm_config(LlmConfig.model_validate_json(llm_config))
     store, dest = resolve_workspace_path(user, target, write=True)
-    spool = await _spool_payload(
+    async with _spooled(
         file,
+        user,
         limit=settings.limits.max_collection_size_bytes,
         too_large=_collection_too_large,
-    )
-    # Enforce every collection limit here, before the job is queued, so a
-    # too-large, too-many-files, or malformed archive is rejected synchronously
-    # with a clear reason instead of failing the job much later.
-    try:
+    ) as spool:
+        # Enforce every collection limit here, before the job is queued, so a
+        # too-large, too-many-files, or malformed archive is rejected synchronously
+        # with a clear reason instead of failing the job much later.
         await asyncio.to_thread(workspace.validate_collection_archive, spool)
-    except BaseException:
-        spool.unlink(missing_ok=True)
-        raise
 
-    async def work(ctx: JobContext) -> None:
-        # The ZIP is read straight from the spool file, so a large archive is
-        # never loaded into memory whole.
-        async for event in workspace.process_collection(
-            store, spool, spec, resolved, dest_dir=dest
-        ):
-            if isinstance(event, CollectionProgressEvent):
-                ctx.set_progress(event.current, event.total)
-            elif isinstance(event, CollectionCompleteEvent):
-                ctx.set_stage(event.message)
-                # The complete event is terminal, so this ends the loop.  A
-                # per-file failure is not fatal to the batch, but the job must
-                # not settle as a clean success: fail it with the per-reason
-                # breakdown so the tray shows why, while succeeded files stay
-                # committed.
-                if event.failed_files:
-                    raise RuntimeError(
-                        _not_imported(
-                            len(event.failed_files),
-                            summarize_failed_files(event.failed_files),
-                        ).current
-                    )
+        async def work(ctx: JobContext) -> None:
+            # The ZIP is read straight from the spool file, so a large archive is
+            # never loaded into memory whole.
+            async for event in workspace.process_collection(
+                store, spool, dest_dir=dest
+            ):
+                if isinstance(event, CollectionProgressEvent):
+                    ctx.set_progress(event.current, event.total)
+                elif isinstance(event, CollectionCompleteEvent):
+                    ctx.set_stage(event.message)
+                    # The complete event is terminal, so this ends the loop.  A
+                    # per-file failure is not fatal to the batch, but the job must
+                    # not settle as a clean success: fail it with the per-reason
+                    # breakdown so the tray shows why, while succeeded files stay
+                    # committed.
+                    if event.failed_files:
+                        raise RuntimeError(
+                            _not_imported(
+                                len(event.failed_files),
+                                summarize_failed_files(event.failed_files),
+                            ).current
+                        )
 
-    return manager.submit(
-        kind=DocumentJobKind.COLLECTION,
-        title=file.filename or "collection.zip",
-        owner=user.id,
-        scope=store.scope.prefix,
-        work=work,
-        on_settled=lambda: spool.unlink(missing_ok=True),
-    )
+        return manager.submit(
+            kind=DocumentJobKind.COLLECTION,
+            title=file.filename or "collection.zip",
+            owner=user.id,
+            work=work,
+            on_settled=lambda: spool.unlink(missing_ok=True),
+            spooled=file.size or 0,
+        )
 
 
-@router.delete("/documents/{scope}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/workspaces/{scope:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[UPLOAD_LIMIT],
+)
 async def delete_all_documents(
     scope: str,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> None:
     """Delete all documents, chunks, and originals in a workspace."""
-    store, _ = resolve_workspace_path(user, scope, write=True)
-    await workspace.delete_all(store)
-    announce_workspace_changed(
-        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=client
-    )
+    await workspace.delete_all(resolve_workspace(user, scope, write=True))
 
 
-@router.post("/documents/rechunk")
+@router.post("/documents/rechunk", dependencies=[UPLOAD_LIMIT])
 async def rechunk_documents(
     request: RechunkRequest,
     user: CurrentUser,
 ) -> JobView:
-    """Rechunk documents with new settings as a single background job."""
-    spec = request.pipeline
+    """Rechunk documents with the operator's pipeline as a single background job."""
 
     async def _rechunk_one(filepath: str, ctx: ProgressReporter) -> None:
         store, safe = resolve_workspace_path(user, filepath, write=True)
         ctx.set_stage(_STAGE_CHUNKING.current)
-        await workspace.rechunk(store, safe, spec=spec)
+        await workspace.rechunk(store, safe)
 
     return _submit_bulk_job(
         user=user,
@@ -468,18 +471,16 @@ async def rechunk_documents(
     )
 
 
-@router.post("/documents/reconvert")
+@router.post("/documents/reconvert", dependencies=[UPLOAD_LIMIT])
 async def reconvert_documents(
     request: ReconvertRequest,
     user: CurrentUser,
 ) -> JobView:
-    """Reconvert documents from their originals as a single background job."""
-    spec = request.pipeline
-    resolved = prepare_llm_config(request.llm)
+    """Reconvert documents from their originals with the operator's pipelines as a single background job."""
 
     async def _reconvert_one(filepath: str, ctx: ProgressReporter) -> None:
         store, safe = resolve_workspace_path(user, filepath, write=True)
-        await workspace.reconvert(store, safe, spec=spec, llm=resolved, ctx=ctx)
+        await workspace.reconvert(store, safe, ctx=ctx)
 
     return _submit_bulk_job(
         user=user,
@@ -502,7 +503,7 @@ async def get_document_line_counts(
     caller cannot reach), grouped per store, and looked up in one query each.
     Unknown or not-yet-indexed paths are simply omitted from the response.
     """
-    grouped: dict[Casebase, dict[str, str]] = {}
+    grouped: dict[Workspace, dict[str, str]] = {}
     for original in request.files:
         try:
             store, safe = resolve_workspace_path(user, original)
@@ -512,11 +513,17 @@ async def get_document_line_counts(
             continue
         grouped.setdefault(store, {})[safe] = original
 
-    line_counts: dict[str, int] = {}
-    for store, safe_to_original in grouped.items():
-        counts = await get_line_counts(store, list(safe_to_original))
-        for safe, count in counts.items():
-            line_counts[safe_to_original[safe]] = count
+    counted = await asyncio.gather(
+        *(
+            get_line_counts(store, list(safe_to_original))
+            for store, safe_to_original in grouped.items()
+        )
+    )
+    line_counts = {
+        safe_to_original[safe]: count
+        for safe_to_original, counts in zip(grouped.values(), counted, strict=True)
+        for safe, count in counts.items()
+    }
 
     return DocumentLineCountsResponse(line_counts=line_counts)
 
@@ -525,13 +532,19 @@ async def get_document_line_counts(
 async def get_document_chunks(
     filepath: str,
     user: CurrentUser,
-) -> DocumentMetadata:
+) -> DocumentChunksResponse:
     """Get chunks for a document."""
     store, safe = resolve_workspace_path(user, filepath)
     chunked = await get_document(store, safe)
     if not chunked:
         raise HTTPException(status_code=404, detail=_NO_CHUNKS.current)
-    return chunked
+
+    original = chunked.original_path
+
+    return DocumentChunksResponse(
+        **dict(chunked),
+        case_base_candidate=original is not None and is_case_base_file(original),
+    )
 
 
 @router.get("/documents/assets/{filepath:path}")
@@ -549,7 +562,6 @@ async def patch_asset_description(
     filepath: str,
     request: UpdateAssetDescriptionRequest,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> AssetEntry:
     """Update an asset's companion .md description."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
@@ -559,25 +571,19 @@ async def patch_asset_description(
         safe,
         request.asset_name,
         request.content,
-        owner=user.id,
-        exclude_client=client,
     )
 
 
-@router.post("/documents/assets/{filepath:path}")
+@router.post("/documents/assets/{filepath:path}", dependencies=[GENERATION_LIMIT])
 async def generate_asset_description(
     filepath: str,
     request: GenerateAssetDescriptionRequest,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> AssetEntry:
     """Generate an asset's companion .md description with the vision model."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
-    llm = prepare_llm_config(request.llm)
 
-    return await workspace.generate_asset_description(
-        store, safe, request.asset_name, llm, owner=user.id, exclude_client=client
-    )
+    return await workspace.generate_asset_description(store, safe, request.asset_name)
 
 
 @router.delete("/documents/assets/{filepath:path}")
@@ -585,24 +591,24 @@ async def delete_asset_description(
     filepath: str,
     asset_name: str,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> AssetEntry:
     """Delete an asset's companion .md description, keeping the asset itself."""
     store, safe = resolve_workspace_path(user, filepath, write=True)
 
-    return await workspace.delete_asset_description(
-        store, safe, asset_name, owner=user.id, exclude_client=client
-    )
+    return await workspace.delete_asset_description(store, safe, asset_name)
 
 
 # Registered after the more specific /documents/assets/ PATCH route so the
 # catch-all path parameter cannot shadow it.
-@router.patch("/documents/{filepath:path}", status_code=status.HTTP_204_NO_CONTENT)
+@router.patch(
+    "/documents/{filepath:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[UPLOAD_LIMIT],
+)
 async def write_document(
     filepath: str,
     request: WriteDocumentRequest,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> None:
     """Replace a text document's content in place.
 
@@ -611,18 +617,24 @@ async def write_document(
     """
     store, safe = resolve_workspace_path(user, filepath, write=True)
     write = Write(
-        Location(store, safe),
+        Location(Root.of(store), safe),
         request.content,
         mode=request.mode,
-        chunking=request.chunking,
     )
-    await workspace.apply_changeset((write,), owner=user.id, exclude_client=client)
+    await workspace.apply_changeset((write,))
 
 
 def _tmp_file(conversation: OwnedConversation, filepath: str) -> Path | None:
     """The file *filepath* names in the ``/tmp`` of *conversation*, as the agent's tools resolve it."""
-    root = tmp_search_path(settings.data_dir, conversation)
-    resolved = resolve_accessible_file((root,), filepath)
+    root = tmp_root(tmp_dir(settings.data_dir, conversation))
+    resolved = resolve_accessible_file((root.search_path,), filepath)
+
+    return None if resolved is None else resolved[2]
+
+
+def _skill_file(user: User, filepath: str) -> Path | None:
+    """The file *filepath* names among the skills *user* sees, as the agent's tools resolve it."""
+    resolved = resolve_accessible_file(skill_search_paths(user), filepath)
 
     return None if resolved is None else resolved[2]
 
@@ -633,12 +645,15 @@ async def get_document_content(
     user: CurrentUser,
     conversation_id: UUID | None = None,
 ) -> Response:
-    """Get the content of a document or asset.
+    """Get the content of a document, an asset, or a file of a skill.
 
     A ``/tmp`` path is read from the folder of *conversation_id*, which the
-    user must own.
+    user must own, and a ``/skills`` path from the skills the user sees.
     """
-    if conversation_id is None or TMP_SCOPE.strip_prefix(filepath) is None:
+    if strip(SKILLS_PREFIX, filepath) is not None:
+        return await get_file_response(lambda: _skill_file(user, filepath), filepath)
+
+    if conversation_id is None or strip(TMP_PREFIX, filepath) is None:
         store, safe = resolve_workspace_path(user, filepath)
 
         return await get_document_response(store, safe)
@@ -653,45 +668,35 @@ async def get_document_content(
     return await get_file_response(lambda: _tmp_file(conversation, filepath), filepath)
 
 
-@router.get("/directories/{scope}")
+@router.get("/directories/{scope:path}")
 async def get_directories(
     scope: str,
     user: CurrentUser,
 ) -> DirectoryTreeResponse:
-    """Build a recursive directory tree for a workspace (``~`` or ``@<group>``)."""
-    store, _ = resolve_workspace_path(user, scope)
-
-    return await build_tree_response(store)
+    """Build a recursive directory tree for a workspace by its scope root."""
+    return await build_tree_response(resolve_workspace(user, scope))
 
 
 async def _apply(
     user: User,
-    client: str | None,
     operations: Iterable[MoveOperation | DeleteOperation | CreateDirOperation],
 ) -> WorkspaceChanged:
-    """Resolve every path with write access and apply *operations* as one changeset.
-
-    Returns how the workspaces changed as the gateway resolved it, which the
-    asking client refreshes and follows instead of what it sent, since its own
-    feed skips the change.
-    """
+    """Resolve every path with write access and apply *operations* as one changeset, which the feed announces."""
 
     def at(path: str) -> Location:
-        return Location(*resolve_workspace_path(user, path, write=True))
+        store, safe = resolve_workspace_path(user, path, write=True)
+
+        return Location(Root.of(store), safe)
 
     items = tuple(op.operation(at) for op in operations)
-    applied = await workspace.apply_changeset(
-        items, owner=user.id, exclude_client=client
-    )
 
-    return applied.changed
+    return (await workspace.apply_changeset(items)).changed
 
 
-@router.post("/changes")
+@router.post("/changes", dependencies=[UPLOAD_LIMIT])
 async def apply_changes(
     request: ChangesRequest,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> WorkspaceChanged:
     """Move, delete, and create documents and directories as one changeset.
 
@@ -700,38 +705,37 @@ async def apply_changes(
     at once, all of them or none, so swaps and chains work, and one refused
     operation rejects the batch with the gateway's message naming its path.
     The single-item routes below are shortcuts for one operation of this kind.
+    Every route answers what changed, which the feed announces under the
+    same id, so the caller applies it at once and skips the announcement.
     """
-    return await _apply(user, client, request.operations)
+    return await _apply(user, request.operations)
 
 
-@router.post("/documents/move/{filepath:path}")
+@router.post("/documents/move/{filepath:path}", dependencies=[UPLOAD_LIMIT])
 async def move_document(
     filepath: str,
     request: MoveDestination,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> WorkspaceChanged:
     """Move or rename one document, a shortcut for one move in ``POST /changes``."""
     move = MoveOperation(kind="move", source=filepath, destination=request.destination)
-    return await _apply(user, client, [move])
+    return await _apply(user, [move])
 
 
-@router.delete("/documents/{filepath:path}")
+@router.delete("/documents/{filepath:path}", dependencies=[UPLOAD_LIMIT])
 async def delete_document(
     filepath: str,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> WorkspaceChanged:
     """Delete one document, a shortcut for one entry delete in ``POST /changes``."""
     delete = DeleteOperation(kind="delete", path=filepath, expect="entry")
-    return await _apply(user, client, [delete])
+    return await _apply(user, [delete])
 
 
-@router.put("/directories/{path:path}")
+@router.put("/directories/{path:path}", dependencies=[UPLOAD_LIMIT])
 async def create_directory(
     path: str,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> WorkspaceChanged:
     """Create one directory, a shortcut for one mkdir in ``POST /changes``.
 
@@ -739,34 +743,32 @@ async def create_directory(
     """
     store, safe = resolve_workspace_path(user, path, write=True)
 
-    if await asyncio.to_thread(Location(store, safe).full_path.is_dir):
+    if await asyncio.to_thread(Location(Root.of(store), safe).full_path.is_dir):
         return WorkspaceChanged(())
 
-    return await _apply(user, client, [CreateDirOperation(kind="mkdir", path=path)])
+    return await _apply(user, [CreateDirOperation(kind="mkdir", path=path)])
 
 
-@router.post("/directories/move")
+@router.post("/directories/move", dependencies=[UPLOAD_LIMIT])
 async def move_directory(
     request: MovePaths,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> WorkspaceChanged:
     """Move or rename one directory, a shortcut for one move in ``POST /changes``."""
     move = MoveOperation(
         kind="move", source=request.source, destination=request.destination
     )
-    return await _apply(user, client, [move])
+    return await _apply(user, [move])
 
 
-@router.delete("/directories/{path:path}")
+@router.delete("/directories/{path:path}", dependencies=[UPLOAD_LIMIT])
 async def delete_directory(
     path: str,
     user: CurrentUser,
-    client: ClientId = None,
 ) -> WorkspaceChanged:
     """Delete one directory with everything in it.
 
     A shortcut for one directory delete in ``POST /changes``.
     """
     delete = DeleteOperation(kind="delete", path=path, expect="dir")
-    return await _apply(user, client, [delete])
+    return await _apply(user, [delete])

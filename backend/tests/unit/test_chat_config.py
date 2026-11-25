@@ -1,10 +1,13 @@
 """Tests for the chat request contract and the problems it is refused with."""
 
+from uuid import uuid4
+
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
 from hivegent.server.problems import PROBLEM_MEDIA_TYPE, install_problem_handlers
-from hivegent.types import ChatRequest
+from hivegent.types import ChatRequest, DocumentSelection, FilterEntry
 
 
 def _client() -> TestClient:
@@ -24,22 +27,22 @@ def _client() -> TestClient:
 
 
 def test_an_invalid_chat_request_names_every_invalid_member() -> None:
-    """A wrong value and a misspelled setting are both refused, each by its pointer."""
+    """Every setting beside the SDK's body is refused, each by its pointer, since the server keeps them."""
     response = _client().post(
         "/chat",
-        json={"id": "c", "messages": [], "mode": "bogus", "reasoning": "high"},
+        json={"id": "c", "messages": [], "included_documents": [], "mode": "read"},
     )
 
     assert response.status_code == 422
     assert response.headers["content-type"] == PROBLEM_MEDIA_TYPE
     assert {error["pointer"] for error in response.json()["errors"]} == {
+        "#/included_documents",
         "#/mode",
-        "#/reasoning",
     }
 
 
 def test_the_sdk_body_runs_as_the_adapter_reads_it() -> None:
-    """The SDK's camelCase ``messageId`` sits beside the snake_case settings."""
+    """The SDK's own body, camelCase ``messageId`` included, is all a chat request holds."""
     response = _client().post(
         "/chat",
         json={
@@ -47,7 +50,6 @@ def test_the_sdk_body_runs_as_the_adapter_reads_it() -> None:
             "messages": [],
             "trigger": "regenerate-message",
             "messageId": "6f1c2b9e-1111-4222-8333-444455556666",
-            "reasoning_effort": "low",
         },
     )
 
@@ -65,3 +67,29 @@ def test_a_refusal_is_a_problem() -> None:
         "status": 404,
         "detail": "Conversation not found",
     }
+
+
+def test_a_message_names_the_documents_it_is_about() -> None:
+    """The selection rides on the user message, and one that does not validate is refused."""
+    message = {"id": str(uuid4()), "role": "user", "parts": []}
+    selection = {"included": [{"path": "~/handbook", "directory": True}]}
+
+    def post(documents: object) -> int:
+        body = {"id": "c", "messages": [{**message, "metadata": {"documents": documents}}]}
+
+        return _client().post("/chat", json=body).status_code
+
+    assert post(selection) == 200
+    assert post({"included": "bogus"}) == 422
+
+
+def test_a_turn_runs_with_the_documents_of_its_question() -> None:
+    """A regenerate or a compaction answers the last question again, with its selection."""
+    asked = ModelRequest(
+        parts=[UserPromptPart("q")],
+        metadata={"documents": {"excluded": [{"path": "~/secret", "directory": True}]}},
+    )
+    answer = ModelResponse(parts=[TextPart("a")])
+
+    assert DocumentSelection.of([asked, answer]).excluded == [FilterEntry("~/secret", True)]
+    assert DocumentSelection.of([answer]) == DocumentSelection()

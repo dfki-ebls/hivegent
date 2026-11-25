@@ -1,56 +1,65 @@
 """Shared helpers for server routes and operations."""
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
-from datetime import UTC, datetime
-from typing import Annotated
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
+from typing import Any
 from uuid import UUID
 
-from fastapi import Header, HTTPException
-from pydantic import ValidationError
+from fastapi import HTTPException
 
 from .. import workspace
 from ..agents import RunPrefix, UserDeps, build_capabilities
-from ..changes import WorkspaceChanged
-from ..config import (
-    normalize_unicode,
-    parse_uuid,
-    sanitize_document_path,
-    settings,
+from ..agents.integrations import integration_toolsets
+from ..agents.subagents import delegation
+from ..assistants import (
+    Assistant,
+    apply_assistant,
+    assistant_library,
+    resolve_assistant,
 )
+from ..config import parse_uuid, sanitize_document_path
 from ..conversation_files import delete_conversations
 from ..db.conversations import OwnedConversation
-from ..db.users import delete_user
-from ..l10n import Localized, current_language
+from ..db.users import delete_user, load_preferences
+from ..files import remove_paths
+from ..jobs import manager
+from ..libraries import LibraryGrant
 from ..llm import model_from_config
-from ..llm_config import LlmConfig, LlmTier, resolve_llm_config
-from ..mcp import build_mcp_server, validate_mcp_servers
+from ..llm_config import LlmConfig, ReasoningEffort, chat_llm
 from ..prompts import compose_instructions
-from ..security import require_safe_external_url
-from ..store import AccessDenied, Casebase, User, WorkspaceScope
-from ..types import ChatRequestConfig, DocumentFilter
-from ..workspace_events import announce_workspace_changed
-from .models import PipelineSpec
+from ..shared.l10n import Localized, current_language
+from ..shared.text import normalize_unicode
+from ..skills import library
+from ..store import (
+    AccessDenied,
+    User,
+    Workspace,
+    WorkspaceScope,
+    split_scope_path,
+)
+from ..types import (
+    DocumentFilter,
+    DocumentSelection,
+    FilterEntry,
+    Preferences,
+    RunChoices,
+)
 
 __all__ = [
     "CONVERSATION_NOT_FOUND",
-    "ClientId",
+    "Effective",
     "build_run_prefix",
+    "delete_scope_data",
     "delete_user_data",
+    "effective_preferences",
     "found",
     "parse_document_scope",
-    "parse_pipeline_spec",
-    "prepare_llm_config",
+    "require_chat_llm",
+    "resolve_workspace",
     "resolve_workspace_path",
     "safe_path",
 ]
-
-
-# Identifies the browser tab making a request, so a change it caused is not
-# echoed back to it over the job feed — it re-reads the result itself. Absent
-# for any client that does not name itself (the CLI, an MCP client), which then
-# simply receives every notification.
-type ClientId = Annotated[str | None, Header(alias="X-Client-Id")]
 
 
 CONVERSATION_NOT_FOUND = Localized(
@@ -75,163 +84,200 @@ async def found_by_id[T](
     return found(None if parsed is None else await load(parsed))
 
 
-def _invalid_pipeline_spec(error: str) -> Localized[str]:
+_NO_CHAT_MODEL = Localized(
+    en="No chat model is configured", de="Es ist kein Chat-Modell konfiguriert"
+)
+
+
+def require_chat_llm(model_id: str | None, thinking: ReasoningEffort) -> LlmConfig:
+    """The chat model *model_id* reasoning with *thinking*, the default model for ``None``, ``503`` without a catalog."""
+    llm = chat_llm(model_id, thinking)
+    if llm is None:
+        raise HTTPException(status_code=503, detail=_NO_CHAT_MODEL.current)
+
+    return llm
+
+
+def _invalid_scope(scope: str) -> Localized[str]:
     return Localized(
-        en=f"Invalid pipeline_spec: {error}", de=f"Ungültige pipeline_spec: {error}"
+        en=f"Not a workspace: {scope!r}", de=f"Kein Arbeitsbereich: „{scope}“"
     )
 
 
-def prepare_llm_config(llm: LlmConfig, *, tier: LlmTier = "aux") -> LlmConfig:
-    """Resolve defaults and check user-provided ``base_url`` values.
-
-    Centralizes the request-boundary check so each route can stay a
-    one-liner.
-    Pydantic checks URL shape, while this hook applies the user URL allowlist.
-    Server-configured base URLs are trusted operator input.
-
-    *tier* selects which configured ``(model, max_tokens)`` pair backs the
-    request; it defaults to ``"aux"`` so the many ancillary routes (titles,
-    image alt-text during upload) are right by default, while the chat route
-    passes ``tier="main"``.
-    """
-    if llm.base_url:
-        try:
-            require_safe_external_url(
-                llm.base_url,
-                "LLM base_url",
-                policy=settings.security.user_policy(),
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return resolve_llm_config(llm, tier=tier)
-
-
 def parse_document_scope(
-    included_documents: list[str],
-    excluded_documents: list[str],
-    user_groups: frozenset[str],
-) -> tuple[frozenset[str], DocumentFilter | None, dict[str, DocumentFilter]]:
+    included_documents: Sequence[FilterEntry],
+    excluded_documents: Sequence[FilterEntry],
+    user: User,
+    allowed_documents: Sequence[FilterEntry] = (),
+) -> tuple[frozenset[str], dict[WorkspaceScope, DocumentFilter]]:
     """Parse the request's document selection into its two halves.
 
-    Entries are canonical workspace paths; a bare scope root selects the
-    whole workspace (local ``/``). Unparseable entries and groups the caller
-    cannot address (``user_groups``, i.e. :attr:`User.all_groups`) are
-    skipped from both halves.  Every entry is folded to NFC, so a selection
-    captured from a workspace tree before the paths were canonicalized still
-    names its document instead of silently matching nothing.
+    Entries name canonical workspace paths, a bare scope root as a directory
+    selecting the whole workspace (the empty local path).  Unparseable entries
+    and scopes *user* does not see are skipped from both halves.  Every entry
+    is folded to NFC,
+    so a selection captured from a workspace tree before the paths were
+    canonicalized still names its document instead of silently matching
+    nothing.
 
     The halves are not symmetric.  The included list restricts nothing: it is
     re-rendered as canonical paths for the prompt to name, so a conversation
     pointed at two files still reaches the whole workspace.  Only the excluded
-    list becomes a :class:`DocumentFilter`, and only for the stores it names —
-    every other store stays unfiltered.
+    list becomes a :class:`DocumentFilter`, and only for the scopes it names,
+    every other scope stays unfiltered.
+
+    An assistant's *allowed_documents*, unless empty, confine every scope
+    *user* sees to the entries naming it, so a scope none names is hidden
+    whole, as is everything when no entry is addressable.
 
     Returns:
-        The canonical paths to name to the model, the personal store's filter
-        (``None`` when it hides nothing), and one filter per named group.
+        The canonical paths to name to the model, and one filter per scope
+        the excluded list names, or per visible scope with an allowlist.
     """
+    visible = {store.scope.prefix: store.scope for store in user.workspaces()}
 
-    def scoped(entries: list[str]) -> Iterator[tuple[WorkspaceScope, str]]:
-        """Yield each addressable entry as its scope and its local path."""
+    def scoped(
+        entries: Sequence[FilterEntry],
+    ) -> Iterator[tuple[WorkspaceScope, FilterEntry]]:
+        """Yield each addressable entry as its scope and its entry by local path."""
         for entry in entries:
             try:
-                scope, local = WorkspaceScope.parse(normalize_unicode(entry))
+                prefix, local = split_scope_path(normalize_unicode(entry.path))
             except ValueError:
                 continue
 
-            if scope.group_id is None or scope.group_id in user_groups:
-                yield scope, local or "/"
+            if (scope := visible.get(prefix)) is not None:
+                yield scope, replace(entry, path=local)
 
     relevant = frozenset(
-        scope.render_filter_entry(local) for scope, local in scoped(included_documents)
+        scope.render_filter_entry(local.path, directory=local.directory)
+        for scope, local in scoped(included_documents)
     )
 
-    hidden: dict[str | None, set[str]] = {}
-    for scope, local in scoped(excluded_documents):
-        hidden.setdefault(scope.group_id, set()).add(local)
+    def grouped(
+        entries: Sequence[FilterEntry],
+    ) -> dict[WorkspaceScope, frozenset[FilterEntry]]:
+        """The local entries of *entries* by the scope they name."""
+        groups: dict[WorkspaceScope, set[FilterEntry]] = {}
 
-    filters = {
-        store_id: DocumentFilter(excluded=frozenset(locals_))
-        for store_id, locals_ in hidden.items()
+        for scope, local in scoped(entries):
+            groups.setdefault(scope, set()).add(local)
+
+        return {scope: frozenset(locals_) for scope, locals_ in groups.items()}
+
+    hidden = grouped(excluded_documents)
+
+    if not allowed_documents:
+        return relevant, {
+            scope: DocumentFilter(excluded=locals_) for scope, locals_ in hidden.items()
+        }
+
+    allowed = grouped(allowed_documents)
+
+    return relevant, {
+        scope: DocumentFilter(
+            excluded=hidden.get(scope, frozenset()),
+            allowed=allowed.get(scope, frozenset()),
+        )
+        for scope in visible.values()
     }
 
-    return (
-        relevant,
-        filters.pop(None, None),
-        {group_id: f for group_id, f in filters.items() if group_id is not None},
+
+@dataclass(frozen=True, slots=True)
+class Effective:
+    """A user's preferences as runs apply them, with the assistant they name."""
+
+    preferences: Preferences
+    assistant: Assistant | None
+
+
+async def effective_preferences(
+    user: User, stored: Mapping[str, Any] | None = None
+) -> Effective:
+    """The preferences *stored*, the user's own if None, as runs apply them.
+
+    An assistant the user no longer sees is none, since a stored choice
+    outlives what it names, so what the preferences show is what a run applies.
+    """
+    preferences = Preferences.stored(
+        await load_preferences(user.id) if stored is None else stored
+    )
+    assistant = (
+        None
+        if preferences.assistant is None
+        else await resolve_assistant(user, preferences.assistant)
     )
 
+    if assistant is None and preferences.assistant is not None:
+        preferences = preferences.model_copy(update={"assistant": None})
 
-def build_run_prefix(
-    config: ChatRequestConfig, user: User, conversation: OwnedConversation
+    return Effective(preferences, assistant)
+
+
+async def build_run_prefix(
+    selection: DocumentSelection,
+    effective: Effective,
+    user: User,
+    conversation: OwnedConversation,
 ) -> RunPrefix:
-    """Compose the prompt prefix *config* describes for *user*, for a turn or a compaction.
+    """Compose the prompt prefix of *user*'s *effective* preferences and the documents of *selection*, for a turn or a compaction.
 
     A compaction asks for its summary as one more turn of the conversation,
     which only pays off while its instructions and tool schemas match the turn
     before it token for token, so both run under the prefix built here.
 
     It also owns the preconditions of that match, so no caller can compose a
-    prefix that differs by forgetting one: the LLM config is resolved (and
-    returned on the result, since prefix and model go together), the MCP list
-    is validated before its toolsets are built, and the request's interface
-    language is read once and handed to every part of the prefix explicitly.
+    prefix that differs by forgetting one: the preferred assistant narrows
+    the rest, a withheld name no tool has withholds nothing, since tools come
+    and go with the operator's settings while a client's choices persist,
+    the LLM config is resolved (and
+    returned on the result, since prefix and model go together), the
+    request's interface language is read once and handed to every part of the
+    prefix explicitly, and the subagents the turn delegates to join it
+    (:func:`~hivegent.agents.subagents.delegation`), since their tools and
+    listing are part of it.
     """
     language = current_language()
+    assistant = effective.assistant
+    config = RunChoices(
+        **effective.preferences.model_dump(),
+        included_documents=selection.included,
+        excluded_documents=selection.excluded,
+    )
 
-    try:
-        validate_mcp_servers(config.tools.mcp_servers)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if assistant is not None:
+        config = apply_assistant(config, assistant)
 
-    llm = prepare_llm_config(config.llm, tier="main")
-    relevant_documents, document_filter, group_filters = parse_document_scope(
+    llm = require_chat_llm(config.model, config.reasoning_effort)
+    relevant_documents, document_filters = parse_document_scope(
         config.included_documents,
         config.excluded_documents,
-        user.all_groups,
+        user,
+        () if assistant is None else assistant.spec.allowed_documents,
     )
 
-    deps = UserDeps(
+    deps = await UserDeps(
         user=user,
-        mode=config.mode,
+        # A service answers many people at once, so it only ever reads.
+        mode="read" if user.is_service else config.mode,
         conversation=conversation,
-        document_filter=document_filter,
-        group_filters=group_filters,
+        document_filters=document_filters,
         relevant_documents=relevant_documents,
-        disabled_tools=frozenset(config.tools.disabled_tools),
+        disabled_tools=frozenset(config.disabled_tools),
+        assistant=assistant,
         llm=llm,
-        aux_llm=prepare_llm_config(config.llm),
         language=language,
-    )
+    ).with_roots()
 
-    return RunPrefix(
+    prefix = RunPrefix(
         deps=deps,
-        capabilities=build_capabilities(
-            config.tools,
-            extra=[build_mcp_server(server) for server in config.tools.mcp_servers],
-            mode=deps.mode,
-            language=language,
-        ),
-        instructions=compose_instructions(
-            config.personality,
-            config.system_message,
-            language,
-            datetime.now(UTC).date(),
-        ),
+        capabilities=build_capabilities(deps, extra=integration_toolsets(user)),
+        instructions=compose_instructions(language),
         llm=llm,
         model=model_from_config(llm),
     )
 
-
-def parse_pipeline_spec(raw: str) -> PipelineSpec:
-    """Parse a JSON-encoded ``PipelineSpec`` form field."""
-    try:
-        return PipelineSpec.model_validate_json(raw)
-    except (ValidationError, ValueError) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=_invalid_pipeline_spec(str(exc)).current,
-        ) from exc
+    return replace(prefix, capabilities=[*prefix.capabilities, *delegation(prefix)])
 
 
 def safe_path(filepath: str) -> str:
@@ -244,45 +290,65 @@ def safe_path(filepath: str) -> str:
 
 def resolve_workspace_path(
     user: User, path: str, *, write: bool = False
-) -> tuple[Casebase, str]:
+) -> tuple[Workspace, str]:
     """Resolve a canonical workspace path to its store and local path.
 
-    Personal documents carry a ``~`` prefix, group documents an
-    ``@<group>`` prefix — the convention owned by :class:`WorkspaceScope`. For
-    group paths this enforces membership, or write access when *write* is true,
-    so a caller cannot reach a group they do not belong to by crafting a prefix.
+    The scope prefix (``~``, ``@<group>``, or the global one) names the
+    workspace, which *user* must see, and write when *write* is true, so a
+    caller cannot reach a workspace beyond its grant by crafting a prefix.
 
-    A bare scope root (``~`` or ``@<group>``) resolves to the store with an
-    empty local path. A bare, unprefixed path raises ``400``.
+    A bare scope root resolves to the store with an empty local path. A bare,
+    unprefixed path raises ``400``, a workspace beyond the grant ``403``.
     """
     try:
-        scope, local = WorkspaceScope.parse(path)
+        prefix, local = split_scope_path(path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     try:
-        store = (
-            user.store
-            if scope.group_id is None
-            else user.group_store(scope.group_id, writable=write)
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        store = user.workspace(prefix, writable=write)
     except AccessDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
     return store, safe_path(local) if local else ""
 
 
-async def delete_user_data(user: User, *, exclude_client: str | None = None) -> None:
-    """Delete everything *user* owns and announce their emptied workspace.
+def resolve_workspace(user: User, scope: str, *, write: bool = False) -> Workspace:
+    """Resolve a bare scope root (``~``, ``@<group>``, the global one) to its store.
 
-    The workspace (documents, cascading to chunks, and the directory) and the
-    conversations (turns, rows, and folders) go independently, and deleting
-    the ``User`` row then cascades to memory.  The user re-materialises lazily
-    on the next request.
+    Raises ``400`` for a path below the root, which names no whole workspace.
     """
-    store = user.store
-    await asyncio.gather(workspace.delete_all(store), delete_conversations(user))
-    await delete_user(user.id)
-    announce_workspace_changed(
-        user.id, WorkspaceChanged((store.scope.prefix,)), exclude_client=exclude_client
+    store, local = resolve_workspace_path(user, scope, write=write)
+
+    if local:
+        raise HTTPException(status_code=400, detail=_invalid_scope(scope).current)
+
+    return store
+
+
+async def delete_scope_data(granted: LibraryGrant) -> None:
+    """Delete the workspace, skills, and assistants of *granted*'s scope, announcing the emptied workspace."""
+    scope = granted.scope
+    await asyncio.gather(
+        workspace.delete_all(granted.store),
+        asyncio.to_thread(
+            remove_paths, [library(scope).path, assistant_library(scope)]
+        ),
     )
+
+
+async def delete_user_data(user: User) -> None:
+    """Delete everything *user* owns.
+
+    Their jobs are cancelled first, so no queued upload lands afterwards.
+    Their scope's data (:func:`delete_scope_data`) and the conversations
+    (turns, rows, and folders) go independently, and deleting the ``User``
+    row then cascades to memory.  The user re-materialises lazily on the
+    next request.
+    """
+    await manager.cancel_owner(user.id)
+    await asyncio.gather(
+        delete_scope_data(LibraryGrant(user.home)),
+        delete_conversations(user),
+    )
+    await delete_user(user.id)

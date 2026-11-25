@@ -7,11 +7,13 @@ from starlette.requests import Request
 
 from ...auth import CurrentUser
 from ...config import settings
-from ...l10n import Localized
 from ...llm import create_openai_client
-from ...llm_config import LlmConfig, resolve_llm_config
+from ...llm_config import stt_llm
+from ...shared.l10n import Localized, format_bytes
 from ...types import TranscriptionResponse
 from ..cancellation import run_until_disconnect
+from ..operations import enforce_upload_size, upload_body_limit
+from ..rate_limit import TRANSCRIPTION_LIMIT
 
 __all__ = ["router"]
 
@@ -27,7 +29,18 @@ _FAILED = Localized(
 )
 
 
-@router.post("/transcription")
+def _too_large(limit: int) -> Localized[str]:
+    return Localized(
+        en=f"Recording too large. Maximum size: {format_bytes(limit)}",
+        de=f"Aufnahme zu groß. Maximale Größe: {format_bytes(limit)}",
+    )
+
+
+@router.post(
+    "/transcription",
+    dependencies=[TRANSCRIPTION_LIMIT],
+    max_body_size=upload_body_limit(settings.limits.max_file_size_bytes),
+)
 async def create_transcription(
     audio: UploadFile,
     http_request: Request,
@@ -39,22 +52,19 @@ async def create_transcription(
     Speech API (Firefox, Safari, Vivaldi): they record locally and send
     the audio here.  Responds 501 when no STT model is configured.
     """
-    stt_model = settings.llm.stt_model
-    if not stt_model:
+    stt = stt_llm()
+    if stt is None:
         raise HTTPException(status_code=501, detail=_NO_MODEL.current)
 
-    # Server-configured credentials only; the base URL is trusted
-    # operator input (may legitimately point at a private host).
-    llm = resolve_llm_config(LlmConfig())
-    client = create_openai_client(
-        api_key=llm.api_key or None,
-        base_url=llm.base_url,
-        base_url_is_trusted=True,
+    enforce_upload_size(
+        audio, limit=settings.limits.max_file_size_bytes, too_large=_too_large
     )
+
+    client = create_openai_client(stt.provider)
 
     async def _transcribe() -> str:
         result = await client.audio.transcriptions.create(
-            model=stt_model,
+            model=stt.model,
             file=(
                 audio.filename or "audio.webm",
                 await audio.read(),

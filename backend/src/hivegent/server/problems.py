@@ -1,8 +1,9 @@
 """RFC 9457 problem details, the one shape every API error takes.
 
-Every refusal answers ``application/problem+json``: an ``HTTPException`` and a
-validation failure alike, whichever layer raised it.  ``title`` is the status
-phrase unless a :class:`ProblemException` names a problem type of its own,
+Every refusal answers ``application/problem+json``: an ``HTTPException``, a
+gateway's ``ChangeRefused``, and a validation failure alike, whichever layer
+raised it.  ``title`` is the status phrase unless a :class:`ProblemException`
+names a problem type of its own,
 ``detail`` the localized explanation a client shows, and ``errors`` lists the
 invalid members of a request it rejected.
 """
@@ -11,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from typing import Any
 
+from exar.tools import Retry
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
@@ -18,13 +20,15 @@ from pydantic.json_schema import models_json_schema
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse, Response
 
-from ..l10n import Localized
+from ..shared.l10n import Localized
 from ..store import AccessDenied
+from ..tools.changes import ChangeRefused
 
 __all__ = [
     "PROBLEM_MEDIA_TYPE",
     "PROBLEM_RESPONSES",
     "ProblemException",
+    "handle_problem",
     "install_problem_handlers",
     "problem_response",
 ]
@@ -166,7 +170,7 @@ def _problem(
     )
 
 
-async def _handle(_request: Request, exc: Exception) -> Response:
+async def handle_problem(_request: Request, exc: Exception) -> Response:
     """Answer *exc* as a problem, whichever layer raised it."""
     match exc:
         case ProblemException():
@@ -191,8 +195,13 @@ async def _handle(_request: Request, exc: Exception) -> Response:
             )
         case HTTPException():
             return _problem(exc.status_code, exc.detail, headers=exc.headers)
+        case ChangeRefused():
+            return _problem(exc.status_code, exc.detail)
         case AccessDenied():
             return _problem(403, str(exc))
+        case Retry():
+            # Input the caller can fix, such as a path with a NUL byte, refused as the tools refuse it.
+            return _problem(400, str(exc))
         case _:
             # Starlette raises it on after the answer, so the server logs it.
             return _problem(500, _INTERNAL_ERROR.current)
@@ -202,12 +211,14 @@ def install_problem_handlers(app: FastAPI) -> None:
     """Answer every error *app* raises as a problem, and document them so."""
     for kind in (
         HTTPException,
+        ChangeRefused,
         RequestValidationError,
         ValidationError,
         AccessDenied,
+        Retry,
         Exception,
     ):
-        app.add_exception_handler(kind, _handle)
+        app.add_exception_handler(kind, handle_problem)
 
     generate = app.openapi
 

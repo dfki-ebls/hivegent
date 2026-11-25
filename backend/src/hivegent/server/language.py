@@ -3,7 +3,7 @@
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ..l10n import negotiate_language, use_language
+from ..shared.l10n import negotiate_language, use_language
 
 __all__ = ["LanguageMiddleware"]
 

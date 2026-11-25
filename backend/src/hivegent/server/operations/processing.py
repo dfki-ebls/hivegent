@@ -7,24 +7,24 @@ context.
 """
 
 import logging
-import shutil
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
+from exar.helpers import bounded_as_completed
 from fastapi import HTTPException, UploadFile
 
-from ...concurrency import bounded_as_completed
 from ...config import settings
-from ...l10n import Localized
+from ...files import transient
+from ...shared.l10n import Localized
 from ...types import FailedFile, ProgressReporter
 
 __all__ = [
-    "cleanup_spool_dir",
     "enforce_upload_size",
     "run_bulk_document_job",
     "spool_dir",
     "summarize_failed_files",
     "summarize_failures",
+    "upload_body_limit",
 ]
 
 logger = logging.getLogger(__name__)
@@ -79,28 +79,11 @@ def summarize_failed_files(
     )
 
 
-def _spool_root() -> Path:
-    """The single source of truth for where job spool files live."""
-    return settings.data_dir / "spool"
-
-
 def spool_dir() -> Path:
-    """Directory holding upload payloads spooled to disk for background jobs."""
-    path = _spool_root()
+    """Directory holding upload payloads spooled to disk for background jobs, emptied at boot with the transient folder."""
+    path = transient("spool")
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def cleanup_spool_dir() -> None:
-    """Drop spool files orphaned by a restart, called once at startup.
-
-    Jobs live only in memory, so any spool file present at startup belongs to a
-    job a restart cut short — its ``on_settled`` unlink never ran — and is safe
-    to remove.
-    """
-    path = _spool_root()
-    if path.exists():
-        shutil.rmtree(path, ignore_errors=True)
 
 
 async def run_bulk_document_job(
@@ -133,17 +116,18 @@ async def run_bulk_document_job(
 
         return filepath, None
 
-    async for filepath, error in bounded_as_completed(
+    async with bounded_as_completed(
         files, run, limit=settings.jobs.collection_concurrency
-    ):
-        if error is not None:
-            logger.warning(
-                "Bulk %s failed for %s: %s", verb.en.lower(), filepath, error
-            )
-            failed.append(filepath)
+    ) as results:
+        async for filepath, error in results:
+            if error is not None:
+                logger.warning(
+                    "Bulk %s failed for %s: %s", verb.en.lower(), filepath, error
+                )
+                failed.append(filepath)
 
-        done += 1
-        ctx.set_progress(done, total)
+            done += 1
+            ctx.set_progress(done, total)
 
     if failed:
         raise RuntimeError(
@@ -155,6 +139,20 @@ async def run_bulk_document_job(
                 summarize_failures(failed),
             ).current
         )
+
+
+_FORM_OVERHEAD = 1024 * 1024
+"""What a multipart body holds beside its file, the form fields and the encoding."""
+
+
+def upload_body_limit(limit: int) -> int:
+    """The largest body of an upload whose file may take *limit* bytes.
+
+    FastAPI refuses a larger body with a 413 while it arrives, before any of it
+    is spooled, and :func:`enforce_upload_size` holds the file to *limit* with
+    the localized reason.
+    """
+    return limit + _FORM_OVERHEAD
 
 
 def enforce_upload_size(

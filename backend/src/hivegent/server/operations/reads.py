@@ -1,6 +1,6 @@
 """Read-only filesystem helpers for document routes.
 
-These helpers do not mutate the workspace or metadata — they only inspect
+These helpers do not mutate the workspace or metadata.  They only inspect
 the filesystem to resolve URLs to bytes.  Mutations live in
 :mod:`hivegent.workspace`.
 """
@@ -12,16 +12,15 @@ from pathlib import Path
 from stat import S_ISREG
 from urllib.parse import quote
 
+from exar.memory.mounts import entry_stat
+from exar.text import decode
 from fastapi import HTTPException
 from starlette.responses import FileResponse, PlainTextResponse, Response
 
-from ...converters.base import DOCUMENT_EXTENSION
-from ...converters.formats import is_textual_media_type, media_type
-from ...entries import assets_dir_for_stem, stem_path_from_reference
-from ...l10n import Localized
-from ...store import Casebase
-from ...text import read_text_file
-from ...tools.base import entry_stat
+from ...shared.formats import DOCUMENT_EXTENSION, is_textual_media_type, media_type
+from ...shared.l10n import Localized
+from ...store import Workspace
+from ...tools.entries import Part, stem_path_from_reference
 from ...types import AssetEntry, AssetListResponse
 from ...workspace.paths import document_not_found
 
@@ -60,7 +59,7 @@ def attachment_response(path: Path) -> FileResponse:
     )
 
 
-async def get_document_response(store: Casebase, safe: str) -> Response:
+async def get_document_response(store: Workspace, safe: str) -> Response:
     """Return the raw content of a document or asset as an HTTP response."""
     return await get_file_response(lambda: store.locate(safe), store.scope.render(safe))
 
@@ -96,7 +95,7 @@ def _file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
         not declared.startswith("image/") and is_textual_media_type(declared)
     ):
         try:
-            decoded = read_text_file(file_path)
+            decoded = decode(file_path.read_bytes())
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=404, detail=document_not_found(shown).current
@@ -111,9 +110,9 @@ def _file_response(resolve: Callable[[], Path | None], shown: str) -> Response:
     return attachment_response(file_path)
 
 
-def list_assets(store: Casebase, safe: str) -> AssetListResponse:
+def list_assets(store: Workspace, safe: str) -> AssetListResponse:
     """List the asset files in a document's child-assets directory."""
-    assets_dir = assets_dir_for_stem(stem_path_from_reference(safe))
+    assets_dir = Part(stem_path_from_reference(safe), "assets").path
     assets_path = store.locate(assets_dir)
     if assets_path is None or not assets_path.is_dir():
         raise HTTPException(status_code=404, detail=_NO_ASSETS.current)
@@ -140,7 +139,7 @@ def list_assets(store: Casebase, safe: str) -> AssetListResponse:
         if companion is not None:
             description_path = f"{assets_dir}/{companion.as_posix()}"
             try:
-                decoded = read_text_file(assets_path / companion)
+                decoded = decode((assets_path / companion).read_bytes())
                 description = decoded.text if decoded is not None else ""
             except OSError:
                 logger.warning(

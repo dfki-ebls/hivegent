@@ -28,16 +28,22 @@ async def health() -> dict[str, str]:
 async def config() -> FrontendConfigResponse:
     """Serve the browser SPA's runtime configuration.
 
-    The single source of truth for the frontend's OIDC client: the issuer and
-    client id are derived from the backend settings, so the SPA reads them here
-    at startup instead of baking them in at build time. Unauthenticated (the SPA
-    fetches it before login) and carries only public values.
+    The single source of truth for the frontend's OIDC client and handbook
+    link: both are derived from the backend settings, so the SPA reads them
+    here at startup instead of baking them in at build time.  No OIDC client
+    means ``hivegent dev`` runs it as the development user, which the SPA
+    mocks.  Unauthenticated (the SPA fetches it before login) and carries only
+    public values.
     """
+    issuer = settings.auth.issuer
+
     return FrontendConfigResponse(
-        oidc=OidcPublicConfig(
-            issuer_uri=settings.auth.issuer,
-            client_id=settings.auth.frontend_client_id,
-        )
+        oidc=None
+        if issuer is None
+        else OidcPublicConfig(
+            issuer_uri=issuer, client_id=settings.auth.frontend_client_id
+        ),
+        docs_url=settings.docs_url,
     )
 
 

@@ -1,4 +1,4 @@
-"""Tests for AUTO conversion routing of plain-text formats."""
+"""Tests for AUTO conversion routing and the plain-text projection."""
 
 import subprocess
 import sys
@@ -7,14 +7,20 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from exar.ingest import (
+    Anydoc,
+    Docling,
+    Offloaded,
+    Parsed,
+    Pdftotext,
+    PlainText,
+    WorkerCrashed,
+    garbled,
+)
 
-from hivegent import converters
-from hivegent.converters import ConversionPipeline, get_converter, resolve_auto_pipeline
-from hivegent.converters.base import fenced_code_block
-from hivegent.converters.plain_text import PlainTextConverter
-from hivegent.llm_config import LlmConfig
-from hivegent.pipeline_registry import PipelineImplementation
-from hivegent.types import PipelineSpec
+from hivegent import pipelines
+from hivegent.pipelines import AUTO, _Recovering, get_converter, resolve_auto_pipeline
+from hivegent.shared import pipeline_registry
 from hivegent.workspace import prepare
 
 
@@ -22,40 +28,43 @@ from hivegent.workspace import prepare
     ("filename", "expected"),
     [
         # Raw text routes to plain-text, not docling, which reads only its own
-        # DoclingDocument JSON schema and the USPTO/JATS XML dialects and
-        # rejects every ordinary file of those extensions -- the headline
-        # regression for both suffixes.
-        ("laws.json", ConversionPipeline.PLAIN_TEXT),
-        ("catalog.xml", ConversionPipeline.PLAIN_TEXT),
-        ("notes.txt", ConversionPipeline.PLAIN_TEXT),
-        ("app.log", ConversionPipeline.PLAIN_TEXT),
-        ("config.yaml", ConversionPipeline.PLAIN_TEXT),
-        ("settings.ini", ConversionPipeline.PLAIN_TEXT),
+        # DoclingDocument JSON schema and the USPTO/JATS XML dialects.
+        ("laws.json", "plain-text"),
+        ("catalog.xml", "plain-text"),
+        ("notes.txt", "plain-text"),
+        ("app.log", "plain-text"),
+        ("config.yaml", "plain-text"),
+        ("settings.ini", "plain-text"),
         # Unclaimed source code reaches the content-aware plain-text default.
-        ("server.py", ConversionPipeline.PLAIN_TEXT),
+        ("server.py", "plain-text"),
         # Structured text keeps its richer converter.
-        ("data.csv", ConversionPipeline.DOCLING),
-        ("archive.tar.gz", ConversionPipeline.DOCLING),
-        ("report.docx", ConversionPipeline.DOCLING),
+        ("data.csv", "docling"),
+        ("archive.tar.gz", "docling"),
+        ("report.docx", "docling"),
         # Office formats docling is not given go to anydoc.
-        ("letter.doc", ConversionPipeline.ANYDOC),
-        ("sheet.ods", ConversionPipeline.ANYDOC),
-        # An unclaimed extension (and a name with none at all) falls back to
+        ("letter.doc", "anydoc"),
+        ("sheet.ods", "anydoc"),
+        # An unclaimed extension, and a name with none at all, fall back to
         # plain-text, which decides from the content rather than the name.
-        ("laws2", ConversionPipeline.PLAIN_TEXT),
-        ("archive.sbx", ConversionPipeline.PLAIN_TEXT),
+        ("laws2", "plain-text"),
+        ("archive.sbx", "plain-text"),
     ],
 )
-def test_auto_routes_plain_text(filename: str, expected: ConversionPipeline) -> None:
-    assert resolve_auto_pipeline(filename) is expected
+def test_auto_routes_plain_text(
+    monkeypatch: pytest.MonkeyPatch, filename: str, expected: str
+) -> None:
+    # The routing every converter declares, whichever extras are installed.
+    monkeypatch.setattr(pipeline_registry, "_installed", lambda *_: True)
+
+    assert resolve_auto_pipeline(filename) == expected
 
 
-def test_auto_routing_imports_no_converter() -> None:
+def test_auto_conversion_imports_no_backend() -> None:
     code = (
         "import sys\n"
-        "from hivegent.converters import resolve_auto_pipeline\n"
-        "pipeline = resolve_auto_pipeline('report.pdf').value\n"
-        "print(pipeline, 'hivegent.converters.docling' in sys.modules)\n"
+        "from hivegent.pipelines import get_converter\n"
+        "get_converter('auto', 'report.docx')\n"
+        "print('docling' in sys.modules, 'anydoc' in sys.modules)\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -65,86 +74,79 @@ def test_auto_routing_imports_no_converter() -> None:
         timeout=30,
     )
 
-    assert result.stdout.strip() == "docling False"
+    assert result.stdout.strip() == "False False"
 
 
-def test_auto_priority_members_declare_their_routing_extensions() -> None:
-    # A pipeline listed in _AUTO_PRIORITY without auto_extensions would silently
-    # never win AUTO, since routing reads that field and not the capability.
-    for pipeline in converters._AUTO_PRIORITY:
-        assert converters._CONVERTERS[pipeline].auto_extensions
-
-
-def test_auto_uses_next_available_converter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def unavailable() -> PipelineImplementation[converters.DocumentConverter]:
-        raise ImportError("docling unavailable")
-
-    registration = converters._CONVERTERS[ConversionPipeline.DOCLING]
-    monkeypatch.setitem(
-        converters._CONVERTERS,
-        ConversionPipeline.DOCLING,
-        replace(registration, loader=unavailable),
+def _installed(monkeypatch: pytest.MonkeyPatch, name: str, installed: bool) -> None:
+    registration = pipelines.CONVERTERS[name]
+    dependencies = () if installed else ("hivegent_missing_module",)
+    monkeypatch.setattr(
+        pipelines,
+        "CONVERTERS",
+        {
+            **pipelines.CONVERTERS,
+            name: replace(registration, dependencies=dependencies),
+        },
     )
 
-    converter = get_converter(ConversionPipeline.AUTO, filename="data.csv")
 
-    assert converter.name == ConversionPipeline.ANYDOC.value
+def test_auto_uses_next_available_converter(monkeypatch: pytest.MonkeyPatch) -> None:
+    _installed(monkeypatch, "docling", False)
+
+    converter = get_converter("auto", filename="data.csv")
+
+    assert isinstance(converter, Offloaded)
+    assert isinstance(converter.func, Anydoc)
+
+
+def test_auto_falls_back_for_garbled_pdfs(monkeypatch: pytest.MonkeyPatch) -> None:
+    _installed(monkeypatch, "docling", True)
+
+    converter = get_converter("auto", filename="report.pdf")
+
+    assert isinstance(converter, _Recovering)
+    assert isinstance(converter.primary, Offloaded)
+    assert isinstance(converter.primary.func, Docling)
+    assert isinstance(converter.fallback, Offloaded)
+    assert converter.fallback.func == Pdftotext()
+
+
+async def test_auto_falls_back_when_the_worker_crashes(tmp_path: Path) -> None:
+    async def crash(source: Path, /) -> Parsed:
+        raise WorkerCrashed("The worker exited with code -9")
+
+    async def recover(source: Path, /) -> Parsed:
+        return Parsed(markdown="recovered")
+
+    for degraded in (None, garbled):
+        converter = _Recovering(crash, recover, degraded)
+
+        assert (await converter(tmp_path / "a.pdf")).markdown == "recovered"
 
 
 @pytest.mark.parametrize(
     ("filename", "expected"),
     [
-        ("notes.rst", ConversionPipeline.KREUZBERG),
-        ("paper.typ", ConversionPipeline.KREUZBERG),
-        ("page.textile", ConversionPipeline.PLAIN_TEXT),
+        ("notes.rst", "kreuzberg"),
+        ("paper.typ", "kreuzberg"),
+        ("page.textile", "plain-text"),
     ],
 )
 def test_auto_routes_markup_to_kreuzberg(
-    monkeypatch: pytest.MonkeyPatch, filename: str, expected: ConversionPipeline
+    monkeypatch: pytest.MonkeyPatch, filename: str, expected: str
 ) -> None:
-    registration = converters._CONVERTERS[ConversionPipeline.KREUZBERG]
-    monkeypatch.setitem(
-        converters._CONVERTERS,
-        ConversionPipeline.KREUZBERG,
-        replace(registration, dependencies=()),
-    )
+    _installed(monkeypatch, "kreuzberg", True)
 
-    assert resolve_auto_pipeline(filename) is expected
+    assert resolve_auto_pipeline(filename) == expected
 
 
 def test_auto_accepts_undeclared_extension() -> None:
     # The fallback pipeline must survive get_converter's extension check, which
     # would otherwise reject the very inputs it exists to catch.
-    converter = get_converter(ConversionPipeline.AUTO, filename="archive.sbx")
+    converter = get_converter("auto", filename="archive.sbx")
 
-    assert isinstance(converter, PlainTextConverter)
-
-
-async def test_plain_text_fences_its_output(tmp_path: Path) -> None:
-    # Raw text is projected as a fenced code block so the frontend renders it
-    # as source instead of misreading `#`/`*` as markdown. The shared projection
-    # keeps explicit conversion and AUTO preparation identical.
-    source = "# not a heading\n* not a list"
-    doc = tmp_path / "notes.txt"
-    doc.write_text(source)
-
-    result = await PlainTextConverter()(doc)
-
-    assert result.markdown.startswith("```txt")
-    assert source in result.markdown
-    assert result.source_encoding is None
-
-
-async def test_plain_text_transcodes_and_reports_encoding(tmp_path: Path) -> None:
-    doc = tmp_path / "settings.ini"
-    doc.write_bytes("Benutzer = Jörg Müller\n".encode("utf-16"))
-
-    result = await PlainTextConverter()(doc)
-
-    assert "Jörg Müller" in result.markdown
-    assert result.source_encoding == "utf-16"
+    assert isinstance(converter, Offloaded)
+    assert converter.func == PlainText()
 
 
 async def test_auto_plain_text_uses_plain_text_pipeline(
@@ -159,8 +161,7 @@ async def test_auto_plain_text_uses_plain_text_pipeline(
     prepared = await prepare._prepare_convertible(
         "notes.txt",
         b"plain text",
-        PipelineSpec(),
-        LlmConfig(),
+        AUTO,
         origin="upload",
         ctx=None,
     )
@@ -169,16 +170,7 @@ async def test_auto_plain_text_uses_plain_text_pipeline(
     assert "plain text" in prepared.main.markdown
 
 
-async def test_plain_text_rejects_binary(tmp_path: Path) -> None:
-    doc = tmp_path / "blob.sbx"
-    doc.write_bytes(b"\x89PNG\r\n\x1a\n")
-
-    with pytest.raises(ValueError, match="not text"):
-        await PlainTextConverter()(doc)
-
-
 def test_auto_fallback_decodes_legacy_text() -> None:
-    # The fallback applies the same decode-and-fence projection as the pipeline.
     prepared = prepare._prepare_plain_text_or_stub(
         "settings.ini", "Benutzer = Jörg\n".encode("cp1252"), origin="upload"
     )
@@ -193,14 +185,3 @@ def test_auto_fallback_stubs_real_binaries() -> None:
     )
 
     assert prepared.main.entry_metadata.entry_kind == "binary_stub"
-
-
-def test_fenced_code_block_escapes_embedded_fences() -> None:
-    # A file that itself contains a long backtick run must not close the block
-    # early: the fence grows to one backtick longer than the longest run.
-    payload = "before\n````````\nafter"  # an 8-backtick line
-    block = fenced_code_block(payload, ".md")
-    fence = "`" * 9
-
-    assert block == f"{fence}md\n{payload}\n{fence}\n"
-    assert payload in block

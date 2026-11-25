@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from hivegent.auth import NOBODY, get_current_principal
 from hivegent.config import settings
 from hivegent.server.language import LanguageMiddleware
 from hivegent.server.routes import transparency
@@ -24,6 +25,7 @@ def test_error_detail_follows_accept_language(
     app = FastAPI()
     app.add_middleware(LanguageMiddleware)
     app.include_router(transparency.router)
+    app.dependency_overrides[get_current_principal] = lambda: NOBODY
 
     response = TestClient(app).post(
         "/transparency/detect",

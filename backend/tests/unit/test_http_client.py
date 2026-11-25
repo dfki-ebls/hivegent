@@ -1,20 +1,16 @@
-"""Tests for routing operator endpoints over unix sockets."""
+"""Tests for the direct client of operator endpoints."""
 
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-import httpx2
 import pytest
 
-from hivegent import security
 from hivegent.config import settings
-from hivegent.http_client import (
-    get_trusted_http_client,
-    get_user_http_client,
-    shared_http_client_lifespan,
-)
+from hivegent.http_client import get_trusted_http_client, shared_http_client_lifespan
+from hivegent.security import OperatorUrl, UnsafeUrlError
 
+ENDPOINT = OperatorUrl("http://llmhop/v1")
 URL = "http://llmhop/v1/models"
 
 
@@ -45,30 +41,17 @@ async def socket_hits(
 async def test_trusted_client_reaches_unix_socket(socket_hits: list[bytes]) -> None:
     """A configured socket host is served over its socket, keeping its Host header."""
     async with shared_http_client_lifespan():
-        response = await get_trusted_http_client().get(URL)
+        response = await get_trusted_http_client(ENDPOINT).get(URL)
 
     assert response.text == "ok"
     assert len(socket_hits) == 1
     assert b"Host: llmhop" in socket_hits[0]
 
 
-async def test_user_client_ignores_unix_socket(
-    socket_hits: list[bytes], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Even an allowlisted socket host goes through the egress proxy for users."""
-    proxied: list[str] = []
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        proxied.append(str(request.url))
-        return httpx2.Response(502)
-
-    monkeypatch.setattr(settings.security.user_urls, "allow_hosts", ["llmhop"])
-    monkeypatch.setattr(
-        security, "_egress_transport", lambda *_: httpx2.MockTransport(handler)
-    )
-
+async def test_trusted_client_refuses_other_origins(socket_hits: list[bytes]) -> None:
+    """A trusted client reaches the origins of its operator URLs and nothing else."""
     async with shared_http_client_lifespan():
-        await get_user_http_client().get(URL)
+        with pytest.raises(UnsafeUrlError):
+            _ = await get_trusted_http_client(ENDPOINT).get("http://llmhop:8080/")
 
-    assert proxied == [URL]
     assert socket_hits == []

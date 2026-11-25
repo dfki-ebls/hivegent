@@ -1,19 +1,28 @@
-"""Unit tests for the concrete WorkspaceScope grammar (~/@ convention)."""
+"""Unit tests for the scope grammar (~, @<group>, /srv) and its routing."""
 
 from pathlib import Path
 
 import pytest
+from exar.memory.mounts import render, strip
 
-from hivegent import entries
 from hivegent.agents.common import UserDeps
-from hivegent.changes import Changeset, Delete
 from hivegent.server.common import parse_document_scope
-from hivegent.store import Casebase, User, WorkspaceScope
+from hivegent.store import (
+    GlobalScope,
+    GroupScope,
+    HostGrant,
+    User,
+    UserScope,
+    parse_scope,
+    split_scope_path,
+)
 from hivegent.tmp import tmp_dir
+from hivegent.tools import entries
 from hivegent.tools.base import SearchPath, resolve_accessible_file
-from hivegent.types import DocumentFilter
-from hivegent.workspace.operations import Location, route
-from tests.helpers import label_id, owned
+from hivegent.tools.changes import Changeset, Delete
+from hivegent.types import DocumentFilter, FilterEntry
+from hivegent.workspace.operations import Location, Root, route
+from tests.helpers import doc, label_id, owned
 
 
 def _deps(conversation_id: str | None) -> UserDeps:
@@ -24,35 +33,46 @@ def _deps(conversation_id: str | None) -> UserDeps:
     )
 
 
-class TestWorkspaceScope:
-    """Render, strip, and parse for the ~/@ addressing convention."""
+class TestScope:
+    """Render, strip, and parse for every scope's key and path prefix."""
 
-    def test_render_personal_and_group(self) -> None:
-        assert WorkspaceScope().render("reports/q1.md") == "~/reports/q1.md"
-        assert WorkspaceScope("team").render("notes.md") == "@team/notes.md"
-        assert WorkspaceScope("team").render("") == "@team"
+    def test_render_each_scope(self) -> None:
+        assert UserScope("u").render("reports/q1.md") == "~/reports/q1.md"
+        assert GroupScope("team").render("notes.md") == "@team/notes.md"
+        assert GlobalScope().render("") == "/srv"
 
     def test_strip_recovers_local_or_none(self) -> None:
-        personal = WorkspaceScope()
-        assert personal.strip_prefix("~/reports") == "reports"
-        assert personal.strip_prefix("~") == ""
-        assert personal.strip_prefix("@team/x") is None
-        assert personal.strip_prefix("reports") is None
+        user, shared = UserScope("u").prefix, GlobalScope().prefix
+        assert strip(user, "~/reports") == "reports"
+        assert strip(user, "~") == ""
+        assert strip(user, "@team/x") is None
+        assert strip(shared, "/globals/x") is None
 
-    def test_parse_round_trips_render(self) -> None:
-        for raw in ("~", "~/reports/q1.md", "@team", "@team/notes.md"):
-            scope, local = WorkspaceScope.parse(raw)
-            assert scope.render(local) == raw
+    def test_split_round_trips_render(self) -> None:
+        for raw in ("~", "~/reports/q1.md", "@team", "@team/notes.md", "/srv/a"):
+            prefix, local = split_scope_path(raw)
+            assert render(prefix, local) == raw
 
-    def test_parse_requires_a_prefix(self) -> None:
+    def test_split_requires_a_prefix(self) -> None:
+        for raw in ("reports/q1.md", "/tmp/a", "@"):
+            with pytest.raises(ValueError):
+                split_scope_path(raw)
+
+    def test_keys_parse_back(self) -> None:
+        for scope in (GlobalScope(), GroupScope("team"), UserScope("u")):
+            assert parse_scope(scope.key) == scope
+
         with pytest.raises(ValueError):
-            WorkspaceScope.parse("reports/q1.md")
+            parse_scope("tenant:x")
 
 
 class TestRoute:
     """Routing a canonical path to the root it names."""
 
-    _roots = (Casebase.for_user("u"), Casebase.for_group("team", writable=True))
+    _roots = (
+        Root.of(HostGrant().workspace(UserScope("u"))),
+        Root.of(HostGrant().workspace(GroupScope("team"))),
+    )
 
     def test_routes_to_each_addressed_root(self) -> None:
         routed = route(
@@ -85,7 +105,7 @@ class TestConversationTmp:
             sp, local, absolute = resolve_accessible_file(
                 paths, "/tmp/state.json"
             ) or pytest.fail("unresolved")
-            assert sp.prefixed(local) == "/tmp/state.json"
+            assert sp.mount.render(local) == "/tmp/state.json"
             assert absolute.read_text() == conversation
             assert (
                 resolve_accessible_file(paths, f"/tmp/../{label_id(other)}/state.json")
@@ -108,8 +128,8 @@ class TestCaseFolding:
         """A hidden `secret.md` is not reachable as `SECRET.md` where case folds."""
         monkeypatch.setattr(entries, "folds_case", lambda _directory: True)
         (tmp_path / "secret.md").write_text("x")
-        hidden = DocumentFilter(excluded=frozenset({"secret.md"}))
-        paths = (SearchPath(tmp_path, WorkspaceScope(), hidden),)
+        hidden = DocumentFilter(excluded=frozenset({doc("secret.md")}))
+        paths = (SearchPath.of(tmp_path, "~", implied=True, filter_func=hidden),)
 
         assert resolve_accessible_file(paths, "~/secret.md") is None
         assert resolve_accessible_file(paths, "~/SECRET.md") is None
@@ -123,26 +143,26 @@ class TestDocumentScopePrompt:
     no idea which of the workspace's documents the question was about.
     """
 
-    def _deps(self, included: list[str], excluded: list[str]) -> UserDeps:
-        relevant, document_filter, group_filters = parse_document_scope(
-            included, excluded, frozenset()
-        )
+    def _deps(
+        self, included: list[FilterEntry], excluded: list[FilterEntry]
+    ) -> UserDeps:
+        user = User("u1")
+        relevant, document_filters = parse_document_scope(included, excluded, user)
         return UserDeps(
-            user=User("u1"),
+            user=user,
             mode="interactive",
-            document_filter=document_filter,
-            group_filters=group_filters,
+            document_filters=document_filters,
             relevant_documents=relevant,
         )
 
     def test_included_documents_are_named(self) -> None:
-        scope = self._deps(["~/projekte/tabelle.md"], []).describe_document_scope()
+        scope = self._deps([doc("~/projekte/tabelle.md")], []).describe_document_scope()
 
         assert "~/projekte/tabelle.md" in scope
         assert "these documents" in scope
 
     def test_excluded_documents_are_named(self) -> None:
-        scope = self._deps([], ["~/geheim.md"]).describe_document_scope()
+        scope = self._deps([], [doc("~/geheim.md")]).describe_document_scope()
 
         assert "~/geheim.md" in scope
 

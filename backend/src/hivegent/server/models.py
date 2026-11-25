@@ -5,9 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from ..changes import CreateDir, Delete, DeleteKind, Move
-from ..llm_config import LlmConfig
-from ..types import PipelineSpec
+from ..tools.changes import CreateDir, Delete, DeleteKind, Move
 
 __all__ = [
     "MAX_CHANGE_OPERATIONS",
@@ -25,28 +23,30 @@ __all__ = [
 ]
 
 MAX_CHANGE_OPERATIONS = 10_000
-"""Most operations one change request carries, as many as a collection may import."""
+"""Most operations or paths one bulk request carries, as many as a collection may import."""
 
 
 class RechunkRequest(BaseModel):
-    """Request to rechunk documents with new settings."""
+    """Request to rechunk documents with the operator's chunking pipeline."""
 
     files: list[str] = Field(
-        min_length=1, description="Workspace paths of the documents, all in one scope"
+        min_length=1,
+        max_length=MAX_CHANGE_OPERATIONS,
+        description="Workspace paths of the documents, all in one scope",
     )
-    pipeline: PipelineSpec = Field(default_factory=PipelineSpec)
 
 
 class ReconvertRequest(RechunkRequest):
     """Request to reconvert documents from their originals."""
 
-    llm: LlmConfig = Field(default_factory=LlmConfig)
-
 
 class DocumentLineCountsRequest(BaseModel):
     """Request a batch of document line counts by workspace path."""
 
-    files: list[str] = Field(description="Workspace paths to look up line counts for")
+    files: list[str] = Field(
+        max_length=MAX_CHANGE_OPERATIONS,
+        description="Workspace paths to look up line counts for",
+    )
 
 
 class MoveDestination(BaseModel):

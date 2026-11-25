@@ -1,8 +1,8 @@
 """Global maintenance mode: locks out non-admins instance-wide.
 
 The authoritative flag is the ``maintenance_enabled`` column of the
-:class:`~hivegent.db.models.ApplicationSettings` singleton; the value on
-``app.state`` is a write-through cache seeded once at boot via
+:class:`~hivegent.db.models.ApplicationSettings` singleton, and the value held
+here is a write-through cache seeded once at boot via
 :func:`load_persisted_state` so the per-request gate never costs a
 database round trip.  Toggles (``PUT /api/v1/admin/maintenance``) persist
 the row first and update the cache second, so a failed write can never
@@ -14,23 +14,25 @@ serving their stale value until restart.  If that ever becomes the
 deployment shape, replace the cache with per-request reads or a
 short-TTL refresh.
 
-While the flag is set, every API request from a non-admin fails with a
-503 problem of type :data:`MAINTENANCE_PROBLEM`, which the frontend turns
+While the flag is set, every request to the API or ``/mcp`` from a non-admin
+fails with a 503 problem of type :data:`MAINTENANCE_PROBLEM`, which the frontend turns
 into a full-screen maintenance notice.
 Admins are exempt so they can keep working and switch the mode back
 off.
 """
 
-from fastapi import FastAPI, Request, status
+from dataclasses import dataclass
 
-from ..auth import CurrentUser
+from fastapi import status
+
 from ..db.application_settings import read_maintenance_enabled
-from ..l10n import Localized
+from ..shared.l10n import Localized
+from ..store import User
 from .problems import ProblemException
 
 __all__ = [
     "MAINTENANCE_PROBLEM",
-    "enforce_maintenance",
+    "check_maintenance",
     "is_enabled",
     "load_persisted_state",
     "set_enabled",
@@ -48,41 +50,46 @@ _MAINTENANCE_DETAIL = Localized(
 )
 
 
-def is_enabled(app: FastAPI) -> bool:
-    """Return whether maintenance mode is currently active for *app*."""
-    return getattr(app.state, "maintenance_enabled", False)
+@dataclass(slots=True)
+class _Flag:
+    enabled: bool = False
 
 
-def set_enabled(app: FastAPI, enabled: bool) -> None:
+_flag = _Flag()
+"""The process's cache of the flag, read by the REST API and ``/mcp`` alike."""
+
+
+def is_enabled() -> bool:
+    """Return whether maintenance mode is currently active."""
+    return _flag.enabled
+
+
+def set_enabled(enabled: bool) -> None:
     """Update the in-memory cache of the maintenance flag.
 
     Callers that change the mode (rather than seed the cache) must
-    persist via ``write_maintenance_enabled`` first — see the module
+    persist via ``write_maintenance_enabled`` first, see the module
     docstring for the ordering rationale.
     """
-    app.state.maintenance_enabled = enabled
+    _flag.enabled = enabled
 
 
-async def load_persisted_state(app: FastAPI) -> None:
-    """Seed the cache from the persisted singleton; called once at boot."""
-    set_enabled(app, await read_maintenance_enabled())
+async def load_persisted_state() -> None:
+    """Seed the cache from the persisted singleton, called once at boot."""
+    set_enabled(await read_maintenance_enabled())
 
 
-async def enforce_maintenance(
-    request: Request,
-    user: CurrentUser,
-) -> None:
-    """FastAPI dependency that rejects non-admin requests during maintenance.
+def check_maintenance(user: User) -> None:
+    """Refuse *user* during maintenance unless an admin.
 
-    Mounted router-wide on the API router.  Admins pass through so
-    they can operate the app and disable the mode again; everyone else
-    (including PAT clients, which carry no roles) receives 503.
+    Admins pass through so they can operate the app and disable the mode
+    again.
 
     Raises:
         ProblemException: 503 of type :data:`MAINTENANCE_PROBLEM` while
             the flag is set and the caller is not an admin.
     """
-    if is_enabled(request.app) and not user.is_admin:
+    if is_enabled() and not user.is_admin:
         raise ProblemException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             _MAINTENANCE_DETAIL.current,

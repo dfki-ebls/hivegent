@@ -7,13 +7,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ...config import TransparencySettings, settings
-from ...l10n import Localized
+from ...config import settings
+from ...config.observability import TransparencySettings
+from ...shared.l10n import Localized
 from ...transparency import TransparencyUnavailable, detect_text
 from ...types import (
     TransparencyDetectionRequest,
     TransparencyDetectionResponse,
 )
+from ..rate_limit import DETECTION_LIMIT
 
 __all__ = ["TransparencyConfigured", "router"]
 
@@ -37,7 +39,7 @@ TransparencyConfigured = Annotated[TransparencySettings, Depends(_require_transp
 router = APIRouter(prefix="/transparency")
 
 
-@router.post("/detect")
+@router.post("/detect", dependencies=[DETECTION_LIMIT])
 async def detect_watermark(
     request: TransparencyDetectionRequest,
     config: TransparencyConfigured,

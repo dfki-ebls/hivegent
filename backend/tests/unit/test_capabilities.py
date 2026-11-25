@@ -1,8 +1,11 @@
 """Capability composition: guidance appears exactly when its tools do."""
 
+import asyncio
 from collections.abc import Sequence
+from dataclasses import replace
 
 import pytest
+from exar.pydantic_ai import definition_action
 from pydantic_ai import FunctionToolset
 from pydantic_ai.agent import AgentInstructions
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
@@ -10,19 +13,20 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from hivegent.agents import capabilities
-from hivegent.agents.app import user_agent
+from hivegent.agents.app import chat_agent
 from hivegent.agents.capabilities import (
     FEATURES,
     build_capabilities,
     collect_tool_schemas,
 )
 from hivegent.agents.common import UserDeps
+from hivegent.agents.guards import SPILL_TOOLS
 from hivegent.agents.tools.python import sandbox_surface
 from hivegent.prompts import GROUNDING_INSTRUCTIONS
 from hivegent.server.routes.meta import list_tools
-from hivegent.store import User
-from hivegent.types import Mode, ToolsSpec
-from tests.helpers import owned, run_context
+from hivegent.store import User, UserScope
+from hivegent.types import DocumentFilter, Mode
+from tests.helpers import in_run, owned, run_context
 
 _EXPLORE = next(feature for feature in FEATURES if feature.id == "explore")
 
@@ -38,32 +42,31 @@ def _static_texts(instructions: AgentInstructions[UserDeps]) -> list[str]:
     return []
 
 
-def _instructions(spec: ToolsSpec) -> str:
+def _deps(disabled: Sequence[str] = (), mode: Mode = "interactive") -> UserDeps:
+    return UserDeps(user=User("u"), mode=mode, disabled_tools=frozenset(disabled))
+
+
+def _instructions(disabled: Sequence[str]) -> str:
     """Every static instruction the composed capabilities contribute."""
     return "\n".join(
         text
-        for capability in build_capabilities(spec, mode="interactive", language="en")
+        for capability in build_capabilities(_deps(disabled))
         for text in _static_texts(capability.get_instructions())
     )
 
 
 def test_grounding_rides_with_the_retrieval_tools() -> None:
     """Disabling every explore tool must retract the search-first mandate."""
-    assert GROUNDING_INSTRUCTIONS["en"] in _instructions(ToolsSpec())
+    assert GROUNDING_INSTRUCTIONS["en"] in _instructions(())
 
-    disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
+    disabled = sorted(_EXPLORE.tool_names)
     assert GROUNDING_INSTRUCTIONS["en"] not in _instructions(disabled)
 
 
 def test_shared_block_survives_on_its_remaining_feature() -> None:
     """Path guidance is owned by explore *and* write, so write alone keeps it."""
-    disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
-    ids = {
-        capability.id
-        for capability in build_capabilities(
-            disabled, mode="interactive", language="en"
-        )
-    }
+    disabled = sorted(_EXPLORE.tool_names)
+    ids = {capability.id for capability in build_capabilities(_deps(disabled))}
     assert "workspace-paths" in ids
 
 
@@ -71,7 +74,7 @@ def _turn(
     *,
     relevant: frozenset[str] = frozenset(),
     mode: Mode = "interactive",
-    spec: ToolsSpec | None = None,
+    disabled: Sequence[str] = (),
 ) -> ModelRequestParameters:
     """Run one turn against a stub model, returning what it was first handed."""
     captured: list[ModelRequestParameters] = []
@@ -85,12 +88,18 @@ def _turn(
         mode=mode,
         conversation=owned("c1"),
         relevant_documents=relevant,
+        disabled_tools=frozenset(disabled),
     )
-    user_agent.run_sync(
-        "hi",
-        model=FunctionModel(respond),
-        deps=deps,
-        capabilities=build_capabilities(spec or ToolsSpec(), mode=mode, language="en"),
+    _ = asyncio.run(
+        in_run(
+            deps,
+            chat_agent.run(
+                "hi",
+                model=FunctionModel(respond),
+                deps=deps,
+                capabilities=build_capabilities(deps),
+            ),
+        )
     )
     return captured[0]
 
@@ -109,8 +118,10 @@ def test_document_scope_rides_with_the_retrieval_tools() -> None:
     selected = frozenset({"~/a.md"})
     assert "~/a.md" in _instruction_text(_turn(relevant=selected))
 
-    disabled = ToolsSpec(disabled_tools=sorted(_EXPLORE.tool_names))
-    assert "~/a.md" not in _instruction_text(_turn(relevant=selected, spec=disabled))
+    disabled = sorted(_EXPLORE.tool_names)
+    assert "~/a.md" not in _instruction_text(
+        _turn(relevant=selected, disabled=disabled)
+    )
 
 
 def _tool_names(mode: Mode = "interactive") -> set[str]:
@@ -165,10 +176,12 @@ def test_the_shape_specific_readers_are_never_merely_hinted_at(
     assert "async def query_table(" in declared
 
 
-def test_the_default_exclusions_never_reach_the_model() -> None:
+def test_an_operator_exclusion_never_reaches_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """What deferral used to decide silently is now an operator's list."""
-    excluded = set(capabilities.settings.tools.disabled)
-    assert excluded == {"list_conversations", "get_conversation", "search_conversation"}
+    excluded = {"list_conversations", "get_conversation", "search_conversation"}
+    monkeypatch.setattr(capabilities.settings.tools, "disabled", sorted(excluded))
 
     assert not excluded & _tool_names()
 
@@ -181,7 +194,7 @@ def test_an_operator_exclusion_retracts_the_feature_it_empties(
         capabilities.settings.tools, "disabled", sorted(_EXPLORE.tool_names)
     )
 
-    assert GROUNDING_INSTRUCTIONS["en"] not in _instructions(ToolsSpec())
+    assert GROUNDING_INSTRUCTIONS["en"] not in _instructions(())
 
 
 def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
@@ -190,9 +203,9 @@ def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
     """The one filter covers *extra* too, an operator's only reach over them."""
     extra: FunctionToolset[UserDeps] = FunctionToolset()
 
-    @extra.tool_plain
+    @extra.tool_plain(metadata={"effect": "read"})
     def remote_thing() -> str:
-        """A tool a user-configured MCP server brought."""
+        """A tool an extra toolset brought."""
         return ""
 
     def names() -> set[str]:
@@ -202,13 +215,16 @@ def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
             captured.append(info.model_request_parameters)
             return ModelResponse(parts=[TextPart("ok")])
 
-        user_agent.run_sync(
-            "hi",
-            model=FunctionModel(respond),
-            deps=UserDeps(user=User("u"), mode="interactive"),
-            capabilities=build_capabilities(
-                ToolsSpec(), extra=[extra], mode="interactive", language="en"
-            ),
+        _ = asyncio.run(
+            in_run(
+                _deps(),
+                chat_agent.run(
+                    "hi",
+                    model=FunctionModel(respond),
+                    deps=_deps(),
+                    capabilities=build_capabilities(_deps(), extra=[extra]),
+                ),
+            )
         )
         return {tool.name for tool in captured[0].function_tools}
 
@@ -233,6 +249,17 @@ async def test_an_excluded_tool_offers_the_user_no_switch(
     assert "query_table" not in {tool.name for tool in await list_tools(User(id="u"))}
 
 
+async def test_an_internal_tool_is_listed_but_never_switchable() -> None:
+    """The host reports the assistant through it, so no list may withhold it."""
+    listed = {tool.name: tool for tool in await list_tools(User(id="u"))}
+    assistant = next(feature for feature in FEATURES if feature.id == "assistant")
+    (tool_def,) = assistant.tool_defs
+
+    assert not listed["read_assistant"].switchable
+    assert capabilities.unknown_tool_names(["read_assistant"]) == ["read_assistant"]
+    assert _deps(["read_assistant"]).policy(definition_action(tool_def)) == "allow"
+
+
 def test_a_misspelled_exclusion_is_a_startup_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -242,3 +269,32 @@ def test_a_misspelled_exclusion_is_a_startup_error(
     monkeypatch.setattr(capabilities.settings.tools, "disabled", ["query_tables"])
     with pytest.raises(ValueError, match="query_tables"):
         capabilities.check_tool_settings()
+
+
+def test_delegation_is_known_and_listed() -> None:
+    """A list may withhold the delegation tools and the subagents, and the catalog names them."""
+    infos = {info.name: info for info in capabilities.tool_infos()}
+
+    assert capabilities.unknown_tool_names(["delegate_task", "explore"]) == []
+    assert {"delegate_task", "cancel_task", "explore", "load_skill"} <= infos.keys()
+    assert infos["delegate_task"].switchable
+    assert not any(infos[name].switchable for name in SPILL_TOOLS)
+
+
+async def test_a_withheld_tool_is_called_through_no_surface() -> None:
+    """The debug console and MCP build the tools by the same rule a run does."""
+    with pytest.raises(KeyError):
+        await capabilities.invoke_agent_tool(
+            "delete_documents", {"file_paths": ["~/a.md"]}, _deps(["delete_documents"])
+        )
+
+
+def test_an_allowlist_withholds_derived_content() -> None:
+    """Past conversations and the memory may quote any document beyond the allowlist."""
+    memory = next(feature for feature in FEATURES if feature.id == "memory")
+    confined = replace(
+        _deps(), document_filters={UserScope("u"): DocumentFilter(allowed=frozenset())}
+    )
+
+    assert memory.live(_deps())
+    assert not memory.live(confined)

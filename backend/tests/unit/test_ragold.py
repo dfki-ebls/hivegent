@@ -12,12 +12,13 @@ import pytest
 from fastapi import HTTPException
 from pydantic import HttpUrl
 
-from hivegent.chunkers.base import EntryMetadata
 from hivegent.config import settings
 from hivegent.db import documents as db_documents
-from hivegent.ragold import RagoldRequest, plain_text
-from hivegent.server.routes.conversations import export_ragold_route
-from hivegent.store import Casebase, User
+from hivegent.metadata import EntryMetadata
+from hivegent.ragold import RagoldRequest, load, plain_text
+from hivegent.server.routes.conversations.history import export_ragold_route
+from hivegent.shared.zips import member_mtime
+from hivegent.store import User, Workspace
 
 from ..helpers import owned
 
@@ -28,7 +29,7 @@ SCHEMA = Path(__file__).parents[3] / "schemas" / "ragold.json"
 def _ragold(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     """Enable the export over a workspace that has no database rows."""
 
-    async def no_metadata(_store: Casebase, _reference: str) -> EntryMetadata | None:
+    async def no_metadata(_store: Workspace, _reference: str) -> EntryMetadata | None:
         return None
 
     _ = data_dir
@@ -57,7 +58,7 @@ def _request(**changes: object) -> RagoldRequest:
 async def test_archive_matches_the_ragold_schema() -> None:
     """The zip ships originals, markdown-only entries, and a schema-valid envelope."""
     user = User("u", name="Ada")
-    workspace = user.store.workspace_dir(settings.data_dir)
+    workspace = user.home.workspace_dir()
     original = b"%PDF-1.7 bees"
     (workspace / "report.pdf").write_bytes(original)
     (workspace / "report.md").write_text("Bees")
@@ -93,6 +94,7 @@ async def test_archive_matches_the_ragold_schema() -> None:
             info for info in archive.infolist() if info.filename.endswith("/notes.md")
         )
         assert notes.date_time == (1980, 1, 1, 0, 0, 0)
+        assert member_mtime(notes) == 0
         assert archive.read(notes) == b"Notes"
         (annotation,) = data["annotations"].values()
         assert annotation["passages"] == [
@@ -139,3 +141,41 @@ async def test_refuses_unreachable_and_unlisted_documents() -> None:
 def test_plain_text(markdown: str, text: str) -> None:
     """Markdown syntax is dropped, cut-off constructs degrade to their text."""
     assert plain_text(markdown) == text
+
+
+async def test_load_scores_an_archive_by_its_key_facts() -> None:
+    """An archive loads as a dataset whose cases check their key facts."""
+    annotation = {
+        "query": "Capital of France?",
+        "response": "Paris is the capital of France.",
+        "questionType": "simple",
+        "answerability": "answerable",
+        "origin": "https://chat.test/1",
+        "keyFacts": [{"text": "Paris", "importance": "must"}],
+        "passages": [
+            {"documentId": "d1", "text": "Paris is the capital.", "grade": "needed"},
+            {"documentId": "d1", "text": "Lyon is a city.", "grade": "misleading"},
+        ],
+    }
+    archive = {
+        "version": 3,
+        "author": "ada",
+        "project": "geo",
+        "language": "en",
+        "annotations": {"a1": annotation},
+        "documents": {"d1": {"name": "france.md", "size": 21, "sha256": "0" * 64}},
+    }
+    buffer = io.BytesIO()
+
+    with ZipFile(buffer, "w") as zip:
+        zip.writestr("annotations.json", json.dumps(archive))
+
+    dataset = load(buffer)
+    [case] = dataset.cases
+
+    assert (dataset.name, case.name, case.inputs) == ("geo", "a1", "Capital of France?")
+    assert case.metadata is not None and case.metadata.qrels() == {"d1": 2}
+
+    report = await dataset.evaluate(lambda query: "Paris", progress=False)
+
+    assert report.cases[0].assertions["KeyFacts_passed"].value is True

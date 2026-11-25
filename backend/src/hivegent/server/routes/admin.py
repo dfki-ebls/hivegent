@@ -1,45 +1,44 @@
-"""Admin-only routes for destructive resets and operator overviews.
+"""Admin-only routes for the overview, maintenance, reindexing, and what the operator configured.
 
 Every endpoint in this router gates on :func:`hivegent.auth.require_admin`
-via the router-level dependency.  The actions mirror the destructive
-operations exposed in open-webui's admin panel, mapped onto Hivegent's
-storage layout:
-
-* Workspace files live in ``<data_dir>/workspace/<store_key>/`` and
-  are the source of truth for document content; the ``documents`` and
-  ``chunks`` rows (text + vector) are an index derived from them.
-* PostgreSQL is authoritative for everything else: conversations,
-  memory, users, and groups.  Group membership is not stored — it
-  lives solely in the OIDC token.
-
-A full ``DELETE /admin/data/factory`` wipes workspace + database and
-leaves the deployment in the same state as a clean checkout.
+via the router-level dependency.  Wiping another user's or a group's data, or
+the whole deployment's, is no HTTP route at all, it runs on the host through
+``hivegent reset``, and no admin acts as another user.
 """
 
 import asyncio
-from typing import Annotated, Literal
+from collections.abc import Callable
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from exar.helpers import get_name
+from exar.text import plural
+from exar.tools import effect_of
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from ... import workspace
-from ...auth import act_as, require_admin
-from ...conversation_files import reset_conversation_files
+from ...agents.integrations import INTEGRATIONS
+from ...auth import require_admin
+from ...db import sources as db_sources
 from ...db.application_settings import write_maintenance_enabled
-from ...db.documents import delete_all_documents
 from ...db.groups import list_groups_with_counts
-from ...db.users import delete_all_identities, list_users_with_counts
-from ...humanize import pluralize
-from ...l10n import Localized
+from ...db.users import list_users_with_counts
+from ...pipelines import PipelineInfo, chunking_pipelines, conversion_pipelines
+from ...plugins.loader import LoadedPlugin, plugins
 from ...reconcile import reconcile_all
-from ...store import Casebase, User
+from ...shared.l10n import Localized
+from ...sources.catalog import SOURCES
+from ...sources.sync import progress, request_sync
+from ...store import HostGrant
 from ...types import (
     AdminGroupInfo,
     AdminMaintenanceState,
     AdminOverviewResponse,
     AdminReindexResponse,
     AdminUserInfo,
+    Integration,
+    PluginFeatureInfo,
+    PluginInfo,
+    SourceStatus,
 )
-from ..common import delete_user_data
 from ..maintenance import is_enabled, set_enabled
 
 __all__ = ["router"]
@@ -47,30 +46,30 @@ __all__ = ["router"]
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 
-def _reindexed(stores: int, synced: int, renamed: int) -> Localized[str]:
+def _reindexed(stores: int, synced: int) -> Localized[str]:
     return Localized(
         en=(
-            f"Reconciled {stores} {pluralize(stores, 'casebase')}: "
-            f"{synced} {pluralize(synced, 'entry', 'entries')} synced, "
-            f"{renamed} {pluralize(renamed, 'path')} renamed"
+            f"Reconciled {stores} {plural(stores, 'workspace')}: "
+            f"{synced} {plural(synced, 'entry', 'entries')} synced"
         ),
         de=(
-            f"{stores} {pluralize(stores, 'Arbeitsbereich', 'Arbeitsbereiche')} "
-            f"abgeglichen: {synced} {pluralize(synced, 'Eintrag', 'Einträge')} "
-            f"aktualisiert, {renamed} {pluralize(renamed, 'Pfad', 'Pfade')} umbenannt"
+            f"{stores} {plural(stores, 'Arbeitsbereich', 'Arbeitsbereiche')} "
+            f"abgeglichen: {synced} {plural(synced, 'Eintrag', 'Einträge')} "
+            f"aktualisiert"
         ),
     )
 
 
-# ─── Overviews ────────────────────────────────────────────────────────
+# ─── Overview ─────────────────────────────────────────────────────────
 
 
 @router.get("/overview")
 async def get_overview() -> AdminOverviewResponse:
-    """List the users that left a footprint in the local database, and every group."""
+    """List the users and groups that stored something, with what they hold."""
     users, groups = await asyncio.gather(
         list_users_with_counts(), list_groups_with_counts()
     )
+
     return AdminOverviewResponse(
         users=[
             AdminUserInfo(id=user_id, document_count=docs, conversation_count=convs)
@@ -87,105 +86,133 @@ async def get_overview() -> AdminOverviewResponse:
 
 
 @router.get("/maintenance")
-async def get_maintenance(request: Request) -> AdminMaintenanceState:
+async def get_maintenance() -> AdminMaintenanceState:
     """Report the current state of the global maintenance flag."""
-    return AdminMaintenanceState(enabled=is_enabled(request.app))
+    return AdminMaintenanceState(enabled=is_enabled())
 
 
 @router.put("/maintenance")
-async def set_maintenance(
-    request: Request,
-    state: AdminMaintenanceState,
-) -> AdminMaintenanceState:
+async def set_maintenance(state: AdminMaintenanceState) -> AdminMaintenanceState:
     """Set the global maintenance flag.
 
-    While enabled, every API request from a non-admin fails with
-    503 (see ``hivegent.server.maintenance``).  Persists the
+    While enabled, every request to the API or ``/mcp`` from a non-admin
+    fails with 503 (see ``hivegent.server.maintenance``).  Persists the
     ``ApplicationSettings`` row first, then updates the in-memory cache the
-    gate reads — a failed write leaves both layers unchanged.
+    gate reads, so a failed write leaves both layers unchanged.
     """
     await write_maintenance_enabled(state.enabled)
-    set_enabled(request.app, state.enabled)
+    set_enabled(state.enabled)
     return state
 
 
-# ─── System-wide resets ───────────────────────────────────────────────
+# ─── Integrations ───────────────────────────────────────────────────
 
 
-@router.delete("/data/{target}", status_code=status.HTTP_204_NO_CONTENT)
-async def admin_reset(target: Literal["workspace", "database", "factory"]) -> None:
-    """Wipe the workspace, the database, or both (``factory``).
+@router.get("/integrations")
+async def list_integrations() -> list[Integration]:
+    """List the configured MCP servers, databases, and APIs with the tools each offers."""
+    return [integration.integration() for integration in INTEGRATIONS]
 
-    ``workspace`` drops every workspace file and document row, chunks
-    (text + vector) cascade with the rows, while conversations, memory,
-    users, and groups are kept.
 
-    ``database`` drops every user and group in one transaction
-    (:func:`delete_all_identities`) and the conversations' folders.
-    Cascade chain (see ``backend/src/hivegent/db/models.py``):
-    users → memory, conversations (→ messages), documents (→ chunks),
-    groups → group documents.  The workspace tree on disk is not touched.
+# ─── Pipelines ────────────────────────────────────────────────────────
 
-    ``factory`` drops the workspace tree, the conversations' folders, and
-    every identity, leaving the deployment in the shape of a fresh checkout.
-    Idempotent, re-running on a clean tree is a no-op.
-    """
-    match target:
-        case "workspace":
-            await workspace.delete_workspace_root()
-            await delete_all_documents()
-        case "database":
-            await reset_conversation_files()
-            await delete_all_identities()
-        case "factory":
-            await asyncio.gather(
-                workspace.delete_workspace_root(), reset_conversation_files()
+type PipelineStage = Literal["conversion", "chunking"]
+
+_STAGES: dict[PipelineStage, Callable[[], list[PipelineInfo]]] = {
+    "conversion": conversion_pipelines,
+    "chunking": chunking_pipelines,
+}
+
+
+@router.get("/pipelines/{stage}")
+async def list_pipelines(stage: PipelineStage) -> list[PipelineInfo]:
+    """The installed pipelines of one processing stage, ``auto`` first, in the request's language."""
+    return _STAGES[stage]()
+
+
+# ─── External sources ─────────────────────────────────────────────────
+
+_UNKNOWN_SOURCE = Localized(en="No such source", de="Diese Quelle gibt es nicht")
+
+
+@router.get("/sources")
+async def list_sources() -> list[SourceStatus]:
+    """List the configured sources with how their last sync went."""
+    states = await db_sources.load_states(counted=True)
+
+    return [
+        SourceStatus(
+            id=source.id,
+            connector=source.config.connector,
+            host=source.config.url.host or "" if source.config.url else "",
+            groups=source.config.groups,
+            interval_minutes=source.config.interval_minutes,
+            requested=state.requested,
+            running=running is not None,
+            done=0 if running is None else running.done,
+            total=0 if running is None else running.total,
+            synced_at=state.synced_at,
+            error=state.error,
+            held_deletes=state.held,
+            items=state.items,
+        )
+        for source in SOURCES.values()
+        for state in (states.get(source.id, db_sources.SourceState()),)
+        for running in (progress(source.id),)
+    ]
+
+
+@router.post("/sources/{source_id}/sync", status_code=status.HTTP_202_ACCEPTED)
+async def sync_source_now(source_id: str, confirm_deletes: bool = False) -> None:
+    """Request a sync of a source, which runs soon, *confirm_deletes* deleting what its brake held."""
+    source = SOURCES.get(source_id)
+
+    if source is None:
+        raise HTTPException(status_code=404, detail=_UNKNOWN_SOURCE.current)
+
+    await request_sync(source, confirm=confirm_deletes)
+
+
+# ─── Plugins ──────────────────────────────────────────────────────────
+
+
+def _plugin_info(loaded: LoadedPlugin) -> PluginInfo:
+    plugin = loaded.plugin
+
+    return PluginInfo(
+        name=loaded.name,
+        features=[
+            PluginFeatureInfo(
+                id=feature.id,
+                tools={get_name(tool): effect_of(tool) for tool in feature.tools},
             )
-            await delete_all_identities()
+            for feature in plugin.features
+        ],
+        converters=sorted(plugin.converters),
+        chunkers=sorted(plugin.chunkers),
+        skills=sorted(
+            folder.name
+            for directory in plugin.skills
+            for folder in directory.iterdir()
+            if folder.is_dir() and not folder.name.startswith(".")
+        ),
+    )
+
+
+@router.get("/plugins")
+async def list_plugins() -> list[PluginInfo]:
+    """List the enabled plugins with what each contributes, tools by their effect."""
+    return [_plugin_info(loaded) for loaded in plugins()]
+
+
+# ─── Index ───────────────────────────────────────────────────────────
 
 
 @router.post("/reindex")
 async def admin_reindex() -> AdminReindexResponse:
-    """Reconcile every casebase: re-derive the document index from disk.
+    """Reconcile every workspace: re-derive the document index from disk.
 
-    Also the on-demand path canonicalisation: reconciliation folds each
-    workspace to Unicode NFC before ingesting it, so this is what repairs
-    files copied into ``data/workspace/`` by hand without a restart.
+    Refused with a 409 while a change whose rollback could not finish is kept.
     """
-    reports = (await reconcile_all()).values()
-    synced = sum(r.entries_synced for r in reports)
-    renamed = sum(r.files_renamed for r in reports)
-    return AdminReindexResponse(
-        message=_reindexed(len(reports), synced, renamed).current
-    )
-
-
-# ─── Targeted wipes ───────────────────────────────────────────────────
-
-
-@router.delete("/users/{user_id}/data", status_code=status.HTTP_204_NO_CONTENT)
-async def admin_delete_user_data(
-    user_id: str, admin: Annotated[User, Depends(require_admin)]
-) -> None:
-    """Wipe all data owned by a single user (:func:`delete_user_data`).
-
-    The wiped user is never the caller here, so every one of their tabs is told.
-    """
-    await delete_user_data(await act_as(admin, user_id))
-
-
-@router.delete("/groups/{group_id}/data", status_code=status.HTTP_204_NO_CONTENT)
-async def admin_delete_group_data(group_id: str) -> None:
-    """Wipe all data owned by a single group.
-
-    Removes the group's workspace directory and SQL document rows
-    (which cascade to chunks).  Membership rows are kept so
-    re-creating the group is a no-op for the IdP-side group
-    assignment.
-    """
-    try:
-        store = Casebase.for_group(group_id, writable=True)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await workspace.delete_all(store)
+    synced = (await reconcile_all(HostGrant())).values()
+    return AdminReindexResponse(message=_reindexed(len(synced), sum(synced)).current)
