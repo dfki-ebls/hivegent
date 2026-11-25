@@ -1,85 +1,108 @@
 """Serve the agent's own tools over MCP, run the way the agent runs them.
 
-Each call builds the caller's :class:`UserDeps` in ``interactive`` mode with no
+`exar.mcp.server` serves the tools `agent_tools` builds for each request,
+bound to the caller's :class:`UserDeps` in ``interactive`` mode with no
 conversation, so there is no ``/tmp`` and a workspace write asks the user first.
-That question is the write gate's :class:`ApprovalRequired`, answered with an MCP
-elicitation, and the confirmed retry runs the call approved as an agent's
-resumed one does.
+That question is the write gate's :class:`ApprovalRequired`, asked over exar's
+SEP-2322 round trip (`exar.mcp.Confirmations`) with the changeset it would make,
+and the confirmed retry runs the call approved and bound to the digest of that
+changeset, so the gate refuses it once the changes are different ones.
+Plugin tools are served alike, so one whose effect is not ``read`` asks before
+every call, as it does in a chat.
 
-Which tools are served is the server's to settle, not the caller's: each tool's
-``prepare`` hook is asked once at import, with a caller's deps but no caller,
-and a tool it withholds, such as ``apply_changes`` without a conversation, is
-never served.
+Which tools are served is the server's to settle and the caller's deps to
+narrow: each tool's ``prepare`` hook is asked once, with a caller's deps but no
+caller, and a tool it withholds, such as ``apply_changes`` without a
+conversation, is never served, while each request lists and calls only what
+the caller's policy lists (``agents.policy.listed``).
 """
 
 import inspect
-from collections.abc import Mapping
-from typing import Any, override
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
+from typing import Annotated, Any, override
 
-from fastmcp import FastMCP
+from exar.mcp import (
+    Confirmations,
+    ToolFactory,
+    annotations,
+    describe_call,
+    tool_content,
+)
+from exar.pydantic_ai import definition_action
+from exar.text import truncate_middle
+from exar.tools.batch import unpack
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AccessToken
-from fastmcp.server.dependencies import get_access_token, get_context
 from fastmcp.tools import Tool as McpTool
 from fastmcp.tools import ToolResult
 from fastmcp.tools.base import InputRequiredToolResult
-from mcp.types import ContentBlock, TextContent, ToolAnnotations
-from pydantic import TypeAdapter, ValidationError
-from pydantic_ai import BinaryContent, Tool
+from mcp.types import ToolAnnotations
+from pydantic import Field, InstanceOf, TypeAdapter, ValidationError
+from pydantic.json_schema import SkipJsonSchema
+from pydantic_ai import Tool
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
 from pydantic_ai.tools import ToolDefinition
-from pydantic_core import to_json
 
-from ..agents import UserDeps, invoke_agent_tool, unlisted_tool_names
-from ..agents.capabilities import feature_tools
-from ..auth import NOBODY, dev_user, user_from_claims
-from ..changes import ChangesetSummary
-from ..config import content_hash, settings
+from ..agents import UserDeps, invoke_agent_tool
+from ..agents.approval import APPROVED_CHANGES, changes_digest
+from ..agents.capabilities import FEATURES, PLUGIN_FEATURE_IDS
+from ..agents.common import run_context
+from ..agents.policy import host_policy, listed
+from ..auth import PROBE, user_from_claims
+from ..config import settings
 from ..store import User
-from ..tools.base import BinaryAttachment
-from ..tools.fastmcp import attachment_block
-from ..tools.formatting import truncate_middle
-from ..tools.pydantic_ai import run_context, unwrap_tool_output
-from ..types import ToolsSpec
-from .confirmation import confirm
+from ..tools.changes import ChangesetSummary
 
-__all__ = ["get_mcp_user", "serve_agent_tools"]
+__all__ = ["POLICY", "Caller", "agent_tools", "token_user"]
 
-_FEATURES = frozenset({"explore", "write", "subagent"})
-"""The features served, the ones that need neither a conversation nor a sandbox."""
+_FEATURES = frozenset({"explore", "write"})
+"""The built-in features served, the ones that need neither a conversation nor a sandbox.
 
-_SUMMARY = TypeAdapter(ChangesetSummary)
+Every plugin feature is served beside them, since a plugin tool needs neither.
+"""
+
+_MODE = "interactive"
+"""The mode of every served call, in which a workspace write asks the user first."""
+
+POLICY = host_policy(_MODE)
+"""The policy of the served tools, which each call applies as an agent's does (`invoke_agent_tool`)."""
+
+_SUMMARY = TypeAdapter(ChangesetSummary | None)
+
+type Caller = Callable[[AccessToken | None], Awaitable[User]]
+"""Who calls the served tools, resolved anew for every request from its access token."""
 
 
-async def get_mcp_user(access_token: AccessToken | None) -> User:
-    """Build the caller's :class:`User` from the MCP auth token.
+async def token_user(token: AccessToken | None) -> User:
+    """Build the caller's :class:`User` from the MCP access token.
 
     The same construction the HTTP API uses, so an MCP client is granted
     exactly the groups and permissions its token grants there.
     """
-    if not settings.auth.enable:
-        return await dev_user()
-
-    if access_token is None:
+    if token is None:
         raise RuntimeError("No authenticated user in MCP context")
 
-    return user_from_claims(access_token.claims)
+    user = user_from_claims(token.claims)
+    # A service answers many people at once and reaches the chat route alone.
+    user.require_person()
+
+    return user
 
 
 def _deps(user: User) -> UserDeps:
-    return UserDeps(user=user, mode="interactive")
+    return UserDeps(user=user, mode=_MODE)
 
 
-def _question(summary: ChangesetSummary) -> str:
+async def _question(
+    name: str, arguments: Mapping[str, object], summary: ChangesetSummary | None
+) -> str:
+    if summary is None:
+        return await describe_call(name, arguments)
+
     diffs = (f"{c.path}\n{c.diff}" for c in (*summary.creates, *summary.updates))
 
     return "\n\n".join(("Allow these changes?", "\n".join(summary.lines()), *diffs))
-
-
-def _block(content: BinaryContent) -> ContentBlock:
-    return attachment_block(
-        BinaryAttachment(content.data, content.media_type, content.identifier)
-    )
 
 
 def _bounded(text: str) -> str:
@@ -95,39 +118,46 @@ def _result(value: object) -> ToolResult:
     The structured data is left out.  It is our frontend's, and clients that
     get it hand it to their model in place of the text, or beside it.
     """
-    output = unwrap_tool_output(value)
-    text = output.text if output.text is not None else to_json(output.data).decode()
-    blocks: list[ContentBlock] = [TextContent(type="text", text=_bounded(text))]
-    blocks.extend(
-        _block(item) for item in output.rest or () if isinstance(item, BinaryContent)
+    unpacked = unpack(value)
+
+    return ToolResult(
+        content=tool_content(replace(unpacked, text=_bounded(unpacked.text)))
     )
 
-    return ToolResult(content=blocks)
 
-
-async def _call(name: str, arguments: Mapping[str, Any], deps: UserDeps) -> ToolResult:
+async def _call(
+    name: str, arguments: Mapping[str, Any], deps: UserDeps, confirm: Confirmations
+) -> ToolResult:
     """Call the tool, asking the user first wherever the write gate asks."""
     try:
         return _result(await invoke_agent_tool(name, arguments, deps))
     except ApprovalRequired as exc:
-        question = _question(_SUMMARY.validate_python(exc.metadata))
-        digest = content_hash(to_json((name, arguments, exc.metadata)).decode())
+        summary = _SUMMARY.validate_python(exc.metadata)
 
-        if (ask := confirm(get_context(), question, digest)) is not None:
+        if (
+            ask := await confirm(
+                name, arguments, await _question(name, arguments, summary)
+            )
+        ) is not None:
             return InputRequiredToolResult(ask)
 
-    return _result(await invoke_agent_tool(name, arguments, deps, approved=True))
+    approval = {APPROVED_CHANGES: changes_digest(summary)}
+
+    return _result(
+        await invoke_agent_tool(name, arguments, deps, approved=True, metadata=approval)
+    )
 
 
 class AgentTool(McpTool):
-    """One agent tool, validated, gated, and called as the agent calls it."""
+    """One agent tool for one caller, validated, gated, and called as the agent calls it."""
+
+    deps: Annotated[SkipJsonSchema[InstanceOf[UserDeps]], Field(exclude=True)]
+    confirm: Annotated[SkipJsonSchema[InstanceOf[Confirmations]], Field(exclude=True)]
 
     @override
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
-        deps = _deps(await get_mcp_user(get_access_token()))
-
         try:
-            return await _call(self.name, arguments, deps)
+            return await _call(self.name, arguments, self.deps, self.confirm)
         except ModelRetry as exc:
             raise ToolError(_bounded(exc.message)) from exc
         except ValidationError as exc:
@@ -149,27 +179,43 @@ def _prepared(tool: Tool[UserDeps], deps: UserDeps) -> ToolDefinition | None:
     return result
 
 
-def serve_agent_tools(app: FastMCP) -> None:
-    """Serve every tool of :data:`_FEATURES` the operator and its ``prepare`` hook leave."""
-    unlisted = unlisted_tool_names(ToolsSpec())
+def _served() -> list[tuple[ToolDefinition, ToolAnnotations]]:
+    """Every tool of :data:`_FEATURES` and the plugins that its ``prepare`` hook and :data:`POLICY` leave."""
     # No hook may depend on who calls, so the probe names no one.
-    probe = _deps(NOBODY)
+    probe = _deps(PROBE)
 
-    for feature_id, tool in feature_tools():
-        if feature_id not in _FEATURES or tool.name in unlisted:
-            continue
+    return [
+        (tool_def, annotations(action.effect))
+        for feature in FEATURES
+        if feature.id in _FEATURES or feature.id in PLUGIN_FEATURE_IDS
+        for tool in feature.tools.build(run_context(probe)).tools.values()
+        if (tool_def := _prepared(tool, probe)) is not None
+        and POLICY(action := definition_action(tool_def)) != "deny"
+    ]
 
-        if (tool_def := _prepared(tool, probe)) is None:
-            continue
 
-        writes = feature_id == "write"
-        app.add_tool(
+def agent_tools(caller: Caller, confirm: Confirmations) -> ToolFactory:
+    """The served tools of each request, every one called as the *caller* its access token names.
+
+    A write the gate asks about asks the user through *confirm*.
+    """
+    served = _served()
+
+    async def tools(token: AccessToken | None) -> list[AgentTool]:
+        # Resolved once per request off the event loop, as a turn's are, rather than by every read tool.
+        deps = await _deps(await caller(token)).with_roots()
+
+        return [
             AgentTool(
-                name=tool.name,
+                name=tool_def.name,
                 description=tool_def.description,
                 parameters=tool_def.parameters_json_schema,
-                annotations=ToolAnnotations(
-                    read_only_hint=not writes, destructive_hint=writes
-                ),
+                annotations=hints,
+                deps=deps,
+                confirm=confirm,
             )
-        )
+            for tool_def, hints in served
+            if listed(deps.policy, definition_action(tool_def))
+        ]
+
+    return tools

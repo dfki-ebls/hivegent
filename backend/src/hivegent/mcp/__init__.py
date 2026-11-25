@@ -1,11 +1,5 @@
 """MCP package for Hivegent."""
 
-from .app import mcp_app
-from .external import build_mcp_server, build_mcp_toolset, validate_mcp_servers
+from .app import McpApp, build_mcp_app
 
-__all__ = [
-    "build_mcp_server",
-    "build_mcp_toolset",
-    "mcp_app",
-    "validate_mcp_servers",
-]
+__all__ = ["McpApp", "build_mcp_app"]
