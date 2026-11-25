@@ -7,36 +7,43 @@ manager runs it as an :class:`asyncio.Task`, tracks its lifecycle, and
 broadcasts every state change to subscribers (the SSE feed consumes
 these).
 
-The feed also carries :class:`~hivegent.changes.WorkspaceChanged`, for work
-that already ran inline and so never was a job at all, so a client learns
-that a scope changed through the one channel it already watches instead of a
-second push mechanism invented per feature.  A subscription is
-tagged with the client it belongs to, which lets such a notification skip the
-very client whose request caused it — that one reads the result back itself.
+The feed also carries :class:`~hivegent.tools.changes.WorkspaceChanged`,
+:class:`ConversationsChanged`, :class:`LibraryChanged`, and :class:`SourceChanged`, so a client
+learns that its state changed through the one channel it already watches
+instead of a second push mechanism invented per feature.  :meth:`JobManager.publish` reaches every subscription
+of one owner, :meth:`JobManager.broadcast` every subscription, and a
+subscription also follows opaque topics, such as the workspaces its owner may
+read, for which :meth:`JobManager.notify` offers each one the event its topics
+let it see, whoever caused the change.
 
 The registry is in-memory only: jobs do not survive a process restart.
 Each feature keeps its own durable state consistent when a job is
-cancelled or fails — e.g. the document pipeline rolls its workspace and
+cancelled or fails, e.g. the document pipeline rolls its workspace and
 SQL writes back.  The framework itself knows nothing about documents; it
 carries only generic, JSON-serialisable status fields so any subsystem
 can reuse it.
 """
 
 import asyncio
+import contextlib
 import logging
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
+from functools import partial
+from types import MappingProxyType
 from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from .changes import WorkspaceChanged
 from .config import settings
-from .l10n import Localized
+from .shared.l10n import Localized
+from .tools.changes import WorkspaceChanged
 
 __all__ = [
+    "ADMINS",
+    "ConversationsChanged",
     "FeedEvent",
     "FeedReady",
     "JobContext",
@@ -45,10 +52,16 @@ __all__ = [
     "JobStatus",
     "JobView",
     "JobWork",
+    "LibraryChanged",
+    "Reservation",
+    "SourceChanged",
     "manager",
 ]
 
 logger = logging.getLogger(__name__)
+
+ADMINS = "role:admin"
+"""The owner of what every admin follows, such as a source's sync, which no user id can name."""
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
@@ -84,21 +97,20 @@ def _error_message(exc: BaseException) -> str:
 
 
 class JobView(BaseModel):
-    """Immutable, JSON-serialisable snapshot of a job — the wire model.
+    """Immutable, JSON-serialisable snapshot of a job, used as the wire model.
 
     The single shape the SSE feed and REST listing emit and the client
     renders.  Carries only generic fields so the same model serves every
     feature that submits jobs.
 
     ``created_at``/``updated_at`` are monotonic timestamps (:func:`time.monotonic`),
-    used purely to order snapshots and drop stale ones — never displayed as
-    wall-clock time — so a backward clock adjustment cannot freeze a job's UI.
+    used purely to order snapshots and drop stale ones.  They are never displayed as
+    wall-clock time, so a backward clock adjustment cannot freeze a job's UI.
     """
 
     id: str
     kind: str
     title: str
-    scope: str | None
     status: JobStatus
     created_at: float
     updated_at: float
@@ -120,7 +132,33 @@ class FeedReady(BaseModel):
     type: Literal["ready"] = "ready"
 
 
-type FeedEvent = JobView | FeedReady | WorkspaceChanged
+class ConversationsChanged(BaseModel):
+    """Marks a change to the owner's conversations, which a client lists again."""
+
+    type: Literal["conversations-changed"] = "conversations-changed"
+
+
+class LibraryChanged(BaseModel):
+    """Marks a change to a library the subscriber sees, whose list a client reads again."""
+
+    type: Literal["library-changed"] = "library-changed"
+    kind: Literal["skills", "assistants"]
+
+
+class SourceChanged(BaseModel):
+    """Marks a change to the sync state of a source, which an admin's client lists again."""
+
+    type: Literal["source-changed"] = "source-changed"
+
+
+type FeedEvent = (
+    JobView
+    | FeedReady
+    | WorkspaceChanged
+    | ConversationsChanged
+    | LibraryChanged
+    | SourceChanged
+)
 
 
 class _Job(JobView):
@@ -134,6 +172,7 @@ class _Job(JobView):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     owner: str
+    spooled: int = 0
     task: asyncio.Task[None] | None = None
 
     def view(self) -> JobView:
@@ -154,12 +193,18 @@ def _enqueue(queue: asyncio.Queue[FeedEvent], view: FeedEvent) -> None:
     try:
         queue.put_nowait(view)
     except asyncio.QueueFull:
-        try:
+        with contextlib.suppress(asyncio.QueueEmpty):
             queue.get_nowait()
-        except asyncio.QueueEmpty:
-            pass
 
         queue.put_nowait(view)
+
+
+@dataclass(slots=True, frozen=True)
+class _Subscription:
+    """Whose jobs a feed subscription receives, and the topics it follows by the names it knows them."""
+
+    owners: frozenset[str]
+    follows: Mapping[str, str]
 
 
 @dataclass(slots=True, frozen=True)
@@ -200,6 +245,14 @@ class JobContext:
 type JobWork = Callable[[JobContext], Awaitable[None]]
 
 
+@dataclass(slots=True, frozen=True, eq=False)
+class Reservation:
+    """The room of a job that has not been submitted yet, held until :meth:`JobManager.release`."""
+
+    owner: str
+    spooled: int
+
+
 @dataclass(slots=True)
 class JobManager:
     """In-memory registry that runs, tracks, and broadcasts jobs.
@@ -211,14 +264,17 @@ class JobManager:
     max_concurrency: int = field(default_factory=lambda: settings.jobs.max_concurrency)
     retain_seconds: float = field(default_factory=lambda: settings.jobs.retain_seconds)
     queue_maxsize: int = field(default_factory=lambda: settings.jobs.queue_maxsize)
+    max_owner_jobs: int = field(default_factory=lambda: settings.jobs.max_owner_jobs)
+    max_owner_spool_bytes: int = field(
+        default_factory=lambda: settings.jobs.max_owner_spool_bytes
+    )
     # Per owner, its jobs by id in the order they came, so a lookup by id
     # never reaches another owner's job.
     _jobs: dict[str, dict[str, _Job]] = field(default_factory=dict, init=False)
-    # Per owner, each live subscription and the client id it was opened with
-    # (``None`` when the client did not name itself).
-    _subscribers: dict[str, dict[asyncio.Queue[FeedEvent], str | None]] = field(
+    _subscribers: dict[asyncio.Queue[FeedEvent], _Subscription] = field(
         default_factory=dict, init=False
     )
+    _reservations: list[Reservation] = field(default_factory=list, init=False)
     _semaphore: asyncio.Semaphore = field(init=False)
 
     def __post_init__(self) -> None:
@@ -230,17 +286,18 @@ class JobManager:
         kind: str,
         title: str,
         owner: str,
-        scope: str | None,
         work: JobWork,
         on_settled: Callable[[], None] | None = None,
+        spooled: int = 0,
     ) -> JobView:
         """Register *work* as a job and start it; return its initial snapshot.
 
         The job runs as a detached task bounded by the concurrency limit,
         independent of any request, so a client disconnect never aborts it.
         *on_settled* runs once the job reaches a terminal state through any
-        path — success, failure, or a cancel even before it started — so a
-        feature can release resources tied to the job (e.g. a spooled payload).
+        path (success, failure, or a cancel even before it started), so a
+        feature can release resources tied to the job (e.g. a spooled payload
+        of *spooled* bytes, which :meth:`admits` counts until then).
         """
         self._prune()
         now = time.monotonic()
@@ -249,63 +306,80 @@ class JobManager:
             kind=kind,
             title=title,
             owner=owner,
-            scope=scope,
+            spooled=spooled,
             status="queued",
             created_at=now,
             updated_at=now,
         )
         self._jobs.setdefault(owner, {})[job.id] = job
-        job.task = asyncio.create_task(self._run(job, work, on_settled))
-        self._publish(job)
+        job.task = asyncio.create_task(self._run(job, work))
+        job.task.add_done_callback(partial(self._settle, job, on_settled))
+        self.publish(owner, job.view())
         return job.view()
 
-    def notify_workspace_changed(
-        self,
-        owner: str,
-        changed: WorkspaceChanged,
-        *,
-        exclude_client: str | None = None,
+    def publish(self, owner: str, event: FeedEvent) -> None:
+        """Send *event* to every subscription following *owner*'s jobs.
+
+        Transient like :meth:`notify`.
+        """
+        for queue, subscription in self._subscribers.items():
+            if owner in subscription.owners:
+                _enqueue(queue, event)
+
+    def broadcast(self, event: FeedEvent) -> None:
+        """Send *event* to every subscription, transient like :meth:`notify`."""
+        for queue in self._subscribers:
+            _enqueue(queue, event)
+
+    def notify(
+        self, event_for: Callable[[Mapping[str, str]], FeedEvent | None]
     ) -> None:
-        """Tell *owner*'s subscribers how the workspaces changed.
+        """Offer every subscription what *event_for* derives from the topics it follows.
 
         Transient: a reconnecting client re-reads the scopes it holds, so
-        nothing missed while disconnected is lost.  *exclude_client* is the
-        client whose own request made the change, which learns of it from that
-        request's response.
+        nothing missed while disconnected is lost.
         """
-        self._broadcast(owner, changed, exclude_client)
+        for queue, subscription in self._subscribers.items():
+            if (event := event_for(subscription.follows)) is not None:
+                _enqueue(queue, event)
 
-    async def _run(
-        self, job: _Job, work: JobWork, on_settled: Callable[[], None] | None
+    async def _run(self, job: _Job, work: JobWork) -> None:
+        async with self._semaphore:
+            job.status = "running"
+            self._touch(job)
+            await work(JobContext(job, self._touch))
+
+    def _settle(
+        self,
+        job: _Job,
+        on_settled: Callable[[], None] | None,
+        task: asyncio.Task[None],
     ) -> None:
-        """Drive one job through its lifecycle and record the terminal state."""
-        ctx = JobContext(job, self._touch)
-        try:
-            async with self._semaphore:
-                job.status = "running"
-                self._touch(job)
-                await work(ctx)
-        except asyncio.CancelledError:
+        """Record the terminal state of *job*, also when its task was cancelled before it started."""
+        if task.cancelled():
             job.status = "cancelled"
-        except Exception as exc:
-            logger.exception("Job %s (%s) failed", job.id, job.kind)
+        elif (exc := task.exception()) is not None:
+            logger.error("Job %s (%s) failed", job.id, job.kind, exc_info=exc)
             job.status = "failed"
             job.error = _error_message(exc)
         else:
             job.status = "succeeded"
-        finally:
-            if on_settled is not None:
-                try:
-                    on_settled()
-                except Exception:
-                    logger.exception("Job %s (%s) finalizer failed", job.id, job.kind)
+
+        if on_settled is not None:
+            try:
+                on_settled()
+            except Exception:
+                logger.exception("Job %s (%s) finalizer failed", job.id, job.kind)
 
         self._touch(job)
         self._prune()
 
-    def cancel(self, owner: str, job_id: str) -> bool:
-        """Request cancellation of *owner*'s job; return whether it was live."""
-        job = self._jobs.get(owner, {}).get(job_id)
+    def cancel(self, owners: Collection[str], job_id: str) -> bool:
+        """Request cancellation of a job of one of *owners*; return whether it was live."""
+        job = next(
+            (job for owner in owners if (job := self._jobs.get(owner, {}).get(job_id))),
+            None,
+        )
         if job is None or job.task is None:
             return False
         if job.status in _TERMINAL:
@@ -313,15 +387,68 @@ class JobManager:
         job.task.cancel()
         return True
 
-    def list_jobs(self, owner: str) -> list[JobView]:
-        """Return every known job for *owner*, oldest first."""
-        return [job.view() for job in self._owner_jobs(owner)]
+    def admits(self, owner: str, spooled: int) -> bool:
+        """Whether *owner* may submit one more job spooling *spooled* bytes.
+
+        Only unfinished jobs and reservations count, against ``max_owner_jobs``
+        and, by the bytes they hold spooled, against ``max_owner_spool_bytes``.
+        """
+        held = [
+            *(
+                job.spooled
+                for job in self._owners_jobs((owner,))
+                if job.status not in _TERMINAL
+            ),
+            *(r.spooled for r in self._reservations if r.owner == owner),
+        ]
+
+        return (
+            len(held) < self.max_owner_jobs
+            and sum(held) + spooled <= self.max_owner_spool_bytes
+        )
+
+    def reserve(self, owner: str, spooled: int) -> Reservation | None:
+        """Hold the room :meth:`admits` found for a job spooling *spooled* bytes, ``None`` without any.
+
+        Admitting and holding take one synchronous step, so concurrent requests
+        cannot all pass before the first one submitted.  The holder submits its
+        job and then calls :meth:`release`, with no await between, or on any error.
+        """
+        if not self.admits(owner, spooled):
+            return None
+
+        reservation = Reservation(owner, spooled)
+        self._reservations.append(reservation)
+
+        return reservation
+
+    def release(self, reservation: Reservation) -> None:
+        """Give back what *reservation* held."""
+        self._reservations.remove(reservation)
+
+    async def cancel_owner(self, owner: str) -> None:
+        """Cancel every unfinished job of *owner* and wait until each settled."""
+        tasks = [
+            job.task
+            for job in self._owners_jobs((owner,))
+            if job.task is not None and job.status not in _TERMINAL
+        ]
+
+        for task in tasks:
+            task.cancel()
+
+        if tasks:
+            _ = await asyncio.wait(tasks)
+
+    def list_jobs(self, owners: Collection[str]) -> list[JobView]:
+        """Return every known job of *owners*, oldest first."""
+        return [job.view() for job in self._owners_jobs(owners)]
 
     async def subscribe(
-        self, owner: str, client: str | None = None
+        self, owners: Collection[str], follows: Mapping[str, str] = MappingProxyType({})
     ) -> AsyncGenerator[FeedEvent]:
-        """Yield *owner*'s snapshots: every retained job, a :class:`FeedReady`
-        marker, then each change.
+        """Yield the snapshots of *owners*' jobs: every retained job, a :class:`FeedReady`
+        marker, then each change, and what :meth:`notify` offers *follows*.
 
         Both active and recently-settled jobs are replayed on connect: a client
         that dropped while a job finished would otherwise never receive the
@@ -332,7 +459,7 @@ class JobManager:
         no-op, firing its settle handlers only on the first transition.
 
         The :class:`FeedReady` sentinel terminates the seed so the client can
-        tell the replay of current state apart from later live transitions —
+        tell the replay of current state apart from later live transitions,
         e.g. to show already-running jobs without re-announcing them and to
         ignore jobs that finished before it connected.
 
@@ -341,41 +468,24 @@ class JobManager:
         generator (e.g. via :func:`contextlib.aclosing`).
         """
         queue: asyncio.Queue[FeedEvent] = asyncio.Queue(maxsize=self.queue_maxsize)
-        self._subscribers.setdefault(owner, {})[queue] = client
-        for job in self._owner_jobs(owner):
+        self._subscribers[queue] = _Subscription(frozenset(owners), follows)
+        for job in self._owners_jobs(owners):
             _enqueue(queue, job.view())
         _enqueue(queue, FeedReady())
         try:
             while True:
                 yield await queue.get()
         finally:
-            self._unsubscribe(owner, queue)
+            del self._subscribers[queue]
 
-    def _owner_jobs(self, owner: str) -> list[_Job]:
-        return list(self._jobs.get(owner, {}).values())
+    def _owners_jobs(self, owners: Collection[str]) -> list[_Job]:
+        jobs = (job for owner in owners for job in self._jobs.get(owner, {}).values())
+
+        return sorted(jobs, key=lambda job: job.created_at)
 
     def _touch(self, job: _Job) -> None:
         job.updated_at = time.monotonic()
-        self._publish(job)
-
-    def _publish(self, job: _Job) -> None:
-        self._broadcast(job.owner, job.view())
-
-    def _broadcast(
-        self, owner: str, event: FeedEvent, exclude_client: str | None = None
-    ) -> None:
-        for queue, client in self._subscribers.get(owner, {}).items():
-            if exclude_client is not None and client == exclude_client:
-                continue
-            _enqueue(queue, event)
-
-    def _unsubscribe(self, owner: str, queue: asyncio.Queue[FeedEvent]) -> None:
-        subscribers = self._subscribers.get(owner)
-        if subscribers is None:
-            return
-        subscribers.pop(queue, None)
-        if not subscribers:
-            del self._subscribers[owner]
+        self.publish(job.owner, job.view())
 
     def _prune(self) -> None:
         cutoff = time.monotonic() - self.retain_seconds

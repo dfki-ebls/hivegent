@@ -1,20 +1,31 @@
-"""OpenTelemetry tracing via Logfire.
+"""OpenTelemetry tracing into exar's traces, exported via Logfire when configured.
 
-Tracing is opt-in.  When :attr:`LogfireSettings.otlp_endpoint` is set,
-spans are exported via OTLP/HTTP to a self-hosted backend (e.g. Grafana
-Tempo on the same systemd host).  When the ``LOGFIRE_TOKEN`` environment
-variable is set, spans additionally go to Pydantic Logfire SaaS — useful
-for local development.  When neither is configured, instrumentation is
-skipped entirely so there is no runtime overhead.
+Every Pydantic AI agent is instrumented into exar's tracer provider
+(`exar.pydantic_ai.instrumentation`), so the trace of every exar run holds its
+model and tool spans.  It stays on without an exporter, since exar's
+experience reads its trajectories from these spans, and spans live in memory
+only while exar records a trace a caller asked for.  They carry no message
+content unless :attr:`LogfireSettings.include_content` opts in, and never
+binary content, so what an exporter receives is metadata by default.  When :attr:`LogfireSettings.otlp_endpoint` is set,
+spans are also exported via OTLP/HTTP to a self-hosted backend (e.g. Grafana
+Tempo on the same systemd host).  When :attr:`LogfireSettings.token` is set,
+spans additionally go to Pydantic Logfire SaaS.  Logfire only adds exporters:
+exar attaches its processor to the provider Logfire installs, so nothing is
+instrumented twice.
 """
 
 import logging
-import os
+from typing import Any
 
 import logfire
-from fastapi import FastAPI
+from exar.pydantic_ai import instrumentation
+from fastapi import FastAPI, Request, WebSocket
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from pydantic_ai import Agent
 
 from .config import settings
+from .config.observability import LogfireSettings
 
 __all__ = ["configure_observability"]
 
@@ -22,47 +33,73 @@ logger = logging.getLogger(__name__)
 
 
 def configure_observability(app: FastAPI) -> None:
-    """Set up tracing via Logfire when a destination is configured.
+    """Instrument Pydantic AI into exar's traces, and export spans via Logfire when a destination is configured.
 
-    Configures an OTLP/HTTP exporter pointed at
-    :attr:`LogfireSettings.otlp_endpoint` (e.g. ``http://127.0.0.1:4318``)
-    and enables Pydantic Logfire SaaS export when ``LOGFIRE_TOKEN`` is
-    set.  FastAPI, Pydantic AI, and MCP are instrumented automatically.
-
-    Does nothing when no destination is configured.
+    Exports to :attr:`LogfireSettings.otlp_endpoint` over OTLP/HTTP and to
+    Pydantic Logfire SaaS with :attr:`LogfireSettings.token`, either of which
+    also instruments FastAPI, and with :attr:`LogfireSettings.include_content`
+    only, the endpoints' arguments, MCP, and Monty, since they record whole
+    payloads, chat bodies, the caller, tool arguments and results, executed
+    code, and its inputs and outputs.
 
     Args:
         app: The FastAPI application instance to instrument.
     """
-    endpoint = settings.logfire.otlp_endpoint
-    has_token = bool(os.environ.get("LOGFIRE_TOKEN"))
+    if settings.logfire.enabled:
+        _configure_logfire(app, settings.logfire)
 
-    if not endpoint and not has_token:
-        return
-
-    extra_processors = []
-    if endpoint:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
+    # After Logfire installed its provider, which exar then records from.
+    Agent.instrument_all(
+        instrumentation(
+            include_content=settings.logfire.include_content,
+            include_binary_content=False,
         )
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    )
 
+
+def _without_arguments(
+    _request: Request | WebSocket, attributes: dict[str, Any]
+) -> dict[str, Any]:
+    """The span attributes of a request without its endpoint's arguments, its validation errors only by type and location."""
+    errors = attributes.get("errors", [])
+
+    return {
+        "errors": [
+            {"type": error.get("type"), "loc": error.get("loc")} for error in errors
+        ]
+    }
+
+
+def _configure_logfire(app: FastAPI, config: LogfireSettings) -> None:
+    endpoint = config.otlp_endpoint
+    token = config.token
+    processors = []
+
+    if endpoint is not None:
+        # The signal path below the base URL, as `OTEL_EXPORTER_OTLP_ENDPOINT` takes it.
         exporter = OTLPSpanExporter(endpoint=f"{endpoint.rstrip('/')}/v1/traces")
-        extra_processors.append(BatchSpanProcessor(exporter))
+        processors.append(BatchSpanProcessor(exporter))
 
     logfire.configure(
-        service_name=settings.logfire.service_name,
-        send_to_logfire="if-token-present",
-        additional_span_processors=extra_processors,
+        service_name=config.service_name,
+        token=None if token is None else token.get_secret_value(),
+        send_to_logfire=token is not None,
+        additional_span_processors=processors,
     )
-    logfire.instrument_fastapi(app)
-    logfire.instrument_pydantic_ai()
-    logfire.instrument_mcp()
-    # Before the lifespan opens the sandbox pool, which it must precede.
-    logfire.instrument_monty()
+    logfire.instrument_fastapi(
+        app,
+        request_attributes_mapper=None
+        if config.include_content
+        else _without_arguments,
+    )
+
+    if config.include_content:
+        logfire.instrument_mcp()
+        # Before the lifespan opens the sandbox pool, which it must precede.
+        logfire.instrument_monty()
 
     logger.info(
         "Observability configured (otlp=%s, logfire_saas=%s)",
         endpoint or "off",
-        has_token,
+        token is not None,
     )

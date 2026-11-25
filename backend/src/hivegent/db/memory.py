@@ -1,59 +1,81 @@
-"""Per-user memory repository (replaces ``hivegent.memory``).
+"""Per-user memory, one markdown page per person, as an `exar.cbrkit.StorageMemory`.
 
-Memory is a single markdown blob per user.  The :class:`User` row is
-materialized lazily so OIDC identities don't need pre-registration.
+The page is the ``content`` of the person's row in ``memory``, read and
+written by a cbrkit storage scoped to that row.  The :class:`User` row is
+materialized lazily before a write so OIDC identities don't need
+pre-registration.
 """
 
-from collections.abc import Callable
+from collections.abc import Mapping
+from dataclasses import dataclass
 
-from sqlalchemy import ColumnElement, delete, func, select, update
+import sqlalchemy as sa
+from cbrkit.indexable import SQLAlchemy
+from cbrkit.retrieve import Retriever
+from cbrkit.sim.strings import WordCoverage
+from exar.cbrkit import StorageMemory
+from exar.typing import Changes
 
 from ..store import User
-from ._common import affected_rows, ensure_row
-from .engine import session
+from .engine import get_engine, session
 from .models import Memory
 from .users import ensure_user
 
-__all__ = ["clear_memory", "load_memory", "update_memory"]
+__all__ = ["clear_memory", "user_memory"]
+
+_PAGES = Memory.metadata.tables[Memory.__tablename__]
 
 
-def _owned(user: User) -> ColumnElement[bool]:
-    """Match the memory of *user*, the one row every statement here names."""
-    return Memory.user_id == user.id
+def _page(user: User) -> SQLAlchemy[str, str]:
+    """The storage of *user*'s page, keyed by the user id.
 
-
-async def load_memory(user: User) -> str | None:
-    """Return the user's memory content, or ``None`` if none is stored."""
-    async with session() as s:
-        return await s.scalar(select(Memory.content).where(_owned(user)))
-
-
-async def update_memory(user: User, change: Callable[[str], str]) -> str:
-    """Apply *change* to the user's memory and return what it stored.
-
-    The row is created empty if missing and locked for the read-modify-write,
-    so two conversations editing at once apply their changes one after the
-    other instead of one overwriting the other.  An exception raised by
-    *change* rolls the transaction back and propagates.
+    Raises:
+        AccessDenied: For a service principal, which answers many people and
+            so remembers nobody.
     """
-    async with session() as s:
-        await ensure_user(s, user.id)
-        await ensure_row(s, Memory, user_id=user.id, content="")
-        current = await s.scalar(
-            select(Memory.content).where(_owned(user)).with_for_update()
-        )
-        content = change(current or "")
-        await s.execute(
-            update(Memory)
-            .where(_owned(user))
-            .values(content=content, updated_at=func.now())
-        )
+    user.require_person()
 
-        return content
+    return SQLAlchemy[str, str](
+        get_engine(),
+        table=_PAGES,
+        value_column=Memory.content.key,
+        scope=Memory.user_id == user.id,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Memory(StorageMemory[str, str]):
+    user_id: str
+
+    async def write(
+        self,
+        changes: Changes[str, str],
+        /,
+        *,
+        expected: Mapping[str, str] | None = None,
+    ) -> Changes[str, str]:
+        async with session() as s:
+            await ensure_user(s, self.user_id)
+
+        return await StorageMemory.write(self, changes, expected=expected)
+
+
+def user_memory(user: User) -> StorageMemory[str, str]:
+    """The memory of a person, one page under the person's user id, searched by the words it shares with a query.
+
+    Raises:
+        AccessDenied: For a service principal.
+    """
+    return _Memory(
+        storage=_page(user),
+        retriever=lambda limit: [
+            Retriever(measure=WordCoverage(case_sensitive=False), limit=limit)
+        ],
+        conversion=str,
+        user_id=user.id,
+    )
 
 
 async def clear_memory(user: User) -> bool:
     """Delete the user's memory.  Returns ``True`` if a row was removed."""
-    async with session() as s:
-        result = await s.execute(delete(Memory).where(_owned(user)))
-        return affected_rows(result) > 0
+    return bool(await _page(user).delete_where(sa.true()))

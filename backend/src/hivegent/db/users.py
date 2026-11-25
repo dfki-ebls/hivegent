@@ -1,27 +1,31 @@
-"""User repository: identity rows and admin overviews.
+"""User repository: identity rows.
 
-Hivegent is not an identity store — :class:`User` rows are materialised
+Hivegent is not an identity store.  :class:`User` rows are materialised
 lazily the first time an authenticated identity stores anything in the
 local database.  This module only exposes the small set of user-table
-operations that are local to the app (lazy insert, admin overview,
-global wipe).  Authentication and group membership live in
+operations that are local to the app (lazy insert, existence check,
+wipes).  Authentication and group membership live in
 :mod:`hivegent.auth` and the OIDC IdP.
 """
 
-from __future__ import annotations
+from collections.abc import Mapping
+from typing import Any
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ._common import affected_rows, ensure_row
 from .engine import session
-from .models import Conversation, Document, Group, User
+from .models import Conversation, Document, Group, User, Workspace
 
 __all__ = [
     "delete_all_identities",
     "delete_user",
     "ensure_user",
     "list_users_with_counts",
+    "load_preferences",
+    "update_preferences",
     "user_exists",
 ]
 
@@ -31,55 +35,70 @@ async def ensure_user(s: AsyncSession, user_id: str) -> None:
     await ensure_row(s, User, id=user_id)
 
 
+async def load_preferences(user_id: str) -> dict[str, Any]:
+    """The choices *user_id* stored for their runs, none for a user without a row."""
+    async with session() as s:
+        return await s.scalar(select(User.preferences).where(User.id == user_id)) or {}
+
+
+async def update_preferences(
+    user_id: str, changed: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Merge *changed* into the choices *user_id* stored, keeping the others, and return them all."""
+    insert = pg_insert(User).values(id=user_id, preferences=dict(changed))
+
+    async with session() as s:
+        stored = await s.scalar(
+            insert.on_conflict_do_update(
+                index_elements=[User.id],
+                set_={"preferences": User.preferences.op("||")(insert.excluded.preferences)},
+            ).returning(User.preferences)
+        )
+
+    return stored or {}
+
+
 async def user_exists(user_id: str) -> bool:
     """Whether a user has left a footprint in the local database.
 
-    Reads only the user's own ``id`` — never group state, which lives
-    solely in the OIDC token.  Used to reject impersonation of an
-    identity the app has never seen.
+    Reads only the user's own ``id`` and never group state, which lives
+    solely in the OIDC token.  Used to reject acting on an identity the
+    app has never seen.
     """
     async with session() as s:
         return await s.get(User, user_id) is not None
 
 
 async def list_users_with_counts() -> list[tuple[str, int, int]]:
-    """Return ``(user_id, document_count, conversation_count)`` per user.
+    """Return ``(user_id, document_count, conversation_count)`` for every user row, by id.
 
-    Only rows materialised in the local database are returned — Hivegent
-    is not an identity store and does not enumerate accounts that have
-    not yet interacted with the app.  Email and display name live solely
-    in the OIDC token and are not stored.
+    Only users who stored something appear, since Hivegent is not an identity store.
     """
-    docs_subq = (
-        select(
-            Document.owner_user_id.label("uid"),
-            func.count().label("n"),
-        )
-        .where(Document.owner_user_id.is_not(None))
-        .group_by(Document.owner_user_id)
+    documents = (
+        select(Workspace.user_id.label("uid"), func.count().label("n"))
+        .join(Document, Document.workspace_key == Workspace.key)
+        .where(Workspace.user_id.is_not(None))
+        .group_by(Workspace.user_id)
         .subquery()
     )
-    convs_subq = (
-        select(
-            Conversation.user_id.label("uid"),
-            func.count().label("n"),
-        )
+    conversations = (
+        select(Conversation.user_id.label("uid"), func.count().label("n"))
         .group_by(Conversation.user_id)
         .subquery()
     )
+
     async with session() as s:
-        rows = (
-            await s.execute(
-                select(
-                    User.id,
-                    func.coalesce(docs_subq.c.n, 0),
-                    func.coalesce(convs_subq.c.n, 0),
-                )
-                .outerjoin(docs_subq, docs_subq.c.uid == User.id)
-                .outerjoin(convs_subq, convs_subq.c.uid == User.id)
-                .order_by(User.id)
+        rows = await s.execute(
+            select(
+                User.id,
+                func.coalesce(documents.c.n, 0),
+                func.coalesce(conversations.c.n, 0),
             )
-        ).all()
+            .outerjoin(documents, documents.c.uid == User.id)
+            .outerjoin(conversations, conversations.c.uid == User.id)
+            .order_by(User.id)
+        )
+
     return [(uid, int(docs), int(convs)) for uid, docs, convs in rows]
 
 
@@ -87,7 +106,8 @@ async def delete_all_identities() -> None:
     """Delete every user and group row in one transaction, so a crash leaves neither half.
 
     Users cascade to memory, conversations (and their messages), and their
-    documents, groups to theirs, and chunks with every document.
+    workspace with its documents, groups to theirs, and chunks with every
+    document.
     """
     async with session() as s:
         await s.execute(delete(User))
@@ -95,7 +115,7 @@ async def delete_all_identities() -> None:
 
 
 async def delete_user(user_id: str) -> bool:
-    """Delete one user row.  Cascades to memory, conversations, documents.
+    """Delete one user row.  Cascades to memory, conversations, and the workspace.
 
     Returns ``True`` if a row was deleted.  The user can re-materialise
     via :func:`ensure_user` on the next request, so this is the right

@@ -2,6 +2,9 @@
 
 A turn runs as a task of :data:`runs`, one per conversation, from its
 preparation to its last chunk, and keeps every chunk it streams until it ends.
+However it ends, its last chunk before any error is what it *settles* on,
+the stored version of the turn, since a client stops reading at an error,
+unless the turn could not be stored.
 The request that started it, a retry of that request, and a client
 reconnecting after a reload each follow it from its first chunk, and leaving
 stops only the follower.  An explicit cancel, or the server shutting down,
@@ -16,20 +19,43 @@ single-process deployment and a turn ends with the process.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
-from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ErrorChunk
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DoneChunk, ErrorChunk
 
 from .db.conversations import OwnedConversation
+from .shared.l10n import Localized
 from .store import User
 
-__all__ = ["Prepared", "Run", "Runs", "runs"]
+__all__ = ["Prepared", "Run", "Runs", "Settle", "runs"]
 
-type Prepared = tuple[AsyncIterator[BaseChunk], UUID | None]
-"""A prepared turn, its stream and the node its branch forks from."""
+
+logger = logging.getLogger(__name__)
+
+_TURN_FAILED = Localized(
+    en="The response failed. Please try again.",
+    de="Die Antwort ist fehlgeschlagen. Bitte versuchen Sie es erneut.",
+)
+
+type Settle = Callable[[], BaseChunk | None]
+"""The chunk a started turn ends on once it stored what it got to, ``None`` when it could not."""
+
+
+@dataclass(frozen=True, slots=True)
+class Prepared:
+    """A turn every check passed, ready to stream."""
+
+    stream: AsyncIterator[BaseChunk]
+    history: list[ModelMessage]
+    """The history the turn runs on, the stored one or the part an edit keeps."""
+
+    settle: Settle = lambda: None
+    """What the turn settles on once it ended (:meth:`Run.pump`)."""
 
 
 @dataclass(slots=True, eq=False)
@@ -41,13 +67,13 @@ class Run:
             user message or the assistant message carrying the decisions of a
             post-approval continuation, ``None`` for a regenerate or a
             compaction.
-        fork_id: The node the turn's branch forks from, once it is prepared.
+        history: The history the turn runs on, once it is prepared.
         refusal: Why its preparation refused the turn.
         started: Whether its preparation passed, so it streams.
     """
 
     message: UIMessage | None
-    fork_id: UUID | None = None
+    history: list[ModelMessage] = field(default_factory=list[ModelMessage])
     chunks: list[BaseChunk] = field(default_factory=list[BaseChunk])
     refusal: Exception | None = None
     started: bool = False
@@ -59,21 +85,57 @@ class Run:
         self._changed.set()
         self._changed = asyncio.Event()
 
+    def _push(self, chunk: BaseChunk) -> None:
+        self.chunks.append(chunk)
+        self._notify()
+
     async def pump(self, prepare: Awaitable[Prepared]) -> None:
-        """Prepare the turn, then keep every chunk it streams, waking the followers."""
+        """Prepare the turn, then keep every chunk it streams, waking the followers.
+
+        The chunk the prepared turn settles on goes after everything it streamed,
+        a stop included, but ahead of its errors and its end, where a client
+        stops reading.
+        A failure of the stream or of settling is logged and ends the turn on an
+        error chunk, so no follower sees it end unexplained.
+        """
         try:
-            stream, self.fork_id = await prepare
+            prepared = await prepare
         # Raised again by every request that follows the turn.
         except Exception as exc:  # noqa: BLE001
             self.refusal = exc
             return
 
+        self.history = prepared.history
         self.started = True
         self._notify()
+        held: list[BaseChunk] = []
 
-        async for chunk in stream:
-            self.chunks.append(chunk)
-            self._notify()
+        def fail(exc: Exception) -> None:
+            logger.error("Chat turn failed", exc_info=exc)
+
+            if not any(isinstance(chunk, ErrorChunk) for chunk in held):
+                held.append(ErrorChunk(error_text=_TURN_FAILED.current))
+
+        try:
+            async for chunk in prepared.stream:
+                if isinstance(chunk, ErrorChunk | DoneChunk):
+                    held.append(chunk)
+                else:
+                    self._push(chunk)
+        except Exception as exc:  # noqa: BLE001
+            fail(exc)
+        finally:
+            try:
+                settled = prepared.settle()
+            except Exception as exc:  # noqa: BLE001
+                fail(exc)
+                settled = None
+
+            if settled is not None:
+                self._push(settled)
+
+            for chunk in held:
+                self._push(chunk)
 
     def end(self) -> None:
         """Mark the turn ended, so every follower finishes."""
@@ -136,6 +198,8 @@ class Runs:
     ) -> Run:
         """Run the turn *prepare* yields in the conversation's slot, which no turn may hold.
 
+        Once started, the turn ends on the chunk it settles on (:meth:`Run.pump`).
+
         The slot is taken before *prepare* runs, so a second request finds it
         taken before this one wrote anything.  The task copies the request's
         context, its language among it, and leaves the slot when it ends,
@@ -159,6 +223,10 @@ class Runs:
         """Stop the turn of the conversation, if any, once it stored what it got to."""
         if (run := self.get(conversation)) is not None:
             await _stop([run])
+
+    def running(self, user: User) -> set[UUID]:
+        """The ids of *user*'s conversations with a turn, preparing or running."""
+        return {c.id for c in self._runs if c.owner == user.id}
 
     async def cancel_all(self, user: User) -> None:
         """Stop every turn of *user*, once each stored what it got to."""

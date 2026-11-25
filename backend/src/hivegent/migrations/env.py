@@ -11,11 +11,12 @@ and prod hit the database the rest of the app uses.
 import asyncio
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import func, pool, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from hivegent.db.engine import resolve_database_url
+from hivegent.db.migrations import COMPARE
 from hivegent.db.models import Base
 
 config = context.config
@@ -31,10 +32,18 @@ def _run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=Base.metadata,
-        compare_type=True,
-        compare_server_default=True,
+        **COMPARE,
     )
     with context.begin_transaction():
+        # Servers booting together migrate one after the other, and the later
+        # one finds the schema at head, since Alembic reads the version only now.
+        _ = connection.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    func.hashtextextended("hivegent.migrations", 0)
+                )
+            )
+        )
         context.run_migrations()
 
 

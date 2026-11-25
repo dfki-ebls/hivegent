@@ -2,78 +2,63 @@
 
 Shared clients are opened by the FastAPI lifespan and re-used by outbound
 callers so connection pooling pays for itself.
-The user-policy and web clients use the SSRF-safe egress proxy, while the
-trusted client connects directly to operator-configured endpoints, reaching
-the hosts in ``network.unix_sockets`` over their unix socket.
-The two proxied clients are separate because ``user_urls`` and ``web_urls``
-are independent policies, and pooling the web client is what keeps a research
-turn from paying a fresh CONNECT and TLS handshake per tool call.
+The web client uses the SSRF-safe egress proxy, while a trusted client
+connects directly to the origins of operator URLs from the settings and no
+other, reaching the hosts in ``network.unix_sockets`` over their unix socket.
+Pooling the web client is what keeps a research turn from paying a fresh
+CONNECT and TLS handshake per tool call.
 """
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Collection
 from contextlib import asynccontextmanager
-from typing import Literal
+from dataclasses import dataclass, field
 
 import httpx2
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, get_user_agent
 
 from .config import settings
 from .lifespan import LifespanResource
-from .security import create_safe_async_client
+from .security import (
+    OperatorUrl,
+    Origin,
+    create_operator_client,
+    create_safe_async_client,
+)
 
 __all__ = [
+    "create_trusted_http_client",
     "get_trusted_http_client",
-    "get_user_http_client",
     "get_web_http_client",
     "shared_http_client_lifespan",
 ]
 
-# Named client variants. Add a new kind here (and a matching entry in the
-# lifespan) to introduce another specialized client later.
-_HttpClientKind = Literal["user", "trusted", "web"]
 
+@dataclass(slots=True)
+class _Clients:
+    """The web client, and the direct clients opened on demand per set of operator URLs."""
 
-_Clients = dict[_HttpClientKind, httpx2.AsyncClient]
-
-
-def _unix_socket_mounts() -> dict[str, httpx2.AsyncHTTPTransport]:
-    """Route every configured socket host through its unix socket.
-
-    Only the trusted client may mount these, since they bypass the egress proxy.
-    """
-    return {
-        f"all://{host}": httpx2.AsyncHTTPTransport(uds=str(path))
-        for host, path in settings.network.unix_sockets.items()
-    }
+    timeout: httpx2.Timeout
+    web: httpx2.AsyncClient
+    trusted: dict[frozenset[OperatorUrl], httpx2.AsyncClient] = field(
+        default_factory=dict
+    )
 
 
 @asynccontextmanager
 async def _open_clients() -> AsyncGenerator[_Clients]:
-    """Open one client per variant, keyed so they share one code path."""
+    """Open the web client now and close every client at the end."""
     network = settings.network
     timeout = httpx2.Timeout(
         timeout=DEFAULT_HTTP_TIMEOUT,
         connect=network.connect_timeout_seconds,
     )
-    headers = {"User-Agent": get_user_agent()}
-    clients: _Clients = {
-        "user": create_safe_async_client(
-            policy=settings.security.user_policy(),
-            proxy_url=settings.security.egress_proxy_url,
-            timeout=timeout,
-            headers=headers,
-        ),
-        "trusted": httpx2.AsyncClient(
-            timeout=timeout,
-            headers=headers,
-            trust_env=False,
-            mounts=_unix_socket_mounts(),
-        ),
+    clients = _Clients(
+        timeout=timeout,
         # Redirects are followed for fetched pages: every hop is checked by
         # the request hook and the egress proxy, so a moved page resolves
         # rather than failing. The hop limit is client-level in HTTPX, while
         # the tools bound each request as a whole.
-        "web": create_safe_async_client(
+        web=create_safe_async_client(
             policy=settings.security.web_policy(),
             proxy_url=settings.security.egress_proxy_url,
             timeout=timeout,
@@ -81,12 +66,12 @@ async def _open_clients() -> AsyncGenerator[_Clients]:
             max_redirects=network.webfetch_max_redirects,
             keepalive_expiry=network.web_keepalive_seconds,
         ),
-    }
+    )
 
     try:
         yield clients
     finally:
-        for client in clients.values():
+        for client in (clients.web, *clients.trusted.values()):
             await client.aclose()
 
 
@@ -107,16 +92,45 @@ async def shared_http_client_lifespan() -> AsyncGenerator[None]:
         yield
 
 
-def get_trusted_http_client() -> httpx2.AsyncClient:
-    """Return the direct client for operator-configured endpoints."""
-    return _shared.get()["trusted"]
+def create_trusted_http_client(
+    *urls: OperatorUrl,
+    timeout: httpx2.Timeout,
+    discovered: Callable[[], Collection[Origin]] = frozenset,
+) -> httpx2.AsyncClient:
+    """Create a direct client confined to the origins of the operator's *urls*.
+
+    It reaches the hosts in ``network.unix_sockets`` over their socket, and
+    refuses every request to another origin, so a caller can only reach what
+    the operator configured, plus the *discovered* origins of the endpoints a
+    document fetched from them names.  Its owner closes it, unlike a pooled one.
+    """
+    if not urls:
+        raise ValueError("A trusted client needs an operator URL")
+
+    return create_operator_client(
+        urls,
+        timeout=timeout,
+        headers={"User-Agent": get_user_agent()},
+        unix_sockets={
+            host: str(path) for host, path in settings.network.unix_sockets.items()
+        },
+        discovered=discovered,
+    )
 
 
-def get_user_http_client() -> httpx2.AsyncClient:
-    """Return the policy-checked proxy client for user-provided endpoints."""
-    return _shared.get()["user"]
+def get_trusted_http_client(*urls: OperatorUrl) -> httpx2.AsyncClient:
+    """Return the pooled :func:`create_trusted_http_client` of the operator's *urls*."""
+    clients = _shared.get()
+    key = frozenset(urls)
+
+    if (client := clients.trusted.get(key)) is None:
+        client = clients.trusted[key] = create_trusted_http_client(
+            *key, timeout=clients.timeout
+        )
+
+    return client
 
 
 def get_web_http_client() -> httpx2.AsyncClient:
     """Return the pooled client the model's web tools browse through."""
-    return _shared.get()["web"]
+    return _shared.get().web

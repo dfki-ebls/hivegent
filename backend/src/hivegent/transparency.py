@@ -12,8 +12,10 @@ from joserfc import jws
 from joserfc.jwk import OKPKey
 from pydantic import BaseModel, Field
 
-from .config import API_PREFIX, TransparencySettings, content_digest, reveal, settings
+from .config import API_PREFIX, reveal, settings
+from .config.observability import TransparencySettings
 from .http_client import get_trusted_http_client
+from .shared.text import sha256
 from .types import (
     ServerConversation,
     TransparencyConfig,
@@ -92,7 +94,7 @@ def get_transparency_config() -> TransparencyConfig:
 
     return TransparencyConfig(
         enabled=True,
-        contact_email=config.contact_email or None,
+        contact_email=config.contact_email,
         minimum_watermark_tokens=MINIMUM_WATERMARK_TOKENS,
     )
 
@@ -119,7 +121,8 @@ def _key(config: TransparencySettings) -> OKPKey:
 
 
 def _issuer(config: TransparencySettings) -> str:
-    return config.report_issuer.rstrip("/")
+    """The ``iss`` of the reports, the issuer without the trailing slash a bare origin is spelled with."""
+    return str(config.report_issuer).rstrip("/")
 
 
 def _jwk(key: OKPKey) -> TransparencyJwk:
@@ -196,7 +199,7 @@ def sign_provenance(
 
     return _sign(
         config,
-        _ProvenanceClaims(content_sha256=content_digest(canonical)),
+        _ProvenanceClaims(content_sha256=sha256(canonical)),
         PROVENANCE_TYPE,
     )
 
@@ -208,7 +211,7 @@ async def detect_text(
     api_key = reveal(config.detector_api_key)
 
     try:
-        response = await get_trusted_http_client().post(
+        response = await get_trusted_http_client(config.detector_url).post(
             config.detector_url,
             json=_DetectorRequest(text=text).model_dump(),
             headers={"Authorization": f"Bearer {api_key}"} if api_key else None,
@@ -223,7 +226,7 @@ async def detect_text(
     # it: naming the upstream URL would publish internal topology in a report
     # whose whole point is that anyone can re-run the check.
     claims = _ReportClaims(
-        content_sha256=content_digest(text),
+        content_sha256=sha256(text),
         detector=f"{_issuer(config)}{API_PREFIX}/transparency/detect",
         status=status,
     )

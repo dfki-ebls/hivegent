@@ -9,12 +9,12 @@ All workspace, metadata, and search-index *mutations* live in
 
 from .inventory import build_tree_response
 from .processing import (
-    cleanup_spool_dir,
     enforce_upload_size,
     run_bulk_document_job,
     spool_dir,
     summarize_failed_files,
     summarize_failures,
+    upload_body_limit,
 )
 from .reads import (
     attachment_disposition,
@@ -28,7 +28,6 @@ __all__ = [
     "attachment_disposition",
     "attachment_response",
     "build_tree_response",
-    "cleanup_spool_dir",
     "enforce_upload_size",
     "get_document_response",
     "get_file_response",
@@ -37,4 +36,5 @@ __all__ = [
     "spool_dir",
     "summarize_failed_files",
     "summarize_failures",
+    "upload_body_limit",
 ]

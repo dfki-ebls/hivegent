@@ -8,8 +8,7 @@ cascade-delete with their owning document, so deletes only need to
 touch ``documents``.
 """
 
-import contextlib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
 from typing import Any, Self, TypedDict
@@ -20,24 +19,18 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..chunkers.base import (
-    ChunkData,
-    DocumentMetadata,
-    EntryMetadata,
-)
-from ..converters.formats import media_type
-from ..entries import (
+from ..metadata import ChunkData, DocumentMetadata, EntryMetadata
+from ..reach import Reach
+from ..shared.formats import DOCUMENT_EXTENSION, media_type
+from ..store import Workspace
+from ..tools.entries import (
     ContentStat,
-    assets_dir_for_stem,
-    description_path_for_stem,
-    original_path_for_stem,
+    Part,
     stem_path_from_reference,
 )
-from ..store import Casebase
-from ..types import DocumentFilter
+from ..types import FilterEntry
 from ._common import affected_rows, stem_subtree_filter
 from .engine import session
-from .groups import ensure_group
 from .models import (
     Chunk,
     Document,
@@ -45,12 +38,13 @@ from .models import (
     GeneratedBy,
     Origin,
 )
-from .users import ensure_user
+from .workspaces import ensure_workspace
 
 __all__ = [
     "EntryState",
-    "delete_all",
-    "delete_all_documents",
+    "accessible_chunks",
+    "accessible_documents",
+    "clear_content_states",
     "delete_document",
     "delete_documents",
     "delete_subtree",
@@ -61,10 +55,8 @@ __all__ = [
     "get_entry_states",
     "get_line_counts",
     "list_document_paths",
-    "list_known_stores",
     "move_document",
     "move_subtree",
-    "resolve_accessible_document_ids",
     "set_content_state",
     "update_entry",
     "upsert_document",
@@ -76,6 +68,7 @@ class EntryState:
     """An entry's persisted drift fingerprint, stat, and metadata, without chunks."""
 
     content_digest: str | None
+    chunker: str | None
     content_stat: ContentStat | None
     metadata: EntryMetadata
 
@@ -118,46 +111,35 @@ def _stat_from_row(row: Document) -> ContentStat | None:
 # ─── Filters ───────────────────────────────────────────────────────────
 
 
-def _owner_filter(store: Casebase):
+def _workspace_filter(store: Workspace) -> sa.ColumnElement[bool]:
     """Build a SQL WHERE expression matching *store*'s documents, for a read.
 
     Every query on ``documents`` names its rows through this or
-    :func:`_writable_filter`, so no statement here reaches another owner's.
+    :func:`_writable_filter`, so no statement here reaches another workspace's.
     """
-    if store.kind == "user":
-        return Document.owner_user_id == store.id
-    return Document.owner_group_id == store.id
+    return Document.workspace_key == store.store_key
 
 
-def _writable_filter(store: Casebase):
-    """Match *store*'s documents for an update or delete, refusing a read-only grant.
+def _writable_filter(store: Workspace) -> sa.ColumnElement[bool]:
+    """Match *store*'s documents for an update or delete, refusing a grant short of writing it.
 
     Raises:
-        AccessDenied: When *store* may not be written.
+        AccessDenied: When *store* is not granted :attr:`~hivegent.store.Grant.WRITE`.
     """
     store.require_writable()
 
-    return _owner_filter(store)
+    return _workspace_filter(store)
 
 
-class _OwnerColumns(TypedDict):
-    """The mutually exclusive single-owner FK columns."""
-
-    owner_user_id: str | None
-    owner_group_id: str | None
-
-
-def _owner_kwargs(store: Casebase) -> _OwnerColumns:
-    """Single-owner FK kwargs for an insert or a move, refusing a read-only grant.
+def _writable_key(store: Workspace) -> str:
+    """The workspace key of a row inserted or moved into *store*, refusing a grant short of writing it.
 
     Raises:
-        AccessDenied: When *store* may not be written.
+        AccessDenied: When *store* is not granted :attr:`~hivegent.store.Grant.WRITE`.
     """
     store.require_writable()
 
-    if store.kind == "user":
-        return {"owner_user_id": store.id, "owner_group_id": None}
-    return {"owner_user_id": None, "owner_group_id": store.id}
+    return store.store_key
 
 
 # ─── Row → Pydantic ────────────────────────────────────────────────────
@@ -168,9 +150,11 @@ def _entry_from_row(doc: Document) -> EntryMetadata:
     return EntryMetadata(
         entry_kind=doc.entry_kind.value,  # type: ignore[arg-type]
         stem_path=doc.stem_path,
-        description_path=description_path_for_stem(doc.stem_path),
-        original_path=original_path_for_stem(doc.stem_path, doc.original_suffix),
-        assets_dir=assets_dir_for_stem(doc.stem_path) if doc.has_assets else None,
+        description_path=Part(doc.stem_path, "description").path,
+        original_path=None
+        if doc.original_suffix is None
+        else Part(doc.stem_path, "original", doc.original_suffix).path,
+        assets_dir=Part(doc.stem_path, "assets").path if doc.has_assets else None,
         origin=doc.origin.value,  # type: ignore[arg-type]
         generated_by=doc.generated_by.value,  # type: ignore[arg-type]
     )
@@ -232,28 +216,22 @@ def _original_suffix(original_path: str | None) -> str | None:
     ``None`` means there is no original file; an empty string means the original
     has no extension (its path is the bare stem) and must stay distinct from
     ``None`` so extension-less and dotfile originals survive the round-trip
-    through :func:`original_path_for_stem`.
+    through :class:`~hivegent.tools.entries.Part`.
     """
     return PurePosixPath(original_path).suffix if original_path else None
 
 
-async def _ensure_owner(s: AsyncSession, store: Casebase) -> None:
-    """Lazily materialize the owning user/group row before an insert."""
-    if store.kind == "user":
-        await ensure_user(s, store.id)
-    else:
-        await ensure_group(s, store.id)
-
-
-async def _find(s: AsyncSession, store: Casebase, stem_path: str) -> Document | None:
-    stmt = select(Document).where(_owner_filter(store), Document.stem_path == stem_path)
+async def _find(s: AsyncSession, store: Workspace, stem_path: str) -> Document | None:
+    stmt = select(Document).where(
+        _workspace_filter(store), Document.stem_path == stem_path
+    )
     return (await s.execute(stmt)).scalar_one_or_none()
 
 
 # ─── Reads ─────────────────────────────────────────────────────────────
 
 
-async def get_document(store: Casebase, reference: str) -> DocumentMetadata | None:
+async def get_document(store: Workspace, reference: str) -> DocumentMetadata | None:
     """Load a document and its chunks by workspace-relative reference."""
     stem_path = stem_path_from_reference(reference)
     async with session() as s:
@@ -263,7 +241,7 @@ async def get_document(store: Casebase, reference: str) -> DocumentMetadata | No
         return _document_from_row(row, await _load_chunks(s, row.id))
 
 
-async def get_entry_metadata(store: Casebase, reference: str) -> EntryMetadata | None:
+async def get_entry_metadata(store: Workspace, reference: str) -> EntryMetadata | None:
     """Load an entry's persisted metadata without its chunks."""
     stem_path = stem_path_from_reference(reference)
     async with session() as s:
@@ -272,14 +250,14 @@ async def get_entry_metadata(store: Casebase, reference: str) -> EntryMetadata |
 
 
 async def get_entries_metadata(
-    references: Iterable[tuple[Casebase, str]],
-) -> dict[tuple[Casebase, str], EntryMetadata]:
+    references: Iterable[tuple[Workspace, str]],
+) -> dict[tuple[Workspace, str], EntryMetadata]:
     """Load the persisted metadata of many entries in one query, by store and stem.
 
     The batch sibling of :func:`get_entry_metadata`, and an entry without a row is
     absent from the result.
     """
-    stems: dict[Casebase, set[str]] = {}
+    stems: dict[Workspace, set[str]] = {}
 
     for store, reference in references:
         stems.setdefault(store, set()).add(stem_path_from_reference(reference))
@@ -289,23 +267,22 @@ async def get_entries_metadata(
 
     where = sa.or_(
         *(
-            sa.and_(_owner_filter(store), Document.stem_path.in_(paths))
+            sa.and_(_workspace_filter(store), Document.stem_path.in_(paths))
             for store, paths in stems.items()
         )
     )
+
+    by_key = {store.store_key: store for store in stems}
 
     async with session() as s:
         rows = (await s.scalars(select(Document).where(where))).all()
 
     return {
-        (Casebase.for_owner(row.owner_user_id, row.owner_group_id), row.stem_path): (
-            _entry_from_row(row)
-        )
-        for row in rows
+        (by_key[row.workspace_key], row.stem_path): _entry_from_row(row) for row in rows
     }
 
 
-async def get_entry_state(store: Casebase, reference: str) -> EntryState | None:
+async def get_entry_state(store: Workspace, reference: str) -> EntryState | None:
     """Return an entry's drift fingerprint and metadata, or ``None`` if absent.
 
     One row fetch for the reconcile/sync path, which needs the stored drift
@@ -320,25 +297,26 @@ async def get_entry_state(store: Casebase, reference: str) -> EntryState | None:
         return _state_from_row(row) if row is not None else None
 
 
-async def get_entry_states(store: Casebase) -> dict[str, EntryState]:
+async def get_entry_states(store: Workspace) -> dict[str, EntryState]:
     """Return every entry's state in *store* by its description path, in one query."""
     async with session() as s:
-        rows = (await s.scalars(select(Document).where(_owner_filter(store)))).all()
+        rows = (await s.scalars(select(Document).where(_workspace_filter(store)))).all()
 
     return {
-        description_path_for_stem(row.stem_path): _state_from_row(row) for row in rows
+        Part(row.stem_path, "description").path: _state_from_row(row) for row in rows
     }
 
 
 def _state_from_row(row: Document) -> EntryState:
     return EntryState(
         content_digest=row.content_digest,
+        chunker=row.chunker,
         content_stat=_stat_from_row(row),
         metadata=_entry_from_row(row),
     )
 
 
-async def list_document_paths(store: Casebase) -> dict[str, int]:
+async def list_document_paths(store: Workspace) -> dict[str, int]:
     """Return ``{description_path: chunk_count}`` for every doc in *store*."""
     async with session() as s:
         rows = (
@@ -346,14 +324,16 @@ async def list_document_paths(store: Casebase) -> dict[str, int]:
                 select(Document.stem_path, func.count(Chunk.idx))
                 .select_from(Document)
                 .outerjoin(Chunk, Chunk.document_id == Document.id)
-                .where(_owner_filter(store))
+                .where(_workspace_filter(store))
                 .group_by(Document.id, Document.stem_path)
             )
         ).all()
-    return {description_path_for_stem(stem): int(count) for stem, count in rows}
+    return {Part(stem, "description").path: int(count) for stem, count in rows}
 
 
-async def get_line_counts(store: Casebase, references: Sequence[str]) -> dict[str, int]:
+async def get_line_counts(
+    store: Workspace, references: Sequence[str]
+) -> dict[str, int]:
     """Return ``{reference: line_count}`` for the given workspace references.
 
     Keyed on ``line_count`` rather than the content digest: ``upsert_document``
@@ -370,7 +350,7 @@ async def get_line_counts(store: Casebase, references: Sequence[str]) -> dict[st
         rows = (
             await s.execute(
                 select(Document.stem_path, Document.line_count).where(
-                    _owner_filter(store),
+                    _workspace_filter(store),
                     Document.stem_path.in_(stem_to_ref),
                     Document.line_count > 0,
                 )
@@ -379,123 +359,68 @@ async def get_line_counts(store: Casebase, references: Sequence[str]) -> dict[st
     return {stem_to_ref[stem]: int(count) for stem, count in rows}
 
 
-async def _distinct_owner_ids(s: AsyncSession, column) -> list[str]:
-    result = await s.execute(select(column).where(column.is_not(None)).distinct())
-    return [oid for oid in result.scalars().all() if oid]
+def _selected(entries: Iterable[FilterEntry]) -> sa.ColumnElement[bool]:
+    """Match the documents *entries* select, as :meth:`DocumentFilter._selects` does.
 
-
-async def list_known_stores() -> set[Casebase]:
-    """Return every casebase that owns at least one document row, for reading.
-
-    Ids that can no longer back a casebase (e.g. the admin marker) are skipped
-    so a single legacy row cannot break reconciliation.
+    A document is matched by its description path, the path the filter sees,
+    and a file entry also by the stem and ``.assets`` payload it owns.
     """
-    async with session() as s:
-        user_ids = await _distinct_owner_ids(s, Document.owner_user_id)
-        group_ids = await _distinct_owner_ids(s, Document.owner_group_id)
+    description = Document.stem_path + DOCUMENT_EXTENSION
+    clauses: list[sa.ColumnElement[bool]] = []
 
-    owners = [(uid, None) for uid in user_ids] + [(None, gid) for gid in group_ids]
-    stores: set[Casebase] = set()
+    for entry in entries:
+        if entry.directory:
+            if not entry.path:
+                return sa.true()
 
-    for user_id, group_id in owners:
-        with contextlib.suppress(ValueError):
-            stores.add(Casebase.for_owner(user_id, group_id))
+            clauses += [
+                description == entry.path,
+                description.startswith(f"{entry.path}/", autoescape=True),
+            ]
+            continue
 
-    return stores
+        stem = stem_path_from_reference(entry.path)
+        assets_dir = Part(stem, "assets").path
+        clauses += [
+            description == entry.path,
+            Document.stem_path.in_((stem, assets_dir)),
+            Document.stem_path.startswith(f"{assets_dir}/", autoescape=True),
+        ]
+
+    return sa.or_(sa.false(), *clauses)
 
 
-async def resolve_accessible_document_ids(
-    stores: Sequence[Casebase],
-    *,
-    filters: Mapping[Casebase, DocumentFilter | None] = {},
-) -> list[UUID]:
-    """Return the ids of the documents owned by *stores* the caller may see.
+def accessible_documents(reach: Reach) -> sa.Select[UUID]:
+    """Select the ids of the documents *reach* admits, each store's narrowed by its filter.
 
-    Used at search time to scope the cbrkit vector query without
-    denormalising owner columns onto the chunks table.
-
-    *filters* hides the conversation's excluded documents here rather than
-    from the ranked results.  Pruning after the scan spends the top-k on rows
-    the user hid and hands back fewer than were asked for; pruned at the SQL
-    level the scan never ranks them to begin with.  With no store actually
-    filtered the ids alone are selected, since every row would be admitted.
+    The statement binds a parameter per store and filter entry, never one
+    per document.
     """
-    if not stores:
-        return []
-    user_ids = [s.id for s in stores if s.kind == "user"]
-    group_ids = [s.id for s in stores if s.kind == "group"]
-    conditions: list[sa.ColumnElement[bool]] = []
-    if user_ids:
-        conditions.append(Document.owner_user_id.in_(user_ids))
-    if group_ids:
-        conditions.append(Document.owner_group_id.in_(group_ids))
-    if not conditions:
-        return []
 
-    where = sa.or_(*conditions)
-    scoped = {store: f for store, f in filters.items() if f is not None}
+    def visible(store: Workspace) -> sa.ColumnElement[bool]:
+        owned = _workspace_filter(store)
 
-    if not scoped:
-        async with session() as s:
-            result = await s.execute(select(Document.id).where(where))
-        return list(result.scalars().all())
+        if (document_filter := reach.filter(store)) is None:
+            return owned
 
-    async with session() as s:
-        result = await s.execute(
-            select(
-                Document.id,
-                Document.stem_path,
-                Document.owner_user_id,
-                Document.owner_group_id,
-            ).where(where)
-        )
-        rows = result.all()
+        clauses = [owned, sa.not_(_selected(document_filter.excluded))]
 
-    admitted: list[UUID] = []
-    for row in rows:
-        store = Casebase.for_owner(row.owner_user_id, row.owner_group_id)
-        document_filter = scoped.get(store)
-        if document_filter is None or document_filter(
-            description_path_for_stem(row.stem_path)
-        ):
-            admitted.append(row.id)
+        if document_filter.allowed is not None:
+            clauses.append(_selected(document_filter.allowed))
 
-    return admitted
+        return sa.and_(*clauses)
+
+    return select(Document.id).where(sa.or_(sa.false(), *map(visible, reach.stores)))
 
 
-# TODO(cbrkit): the owner-scoped search filter, waiting for cbrkit to accept a
-# SQLAlchemy expression as a filter (see `retrieval.build_search_tool`).  It
-# replaces `resolve_accessible_document_ids`, naming only the hidden documents.
-#
-# def chunk_scope(
-#     stores: Sequence[Casebase], excluded: Sequence[str] = ()
-# ) -> sa.ColumnElement[bool]:
-#     """Match the chunks of the documents *stores* own, but those *excluded*."""
-#     conditions = [
-#         Document.owner_user_id.in_([s.id for s in stores if s.kind == "user"]),
-#         Document.owner_group_id.in_([s.id for s in stores if s.kind == "group"]),
-#     ]
-#     within = Chunk.document_id.in_(select(Document.id).where(sa.or_(*conditions)))
-#
-#     return sa.and_(within, Chunk.document_id.not_in(excluded)) if excluded else within
-#
-#
-# async def accessible_chunks(
-#     stores: Sequence[Casebase],
-#     *,
-#     filters: Mapping[Casebase, DocumentFilter | None] = {},
-# ) -> sa.ColumnElement[bool]:
-#     """Match the chunks of the documents *stores* own that *filters* admit."""
-#     scoped = {store: f for store, f in filters.items() if f is not None}
-#
-#     if not scoped:
-#         return chunk_scope(stores)
-#
-#     hidden = set(await resolve_accessible_document_ids(list(scoped))) - set(
-#         await resolve_accessible_document_ids(list(scoped), filters=scoped)
-#     )
-#
-#     return chunk_scope(stores, sorted(hidden))
+def accessible_chunks(reach: Reach) -> sa.ColumnElement[bool]:
+    """Match the chunks of the documents *reach* admits.
+
+    Scopes the vector search in one subquery on ``documents``
+    (:func:`accessible_documents`), so the scan never ranks a chunk of another
+    owner or one the conversation hides.
+    """
+    return Chunk.document_id.in_(accessible_documents(reach))
 
 
 # ─── Writes ────────────────────────────────────────────────────────────
@@ -533,7 +458,7 @@ class _EntryColumns:
 
 
 async def upsert_document(
-    store: Casebase,
+    store: Workspace,
     entry: EntryMetadata,
     pipeline: str,
     line_count: int,
@@ -546,15 +471,15 @@ async def upsert_document(
     :class:`DocumentMetadata` carries an empty ``chunks`` list; the
     orchestrator fills it after calling the indexer.
 
-    The row's ``content_digest`` and stat columns are cleared here because the
+    The row's ``content_digest``, ``chunker``, and stat columns are cleared here because the
     replacement chunks are not durable yet.  :func:`set_content_state` stamps
     them only after indexing succeeds, so a null digest always means "needs
-    re-indexing".  ``line_count`` is written eagerly instead — it is a pure
+    re-indexing".  ``line_count`` is written eagerly instead.  It is a pure
     function of the content this row represents, so it is correct regardless of
     whether the chunks land.
 
     Concurrency-safe ``INSERT ... ON CONFLICT DO UPDATE`` keyed on the
-    ``(owner, stem_path)`` unique constraint: two requests racing to
+    ``(workspace_key, stem_path)`` unique constraint: two requests racing to
     index the same stem cannot trip the constraint and roll back the
     transaction (losing the document).
     """
@@ -562,19 +487,19 @@ async def upsert_document(
         **_EntryColumns.from_entry(entry).as_values(),
         "pipeline": pipeline,
         "content_digest": None,
+        "chunker": None,
         "line_count": line_count,
         **_stat_columns(None),
     }
-    owner_col = (
-        Document.owner_user_id if store.kind == "user" else Document.owner_group_id
-    )
+    workspace_key = _writable_key(store)
+
     async with session() as s:
-        await _ensure_owner(s, store)
+        await ensure_workspace(s, store.scope)
         stmt = (
             pg_insert(Document)
-            .values(**_owner_kwargs(store), stem_path=entry.stem_path, **mutable)
+            .values(workspace_key=workspace_key, stem_path=entry.stem_path, **mutable)
             .on_conflict_do_update(
-                index_elements=[owner_col, Document.stem_path],
+                index_elements=[Document.workspace_key, Document.stem_path],
                 set_={**mutable, "updated_at": func.now()},
             )
             .returning(Document)
@@ -583,7 +508,7 @@ async def upsert_document(
 
 
 async def update_entry(
-    store: Casebase, entry: EntryMetadata, stat: ContentStat | None
+    store: Workspace, entry: EntryMetadata, stat: ContentStat | None
 ) -> bool:
     """Refresh a document's entry metadata + stat fast-path key, leaving chunks.
 
@@ -603,23 +528,41 @@ async def update_entry(
 
 
 async def set_content_state(
-    document_id: UUID, content_digest: str, stat: ContentStat | None
+    document_id: UUID, content_digest: str, chunker: str, stat: ContentStat | None
 ) -> None:
-    """Stamp a document's content fingerprint + stat after chunks are durable."""
+    """Stamp a document's content digest, chunker fingerprint, and stat after chunks are durable."""
     async with session() as s:
         await s.execute(
             update(Document)
             .where(Document.id == document_id)
             .values(
                 content_digest=content_digest,
+                chunker=chunker,
                 **_stat_columns(stat),
                 updated_at=func.now(),
             )
         )
 
 
+async def clear_content_states(workspace_key: str | None = None) -> int:
+    """Clear the stamps of the documents of a workspace, or of every one, so the next reconcile indexes them again.
+
+    Returns:
+        The number of documents.
+    """
+    stmt = update(Document).values(
+        content_digest=None, chunker=None, **_stat_columns(None)
+    )
+
+    if workspace_key is not None:
+        stmt = stmt.where(Document.workspace_key == workspace_key)
+
+    async with session() as s:
+        return affected_rows(await s.execute(stmt))
+
+
 async def delete_document(
-    store: Casebase, reference: str, *, s: AsyncSession | None = None
+    store: Workspace, reference: str, *, s: AsyncSession | None = None
 ) -> bool:
     """Delete a document and its chunks.  Returns ``True`` if one was removed."""
     stem_path = stem_path_from_reference(reference)
@@ -634,7 +577,7 @@ async def delete_document(
     return affected_rows(result) > 0
 
 
-async def delete_documents(store: Casebase, references: Sequence[str]) -> int:
+async def delete_documents(store: Workspace, references: Sequence[str]) -> int:
     """Delete every document in *references* in one statement.
 
     Cascades to chunks.  Returns the number of rows removed; batching
@@ -653,12 +596,12 @@ async def delete_documents(store: Casebase, references: Sequence[str]) -> int:
 
 
 async def delete_subtree(
-    store: Casebase, prefix: str, *, s: AsyncSession | None = None
+    store: Workspace, prefix: str, *, s: AsyncSession | None = None
 ) -> int:
     """Delete every document whose stem lies strictly below ``prefix/``.
 
-    A same-named sibling document (stem equal to *prefix*) is left alone —
-    delete it explicitly via :func:`delete_document`.
+    A same-named sibling document (stem equal to *prefix*) is left alone.
+    Delete it explicitly via :func:`delete_document`.
     """
     if not prefix:
         return 0
@@ -671,30 +614,10 @@ async def delete_subtree(
     return affected_rows(result)
 
 
-async def delete_all(store: Casebase) -> int:
-    """Delete every document owned by *store*.  Cascades to chunks."""
-    async with session() as s:
-        result = await s.execute(delete(Document).where(_writable_filter(store)))
-    return affected_rows(result)
-
-
-async def delete_all_documents() -> int:
-    """Delete every document row globally.  Cascades to chunks.
-
-    Used by the admin "reset workspace" action together with a
-    filesystem wipe; the workspace and the SQL projection must move in
-    lockstep, otherwise reconciliation will re-create one from the
-    other on next boot.
-    """
-    async with session() as s:
-        result = await s.execute(delete(Document))
-    return affected_rows(result)
-
-
 async def move_document(
-    src_store: Casebase,
+    src_store: Workspace,
     src_stem: str,
-    dst_store: Casebase,
+    dst_store: Workspace,
     dst_stem: str,
     *,
     s: AsyncSession | None = None,
@@ -706,30 +629,32 @@ async def move_document(
     :func:`stem_path_from_reference` would strip part of the name and
     miss or mis-target the row.  Chunks reference the document by id
     (which never changes) so the vector index needs no reindex after a
-    rename — a cross-store move re-homes the same rows and vectors by
-    flipping the owner columns, again with no re-embed.
+    rename.  A cross-store move re-homes the same rows and vectors by
+    pointing them at another workspace, again with no re-embed.
     """
     cross_store = src_store != dst_store
     if not cross_store and src_stem == dst_stem:
         return False
 
+    workspace_key = _writable_key(dst_store)
+
     async with session(s) as tx:
         if cross_store:
-            await _ensure_owner(tx, dst_store)
+            await ensure_workspace(tx, dst_store.scope)
 
         result = await tx.execute(
             update(Document)
             .where(_writable_filter(src_store), Document.stem_path == src_stem)
-            .values(stem_path=dst_stem, **_owner_kwargs(dst_store))
+            .values(stem_path=dst_stem, workspace_key=workspace_key)
         )
 
     return affected_rows(result) > 0
 
 
 async def move_subtree(
-    src_store: Casebase,
+    src_store: Workspace,
     src_prefix: str,
-    dst_store: Casebase,
+    dst_store: Workspace,
     dst_prefix: str,
     *,
     s: AsyncSession | None = None,
@@ -738,18 +663,20 @@ async def move_subtree(
 
     A single bulk UPDATE rewrites the ``src_prefix`` portion of each
     matched ``stem_path`` to ``dst_prefix`` and, for a cross-store move,
-    flips the owner columns onto *dst_store*.  No vector reindex needed —
-    chunks reference the immutable document id.  A same-named sibling
-    document (stem equal to *src_prefix*) is left alone — move it
+    points them at *dst_store*.  No vector reindex needed.
+    Chunks reference the immutable document id.  A same-named sibling
+    document (stem equal to *src_prefix*) is left alone.  Move it
     explicitly via :func:`move_document`.
     """
     cross_store = src_store != dst_store
     if not src_prefix or (not cross_store and src_prefix == dst_prefix):
         return
 
+    workspace_key = _writable_key(dst_store)
+
     async with session(s) as tx:
         if cross_store:
-            await _ensure_owner(tx, dst_store)
+            await ensure_workspace(tx, dst_store.scope)
 
         await tx.execute(
             update(Document)
@@ -758,6 +685,6 @@ async def move_subtree(
                 stem_path=func.concat(
                     dst_prefix, func.substr(Document.stem_path, len(src_prefix) + 1)
                 ),
-                **_owner_kwargs(dst_store),
+                workspace_key=workspace_key,
             )
         )

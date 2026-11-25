@@ -6,16 +6,15 @@
 
 """SQLAlchemy 2.0 schema for Hivegent.
 
-Single module — small enough to read top-to-bottom.  Repositories convert
+Single module, small enough to read top-to-bottom.  Repositories convert
 these ORM rows to Pydantic models at their public surface; nothing
 outside :mod:`hivegent.db` sees an ORM object.
 
 The PostgreSQL/pgvector ``chunks`` table holds chunk metadata, text,
-and vectors in one normalised row.  cbrkit reads it via
-:class:`pgvector_async(model=...)` for search and re-embedding;
-hivegent writes to it via plain SQLAlchemy in the same session that
-inserts the parent ``documents`` row, so there is no ordering coupling
-between chunk metadata and vectors.
+and vectors in one normalised row.  cbrkit searches, re-embeds, and
+writes it through :class:`cbrkit.indexable.Pgvector` with this
+model, which embeds a batch before it replaces a document's rows in one
+transaction (see :mod:`hivegent.retrieval`).
 """
 
 import enum
@@ -29,11 +28,9 @@ from sqlalchemy import (
     CheckConstraint,
     Enum,
     ForeignKey,
-    ForeignKeyConstraint,
     Index,
     MetaData,
     UniqueConstraint,
-    Uuid,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import (
@@ -56,12 +53,15 @@ __all__ = [
     "EntryKind",
     "GeneratedBy",
     "Group",
-    "IndexState",
+    "McpConfirmation",
     "Memory",
     "Message",
     "Origin",
+    "Source",
+    "SourceItem",
     "Timestamped",
     "User",
+    "Workspace",
 ]
 
 
@@ -120,7 +120,7 @@ def _enum(t: type[enum.StrEnum]) -> Enum:
     """Native Postgres ENUM column backed by *t*.
 
     Postgres-only schema, so we use real ``CREATE TYPE`` enums instead of
-    ``VARCHAR + CHECK`` — values live in one place (the type) rather than
+    ``VARCHAR + CHECK``, so values live in one place (the type) rather than
     being duplicated in a per-column check constraint.
 
     ``values_callable`` makes the column store each member's ``value`` (e.g.
@@ -153,6 +153,8 @@ class Origin(enum.StrEnum):
     # Discovered on disk by the reconciler with no prior row (hand-dropped
     # files, and the future read-write shell tool's fold-back).
     IMPORTED = "imported"
+    # Mirrored from an external source by its sync.
+    SYNCED = "synced"
 
 
 class GeneratedBy(enum.StrEnum):
@@ -171,42 +173,77 @@ class User(Timestamped, Base):
     Identity attributes (email, display name) and group membership are
     not stored: they live solely in the OIDC token and are reconstructed
     per request.  A row here is just the anchor that owns conversations,
-    documents, and memory.
+    a workspace, and memory, and keeps the choices the user made for their
+    runs, only those they set, so a default the operator changes reaches
+    everyone who never chose (:class:`~hivegent.types.Preferences`).
     """
 
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(primary_key=True)
+    preferences: Mapped[dict[str, Any]] = mapped_column(
+        default=dict, server_default="{}"
+    )
 
-    memory: Mapped["Memory | None"] = relationship(
+    memory: Mapped[Memory | None] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
     )
-    conversations: Mapped[list["Conversation"]] = relationship(
+    conversations: Mapped[list[Conversation]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
-    )
-    documents: Mapped[list["Document"]] = relationship(
-        back_populates="owner_user",
-        cascade="all, delete-orphan",
-        foreign_keys="Document.owner_user_id",
     )
 
 
 class Group(Timestamped, Base):
-    """A group that owns shared documents.
+    """A group that owns a shared workspace.
 
     Like :class:`User`, membership is an OIDC concern and is never
-    persisted; a row here only anchors group-owned documents.
+    persisted; a row here only anchors the group's workspace.
     """
 
     __tablename__ = "groups"
 
     id: Mapped[str] = mapped_column(primary_key=True)
 
-    documents: Mapped[list["Document"]] = relationship(
-        back_populates="owner_group",
-        cascade="all, delete-orphan",
-        foreign_keys="Document.owner_group_id",
+
+class Source(Base):
+    """An external source's sync state, all of it rebuilt by a full sync.
+
+    A row anchors the mirror's workspace and its items, and goes with them
+    once the source leaves the configuration.  ``cursor`` is where the next
+    delta starts, ``synced_at`` when the last sync finished, and ``error``
+    why it failed, if it did.  ``requested`` is the sync an admin asked for
+    and no sync has finished yet, and ``request_seq`` counts the requests,
+    so a sync clears only the request it answered.
+    """
+
+    __tablename__ = "sources"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    cursor: Mapped[str | None]
+    synced_at: Mapped[datetime | None]
+    error: Mapped[str | None]
+    requested: Mapped[str | None]
+    request_seq: Mapped[int] = mapped_column(default=0, server_default="0")
+
+
+class SourceItem(Base):
+    """Which file of a source lies where in its mirror, at which version.
+
+    Keyed by the source's own id for the file, so a rename is a move and a
+    deletion names exactly the file it removes.  A ``held`` file is gone from
+    the source but stays mirrored until an admin confirms its deletion.
+    """
+
+    __tablename__ = "source_items"
+    __table_args__ = (UniqueConstraint("source_id", "path"),)
+
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True
     )
+    remote_id: Mapped[str] = mapped_column(primary_key=True)
+    path: Mapped[str]
+    version: Mapped[str]
+    held: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
 
 
 # ─── Memory ────────────────────────────────────────────────────────────
@@ -227,55 +264,64 @@ class Memory(Timestamped, Base):
 
 
 class Conversation(Timestamped, Base):
+    """A conversation, the record a :class:`~pydantic_ai.conversation_store.ConversationStore` keeps.
+
+    The record columns mirror ``ConversationRecord``: ``head_id`` is the
+    newest message of the active history, ``branches`` the last messages of
+    the histories it left, ``deferred_tool_requests`` the calls a paused run
+    awaits, ``usage`` what every run spent, and ``revision`` the token a save
+    checks, so a concurrent writer cannot overwrite it unnoticed.  The owner
+    is the store's ``scope``, and the title is the app's own, as are the
+    ``instructions`` its first request was sent under, stored once rather
+    than on every request sent under them, and loaded only with a history.  ``head_id``
+    carries no foreign key, so the two tables do not reference each other in
+    a cycle, and the store checks it names a stored message.
+    """
+
     __tablename__ = "conversations"
     __table_args__ = (Index(None, "user_id", "updated_at"),)
 
     # Chosen by the client, so it has no default.
     id: Mapped[UUID] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    revision: Mapped[str]
     title: Mapped[str | None]
+    head_id: Mapped[UUID | None]
+    branches: Mapped[list[str]] = mapped_column(default=list, server_default="[]")
+    usage: Mapped[dict[str, Any]] = mapped_column(default=dict, server_default="{}")
+    deferred_tool_requests: Mapped[dict[str, Any] | None]
+    instructions: Mapped[str | None] = mapped_column(deferred=True)
+    forked_from: Mapped[UUID | None]
+    forked_at: Mapped[UUID | None]
 
     user: Mapped[User] = relationship(back_populates="conversations")
-    messages: Mapped[list["Message"]] = relationship(
+    messages: Mapped[list[Message]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
     )
 
 
 class Message(Base):
-    """One node of a conversation's message tree.
+    """One message of a conversation, a ``ConversationEntry`` of its store.
 
-    Each turn appends its new messages as a chain under a fork point (see
-    ``append_branch``); editing or regenerating forks a sibling chain rather
-    than overwriting, so prior branches are preserved.  The active branch is
-    simply the newest one: the active path is the conversation's most recently
-    created leaf (a node nothing forks from) walked up to the root via
-    ``parent_id``.  Rows are only ever re-parented, under a compaction inserted
-    above them, so each carries only
-    ``created_at`` (with a ``server_default``); the ``(conversation_id,
-    created_at)`` index orders that newest-leaf lookup and the per-conversation
-    walks, while the ``(conversation_id, parent_id)`` index backs its childless
-    test.  A node id is unique within its conversation, since clients choose
-    the ids of their messages, and a parent always lies in its child's
-    conversation.
+    A message points at the one before it, so a conversation's messages form
+    a tree whose active history its record's ``head_id`` names.  Messages are
+    never changed or moved once stored: editing or regenerating a turn stores
+    the new turn beside the old one, which stays a branch.  The id is minted
+    by the store, apart from the id the client knows the message by, which
+    rides in the message's own metadata.
     """
 
     __tablename__ = "messages"
-    __table_args__ = (
-        Index(None, "conversation_id", "created_at"),
-        Index(None, "conversation_id", "parent_id"),
-        ForeignKeyConstraint(
-            ["conversation_id", "parent_id"],
-            ["messages.conversation_id", "messages.id"],
-            ondelete="CASCADE",
-        ),
-    )
+    __table_args__ = (Index(None, "conversation_id"), Index(None, "parent_id"))
 
+    id: Mapped[UUID] = mapped_column(primary_key=True)
     conversation_id: Mapped[UUID] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+        ForeignKey("conversations.id", ondelete="CASCADE")
     )
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    parent_id: Mapped[UUID | None]
+    parent_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE")
+    )
     payload: Mapped[dict[str, Any]]
     created_at: Mapped[datetime] = mapped_column(
         default=_now, server_default=sa.func.now()
@@ -284,11 +330,42 @@ class Message(Base):
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
 
-# ─── Documents & chunks ────────────────────────────────────────────────
+# ─── Workspaces, documents & chunks ────────────────────────────────────
+
+
+class Workspace(Base):
+    """The workspace of one scope, keyed by the scope's key, which every document names.
+
+    A user's, a group's, or a source's names its parent row, which takes it
+    along when deleted, and the global one names none.  The key is the one
+    its parent derives, so a row can neither claim another scope's key nor
+    hang below a second parent.
+    """
+
+    __tablename__ = "workspaces"
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(user_id, group_id, source_id) <= 1 AND key = "
+            "coalesce('user:' || user_id, 'group:' || group_id, "
+            "'source:' || source_id, 'global')",
+            name="parent",
+        ),
+    )
+
+    key: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
+    group_id: Mapped[str | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE")
+    )
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE")
+    )
 
 
 class Document(Timestamped, Base):
-    """A logical stem entry inside a user or group casebase.
+    """A logical stem entry inside a workspace, unique by its stem there.
 
     Path columns hold only the irreducible bits.  ``description_path``,
     ``original_path`` and ``assets_dir`` are derived from ``stem_path``,
@@ -296,21 +373,11 @@ class Document(Timestamped, Base):
     """
 
     __tablename__ = "documents"
-    __table_args__ = (
-        CheckConstraint(
-            "(owner_user_id IS NOT NULL) <> (owner_group_id IS NOT NULL)",
-            name="single_owner",
-        ),
-        UniqueConstraint("owner_user_id", "stem_path"),
-        UniqueConstraint("owner_group_id", "stem_path"),
-    )
+    __table_args__ = (UniqueConstraint("workspace_key", "stem_path"),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    owner_user_id: Mapped[str | None] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
-    owner_group_id: Mapped[str | None] = mapped_column(
-        ForeignKey("groups.id", ondelete="CASCADE")
+    workspace_key: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.key", ondelete="CASCADE")
     )
 
     stem_path: Mapped[str]
@@ -326,7 +393,12 @@ class Document(Timestamped, Base):
     generated_by: Mapped[GeneratedBy] = mapped_column(_enum(GeneratedBy))
 
     pipeline: Mapped[str]
+    # The digest of the indexed text and the fingerprint of the chunker that
+    # made its chunks (`exar.ingest.fingerprint`), stamped together after the
+    # chunks are durable, so either differing from the current one marks the
+    # row for re-indexing.
     content_digest: Mapped[str | None]
+    chunker: Mapped[str | None]
     # Line count of the markdown, written eagerly at row insert (a pure function
     # of the content) and surfaced to the frontend so a coverage map can place
     # partial reads without re-reading the file.
@@ -337,13 +409,6 @@ class Document(Timestamped, Base):
     content_size: Mapped[int | None] = mapped_column(sa.BigInteger())
     content_inode: Mapped[int | None] = mapped_column(sa.BigInteger())
 
-    owner_user: Mapped[User | None] = relationship(
-        back_populates="documents", foreign_keys=[owner_user_id]
-    )
-    owner_group: Mapped[Group | None] = relationship(
-        back_populates="documents", foreign_keys=[owner_group_id]
-    )
-
 
 # ─── Chunks (metadata + text + vector, one row each) ──────────────────
 
@@ -351,19 +416,17 @@ class Document(Timestamped, Base):
 # Schema dim is the plain configured ``HIVEGENT_EMBEDDING__DIMENSION``
 # (never a model probe), so importing this module for Alembic
 # autogenerate, the server, or unit tests stays offline.
-# ``reconcile_index_state`` resizes the live column to match at boot.
+# ``reconcile_index_state`` fits the live column to it at boot.
 _VECTOR_DIM = settings.embedding.dimension
 
 
 # ``MappedAsDataclass`` makes ``Chunk`` its own row contract: it is the
-# value type cbrkit exchanges (``pgvector_async[str, Chunk]``), and the
+# value type cbrkit exchanges (``Pgvector[UUID, Chunk]``), and the
 # generated dataclass ``__init__`` is what statically verifies every
-# write — a column rename, retype, or new required column breaks every
+# write: a column rename, retype, or new required column breaks every
 # ``Chunk(...)`` call site at type-check time.  ``init=False`` columns
 # are cbrkit-owned (``id`` generated key, ``embedding``, ``tsv``) and never
 # passed by the host; ``kw_only`` frees us from default-ordering rules.
-# TODO(cbrkit): read ``id`` as a ``UUID`` once cbrkit takes native uuid keys,
-# as it keys a casebase by ``int | str`` until then.
 class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUnsafeMultipleInheritance]
     """Per-row chunk content + embedding + host metadata, one row each.
 
@@ -372,11 +435,13 @@ class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUns
     ``tsv`` (:class:`TSVECTOR`, Postgres-generated from ``text``) are
     the dense/sparse index targets cbrkit populates on write, so they
     are ``init=False`` and excluded from the row dump.  All columns are
-    declared explicitly here so hivegent owns the schema end-to-end —
-    cbrkit attaches to it via ``pgvector_async(model=...)``.
+    declared explicitly here so hivegent owns the schema end-to-end.
+    cbrkit attaches to it via ``Pgvector(model=...)``.
     ``embedding``'s dimension is the embedding-model-derived
     :data:`_VECTOR_DIM`.  Always written by the upload pipeline together
     with their owning document; cascade-deleted with it.
+    ``Pgvector.reconcile`` fits ``embedding`` and ``tsv`` to this declaration
+    at boot and keeps the fingerprint of the vectors as the comment of ``embedding``.
     """
 
     __tablename__ = "chunks"
@@ -391,11 +456,8 @@ class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUns
         Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
     )
 
-    id: Mapped[str] = mapped_column(
-        Uuid(as_uuid=False),
-        primary_key=True,
-        init=False,
-        default_factory=lambda: str(uuid4()),
+    id: Mapped[UUID] = mapped_column(
+        primary_key=True, init=False, default_factory=uuid4
     )
     text: Mapped[str]
     document_id: Mapped[UUID] = mapped_column(
@@ -419,33 +481,25 @@ class Chunk(MappedAsDataclass, Base, kw_only=True):  # pyright: ignore[reportUns
     )
 
 
-class IndexState(Base):
-    """Global embedding fingerprint for the vector index.
+class McpConfirmation(Base):
+    """The nonce of an MCP confirmation the user answered, spent until it expires.
 
-    Singleton row (``id = 1``).  The application has one embedding model,
-    so one fingerprint covers the whole index.  A mismatch drives an
-    in-place ``reembed_all`` against ``chunks`` — no truncate, no data
-    loss.
+    Kept in the database so an answer runs its call once across restarts,
+    and swept once expired, since the HMAC refuses it from then on.
     """
 
-    __tablename__ = "index_state"
-    __table_args__ = (CheckConstraint("id = 1", name="singleton"),)
+    __tablename__ = "mcp_confirmations"
 
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    embedding_provider: Mapped[str]
-    embedding_model: Mapped[str]
-    fingerprint_set_at: Mapped[datetime] = mapped_column(
-        default=_now, onupdate=_now, server_default=sa.func.now()
-    )
+    nonce: Mapped[str] = mapped_column(primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(index=True)
 
 
 class ApplicationSettings(Timestamped, Base):
     """Operator-set toggles that affect the entire instance.
 
-    Singleton row (``id = 1``), mirroring :class:`IndexState` and named
-    after GitLab's table of the same role.  Each global switch is a
+    Singleton row (``id = 1``), named after GitLab's table of the same role.  Each global switch is a
     column with a ``server_default`` so the row is fully usable whether
-    it predates the column or has never been written at all — readers
+    it predates the column or has never been written at all.  Readers
     treat an absent row as all-defaults.  Add future instance-wide
     toggles here instead of creating new singleton tables.
     """

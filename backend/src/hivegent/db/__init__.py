@@ -11,7 +11,7 @@ package (for ``ConversationSummary``) and is depended on by it.
 """
 
 from .engine import engine_lifespan, resolve_database_url, session
-from .migrations import apply_migrations, build_alembic_config
+from .migrations import apply_migrations, build_alembic_config, verify_schema
 from .models import (
     Base,
     Chunk,
@@ -20,7 +20,6 @@ from .models import (
     EntryKind,
     GeneratedBy,
     Group,
-    IndexState,
     Memory,
     Message,
     Origin,
@@ -36,7 +35,6 @@ __all__ = [
     "EntryKind",
     "GeneratedBy",
     "Group",
-    "IndexState",
     "Memory",
     "Message",
     "Origin",
@@ -47,4 +45,5 @@ __all__ = [
     "engine_lifespan",
     "resolve_database_url",
     "session",
+    "verify_schema",
 ]

@@ -9,8 +9,8 @@ the CLI).
 
 The ``serve`` command starts uvicorn with ``log_config=None``, so uvicorn
 installs no handlers of its own and its ``uvicorn*`` loggers propagate to the
-root handler installed here.  Every record — app, library, and uvicorn
-access/error — then shares one format.
+root handler installed here.  Every record (app, library, and uvicorn
+access/error) then shares one format.
 """
 
 import logging
@@ -51,7 +51,7 @@ def configure_logging() -> None:
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-        level=settings.logging.level.upper(),
+        level=settings.logging.level,
     )
 
     for name, level in _LIBRARY_LEVELS.items():
