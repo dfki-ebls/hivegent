@@ -6,19 +6,22 @@
 }:
 buildGoModule (finalAttrs: {
   pname = "smokescreen";
-  version = "0.1.0";
+  version = "1.0.1";
   src = fetchFromGitHub {
     owner = "stripe";
     repo = "smokescreen";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-l/HxEhMRFHdxSkWJjYVfPSoTiUWW6MY3us8S/Fl5VV4=";
+    hash = "sha256-qVsqoBq3KpeV0ucMwvcrWh7K8uooc9R2vQtatLDUa3g=";
   };
   vendorHash = null;
   excludedPackages = [ "cmd/check_config" ];
+  # The proxy never exposes metrics, so the Prometheus client stays out of the
+  # binary and thereby out of its SBOM.
+  tags = [ "smokescreen_no_prometheus" ];
   # The proxy tests bind loopback listeners inside the Darwin sandbox.
   __darwinAllowLocalNetworking = true;
   # TestInvalidHost asserts on the "no such host" resolver error, which needs a
-  # DNS server answering NXDOMAIN, while the sandbox has none and refuses the
+  # DNS server answering NXDOMAIN, while the Linux sandbox has none and refuses the
   # connection instead.
   checkFlags = [ "-skip=^TestInvalidHost$" ];
   passthru = {
@@ -33,7 +36,7 @@ buildGoModule (finalAttrs: {
     goModuleCache =
       (finalAttrs.finalPackage.overrideAttrs {
         proxyVendor = true;
-        vendorHash = "sha256-y18ZGf8ZkNnsXNPpjqrrPCLfUJwdROOumUQ+xn6Kavo=";
+        vendorHash = "sha256-SQqxFj1WeE3KBWwqiaHSfSCagE4vloJECRCf30RUevs=";
         postPatch = "rm -rf vendor";
       }).goModules;
     # The proxy must never be reachable off-host, and its listen address is
