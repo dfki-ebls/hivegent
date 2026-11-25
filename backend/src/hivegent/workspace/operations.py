@@ -1,41 +1,47 @@
 """Where a changeset's paths lie: a root and the path local to it.
 
 The operations themselves are the plain, location-generic data of
-:mod:`hivegent.changes`, and :func:`route` turns one spelled in canonical paths
+:mod:`hivegent.tools.changes`, and :func:`route` turns one spelled in canonical paths
 into one the gateway in :mod:`~hivegent.workspace.changeset` plans and applies.
 An :class:`Upload` is the one item that exists only here, routed already,
 since it carries bytes no stored changeset may hold.
 
 A :class:`Root` answers for the rules its changes follow, so the gateway never
-asks which kind it holds: a :class:`~hivegent.store.Casebase`, whose workspace
-holds entries with rows, an index, and announcements, or a :class:`Folder`,
-whose plain files are written directly, such as a conversation's ``/tmp``.
+asks which kind it holds: one of a :class:`~hivegent.store.Workspace`, whose
+entries carry rows, an index, and announcements, or one of plain files, such as
+a conversation's ``/tmp`` or a skill library.
 """
 
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Self
 
-from fastapi import HTTPException
+from exar.memory.mounts import Mount, claim
 
-from ..changes import Basis, Changeset, CreateDir, Delete, Edit, Move, Operation, Write
-from ..chunkers.base import EntryOrigin
-from ..entries import is_description_file, stem_path_from_reference
 from ..files import disk_size
-from ..humanize import format_bytes
-from ..l10n import Localized
-from ..llm_config import LlmConfig
-from ..store import Casebase
-from ..tools.base import CommitPolicy, Direct
-from ..tools.scope import Scope
-from ..types import PipelineSpec, ProgressReporter
+from ..metadata import EntryOrigin
+from ..shared.l10n import Localized, format_bytes
+from ..store import Workspace
+from ..tools.base import CommitPolicy, PathFilter, SearchPath, strictest
+from ..tools.changes import (
+    Basis,
+    ChangeRefused,
+    Changeset,
+    CreateDir,
+    Delete,
+    Edit,
+    Move,
+    Operation,
+    Write,
+)
+from ..tools.entries import is_description_file, stem_path_from_reference
+from ..types import ProgressReporter
 
 __all__ = [
-    "Folder",
     "Item",
     "Location",
     "Quota",
@@ -43,6 +49,7 @@ __all__ = [
     "Upload",
     "changed_root",
     "locations",
+    "policy_of",
     "route",
 ]
 
@@ -96,7 +103,7 @@ class Quota:
         walked when the change grows it.
 
         Raises:
-            HTTPException: When the change does not fit even without them,
+            ChangeRefused: When the change does not fit even without them,
                 naming the folder as *shown*.
         """
         excess = disk_size(folder) + growth - self.max_bytes if growth > 0 else 0
@@ -112,7 +119,7 @@ class Quota:
 
         if excess > 0:
             detail = _over_quota(shown, self.max_bytes + excess, self.max_bytes)
-            raise HTTPException(status_code=413, detail=detail.current)
+            raise ChangeRefused(status_code=413, detail=detail.current)
 
         return evicted
 
@@ -136,71 +143,50 @@ def _oldest(folder: Path, keep: AbstractSet[Path]) -> list[tuple[float, int, Pat
     return sorted(found)
 
 
-class Root(Protocol):
-    """What a changeset's location lies in, answering for the rules its commit follows."""
+@dataclass(slots=True, frozen=True)
+class Root:
+    """What a changeset's location lies in: a search path with the rules its commit follows.
 
-    @property
-    def store_key(self) -> str:
-        """What identifies it, and orders its lock beside every other root's."""
-        ...
+    Attributes:
+        search_path: The folder as the tools resolve it, with the filter of
+            what the caller may see and the policy a change commits by.
+        quota: What it may hold once a change is written, unbounded when ``None``.
+        store: The workspace whose rows, index, in-flight claims, and
+            announcements its changes carry, ``None`` for a root of plain
+            files written directly.
+        on_commit: What runs once a changeset that changed it committed,
+            such as announcing a skill library to the clients that list it.
+    """
 
-    @property
-    def scope(self) -> Scope:
-        """The prefix its canonical paths lead with."""
-        ...
+    search_path: SearchPath
+    quota: Quota | None = None
+    store: Workspace | None = None
+    on_commit: Callable[[], None] | None = field(default=None, compare=False)
+
+    @classmethod
+    def of(cls, store: Workspace, filter_func: PathFilter | None = None) -> Self:
+        """The root of a workspace, its paths filtered by *filter_func*."""
+        return cls(store.search_path(filter_func), store=store)
 
     @property
     def path(self) -> Path:
-        """The directory it holds, without creating it."""
-        ...
+        """The directory it holds, resolved, without creating it."""
+        return self.search_path.path
+
+    @property
+    def mount(self) -> Mount:
+        """The directory it holds, whose target is the prefix its canonical paths lead with."""
+        return self.search_path.mount
 
     @property
     def policy(self) -> CommitPolicy:
         """Whether a change to it is approved, and what no ordinary change may touch."""
-        ...
-
-    @property
-    def quota(self) -> Quota | None:
-        """What it may hold once a change is written, unbounded when ``None``."""
-        ...
-
-    @property
-    def store(self) -> Casebase | None:
-        """The casebase whose rows, index, in-flight claims, and announcements its changes carry.
-
-        ``None`` for a root of plain files written directly.
-        """
-        ...
-
-
-@dataclass(slots=True, frozen=True)
-class Folder:
-    """A root whose plain files are written directly.
-
-    No rows, index, in-flight claims, or announcements, and no approval,
-    while every other rule of a changeset holds as it does for a workspace.
-
-    Attributes:
-        path: The folder on disk.
-        scope: The prefix its canonical paths lead with.
-        policy: Its search path's policy, naming the folder only the host changes.
-        quota: What it may hold once a change is written.
-    """
-
-    path: Path
-    scope: Scope
-    policy: Direct
-    quota: Quota
+        return self.search_path.policy
 
     @property
     def store_key(self) -> str:
-        """What orders and identifies its lock beside every casebase's."""
-        return f"folder:{self.path}"
-
-    @property
-    def store(self) -> None:
-        """No casebase, since its files carry no rows."""
-        return None
+        """What identifies it, and orders its lock beside every other root's."""
+        return f"folder:{self.path}" if self.store is None else self.store.store_key
 
 
 @dataclass(slots=True, frozen=True)
@@ -218,7 +204,7 @@ class Location:
     @property
     def canonical(self) -> str:
         """The path as tools and routes spell it, prefix included."""
-        return self.root.scope.render(self.path)
+        return self.root.mount.render(self.path)
 
     @property
     def full_path(self) -> Path:
@@ -240,8 +226,6 @@ class Upload:
         content: Its bytes.
         modified_at: When the content last changed, which dates every file
             the entry lands, now when unknown.
-        spec: The conversion and chunking pipelines.
-        llm: The model that describes images and videos.
         origin: How a new entry came to be.
         companion: A markdown upload's original, a sibling path local to the
             target's root with its bytes.
@@ -254,8 +238,6 @@ class Upload:
     target: Location
     content: bytes
     modified_at: datetime | None = None
-    spec: PipelineSpec = field(default_factory=PipelineSpec)
-    llm: LlmConfig = field(default_factory=LlmConfig)
     origin: EntryOrigin = "upload"
     companion: tuple[str, bytes] | None = None
     overwrite: bool = False
@@ -263,6 +245,9 @@ class Upload:
     progress: ProgressReporter | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
+        if self.modified_at is not None and self.modified_at.tzinfo is None:
+            raise ValueError("An upload's modification time must name its zone")
+
         if self.companion is None:
             return
 
@@ -297,12 +282,18 @@ def locations(items: Iterable[Item]) -> tuple[Location, ...]:
     )
 
 
-def _located(roots: Sequence[Root], canonical: str) -> Location:
-    for root in roots:
-        if (local := root.scope.strip_prefix(canonical)) is not None:
-            return Location(root, local)
+def policy_of(operation: Item) -> CommitPolicy:
+    """The policy an item answers to, the strictest of the roots it names, since a move changes both ends."""
+    return strictest(location.root.policy for location in locations((operation,)))
 
-    raise ValueError(_no_workspace(canonical).current)
+
+def _located(roots: Sequence[Root], canonical: str) -> Location:
+    mounts = [root.mount for root in roots]
+
+    if (claimed := claim(mounts, canonical)) is None:
+        raise ValueError(_no_workspace(canonical).current)
+
+    return Location(roots[mounts.index(claimed[0])], claimed[1])
 
 
 def _routed(operation: Operation[str], roots: Sequence[Root]) -> Operation[Location]:
@@ -310,8 +301,8 @@ def _routed(operation: Operation[str], roots: Sequence[Root]) -> Operation[Locat
         return _located(roots, canonical)
 
     match operation:
-        case Write(target, content, mode, basis, chunking):
-            return Write(at(target), content, mode, basis, chunking)
+        case Write(target, content, mode, basis):
+            return Write(at(target), content, mode, basis)
         case Edit(target, edits, basis):
             return Edit(at(target), edits, basis)
         case Move(source, destination, basis):

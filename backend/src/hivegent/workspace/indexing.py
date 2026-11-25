@@ -10,27 +10,33 @@ and :func:`delete_chunked_document`), which sibling modules import directly.
 
 import asyncio
 import logging
-from collections.abc import Iterable, Mapping
-from pathlib import Path, PurePosixPath
+from collections.abc import Iterable, Mapping, Sequence
+from functools import cache
+from pathlib import Path
+from stat import S_ISREG
 from types import MappingProxyType
 
-from ..chunks import chunk_and_index_document
-from ..chunks import delete_document as delete_chunked_document
-from ..concurrency import shield_to_completion
-from ..config import content_digest, settings
-from ..converters.plain_text import convert_plain_text
+from exar.helpers import bounded_gather, shield_to_completion
+from exar.memory import digest
+from exar.text import NOT_TEXT_REASON, decode
+
+from ..chunks import chunk_and_index_document, chunking
+from ..config import settings
 from ..db import documents as db_documents
-from ..entries import (
+from ..db.documents import delete_document as delete_chunked_document
+from ..metadata import EntryMetadata
+from ..pipelines import chunker_fingerprint
+from ..store import Workspace
+from ..tools.entries import (
     ContentStat,
     EntryPaths,
-    is_projectable_original,
+    Listdir,
+    list_names,
     resolve_entry_paths,
 )
-from ..store import Casebase
-from ..text import NOT_TEXT_REASON, read_text_file
-from .locks import _locked_for
+from .locks import root_lock
 from .metadata import _entry_metadata_from_disk, _refresh_unchanged_entry
-from .paths import _write_markdown_file
+from .operations import Root
 
 __all__ = [
     "sync_entries_from_disk",
@@ -39,59 +45,85 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def _sync_verbatim_description(
-    workspace_dir: Path, original: str, description_path: str
-) -> bool:
-    """Make *description_path* match *original* when its bytes are text."""
-    original_full = workspace_dir / original
-    # A file past the upload limit could not become an entry by any other route
-    # either, so reject it on its stat rather than pulling it all into memory to
-    # find out — this runs over every candidate on every boot.
-    if original_full.stat().st_size > settings.limits.max_file_size_bytes:
-        logger.warning("Skipping %s: too large to project", original)
-        return False
-
-    result = convert_plain_text(
-        original_full.read_bytes(), PurePosixPath(original).suffix
-    )
-    if result is None:
-        return False
-
-    description_full = workspace_dir / description_path
-    if description_full.is_file():
-        current = read_text_file(description_full)
-        if current is not None and current.text == result.markdown:
-            return True
-
-    _write_markdown_file(workspace_dir, description_path, result.markdown)
-    logger.info("Derived %s from %s", description_path, original)
-    return True
+type _Probe = tuple[EntryPaths, ContentStat | None]
 
 
-def _probe(
-    workspace_dir: Path, reference: str
-) -> tuple[EntryPaths, ContentStat | None]:
-    """Resolve an entry, derive a projectable original's description, and stat the description.
+def _probe(workspace_dir: Path, reference: str, listdir: Listdir) -> _Probe:
+    """Resolve an entry and stat its description.
 
-    Blocking.  Anything but a projectable original, a binary or a format
-    needing a converter or vision model, is left alone.  The stat is ``None``
-    once the description is gone.
+    Blocking.  The stat is ``None`` once the description is gone or no file.
+
+    Raises:
+        OSError: When the description cannot be stated for any other reason,
+            such as a stale or unreadable share, so its row is not taken for gone.
     """
-    resolved = resolve_entry_paths(workspace_dir, reference)
-    original = resolved.original_path
+    resolved = resolve_entry_paths(workspace_dir, reference, listdir)
 
-    if original is not None and is_projectable_original(original):
-        _sync_verbatim_description(workspace_dir, original, resolved.description_path)
+    try:
+        st = (workspace_dir / resolved.description_path).stat()
+    except FileNotFoundError, NotADirectoryError:
+        return resolved, None
 
-    description = workspace_dir / resolved.description_path
+    return resolved, ContentStat.of(st) if S_ISREG(st.st_mode) else None
 
-    return resolved, ContentStat.from_path(
-        description
-    ) if description.is_file() else None
+
+def _probe_all(store: Workspace, references: Sequence[str]) -> dict[str, _Probe]:
+    """:func:`_probe` every reference in one pass, listing each folder once.
+
+    Blocking.  A reference that fails to probe is logged and left out.
+    """
+    workspace_dir = store.workspace_dir()
+    listdir = cache(list_names)
+    probes: dict[str, _Probe] = {}
+
+    for reference in references:
+        try:
+            probes[reference] = _probe(workspace_dir, reference, listdir)
+        except Exception:
+            logger.warning(
+                "Failed to reconcile %s/%s from disk",
+                store.store_key,
+                reference,
+                exc_info=True,
+            )
+
+    return probes
+
+
+def _chunked_currently(
+    store: Workspace, state: db_documents.EntryState, entry: EntryMetadata
+) -> bool:
+    """Whether the row *state* was indexed, by the chunker the entry is chunked with now.
+
+    A chunker that cannot be built, such as of a missing extra, never matches,
+    so the entry's sync reports why.  An unindexed row has no chunker.
+    """
+    try:
+        return state.chunker == chunker_fingerprint(chunking(store, entry))
+    except ValueError:
+        return False
+
+
+def _is_current(
+    store: Workspace,
+    resolved: EntryPaths,
+    stat: ContentStat | None,
+    state: db_documents.EntryState | None,
+) -> bool:
+    """Whether the row *state* already matches the entry's files and chunker, so nothing is to be done."""
+    if stat is None or state is None or state.content_stat != stat:
+        return False
+
+    entry = _entry_metadata_from_disk(resolved, state.metadata)
+
+    return state.metadata == entry and _chunked_currently(store, state, entry)
 
 
 async def _sync_entry_from_disk_locked(
-    store: Casebase, reference: str, states: Mapping[str, db_documents.EntryState]
+    store: Workspace,
+    resolved: EntryPaths,
+    stat: ContentStat | None,
+    state: db_documents.EntryState | None,
 ) -> bool:
     """Re-derive one logical entry's SQL + chunk rows from its on-disk markdown.
 
@@ -103,38 +135,38 @@ async def _sync_entry_from_disk_locked(
     changed.  An entry with no prior SQL row is stamped ``origin="imported"``
     since its provenance cannot be recovered from disk, an existing entry keeps
     its stored provenance.  Returns whether SQL changed.  Caller must hold the
-    casebase lock.
+    workspace lock.
     """
-    workspace_dir = store.workspace_dir(settings.data_dir)
-    resolved, stat = await asyncio.to_thread(_probe, workspace_dir, reference)
+    workspace_dir = store.workspace_dir()
     description = resolved.description_path
 
     if stat is None:
         # Entry gone on disk: drop the row if one exists (chunks cascade).
         return await delete_chunked_document(store, description)
 
-    state = (
-        states[description]
-        if description in states
-        else await db_documents.get_entry_state(store, description)
-    )
+    if state is None:
+        state = await db_documents.get_entry_state(store, description)
+
     existing = state.metadata if state else None
     entry_metadata = _entry_metadata_from_disk(resolved, existing)
 
     # Fast path: a stored stat equal to the file's stat means the digest cannot
     # have changed, so skip the read + hash and only reconcile companion-file
-    # metadata.  The stat is only ever stamped together with a digest, so its
-    # presence implies an indexed row.
-    if (
-        state is not None
-        and state.content_digest is not None
-        and state.content_stat == stat
-    ):
-        return await _refresh_unchanged_entry(store, state, entry_metadata, stat)
+    # metadata, unless the chunks were made with another chunker.
+    current = (
+        state
+        if state is not None and _chunked_currently(store, state, entry_metadata)
+        else None
+    )
+
+    if current is not None and current.content_stat == stat:
+        return await _refresh_unchanged_entry(store, current, entry_metadata, stat)
 
     # Offloaded: reconciliation walks every description in the workspace under
     # the store lock, and a legacy-encoded one costs a detection pass.
-    decoded = await asyncio.to_thread(read_text_file, workspace_dir / description)
+    decoded = await asyncio.to_thread(
+        lambda: decode((workspace_dir / description).read_bytes())
+    )
     if decoded is None:
         # A description that is not text at all cannot be chunked; leave any
         # existing row untouched rather than replacing it with garbage.
@@ -142,12 +174,11 @@ async def _sync_entry_from_disk_locked(
         return False
 
     content = decoded.text
-    digest = content_digest(content)
-    if state is not None and state.content_digest == digest:
+    if current is not None and current.content_digest == digest(content):
         # Content identical despite a moved stat (touch, checkout, restore):
         # persist the fresh stat so the next boot hits the fast path, plus any
         # companion-metadata drift.  No re-embed.
-        return await _refresh_unchanged_entry(store, state, entry_metadata, stat)
+        return await _refresh_unchanged_entry(store, current, entry_metadata, stat)
 
     await shield_to_completion(
         chunk_and_index_document(
@@ -162,7 +193,7 @@ async def _sync_entry_from_disk_locked(
 
 
 async def sync_entries_from_disk(
-    store: Casebase,
+    store: Workspace,
     references: Iterable[str],
     states: Mapping[str, db_documents.EntryState] = MappingProxyType({}),
 ) -> int:
@@ -179,18 +210,29 @@ async def sync_entries_from_disk(
 
     Each entry is isolated: one file that fails to index (a chunker or embedder
     error, unreadable bytes) is logged and skipped so the rest of the batch
-    still reconciles.  Entries share the lock but not a transaction — each write
-    commits on its own session — so skipping a failure cannot corrupt the ones
+    still reconciles.  Entries share the lock but not a transaction.  Each write
+    commits on its own session, so skipping a failure cannot corrupt the ones
     that follow, and a single poison file can no longer strand every entry after
     it with no SQL row.
     """
     pending = tuple(references)
-    async with _locked_for(store, *pending):
-        changed = 0
-        for reference in pending:
+    async with root_lock(Root.of(store)):
+        probes = await asyncio.to_thread(_probe_all, store, pending)
+        stale = [
+            reference
+            for reference, (resolved, stat) in probes.items()
+            if not _is_current(
+                store, resolved, stat, states.get(resolved.description_path)
+            )
+        ]
+
+        async def sync(reference: str) -> bool:
+            resolved, stat = probes[reference]
+
             try:
-                if await _sync_entry_from_disk_locked(store, reference, states):
-                    changed += 1
+                return await _sync_entry_from_disk_locked(
+                    store, resolved, stat, states.get(resolved.description_path)
+                )
             except Exception:
                 logger.warning(
                     "Failed to reconcile %s/%s from disk",
@@ -198,4 +240,11 @@ async def sync_entries_from_disk(
                     reference,
                     exc_info=True,
                 )
-        return changed
+
+                return False
+
+        changed = await bounded_gather(
+            stale, sync, limit=settings.jobs.collection_concurrency
+        )
+
+        return sum(changed)

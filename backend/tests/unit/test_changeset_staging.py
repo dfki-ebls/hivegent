@@ -8,15 +8,16 @@ What approving them shows is the planner's, tested with the gateway.
 from pathlib import Path, PurePosixPath
 
 import pytest
+from exar.tools import Retry
 from pydantic import TypeAdapter
 
 from hivegent import staging
-from hivegent.changes import Changeset, CreateDir, Delete, Move, Write
 from hivegent.config import settings
 from hivegent.conversation_files import reset_conversation_files
-from hivegent.store import User, WorkspaceScope
-from hivegent.tmp import TMP_SCOPE
-from hivegent.tools.base import Direct, SearchPath, ToolRetry
+from hivegent.store import User
+from hivegent.tmp import TMP_PREFIX
+from hivegent.tools.base import Direct, SearchPath
+from hivegent.tools.changes import Changeset, CreateDir, Delete, Move, Write
 from hivegent.tools.changeset import stage_changes
 from hivegent.tools.workspace_os import WORKSPACE_MOUNT, WorkspaceOS
 from tests.helpers import LIMITS, owned
@@ -33,8 +34,8 @@ def mount(tmp_path: Path) -> WorkspaceOS:
     (workspace / "old" / "a.md").write_text("a\n")
     (tmp / "keep").mkdir(parents=True)
     (tmp / "draft.md").write_text("draft\n")
-    root = SearchPath(path=workspace, scope=WorkspaceScope())
-    roots = (root, SearchPath(path=tmp, scope=TMP_SCOPE, policy=Direct()))
+    root = SearchPath.of(path=workspace, target="~", implied=True)
+    roots = (root, SearchPath.of(path=tmp, target=TMP_PREFIX, policy=Direct()))
 
     return WorkspaceOS(paths=roots, environ={}, limits=LIMITS, writable=roots)
 
@@ -94,7 +95,7 @@ def test_renaming_or_removing_the_original_takes_the_whole_entry(
 def test_removing_only_the_description_is_refused(mount: WorkspaceOS) -> None:
     mount.path_unlink(_virtual("report.md"))
 
-    with pytest.raises(ToolRetry, match="searchable text of '~/report.pdf'"):
+    with pytest.raises(Retry, match="searchable text of '~/report.pdf'"):
         _ = stage_changes(mount)
 
 
@@ -180,10 +181,10 @@ def test_tmp_holds_plain_files_and_a_rename_across_roots_copies(
     assert set(_staged(mount).operations) == {
         Write("~/final.md", "draft\n", "create"),
         Delete("~/notes.md", mount.bases["~/notes.md"]),
-        Delete("/tmp/draft.md"),
+        Delete("/tmp/draft.md", mount.bases["/tmp/draft.md"]),
         CreateDir("/tmp/keep/deep"),
-        Write("/tmp/keep/deep/state.json", "{}"),
-        Write("/tmp/notes.md", "alpha\n"),
+        Write("/tmp/keep/deep/state.json", "{}", "create"),
+        Write("/tmp/notes.md", "alpha\n", "create"),
     }
 
     with pytest.raises(IsADirectoryError):
@@ -193,7 +194,7 @@ def test_tmp_holds_plain_files_and_a_rename_across_roots_copies(
 def test_a_ragged_table_is_refused(mount: WorkspaceOS) -> None:
     _ = mount.path_write_text(_virtual("table.csv"), "a,b\n1,2,3\n")
 
-    with pytest.raises(ToolRetry, match="line 2 has 3 fields"):
+    with pytest.raises(Retry, match="line 2 has 3 fields"):
         _ = stage_changes(mount)
 
 
@@ -217,3 +218,15 @@ async def test_a_staged_changeset_answers_only_its_conversation_and_its_own_id(
 
     await reset_conversation_files()
     assert await staging.load_staged(alice, changeset_id) is None
+
+
+async def test_a_staged_changeset_of_another_shape_is_dropped_as_expired(
+    data_dir: Path,
+) -> None:
+    conversation = owned("c1")
+    changeset_id = await staging.stage(conversation, Changeset(()))
+    path = next((conversation.folder(data_dir) / staging.CHANGESETS_FOLDER).iterdir())
+    _ = path.write_text("{")
+
+    assert await staging.load_staged(conversation, changeset_id) is None
+    assert not path.exists()

@@ -13,24 +13,24 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import HTTPException
+from exar.helpers import shield_to_completion
+from exar.ingest import vision_media_type
+from exar.text import Decoded, decode, plural, replace_once
 
-from ..changes import Basis, TextEdit, WriteMode
-from ..concurrency import shield_to_completion
-from ..config import content_hash, settings
-from ..converters import BINARY_WRITE_REASON, vision_media_type
-from ..entries import ContentStat, TreeStat
-from ..humanize import pluralize
-from ..l10n import Localized
-from ..store import Casebase
-from ..text import DecodedText, read_text_file
-from ..types import PipelineSpec
+from ..shared.formats import BINARY_WRITE_REASON
+from ..shared.l10n import Localized
+from ..shared.text import content_hash
+from ..store import Workspace
+from ..tools.changes import Basis, ChangeRefused, TextEdit, WriteMode
+from ..tools.entries import ContentStat, TreeStat
+from ..workspace_events import announce_workspace_changed
 from .indexing import chunk_and_index_document
-from .locks import _locked_for
+from .locks import root_lock
 from .metadata import current_entry_metadata
-from .paths import _shown, already_exists, document_not_found, not_text
+from .operations import Root
+from .paths import already_exists, document_not_found, not_text
 
-__all__ = ["TextMutation", "derive_text", "edit_mutation", "rechunk", "write_mutation"]
+__all__ = ["derive_text", "edit_mutation", "rechunk", "write_mutation"]
 
 
 def _is_directory(path: str) -> Localized[str]:
@@ -176,7 +176,7 @@ def _old_string_ambiguous(path: str, count: int) -> Localized[str]:
 
 def _replaced(path: str, count: int) -> Localized[str]:
     return Localized(
-        en=f"Replaced {count} {pluralize(count, 'occurrence')} in '{path}'.",
+        en=f"Replaced {count} {plural(count, 'occurrence')} in '{path}'.",
         de=f"{count} Vorkommen in „{path}“ ersetzt.",
     )
 
@@ -185,7 +185,7 @@ def _edits_applied(path: str, edits: int, count: int) -> Localized[str]:
     return Localized(
         en=(
             f"Applied {edits} edits with {count} "
-            f"{pluralize(count, 'replacement')} to '{path}'."
+            f"{plural(count, 'replacement')} to '{path}'."
         ),
         de=f"{edits} Änderungen mit {count} Ersetzungen in „{path}“ angewendet.",
     )
@@ -259,33 +259,33 @@ def _regenerated(report: str, path: str) -> Localized[str]:
     )
 
 
-def _decode_existing(file_path: Path, shown: str) -> DecodedText:
+def _decode_existing(file_path: Path, shown: str) -> Decoded:
     """Decode an existing workspace file, rejecting content that is not text.
 
     Reads go through the shared decoder so a legacy-encoded file is editable
     and hashes the same way the read tools hash it; the rewrite is UTF-8, which
     normalises the file on its first edit.
     """
-    decoded = read_text_file(file_path)
+    decoded = decode(file_path.read_bytes())
     if decoded is None:
-        raise HTTPException(status_code=422, detail=not_text(shown).current)
+        raise ChangeRefused(status_code=422, detail=not_text(shown).current)
     return decoded
 
 
-def _editable_text(file_path: Path, shown: str) -> DecodedText | None:
+def _editable_text(file_path: Path, shown: str) -> Decoded | None:
     """Return a document's decoded text, or ``None`` when it does not exist.
 
     The gate on every text mutation, not merely a read: it raises for anything
     that may not be edited at all.  Both halves of that question are the ones
-    ``read_document`` asks, in the same order — the shared vision-media table
-    first, the shared decoder second — so a document is writable exactly when it
+    ``read_document`` asks, in the same order: the shared vision-media table
+    first, the shared decoder second, so a document is writable exactly when it
     is readable, rather than merely being described that way in two tool
     descriptions.
     """
     if file_path.is_dir():
-        raise HTTPException(status_code=409, detail=_is_directory(shown).current)
+        raise ChangeRefused(status_code=409, detail=_is_directory(shown).current)
     if (media_type := vision_media_type(file_path.name)) is not None:
-        raise HTTPException(
+        raise ChangeRefused(
             status_code=422,
             detail=_binary_media(shown, media_type).current,
         )
@@ -331,7 +331,7 @@ def _check_basis(
     )
 
     if not exists or file_path is None:
-        raise HTTPException(
+        raise ChangeRefused(
             status_code=409, detail=_hash_unread(shown, _fingerprint(basis)).current
         )
 
@@ -340,20 +340,20 @@ def _check_basis(
         found = _fingerprint(actual) if actual is not None else "nothing"
         matches = actual == basis
     else:
-        if current is None and (decoded := read_text_file(file_path)) is not None:
+        if current is None and (decoded := decode(file_path.read_bytes())) is not None:
             current = decoded.text
 
         found = content_hash(current) if current is not None else "binary content"
         matches = found == basis
 
     if not matches:
-        raise HTTPException(
+        raise ChangeRefused(
             status_code=409,
             detail=_hash_changed(shown, _fingerprint(basis), found).current,
         )
 
 
-type TextMutation = Callable[[str | None], tuple[str, str]]
+type _TextMutation = Callable[[str | None], tuple[str, str]]
 """Derive a document's new content and its report from its current content.
 
 The current content is ``None`` for a document that does not exist yet.  Being
@@ -364,28 +364,22 @@ lock and tell whether the document moved on while it was being prepared.
 
 def _replace(shown: str, text: str, edit: TextEdit) -> tuple[str, int]:
     """Apply one exact-string replacement, returning the text and its count."""
-    count = text.count(edit.old_string)
-
-    if count == 0:
-        raise HTTPException(
-            status_code=422,
-            detail=_old_string_missing(
-                shown, _near_miss(text, edit.old_string)
-            ).current,
+    try:
+        return replace_once(
+            text, edit.old_string, edit.new_string, all=edit.replace_all
+        )
+    except ValueError:
+        count = text.count(edit.old_string)
+        detail = (
+            _old_string_ambiguous(shown, count)
+            if count
+            else _old_string_missing(shown, _near_miss(text, edit.old_string))
         )
 
-    if count > 1 and not edit.replace_all:
-        raise HTTPException(
-            status_code=422, detail=_old_string_ambiguous(shown, count).current
-        )
-
-    if edit.replace_all:
-        return text.replace(edit.old_string, edit.new_string), count
-
-    return text.replace(edit.old_string, edit.new_string, 1), 1
+        raise ChangeRefused(status_code=422, detail=detail.current) from None
 
 
-def edit_mutation(shown: str, edits: Sequence[TextEdit]) -> TextMutation:
+def edit_mutation(shown: str, edits: Sequence[TextEdit]) -> _TextMutation:
     """Build the in-order replacements behind an edit, landing as one write.
 
     Each replacement sees the text the previous one left, and a refusal names
@@ -395,7 +389,7 @@ def edit_mutation(shown: str, edits: Sequence[TextEdit]) -> TextMutation:
 
     def mutate(current: str | None) -> tuple[str, str]:
         if current is None:
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=404, detail=document_not_found(shown).current
             )
 
@@ -404,12 +398,12 @@ def edit_mutation(shown: str, edits: Sequence[TextEdit]) -> TextMutation:
         for number, edit in enumerate(edits, start=1):
             try:
                 text, count = _replace(shown, text, edit)
-            except HTTPException as exc:
+            except ChangeRefused as exc:
                 if len(edits) == 1:
                     raise
 
                 detail = _edit_failed(number, len(edits), exc.detail).current
-                raise HTTPException(exc.status_code, detail) from exc
+                raise ChangeRefused(exc.status_code, detail) from exc
 
             total += count
 
@@ -421,7 +415,7 @@ def edit_mutation(shown: str, edits: Sequence[TextEdit]) -> TextMutation:
     return mutate
 
 
-def write_mutation(shown: str, content: str, mode: WriteMode) -> TextMutation:
+def write_mutation(shown: str, content: str, mode: WriteMode) -> _TextMutation:
     """Build the write-mode composition behind a write."""
 
     def mutate(current: str | None) -> tuple[str, str]:
@@ -429,12 +423,12 @@ def write_mutation(shown: str, content: str, mode: WriteMode) -> TextMutation:
             return content, _wrote(shown, len(content)).current
         if mode == "create":
             if current is not None:
-                raise HTTPException(
+                raise ChangeRefused(
                     status_code=409, detail=already_exists(shown).current
                 )
             return content, _created(shown, len(content)).current
         if current is None:
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=404,
                 detail=_missing_for_mode(shown).current,
             )
@@ -446,7 +440,7 @@ def write_mutation(shown: str, content: str, mode: WriteMode) -> TextMutation:
 
 
 def derive_text(
-    source: Path | None, shown: str, mutate: TextMutation, basis: Basis | None
+    source: Path | None, shown: str, mutate: _TextMutation, basis: Basis | None
 ) -> tuple[str | None, str, str]:
     """Derive a file's new text from what lies at *source*, ``None`` for nothing.
 
@@ -463,33 +457,26 @@ def derive_text(
     current = None if decoded is None else decoded.text
     _check_basis(shown, source, basis, current)
     content, report = mutate(current)
-    note = _transcode_note(decoded.source_encoding if decoded else None)
+    note = _transcode_note(decoded.encoding if decoded else None)
 
     return current, content, report + note
 
 
-async def rechunk(
-    store: Casebase,
-    safe: str,
-    *,
-    spec: PipelineSpec | None = None,
-) -> None:
-    """Re-chunk an existing markdown document.
+async def rechunk(store: Workspace, safe: str) -> None:
+    """Re-chunk an existing markdown document with the operator's chunking pipeline.
 
     The chunk + embed + SQL upsert runs to completion even on a cancel
     (:func:`shield_to_completion`), so it finishes under the lock and cannot
     tear the workspace markdown out of sync with SQL.
     """
-    spec = spec or PipelineSpec()
-
-    async with _locked_for(store, safe):
-        workspace_dir = store.workspace_dir(settings.data_dir)
+    async with root_lock(Root.of(store)):
+        workspace_dir = store.workspace_dir()
         file_path = workspace_dir / safe
-        shown = _shown(store, safe)
+        shown = store.scope.render(safe)
         decoded = _editable_text(file_path, shown)
 
         if decoded is None:
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=404, detail=document_not_found(shown).current
             )
 
@@ -499,8 +486,9 @@ async def rechunk(
                 store,
                 safe,
                 decoded.text,
-                spec.chunking,
                 stat=ContentStat.from_path(file_path),
                 entry_metadata=metadata,
             )
         )
+
+    announce_workspace_changed((store,))

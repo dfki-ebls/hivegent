@@ -11,11 +11,10 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from hivegent import entries
-from hivegent.changes import Changeset, Write
-from hivegent.store import WorkspaceScope
-from hivegent.tmp import TMP_SCOPE
+from hivegent.tmp import TMP_PREFIX
+from hivegent.tools import entries
 from hivegent.tools.base import Direct, SearchPath
+from hivegent.tools.changes import Changeset, Write
 from hivegent.tools.changeset import stage_changes
 from hivegent.tools.workspace_os import (
     WORKSPACE_MOUNT,
@@ -25,6 +24,7 @@ from hivegent.tools.workspace_os import (
     WorkspaceOS,
 )
 from hivegent.types import DocumentFilter
+from tests.helpers import doc
 
 
 @pytest.fixture()
@@ -42,12 +42,15 @@ def workspace(tmp_path: Path) -> Path:
 
 def _mount(workspace: Path, *, writable: bool = False) -> WorkspaceOS:
     """The mount a run gets, `/tmp` writable in every mode as it is there."""
-    scoped = SearchPath(
+    scoped = SearchPath.of(
         path=workspace,
-        scope=WorkspaceScope(),
-        filter_func=DocumentFilter(excluded=frozenset({"hidden.md"})),
+        target="~",
+        implied=True,
+        filter_func=DocumentFilter(excluded=frozenset({doc("hidden.md")})),
     )
-    tmp = SearchPath(path=workspace.with_name("tmp"), scope=TMP_SCOPE, policy=Direct())
+    tmp = SearchPath.of(
+        path=workspace.with_name("tmp"), target=TMP_PREFIX, policy=Direct()
+    )
 
     return WorkspaceOS(
         paths=(scoped, tmp),

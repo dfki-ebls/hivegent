@@ -12,28 +12,20 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import HTTPException
+from exar.ingest import contexts as occurrences
+from exar.text import decode
 
-from ..changes import Changeset, Delete, Write
-from ..config import sanitize_document_path, settings
-from ..converters.asset_processing import image_context_windows
-from ..converters.base import DOCUMENT_EXTENSION
-from ..converters.formats import media_type
-from ..converters.images import guess_image_media_type
-from ..entries import (
-    asset_ref_for,
-    assets_dir_for_stem,
-    description_path_for_stem,
-    stem_path_from_reference,
-)
-from ..l10n import Localized
-from ..llm_config import LlmConfig
-from ..store import Casebase
-from ..text import read_text_file
+from ..config import sanitize_document_path
+from ..media import guess_image_media_type
+from ..shared.formats import DOCUMENT_EXTENSION, media_type
+from ..shared.l10n import Localized
+from ..store import Workspace
+from ..tools.changes import ChangeRefused, Changeset, Delete, Write
+from ..tools.entries import Part, asset_ref_for, stem_path_from_reference
 from ..types import AssetEntry
 from .changeset import apply_changeset, plan_changeset
 from .describe import _build_image_description
-from .operations import Location
+from .operations import Location, Root
 
 __all__ = [
     "delete_asset_description",
@@ -88,58 +80,49 @@ class _Asset:
         )
 
 
-def _resolve_asset(store: Casebase, safe: str, asset_name: str) -> _Asset:
+def _resolve_asset(store: Workspace, safe: str, asset_name: str) -> _Asset:
     """Resolve an existing asset of *safe*'s entry.
 
     Rejects a path that escapes the entry's ``.assets`` directory, and 404s
     when the asset itself is absent.
     """
-    workspace = store.workspace_dir(settings.data_dir)
-    assets_path = workspace / assets_dir_for_stem(stem_path_from_reference(safe))
+    workspace = store.workspace_dir()
+    assets_path = workspace / Part(stem_path_from_reference(safe), "assets").path
 
     try:
         name = sanitize_document_path(asset_name)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ChangeRefused(status_code=400, detail=str(exc)) from exc
 
     path = assets_path / name
 
     if not path.resolve().is_relative_to(assets_path.resolve()):
-        raise HTTPException(status_code=400, detail=_ASSET_ESCAPES.current)
+        raise ChangeRefused(status_code=400, detail=_ASSET_ESCAPES.current)
 
     if not path.is_file():
-        raise HTTPException(status_code=404, detail=_ASSET_NOT_FOUND.current)
+        raise ChangeRefused(status_code=404, detail=_ASSET_NOT_FOUND.current)
 
     return _Asset(workspace, name, path)
 
 
-async def _commit_as_host(
-    item: Write[Location] | Delete[Location],
-    owner: str | None,
-    exclude_client: str | None,
-) -> None:
-    await apply_changeset(
-        (item,), owner=owner, exclude_client=exclude_client, host=True
-    )
+async def _commit_as_host(item: Write[Location] | Delete[Location]) -> None:
+    await apply_changeset((item,), host=True)
 
 
 async def update_asset_description(
-    store: Casebase,
+    store: Workspace,
     safe: str,
     asset_name: str,
     content: str,
-    *,
-    owner: str | None = None,
-    exclude_client: str | None = None,
 ) -> AssetEntry:
     """Update the companion ``.md`` description of an asset.
 
-    The description is indexed by the time the call returns, and *owner*'s
-    clients but *exclude_client* hear about it.
+    The description is indexed by the time the call returns.
     """
     asset = _resolve_asset(store, safe, asset_name)
-    write = Write(Location(store, asset.description_path), content)
-    await _commit_as_host(write, owner, exclude_client)
+    await _commit_as_host(
+        Write(Location(Root.of(store), asset.description_path), content)
+    )
 
     return asset.entry(content, asset.description_path)
 
@@ -148,25 +131,21 @@ def _vision_input(asset: _Asset, safe: str) -> tuple[bytes, list[str]]:
     """The asset's bytes and what grounds its description: its name and where the document shows it."""
     contexts = [f"File name: {asset.name}"]
     stem_path = stem_path_from_reference(safe)
-    parent_md = asset.workspace / description_path_for_stem(stem_path)
-    parent = read_text_file(parent_md) if parent_md.is_file() else None
+    parent_md = asset.workspace / Part(stem_path, "description").path
+    parent = decode(parent_md.read_bytes()) if parent_md.is_file() else None
 
     if parent is not None:
-        windows = image_context_windows(parent.text)
-        ref = asset_ref_for(assets_dir_for_stem(stem_path), asset.name)
+        windows = occurrences(parent.text)
+        ref = asset_ref_for(Part(stem_path, "assets").path, asset.name)
         contexts.extend(windows.get(ref, []))
 
     return asset.path.read_bytes(), contexts
 
 
 async def generate_asset_description(
-    store: Casebase,
+    store: Workspace,
     safe: str,
     asset_name: str,
-    llm: LlmConfig,
-    *,
-    owner: str | None = None,
-    exclude_client: str | None = None,
 ) -> AssetEntry:
     """Describe an asset with the vision model and write the result.
 
@@ -177,25 +156,22 @@ async def generate_asset_description(
     the lock, which refuses the description should the asset vanish meanwhile.
     """
     asset = _resolve_asset(store, safe, asset_name)
-    location = Location(store, asset.description_path)
+    location = Location(Root.of(store), asset.description_path)
     await plan_changeset(Changeset((Write(location, ""),)), host=True)
     content, contexts = await asyncio.to_thread(_vision_input, asset, safe)
     media_type = guess_image_media_type(asset.name) or ""
     description = await _build_image_description(
-        asset.name, content, media_type, contexts, llm
+        asset.name, content, media_type, contexts
     )
-    await _commit_as_host(Write(location, description), owner, exclude_client)
+    await _commit_as_host(Write(location, description))
 
     return asset.entry(description, asset.description_path)
 
 
 async def delete_asset_description(
-    store: Casebase,
+    store: Workspace,
     safe: str,
     asset_name: str,
-    *,
-    owner: str | None = None,
-    exclude_client: str | None = None,
 ) -> AssetEntry:
     """Delete the companion ``.md`` description of an asset.
 
@@ -205,8 +181,6 @@ async def delete_asset_description(
     that was never described is left as it is.
     """
     asset = _resolve_asset(store, safe, asset_name)
-    await _commit_as_host(
-        Delete(Location(store, asset.description_path)), owner, exclude_client
-    )
+    await _commit_as_host(Delete(Location(Root.of(store), asset.description_path)))
 
     return asset.entry("", None)

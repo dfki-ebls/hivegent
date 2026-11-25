@@ -1,50 +1,50 @@
-"""Single mutation gateway for casebase workspaces.
+"""Single mutation gateway for workspaces.
 
 Every operation that modifies the workspace or the SQL documents for a
-:class:`~hivegent.store.Casebase` goes through this package.  Each
+:class:`~hivegent.store.Workspace` goes through this package.  Each
 public function acquires the per-store async lock so concurrent
-mutations on the same casebase are serialised, then performs the
+mutations on the same workspace are serialised, then performs the
 workspace and SQL writes in one step.  Writes, edits, moves, and deletes
-are items of one :class:`~hivegent.changes.Changeset`, which
+are items of one :class:`~hivegent.tools.changes.Changeset`, which
 :func:`~hivegent.workspace.changeset.apply_changeset` commits all or
-nothing, however many items and casebases it spans, and creating a directory
+nothing, however many items and workspaces it spans, and creating a directory
 is one of those items too.  So is an
 :class:`~hivegent.workspace.operations.Upload`, which only the host builds.
 
 Chunks (text + vector) live next to documents in Postgres and cascade
 on delete: any operation that drops a Document row also drops its
 chunks in the same transaction.  Routes, agents, and MCP tools never
-touch the workspace or the database directly — they call into this
+touch the workspace or the database directly.  They call into this
 package instead.
 
 The filesystem is the source of truth for content; document rows and
 chunks are an index derived from it.  Markdown changed or dropped on
 disk by hand is folded back into SQL at startup by
 :mod:`hivegent.reconcile`, and rows whose description file vanished are
-dropped there — workspace files themselves are never deleted outside
+dropped there.  Workspace files themselves are never deleted outside
 the explicit mutation API.
 
 The implementation is split into focused submodules:
 
-* :mod:`~hivegent.workspace.locks` — per-store serialisation and in-flight
+* :mod:`~hivegent.workspace.locks`: per-store serialisation and in-flight
   conflict tracking.
-* :mod:`~hivegent.workspace.paths` — pure path semantics and on-disk guards.
-* :mod:`~hivegent.workspace.metadata` — entry path and metadata derivation and
+* :mod:`~hivegent.workspace.paths`: pure path semantics and on-disk guards.
+* :mod:`~hivegent.workspace.metadata`: entry path and metadata derivation and
   the digest-skip reconciliation helper.
-* :mod:`~hivegent.workspace.describe` — vision description envelope.
-* :mod:`~hivegent.workspace.prepare` — lock-free per-kind upload preparation.
-* :mod:`~hivegent.workspace.indexing` — markdown projection writes and the
+* :mod:`~hivegent.workspace.describe`: vision description envelope.
+* :mod:`~hivegent.workspace.prepare`: lock-free per-kind upload preparation.
+* :mod:`~hivegent.workspace.indexing`: markdown projection writes and the
   disk-to-SQL entry sync (owns the chunk/index primitives).
-* :mod:`~hivegent.workspace.documents` — text-mutation building blocks and
+* :mod:`~hivegent.workspace.documents`: text-mutation building blocks and
   the in-place rechunk.
 * :mod:`~hivegent.workspace.operations` and
-  :mod:`~hivegent.workspace.changeset` — the locations a change's operations
-  (:mod:`hivegent.changes`) are routed to, the uploads only the host builds,
+  :mod:`~hivegent.workspace.changeset`: the locations a change's operations
+  (:mod:`hivegent.tools.changes`) are routed to, the uploads only the host builds,
   and the gateway that plans and commits writes, edits, moves, deletes, and
   uploads.
 * :mod:`~hivegent.workspace.uploads`, :mod:`~hivegent.workspace.assets`,
   :mod:`~hivegent.workspace.directories`,
-  :mod:`~hivegent.workspace.collections` — the rest of the public mutation API.
+  :mod:`~hivegent.workspace.collections`: the rest of the public mutation API.
 """
 
 from . import describe, prepare
@@ -56,7 +56,9 @@ from .assets import (
 from .changeset import (
     AppliedChangeset,
     Gateway,
+    IndexingFailed,
     PlannedChangeset,
+    RowChange,
     apply_changeset,
     plan_changeset,
 )
@@ -67,16 +69,19 @@ from .directories import (
 )
 from .documents import rechunk
 from .indexing import sync_entries_from_disk
-from .locks import inflight_stems
 from .metadata import find_original, find_source, resolve_entry
-from .operations import Location, Upload, route
+from .operations import Location, Root, Upload, route
+from .paths import kept_changes, recover_changesets, sweep_partials
 from .uploads import reconvert, replace_original, upload
 
 __all__ = [
     "AppliedChangeset",
     "Gateway",
+    "IndexingFailed",
     "Location",
     "PlannedChangeset",
+    "Root",
+    "RowChange",
     "Upload",
     "apply_changeset",
     "delete_all",
@@ -86,15 +91,17 @@ __all__ = [
     "find_original",
     "find_source",
     "generate_asset_description",
-    "inflight_stems",
+    "kept_changes",
     "plan_changeset",
     "prepare",
     "process_collection",
     "rechunk",
     "reconvert",
+    "recover_changesets",
     "replace_original",
     "resolve_entry",
     "route",
+    "sweep_partials",
     "sync_entries_from_disk",
     "update_asset_description",
     "upload",

@@ -1,6 +1,6 @@
 """Entry metadata derivation and digest-skip reconciliation.
 
-The canonical :class:`~hivegent.chunkers.base.EntryMetadata` for a logical
+The canonical :class:`~hivegent.metadata.EntryMetadata` for a logical
 entry, derived from its on-disk paths while preserving SQL-only provenance,
 plus the helper that re-stamps a digest-unchanged entry without touching its
 chunks.
@@ -10,16 +10,21 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
-from fastapi import HTTPException
-
-from ..chunkers.base import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
-from ..config import settings
-from ..converters import EntryProjection, projection_for
 from ..db import documents as db_documents
-from ..entries import ContentStat, EntryPaths, entry_exists, resolve_entry_paths
-from ..l10n import Localized
-from ..store import Casebase
-from .paths import _shown, document_not_found, no_original
+from ..metadata import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
+from ..shared.formats import EntryProjection, projection_for
+from ..shared.l10n import Localized
+from ..store import Workspace
+from ..tools.changes import ChangeRefused
+from ..tools.entries import (
+    CASE_BASE_KINDS,
+    ContentStat,
+    EntryPaths,
+    FileKind,
+    entry_exists,
+    resolve_entry_paths,
+)
+from .paths import document_not_found, no_original
 
 __all__ = ["current_entry_metadata", "find_original", "find_source", "resolve_entry"]
 
@@ -32,22 +37,31 @@ def _merge_entry_paths(
     The SQL row wins for every companion file it names, since it knows which
     original and assets directory belong to the entry; disk resolution fills in
     whatever the row leaves unset, so a stray original beside an indexed
-    description is still treated as part of the entry — exactly as the inventory
+    description is still treated as part of the entry, exactly as the inventory
     reads already group it.
     """
     if metadata is None:
         return resolved
 
+    recorded = EntryPaths.entry(resolved.stem_path, metadata.original_path)
+    kinds: set[FileKind] = {*resolved.kinds, *recorded.kinds}
+
+    if metadata.assets_dir is not None:
+        kinds.add("assets")
+
+    # The cbrkit companions found on disk belong to the disk's original only.
+    if metadata.original_path is not None and recorded.suffix != resolved.suffix:
+        kinds -= CASE_BASE_KINDS
+
     return EntryPaths(
-        stem_path=metadata.stem_path or resolved.stem_path,
-        description_path=metadata.description_path or resolved.description_path,
-        original_path=metadata.original_path or resolved.original_path,
-        assets_dir=metadata.assets_dir or resolved.assets_dir,
+        resolved.stem_path,
+        frozenset(kinds),
+        recorded.suffix if metadata.original_path is not None else resolved.suffix,
     )
 
 
 def _entry_paths(
-    store: Casebase, safe: str, metadata: EntryMetadata | None
+    store: Workspace, safe: str, metadata: EntryMetadata | None
 ) -> EntryPaths:
     """Resolve the files of an entry a removal or a move takes with it, given its row.
 
@@ -56,23 +70,21 @@ def _entry_paths(
     always be removed through the API.  Blocking: it lists the entry's
     directory.
     """
-    workspace = store.workspace_path(settings.data_dir)
+    workspace = store.path
 
     if not metadata and not entry_exists(workspace, safe):
-        raise HTTPException(
-            status_code=404, detail=document_not_found(_shown(store, safe)).current
+        raise ChangeRefused(
+            status_code=404, detail=document_not_found(store.scope.render(safe)).current
         )
 
     return _merge_entry_paths(resolve_entry_paths(workspace, safe), metadata)
 
 
-async def resolve_entry(store: Casebase, reference: str) -> EntryPaths:
+async def resolve_entry(store: Workspace, reference: str) -> EntryPaths:
     """Resolve a logical entry's paths from disk, overlaid with its SQL row."""
     resolved, metadata = await asyncio.gather(
         asyncio.to_thread(
-            lambda: resolve_entry_paths(
-                store.workspace_dir(settings.data_dir), reference
-            )
+            lambda: resolve_entry_paths(store.workspace_dir(), reference)
         ),
         db_documents.get_entry_metadata(store, reference),
     )
@@ -81,7 +93,7 @@ async def resolve_entry(store: Casebase, reference: str) -> EntryPaths:
 
 
 async def _find_file(
-    store: Casebase,
+    store: Workspace,
     reference: str,
     local: str | None,
     missing: Callable[[str], Localized[str]],
@@ -94,36 +106,36 @@ async def _find_file(
     full_path = await asyncio.to_thread(locate)
 
     if full_path is None:
-        raise HTTPException(
-            status_code=404, detail=missing(_shown(store, reference)).current
+        raise ChangeRefused(
+            status_code=404, detail=missing(store.scope.render(reference)).current
         )
 
     return full_path
 
 
-async def find_original(store: Casebase, reference: str) -> Path:
+async def find_original(store: Workspace, reference: str) -> Path:
     """The absolute path of the original behind *reference*'s entry.
 
     Raises:
-        HTTPException: When the entry has no original on disk.
+        ChangeRefused: When the entry has no original on disk.
     """
     entry = await resolve_entry(store, reference)
 
     return await _find_file(store, reference, entry.original_path, no_original)
 
 
-async def find_source(store: Casebase, reference: str) -> Path:
+async def find_source(store: Workspace, reference: str) -> Path:
     """The absolute path of *reference*'s original, else its description.
 
     Raises:
-        HTTPException: When the entry has neither on disk.
+        ChangeRefused: When the entry has neither on disk.
     """
     entry = await resolve_entry(store, reference)
 
     return await _find_file(store, reference, entry.source_path, document_not_found)
 
 
-async def current_entry_metadata(store: Casebase, reference: str) -> EntryMetadata:
+async def current_entry_metadata(store: Workspace, reference: str) -> EntryMetadata:
     """The metadata *reference*'s entry is indexed with: its row, else what its files say.
 
     An entry without a row takes the provenance of an upload.
@@ -168,7 +180,7 @@ _REDISCOVERED_KINDS: dict[EntryProjection, tuple[EntryKind, EntryGeneratedBy]] =
 }
 """What a rediscovered entry's original says its description was produced by.
 
-The same routing :func:`~hivegent.workspace.prepare._prepare_upload` dispatches
+The same routing :func:`~hivegent.workspace.prepare.prepare_upload` dispatches
 on, so a row rebuilt from disk describes the entry the way the uploader would
 have.  Getting this wrong is not cosmetic: retrieval attaches an entry's
 original only when it reads back as ``image``.
@@ -206,7 +218,7 @@ def _entry_metadata_from_disk(
 
 
 async def _refresh_unchanged_entry(
-    store: Casebase,
+    store: Workspace,
     state: db_documents.EntryState,
     current: EntryMetadata,
     stat: ContentStat | None,

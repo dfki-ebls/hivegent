@@ -1,7 +1,7 @@
 """Vision description envelope for images and videos.
 
 Each entry that carries a visual original gets a markdown projection from
-the aux vision model, with a single shared fallback: resolve the aux config,
+the aux vision model (`exar.ingest.caption`), with a single shared fallback: resolve the aux config,
 short-circuit to the file stem when no model is configured, and turn any
 failure into the stem so the entry still gets a searchable projection.
 """
@@ -9,37 +9,47 @@ failure into the stem so the entry still gets a searchable projection.
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from functools import partial
 from pathlib import Path, PurePosixPath
 
-from ..config import settings
-from ..converters.asset_processing import caption_frames, caption_image
-from ..converters.video import (
+from exar.ingest import (
+    ANIMATED_MEDIA_TYPES,
+    MAX_DIMENSION,
     MAX_FRAMES,
-    animation_frame_count,
-    sample_animated_image,
+    Media,
+    Sample,
+    caption,
+    sample_animation,
     sample_video,
 )
-from ..llm_config import LlmConfig, resolve_llm_config
+
+from ..llm_config import aux_llm
+from ..media import ISOLATED
+from ..pipelines.vision import Vision
 
 __all__: list[str] = []
 
 logger = logging.getLogger(__name__)
 
 
-def _frame_budget() -> int:
-    """Frames one caption request carries, within the gateway's image cap."""
-    cap = settings.multimodal.max_images
+def _frame_budget(vision: Vision) -> int:
+    """Frames one caption request of *vision* carries, within its model's image cap."""
+    cap = vision.config.max_images
 
     return MAX_FRAMES if cap is None else min(MAX_FRAMES, cap)
+
+
+async def _isolated[R](call: Callable[[], R]) -> R:
+    """Run the decoder *call* in an isolated worker, whose failure the caller falls back on."""
+    return await asyncio.get_running_loop().run_in_executor(ISOLATED, call)
 
 
 async def _describe_with_fallback(
     filepath: str,
     media_kind: str,
-    llm: LlmConfig,
-    describe: Callable[[LlmConfig], Awaitable[str]],
+    describe: Callable[[Vision], Awaitable[str]],
 ) -> str:
-    """Run *describe* against the aux model, falling back to the file stem.
+    """Run *describe* with the aux model, falling back to the file stem.
 
     Centralizes the description envelope shared by every vision entry:
     resolve the aux config, short-circuit to the stem when no model is
@@ -47,12 +57,14 @@ async def _describe_with_fallback(
     the entry still gets a searchable projection.  *media_kind* only
     labels the warning log.
     """
-    aux = resolve_llm_config(llm)
+    aux = aux_llm()
     fallback = PurePosixPath(filepath).stem
-    if not aux.model:
+
+    if aux is None:
         return f"{fallback}\n"
+
     try:
-        description = await describe(aux)
+        description = await describe(Vision(config=aux))
     except Exception:
         logger.warning(
             "%s description generation failed for %s",
@@ -61,6 +73,7 @@ async def _describe_with_fallback(
             exc_info=True,
         )
         description = fallback
+
     return f"{description.strip() or fallback}\n"
 
 
@@ -69,41 +82,58 @@ async def _build_image_description(
     content: bytes,
     media_type: str,
     contexts: Sequence[str],
-    llm: LlmConfig,
 ) -> str:
     """Generate markdown describing an image, grounded in *contexts*, with fallback.
 
     Animated images (multi-frame GIF/WebP) are captioned from frames
-    sampled across their timeline rather than from the container bytes —
-    vision models would otherwise see only the first frame, and a large
+    sampled across their timeline rather than from the container bytes,
+    since vision models would otherwise see only the first frame, and a large
     animation would blow the provider's request size limit.
     """
 
-    async def describe(aux: LlmConfig) -> str:
+    async def describe(vision: Vision) -> str:
         if not media_type:
             return ""
-        if await asyncio.to_thread(animation_frame_count, content, media_type) > 1:
-            sample = await asyncio.to_thread(
-                sample_animated_image, content, max_frames=_frame_budget()
+
+        sample: Sample | None = None
+
+        # Only an animatable format is worth a worker process.
+        if media_type in ANIMATED_MEDIA_TYPES:
+            sample = await _isolated(
+                partial(
+                    sample_animation,
+                    content,
+                    max_frames=_frame_budget(vision),
+                    max_dimension=MAX_DIMENSION,
+                )
             )
 
-            return await caption_frames(sample, contexts, aux)
-        return await caption_image(content, media_type, contexts, aux)
+        return await caption(
+            vision,
+            Media(data=content, media_type=media_type) if sample is None else sample,
+            contexts,
+        )
 
-    return await _describe_with_fallback(filepath, "Image", llm, describe)
+    return await _describe_with_fallback(filepath, "Image", describe)
 
 
 async def _build_video_description(
     filepath: str,
     full_path: Path,
     contexts: Sequence[str],
-    llm: LlmConfig,
 ) -> str:
     """Generate markdown describing a video from sampled frames, with fallback."""
 
-    async def describe(aux: LlmConfig) -> str:
-        sample = await sample_video(full_path, max_frames=_frame_budget())
+    async def describe(vision: Vision) -> str:
+        sample = await _isolated(
+            partial(
+                sample_video,
+                full_path,
+                max_frames=_frame_budget(vision),
+                max_dimension=MAX_DIMENSION,
+            )
+        )
 
-        return await caption_frames(sample, contexts, aux)
+        return await caption(vision, sample, contexts)
 
-    return await _describe_with_fallback(filepath, "Video", llm, describe)
+    return await _describe_with_fallback(filepath, "Video", describe)

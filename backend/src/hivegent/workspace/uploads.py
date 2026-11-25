@@ -11,15 +11,14 @@ import asyncio
 from datetime import datetime
 from pathlib import PurePosixPath
 
-from ..changes import Basis
-from ..chunkers.base import EntryOrigin
-from ..entries import ContentStat, stem_path_from_reference
-from ..llm_config import LlmConfig
-from ..store import Casebase
-from ..types import PipelineSpec, ProgressReporter
+from ..metadata import EntryOrigin
+from ..store import Workspace
+from ..tools.changes import Basis
+from ..tools.entries import ContentStat, stem_path_from_reference
+from ..types import ProgressReporter
 from .changeset import apply_changeset
 from .metadata import find_original, resolve_entry
-from .operations import Location, Upload
+from .operations import Location, Root, Upload
 
 __all__ = [
     "reconvert",
@@ -29,13 +28,11 @@ __all__ = [
 
 
 async def upload(
-    store: Casebase,
+    store: Workspace,
     filepath: str,
     content: bytes,
     *,
     modified_at: datetime | None = None,
-    spec: PipelineSpec | None = None,
-    llm: LlmConfig | None = None,
     origin: EntryOrigin = "upload",
     companion: tuple[str, bytes] | None = None,
     overwrite: bool = False,
@@ -49,8 +46,6 @@ async def upload(
         filepath: The file, local to *store*.
         content: Its bytes.
         modified_at: When the content last changed, now when unknown.
-        spec: The conversion and chunking pipelines.
-        llm: The model that describes images and videos.
         origin: How a new entry came to be.
         companion: A markdown upload's original, a sibling path with its bytes.
         overwrite: Whether it replaces the entry at the same stem, see
@@ -59,11 +54,9 @@ async def upload(
         ctx: Where the conversion reports its stages.
     """
     item = Upload(
-        Location(store, filepath),
+        Location(Root.of(store), filepath),
         content,
         modified_at=modified_at,
-        spec=spec or PipelineSpec(),
-        llm=llm or LlmConfig(),
         origin=origin,
         companion=companion,
         overwrite=overwrite,
@@ -74,14 +67,12 @@ async def upload(
 
 
 async def replace_original(
-    store: Casebase,
+    store: Workspace,
     safe: str,
     content: bytes,
     *,
     new_filename: str | None,
     modified_at: datetime | None = None,
-    spec: PipelineSpec | None = None,
-    llm: LlmConfig | None = None,
     ctx: ProgressReporter | None = None,
 ) -> None:
     """Replace the original behind *safe*'s entry with *content*, converted afresh.
@@ -98,25 +89,21 @@ async def replace_original(
         target,
         content,
         modified_at=modified_at,
-        spec=spec,
-        llm=llm,
         overwrite=True,
         ctx=ctx,
     )
 
 
 async def reconvert(
-    store: Casebase,
+    store: Workspace,
     safe: str,
     *,
-    spec: PipelineSpec | None = None,
-    llm: LlmConfig | None = None,
     ctx: ProgressReporter | None = None,
 ) -> None:
     """Convert the original behind *safe*'s entry again, an upload of its own bytes over it.
 
     Raises:
-        HTTPException: When the entry has no original.
+        ChangeRefused: When the entry has no original.
     """
     located = await find_original(store, safe)
 
@@ -131,8 +118,6 @@ async def reconvert(
         original,
         content,
         modified_at=None if basis is None else basis.modified_at,
-        spec=spec,
-        llm=llm,
         overwrite=True,
         basis=basis,
         ctx=ctx,

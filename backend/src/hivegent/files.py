@@ -2,23 +2,44 @@
 
 import os
 import shutil
+import tempfile
 import time
 from collections.abc import Iterable
 from contextlib import suppress
-from itertools import chain
 from pathlib import Path
 from stat import S_ISDIR
-from uuid import uuid4
+
+from .config import settings
+from .shared.tree import tree
 
 __all__ = [
-    "atomic_write",
     "disk_size",
-    "is_blocked_by_other",
     "remove_path",
     "remove_paths",
+    "reset_transient",
     "rmdir_if_empty",
     "touched_since",
+    "transient",
 ]
+
+
+def transient(*parts: str) -> Path:
+    """A path below the folder of the data directory that holds every temporary file of the server, see :func:`reset_transient`."""
+    return settings.data_dir.joinpath(".transient", *parts)
+
+
+def reset_transient() -> None:
+    """Empty the transient folder and make it the temporary directory of this process and of the workers it starts.  Blocking.
+
+    Every temporary file of the server lies below, the spooled uploads, the
+    staged skills, and the temporary directories of conversions and workers,
+    so the boot, which only one server passes, removes whatever a dead one left at once.
+    """
+    root = transient()
+    remove_path(root)
+    root.mkdir(parents=True)
+    tempfile.tempdir = str(root)
+    os.environ["TMPDIR"] = str(root)
 
 
 def remove_path(path: Path) -> None:
@@ -52,23 +73,7 @@ def touched_since(path: Path, cutoff: float) -> bool:
     A file that vanishes while the tree is walked was just in use, so it
     counts as touched.
     """
-    return any(_mtime(entry) >= cutoff for entry in chain((path,), path.rglob("*")))
-
-
-def is_blocked_by_other(target: Path, source: Path) -> bool:
-    """Whether *target* exists as a node distinct from *source*.
-
-    ``exists()`` alone cannot tell another file from *source* under another
-    spelling, which a case- or normalization-insensitive filesystem (macOS)
-    resolves to the same inode, so only a distinct inode blocks.
-    """
-    if not target.exists():
-        return False
-
-    try:
-        return not target.samefile(source)
-    except OSError:
-        return True
+    return any(_mtime(entry) >= cutoff for entry in tree(path))
 
 
 def _mtime(path: Path) -> float:
@@ -94,21 +99,3 @@ def disk_size(path: Path) -> int:
         for directory, _dirs, files in os.walk(path)
         for name in files
     )
-
-
-def atomic_write(path: Path, data: bytes) -> None:
-    """Write *path* whole through a sibling and a rename, so no reader sees half of it.
-
-    Creates the parents, and replaces a directory standing at *path*.
-    """
-    if path.is_dir():
-        remove_path(path)
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    partial = path.with_name(f".{path.name}.{uuid4().hex}")
-
-    try:
-        _ = partial.write_bytes(data)
-        _ = partial.replace(path)
-    finally:
-        partial.unlink(missing_ok=True)

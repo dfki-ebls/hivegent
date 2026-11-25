@@ -1,66 +1,56 @@
 """Lock-free per-kind preparation of an upload.
 
-The slow work of an upload — conversion, vision captioning, frame sampling —
-runs here without the casebase lock and without touching the live workspace,
-producing the side-effect-free :class:`_PreparedUpload` that the changeset
+The slow work of an upload (conversion, vision captioning, frame sampling)
+runs here without the workspace lock and without touching the live workspace,
+producing the side-effect-free :class:`PreparedUpload` that the changeset
 gateway (:func:`~hivegent.workspace.changeset.apply_changeset`) then lands.
 """
 
-import asyncio
 import logging
 import re
 import tempfile
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 import logfire
-from fastapi import HTTPException
+from exar.helpers import bounded_gather
+from exar.ingest import (
+    Asset,
+    AsyncParser,
+    Parsed,
+    informative,
+    perceptual_key,
+)
+from exar.ingest import contexts as occurrences
+from exar.text import decode
 from pydantic import ValidationError
 
-from ..chunkers.base import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
 from ..config import sanitize_document_path, settings
-from ..converters import (
-    ConversionPipeline,
-    EntryProjection,
+from ..config.compute import AssetProcessingMode
+from ..media import guess_image_media_type
+from ..metadata import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
+from ..pipelines import (
+    AUTO,
+    PLAIN_TEXT,
     get_converter,
-    projection_for,
+    plain_text,
     resolve_auto_pipeline,
 )
-from ..converters.asset_processing import (
-    MD_IMAGE_RE,
-    TriageDecision,
-    image_context_windows,
-    perceptual_key,
-    triage_image,
-)
-from ..converters.base import (
-    ConversionResult,
-    DocumentConverter,
-    ExtractedImage,
-    is_external_ref,
-)
-from ..converters.fallbacks import recover_conversion
-from ..converters.formats import media_type
-from ..converters.images import guess_image_media_type
-from ..converters.plain_text import convert_plain_text
-from ..entries import (
-    asset_ref_for,
-    assets_dir_for_stem,
-    description_path_for_stem,
-    stem_path_from_reference,
-)
-from ..l10n import Localized
-from ..llm_config import LlmConfig
-from ..store import Casebase
-from ..text import decode_bytes
-from ..types import AssetProcessingMode, PipelineSpec, ProgressReporter
+from ..shared.formats import EntryProjection, media_type, projection_for
+from ..shared.l10n import Localized
+from ..sources.catalog import conversion_of
+from ..store import Workspace
+from ..tools.changes import ChangeRefused
+from ..tools.entries import Part, asset_ref_for, stem_path_from_reference
+from ..types import ProgressReporter
 from .describe import _build_image_description, _build_video_description
 from .metadata import _build_entry_metadata
-from .paths import _shown, not_text
+from .paths import not_text
 
-__all__: list[str] = []
+__all__ = ["PreparedUpload", "prepare_upload"]
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +63,37 @@ _STAGE_VIDEO = Localized(
 )
 _STAGE_PROCESSING = Localized(en="Processing document", de="Dokument wird verarbeitet")
 _STAGE_DESCRIBING = Localized(en="Describing images", de="Bilder werden beschrieben")
+
+
+_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+"""A Markdown image reference, its alternative text and its path."""
+
+# URL schemes whose references resolve to a fetchable resource, any other
+# (`file:`, a Windows drive letter like `T:`, ...) points off the workspace.
+_SERVABLE_SCHEMES = frozenset({"http", "https", "data"})
+
+
+def _is_external_ref(ref: str) -> bool:
+    """Return whether *ref* points outside the workspace and cannot be served.
+
+    Converters sometimes leak the author's unreachable image location into the
+    markdown: an absolute path, a Windows drive path, a `file:` URI, or a
+    backslash path.  Web and inline (`data:`) sources are valid and kept.
+
+    >>> _is_external_ref("media/image1.png"), _is_external_ref(r"T:\\grafik\\logo.jpg")
+    (False, True)
+    >>> _is_external_ref("/var/folders/tmp/media/image65.jpg"), _is_external_ref("https://example.com/a.png")
+    (True, False)
+    """
+    ref = ref.strip()
+
+    if not ref:
+        return False
+
+    if scheme := urlsplit(ref).scheme:
+        return scheme not in _SERVABLE_SCHEMES
+
+    return ref.startswith("/") or "\\" in ref
 
 
 def _conversion_failed(reason: str) -> Localized[str]:
@@ -99,12 +120,12 @@ class _PreparedAsset:
 
 
 @dataclass(slots=True, frozen=True)
-class _PreparedUpload:
+class PreparedUpload:
     """The side-effect-free result of preparing an upload.
 
     Produced lock-free, since the slow work (conversion, vision captioning,
     frame sampling) happens here, then written to the workspace under the
-    casebase lock and indexed without it by the changeset gateway.  Holding
+    workspace lock and indexed without it by the changeset gateway.  Holding
     the lock only for the file writes, not the whole pipeline, is what keeps
     the rest of the workspace usable while a long upload runs.
     """
@@ -119,11 +140,11 @@ def _source_on_disk(filepath: str, content: bytes) -> Generator[Path]:
     """Materialise upload bytes at a temp path for converters that read a file.
 
     Keeps the original basename so format detection by suffix still works, and
-    lives outside the workspace so a lock-free conversion never touches the live
-    entry — the commit is the only step that writes into the workspace.
+    lives outside the workspace, so a lock-free conversion never touches the live
+    entry.  The commit is the only step that writes into the workspace.
     """
-    with tempfile.TemporaryDirectory(prefix="hivegent-convert-") as tmp_dir:
-        path = Path(tmp_dir) / PurePosixPath(filepath).name
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / PurePosixPath(filepath).name
         path.write_bytes(content)
         yield path
 
@@ -141,11 +162,11 @@ def _derived_entry(
 
     Centralises the stem → description derivation shared by every upload kind
     that keeps a separate original (image, video, binary stub, plain text,
-    converted document).  User markdown is the exception — its own file is the
-    description — so it does not use this.
+    converted document).  User markdown is the exception.  Its own file is the
+    description, so it does not use this.
     """
     stem_path = stem_path_from_reference(filepath)
-    description_path = description_path_for_stem(stem_path)
+    description_path = Part(stem_path, "description").path
     return _PreparedEntry(
         description_path=description_path,
         markdown=markdown,
@@ -166,7 +187,6 @@ async def _prepare_image_entry(
     content: bytes,
     media_type: str,
     contexts: Sequence[str],
-    llm: LlmConfig,
     *,
     origin: EntryOrigin,
 ) -> _PreparedEntry:
@@ -176,9 +196,7 @@ async def _prepare_image_entry(
     a converted document; *contexts* carries every occurrence's surrounding
     text so the caption is the single source of truth for that image.
     """
-    markdown = await _build_image_description(
-        filepath, content, media_type, contexts, llm
-    )
+    markdown = await _build_image_description(filepath, content, media_type, contexts)
     return _derived_entry(
         filepath, markdown, entry_kind="image", generated_by="vision", origin=origin
     )
@@ -200,28 +218,28 @@ def _replace_image_references(markdown: str, mapping: dict[str, str | None]) -> 
         if path in mapping:
             target = mapping[path]
             return "" if target is None else f"![{match.group(1)}]({target})"
-        return "" if is_external_ref(path) else match.group(0)
+        return "" if _is_external_ref(path) else match.group(0)
 
-    return MD_IMAGE_RE.sub(_replace, markdown)
+    return _IMAGE.sub(_replace, markdown)
 
 
 def _prepare_markdown(
-    store: Casebase,
+    store: Workspace,
     filepath: str,
     content: bytes,
     *,
     origin: EntryOrigin,
     original_path: str | None,
-) -> _PreparedUpload:
+) -> PreparedUpload:
     """Prepare a user-authored markdown document for commit.
 
     It has no assets: the commit clears the ``.assets`` directory of an entry
     it replaces, and a new entry's stem holds none.
     """
-    decoded = decode_bytes(content)
+    decoded = decode(content)
     if decoded is None:
-        raise HTTPException(
-            status_code=422, detail=not_text(_shown(store, filepath)).current
+        raise ChangeRefused(
+            status_code=422, detail=not_text(store.scope.render(filepath)).current
         )
     stem_path = stem_path_from_reference(filepath)
     main = _PreparedEntry(
@@ -237,17 +255,16 @@ def _prepare_markdown(
             generated_by="user",
         ),
     )
-    return _PreparedUpload(main=main)
+    return PreparedUpload(main=main)
 
 
 async def _prepare_image(
     filepath: str,
     content: bytes,
-    llm: LlmConfig,
     *,
     origin: EntryOrigin,
     ctx: ProgressReporter | None,
-) -> _PreparedUpload:
+) -> PreparedUpload:
     """Prepare a standalone image and its generated description for commit."""
     if ctx is not None:
         ctx.set_stage(_STAGE_IMAGE.current)
@@ -258,25 +275,23 @@ async def _prepare_image(
         content,
         media_type,
         [f"File name: {PurePosixPath(filepath).name}"],
-        llm,
         origin=origin,
     )
-    return _PreparedUpload(main=entry)
+    return PreparedUpload(main=entry)
 
 
 async def _prepare_video(
     filepath: str,
     content: bytes,
-    llm: LlmConfig,
     *,
     origin: EntryOrigin,
     ctx: ProgressReporter | None,
-) -> _PreparedUpload:
+) -> PreparedUpload:
     """Prepare a video and its frame-based description for commit.
 
     The original is the entry's payload and the vision-generated markdown is
     its searchable projection.  Frames are sampled with OpenCV from a temp copy
-    of the source (see :func:`~hivegent.converters.video.sample_video`), so the
+    of the source (see :func:`~hivegent.media.sample_video`), so the
     lock-free prepare never touches the live workspace entry.
     """
     if ctx is not None:
@@ -287,35 +302,36 @@ async def _prepare_video(
             filepath,
             full_path,
             [f"File name: {PurePosixPath(filepath).name}"],
-            llm,
         )
     main = _derived_entry(
         filepath, markdown, entry_kind="video", generated_by="vision", origin=origin
     )
-    return _PreparedUpload(main=main)
+    return PreparedUpload(main=main)
 
 
 def _prepare_plain_text_or_stub(
     filepath: str, content: bytes, *, origin: EntryOrigin
-) -> _PreparedUpload:
+) -> PreparedUpload:
     """Prepare AUTO input as plain text or a metadata-only binary stub.
 
     Supported Unicode and Western text is prepared as a searchable plain-text
     document, while unsupported or binary-looking bytes get a metadata-only
     stub.
     """
-    result = convert_plain_text(content, PurePosixPath(filepath).suffix)
-    entry_kind: EntryKind = "binary_stub" if result is None else "convertible"
-    generated_by: EntryGeneratedBy = "stub" if result is None else "converter"
+    entry_kind: EntryKind = "convertible"
+    generated_by: EntryGeneratedBy = "converter"
 
-    if result is None:
+    try:
+        markdown = (
+            plain_text().parse_bytes(content, PurePosixPath(filepath).suffix).markdown
+        )
+    except ValueError:
+        entry_kind, generated_by = "binary_stub", "stub"
         mime = media_type(filepath) or "application/octet-stream"
         markdown = (
             f"File name: {PurePosixPath(filepath).name}.\n"
             f"MIME type: {mime}.\nSize: {len(content)} bytes.\n"
         )
-    else:
-        markdown = result.markdown
 
     main = _derived_entry(
         filepath,
@@ -324,15 +340,14 @@ def _prepare_plain_text_or_stub(
         generated_by=generated_by,
         origin=origin,
     )
-    return _PreparedUpload(main=main)
+    return PreparedUpload(main=main)
 
 
 async def _prepare_conversion_assets(
     assets_dir: str,
-    images: dict[str, ExtractedImage],
+    images: Mapping[str, Asset],
     contexts_by_ref: dict[str, list[str]],
     mode: AssetProcessingMode,
-    llm: LlmConfig,
 ) -> tuple[dict[str, str | None], list[_PreparedAsset], list[_PreparedEntry]]:
     """Triage, deduplicate, and caption a conversion's extracted images.
 
@@ -341,7 +356,7 @@ async def _prepare_conversion_assets(
     Store-only assets (decorative, or ``STORE`` mode) keep their own reference;
     described assets are grouped by :func:`perceptual_key` so an image is
     captioned once and every occurrence's reference is rewritten to the single
-    stored representative — never once per occurrence.
+    stored representative, never once per occurrence.
     """
 
     def child_path(relpath: str) -> str:
@@ -358,10 +373,7 @@ async def _prepare_conversion_assets(
     groups: dict[int | str, list[str]] = {}
 
     for relpath, extracted in sorted(images.items()):
-        describe_image = (
-            mode is AssetProcessingMode.DESCRIBE
-            and triage_image(extracted) is TriageDecision.DESCRIBE
-        )
+        describe_image = mode is AssetProcessingMode.DESCRIBE and informative(extracted)
         if not describe_image:
             ref_mapping[relpath] = asset_ref_for(assets_dir, relpath)
             assets.append(_PreparedAsset(child_path(relpath), extracted.data))
@@ -375,13 +387,7 @@ async def _prepare_conversion_assets(
         for member in members:
             ref_mapping[member] = rep_ref
 
-    asset_entries: list[_PreparedEntry] = []
-    # Caption unique images concurrently, but capped: a figure-heavy document can
-    # have dozens of distinct images, and one unbounded vision request per image
-    # trips provider rate limits, so retries make it slower rather than faster.
-    caption_slots = asyncio.Semaphore(settings.llm.caption_concurrency)
-
-    async def _caption_group(members: list[str]) -> None:
+    async def _caption_group(members: list[str]) -> _PreparedEntry:
         representative = members[0]
         rep_path = child_path(representative)
         media_type = guess_image_media_type(representative) or ""
@@ -391,96 +397,53 @@ async def _prepare_conversion_assets(
             if caption := images[member].caption:
                 contexts.append(f"Figure caption: {caption}")
         assets.append(_PreparedAsset(rep_path, images[representative].data))
-        async with caption_slots:
-            entry = await _prepare_image_entry(
-                rep_path,
-                images[representative].data,
-                media_type,
-                contexts,
-                llm,
-                origin="extracted",
-            )
-        asset_entries.append(entry)
+        return await _prepare_image_entry(
+            rep_path,
+            images[representative].data,
+            media_type,
+            contexts,
+            origin="extracted",
+        )
 
-    await asyncio.gather(*(_caption_group(members) for members in groups.values()))
+    # Caption unique images concurrently, but capped: a figure-heavy document can
+    # have dozens of distinct images, and one unbounded vision request per image
+    # trips provider rate limits, so retries make it slower rather than faster.
+    asset_entries = await bounded_gather(
+        groups.values(), _caption_group, limit=settings.llm.caption_concurrency
+    )
     return ref_mapping, assets, asset_entries
 
 
-def _build_converter(
-    pipeline: ConversionPipeline, basename: str, spec: PipelineSpec, llm: LlmConfig
-) -> DocumentConverter:
+def _build_converter(pipeline: str, basename: str) -> AsyncParser:
     """Instantiate the converter for a resolved pipeline, mapping its errors to HTTP."""
     try:
         return get_converter(
             pipeline,
             filename=basename,
-            config=spec.conversion.config,
-            llm_options=llm,
-            detect_asset_roles=spec.process_assets is AssetProcessingMode.DESCRIBE,
+            detect_asset_roles=settings.conversion.assets is AssetProcessingMode.DESCRIBE,
         )
     except ValidationError:
-        # A config the converter refuses is answered as the request's own error.
+        # Operator options the converter refuses fail loudly, never as a fallback.
         raise
-    except (ImportError, ValueError) as exc:
-        # AUTO reaches this point only for an available richer converter whose
-        # declared extensions produced the mapping.  Only an explicit pipeline
-        # can name one that is uninstalled or wrong for the file.
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        # Only an explicit pipeline can name one that is uninstalled or wrong for the file.
+        raise ChangeRefused(status_code=400, detail=str(exc)) from exc
 
 
 async def _convert_source(
-    filepath: str,
-    content: bytes,
-    converter: DocumentConverter,
-    *,
-    allow_recovery: bool,
-) -> ConversionResult:
-    """Convert a temp copy of the source.
-
-    *allow_recovery* (AUTO only) lets a failed or degraded primary conversion be
-    replaced by a fallback converter's text; an explicit pipeline keeps its own
-    output and surfaces its own error.  Raises the converter's exception when
-    nothing recovered it.
-    """
-    suffix = PurePosixPath(filepath).suffix.lower()
+    filepath: str, content: bytes, converter: AsyncParser, pipeline: str
+) -> Parsed:
+    """Convert a temp copy of the source, raising the converter's exception."""
     with (
-        logfire.span(
-            "convert_document", filepath=filepath, converter=converter.name
-        ) as span,
+        logfire.span("convert_document", filepath=filepath, pipeline=pipeline) as span,
         _source_on_disk(filepath, content) as source_path,
     ):
-        outcome: ConversionResult | Exception
-        try:
-            outcome = await converter(source_path)
-        except Exception as exc:  # noqa: BLE001
-            outcome = exc
-
-        recovery = (
-            await recover_conversion(source_path, suffix, outcome)
-            if allow_recovery
-            else None
-        )
-        if recovery is not None:
-            failure = outcome if isinstance(outcome, Exception) else None
-            # A recovered result is text only (fallbacks drop images), so asset
-            # processing never captions figures the markdown lost.
-            logger.warning(
-                "primary conversion of %s %s; recovered via %s fallback",
-                filepath,
-                "failed" if failure is not None else "produced degraded output",
-                recovery.pipeline.value,
-                exc_info=failure,
-            )
-            result = ConversionResult(markdown=recovery.markdown)
-        elif isinstance(outcome, Exception):
-            raise outcome
-        else:
-            result = outcome
-
+        result = await converter(source_path)
         span.set_attribute("markdown_length", len(result.markdown))
-        span.set_attribute("image_count", len(result.images))
-        if result.source_encoding is not None:
-            span.set_attribute("source_encoding", result.source_encoding)
+        span.set_attribute("image_count", len(result.assets))
+
+        if result.encoding is not None:
+            span.set_attribute("source_encoding", result.encoding)
 
         return result
 
@@ -488,16 +451,15 @@ async def _convert_source(
 async def _prepare_convertible(
     filepath: str,
     content: bytes,
-    spec: PipelineSpec,
-    llm: LlmConfig,
+    conversion_pipeline: str,
     *,
     origin: EntryOrigin,
     ctx: ProgressReporter | None,
-) -> _PreparedUpload:
+) -> PreparedUpload:
     """Convert a binary and prepare its markdown plus extracted assets.
 
     Runs the converter against a temp copy of the source, then prepares the
-    asset files and caption entries — all without the casebase lock and without
+    asset files and caption entries, all without the workspace lock and without
     touching the live workspace entry, so a long conversion never blocks the
     rest of the workspace and a failure mid-conversion leaves nothing behind.
     """
@@ -505,58 +467,68 @@ async def _prepare_convertible(
         ctx.set_stage(_STAGE_PROCESSING.current)
 
     basename = PurePosixPath(filepath).name
-    conversion_pipeline = spec.conversion.pipeline
-    is_auto = conversion_pipeline == ConversionPipeline.AUTO
-    if is_auto and resolve_auto_pipeline(basename) is ConversionPipeline.PLAIN_TEXT:
+    is_auto = conversion_pipeline == AUTO
+    if is_auto and resolve_auto_pipeline(basename) == PLAIN_TEXT:
         # Skip the converter's temp-file round trip: AUTO already falls back
         # to the same projection (or a stub) for anything it cannot decode.
         return _prepare_plain_text_or_stub(filepath, content, origin=origin)
 
-    converter = _build_converter(conversion_pipeline, basename, spec, llm)
+    converter = _build_converter(conversion_pipeline, basename)
 
     try:
         result = await _convert_source(
-            filepath, content, converter, allow_recovery=is_auto
+            filepath, content, converter, conversion_pipeline
         )
     except Exception as exc:
-        if is_auto:
-            # exc_info captures the chained cause: docling re-raises pipeline
-            # errors as a bare "Pipeline ... failed" with the root cause only
-            # attached via `from`.
+        if not is_auto:
+            raise ChangeRefused(
+                status_code=500, detail=_conversion_failed(str(exc)).current
+            ) from exc
+
+        prepared = _prepare_plain_text_or_stub(filepath, content, origin=origin)
+
+        # Text the converter refused is still indexed, so only a stub is worth
+        # a warning.
+        # exc_info captures the chained cause: docling re-raises pipeline
+        # errors as a bare "Pipeline ... failed" with the root cause only
+        # attached via `from`.
+        if prepared.main.entry_metadata.entry_kind == "binary_stub":
             logger.warning(
-                "AUTO conversion failed for %s, indexing as plain text or stub: %s",
+                "AUTO conversion failed for %s, indexing as stub: %s",
                 filepath,
                 exc,
                 exc_info=exc,
             )
-            return _prepare_plain_text_or_stub(filepath, content, origin=origin)
-        raise HTTPException(
-            status_code=500, detail=_conversion_failed(str(exc)).current
-        ) from exc
+        else:
+            logger.info(
+                "%s could not convert %s, indexed as plain text: %s",
+                conversion_pipeline,
+                filepath,
+                exc,
+            )
 
-    assets_dir = assets_dir_for_stem(stem_path_from_reference(filepath))
+        return prepared
+
+    assets_dir = Part(stem_path_from_reference(filepath), "assets").path
     markdown = result.markdown
 
-    mode = spec.process_assets
+    mode = settings.conversion.assets
     assets: tuple[_PreparedAsset, ...] = ()
     asset_entries: tuple[_PreparedEntry, ...] = ()
     if mode is AssetProcessingMode.IGNORE:
-        markdown = _replace_image_references(
-            markdown, {ref: None for ref in result.images}
-        )
+        markdown = _replace_image_references(markdown, dict.fromkeys(result.assets))
         has_assets = False
     else:
-        if ctx is not None and mode is AssetProcessingMode.DESCRIBE and result.images:
+        if ctx is not None and mode is AssetProcessingMode.DESCRIBE and result.assets:
             ctx.set_stage(_STAGE_DESCRIBING.current)
         ref_mapping, asset_list, entry_list = await _prepare_conversion_assets(
             assets_dir,
-            result.images,
-            image_context_windows(markdown),
+            result.assets,
+            occurrences(markdown),
             mode,
-            llm,
         )
         markdown = _replace_image_references(markdown, ref_mapping)
-        has_assets = bool(result.images)
+        has_assets = bool(result.assets)
         assets = tuple(asset_list)
         asset_entries = tuple(entry_list)
 
@@ -568,20 +540,18 @@ async def _prepare_convertible(
         origin=origin,
         assets_dir=assets_dir if has_assets else None,
     )
-    return _PreparedUpload(main=main, assets=assets, asset_entries=asset_entries)
+    return PreparedUpload(main=main, assets=assets, asset_entries=asset_entries)
 
 
-async def _prepare_upload(
-    store: Casebase,
+async def prepare_upload(
+    store: Workspace,
     filepath: str,
     content: bytes,
-    spec: PipelineSpec,
-    llm: LlmConfig,
     *,
     origin: EntryOrigin,
     original_path: str | None,
     ctx: ProgressReporter | None,
-) -> _PreparedUpload:
+) -> PreparedUpload:
     """Dispatch to the per-kind preparation. No lock held.
 
     *original_path* is a markdown upload's companion original, ``None`` for
@@ -593,10 +563,10 @@ async def _prepare_upload(
                 store, filepath, content, origin=origin, original_path=original_path
             )
         case EntryProjection.IMAGE:
-            return await _prepare_image(filepath, content, llm, origin=origin, ctx=ctx)
+            return await _prepare_image(filepath, content, origin=origin, ctx=ctx)
         case EntryProjection.VIDEO:
-            return await _prepare_video(filepath, content, llm, origin=origin, ctx=ctx)
+            return await _prepare_video(filepath, content, origin=origin, ctx=ctx)
         case EntryProjection.CONVERTIBLE:
             return await _prepare_convertible(
-                filepath, content, spec, llm, origin=origin, ctx=ctx
+                filepath, content, conversion_of(store), origin=origin, ctx=ctx
             )

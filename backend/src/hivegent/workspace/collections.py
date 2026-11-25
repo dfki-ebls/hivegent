@@ -22,30 +22,29 @@ from itertools import groupby
 from pathlib import Path
 from typing import Self
 
-from fastapi import HTTPException
+from exar.helpers import bounded_as_completed
+from exar.text import NOT_TEXT_REASON, decode
 
-from ..concurrency import bounded_as_completed
 from ..config import sanitize_document_path, settings
-from ..converters.wikilinks import preprocess_markdown
-from ..entries import (
+from ..shared.l10n import Localized, format_bytes
+from ..shared.zips import member_mtime
+from ..store import Workspace
+from ..tools.changes import ChangeRefused
+from ..tools.entries import (
+    CASE_BASE_KINDS,
+    Part,
     entry_exists,
     is_description_file,
     is_ignorable_path,
     stem_path_from_reference,
 )
-from ..humanize import format_bytes
-from ..l10n import Localized
-from ..llm_config import LlmConfig
-from ..store import Casebase
-from ..text import NOT_TEXT_REASON, read_text_file
 from ..types import (
     CollectionCompleteEvent,
     CollectionProgressEvent,
     FailedFile,
-    PipelineSpec,
 )
-from .locks import _store_claim
 from .uploads import upload
+from .wikilinks import preprocess_markdown
 
 __all__ = [
     "process_collection",
@@ -166,7 +165,7 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
             continue
         file_count += 1
         if file_count > settings.limits.max_collection_files:
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=413,
                 detail=_too_many_files(
                     file_count, settings.limits.max_collection_files
@@ -175,7 +174,7 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
 
         mode = (info.external_attr >> 16) & 0xFFFF
         if mode and not stat.S_ISREG(mode):
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=400,
                 detail=_not_regular(info.filename).current,
             )
@@ -183,13 +182,13 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
         try:
             sanitize_document_path(info.filename)
         except ValueError as exc:
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=400,
                 detail=_unsafe_path(info.filename, str(exc)).current,
             ) from exc
 
         if info.file_size > settings.limits.max_file_size_bytes:
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=413,
                 detail=_member_too_large(
                     info.filename,
@@ -199,7 +198,7 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> None:
             )
         total_uncompressed += info.file_size
         if total_uncompressed > settings.limits.max_collection_size_bytes:
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=413,
                 detail=_collection_too_large(
                     settings.limits.max_collection_size_bytes
@@ -219,7 +218,7 @@ def validate_collection_archive(archive_path: Path) -> None:
         with zipfile.ZipFile(archive_path) as archive:
             _validate_zip_entries(archive)
     except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail=_INVALID_ZIP.current) from exc
+        raise ChangeRefused(status_code=400, detail=_INVALID_ZIP.current) from exc
 
 
 @dataclass(slots=True, frozen=True)
@@ -275,7 +274,7 @@ def _read_markdown(
 ) -> bytes | None:
     """Read and wikilink-preprocess a markdown member, or ``None`` if unreadable."""
     try:
-        decoded = read_text_file(extract_root / planned.relative_path)
+        decoded = decode((extract_root / planned.relative_path).read_bytes())
     except OSError as exc:
         logger.warning(
             "Failed to read %s: %s", planned.relative_path, exc, exc_info=True
@@ -413,44 +412,35 @@ async def _plan_collection(
 def _extract(archive_path: Path, root: Path) -> None:
     """Extract the archive at *archive_path* into *root*, keeping each member's date.
 
-    A member's date names no zone and is read as UTC.  An unset or malformed
-    one, such as the all-zero date some tools write, keeps the extraction time.
+    A member without a date, see :func:`member_mtime`, keeps the extraction time.
     """
     with zipfile.ZipFile(archive_path) as archive:
         for info in archive.infolist():
             path = archive.extract(info, root)
 
-            try:
-                timestamp = datetime(*info.date_time, tzinfo=UTC).timestamp()
-            except ValueError:
-                continue
-
-            os.utime(path, (timestamp, timestamp))
+            if (timestamp := member_mtime(info)) is not None:
+                os.utime(path, (timestamp, timestamp))
 
 
 async def process_collection(
-    store: Casebase,
+    store: Workspace,
     archive_path: Path,
-    spec: PipelineSpec,
-    llm: LlmConfig,
     dest_dir: str = "",
 ) -> AsyncGenerator[CollectionProgressEvent | CollectionCompleteEvent]:
     """Process a ZIP collection, yielding per-file progress events.
 
-    Re-validates the archive against the limits before extracting — the same
-    cheap central-directory scan the request path runs up front — so extraction
+    Re-validates the archive against the limits before extracting (the same
+    cheap central-directory scan the request path runs up front), so extraction
     is never reached for an unsafe archive, even when called directly.  Each
     file then flows through :func:`upload`, which converts it without the
-    casebase lock and holds it only to commit, so the rest of the workspace
+    workspace lock and holds it only to commit, so the rest of the workspace
     stays responsive while a large collection processes, and a cancel mid-run
-    drops only the file being converted while earlier files survive.  The whole
-    import holds a store claim (:func:`_store_claim`) so a concurrent store-wide
-    delete or directory move cannot interleave between files and strip entries
-    the collection already committed.
+    drops only the file being converted while earlier files survive.
 
     :func:`_plan_collection` fixes every member's role up front.  A markdown and
     its companion original flow through one upload, so neither can land without
-    the other.
+    the other.  The cbrkit companions of a case base, its sidecar included, are
+    never imported.
     """
     validate_collection_archive(archive_path)
 
@@ -458,34 +448,31 @@ async def process_collection(
     converted_count = 0
     failed: list[FailedFile] = []
 
-    with _store_claim(store), tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory() as tmp_dir:
         extract_root = Path(tmp_dir)
 
         try:
             await asyncio.to_thread(_extract, archive_path, extract_root)
         except (zipfile.BadZipFile, zlib.error) as exc:
-            raise HTTPException(
+            raise ChangeRefused(
                 status_code=400, detail=_extract_failed(str(exc)).current
             ) from exc
 
-        # Drop OS junk before the unwrap so a stray metadata file beside the real
-        # content still collapses a single top-level directory.
-        top_items = [
-            item for item in extract_root.iterdir() if not is_ignorable_path(item.name)
-        ]
-        if len(top_items) == 1 and top_items[0].is_dir():
-            extract_root = top_items[0]
-
         plan = await _plan_collection(
-            store.workspace_dir(settings.data_dir),
+            store.workspace_dir(),
             extract_root,
-            _content_relative_paths(extract_root),
+            [
+                path
+                for path in _content_relative_paths(extract_root)
+                if Part.of(path).kind not in CASE_BASE_KINDS
+            ],
             dest_dir,
         )
         failed.extend(plan.dropped)
+        total = plan.total
 
         def _progress(current: int) -> CollectionProgressEvent:
-            return CollectionProgressEvent(current=current, total=plan.total)
+            return CollectionProgressEvent(current=current, total=total)
 
         completed = len(failed)
 
@@ -515,8 +502,6 @@ async def process_collection(
                     store,
                     p.safe,
                     content_bytes,
-                    spec=spec,
-                    llm=llm,
                     origin="collection",
                     companion=companion,
                     modified_at=planned.modified_at(extract_root),
@@ -532,31 +517,34 @@ async def process_collection(
         yield _progress(completed)
 
         # Logical entries run concurrently up to the collection cap.  Markdown
-        # companions are already folded into their owner's upload.
+        # companions are already folded into their owner's upload.  Leaving the
+        # block, also when the consumer closes this generator, cancels and
+        # awaits the uploads still in flight.
         limit = settings.jobs.collection_concurrency
-        async for planned, error in bounded_as_completed(
+        async with bounded_as_completed(
             plan.uploads, _run_upload, limit=limit
-        ):
-            p = planned.entry
-            if error is None:
-                if p.is_markdown:
-                    markdown_count += 1
+        ) as results:
+            async for planned, error in results:
+                p = planned.entry
+                if error is None:
+                    if p.is_markdown:
+                        markdown_count += 1
+                    else:
+                        converted_count += 1
+                    if planned.original is not None:
+                        converted_count += 1
                 else:
-                    converted_count += 1
-                if planned.original is not None:
-                    converted_count += 1
-            else:
-                failed.append(
-                    _record_failure(p.relative_path, _REASON_CONVERSION, exc=error)
-                )
-                if planned.original is not None:
                     failed.append(
-                        _record_failure(
-                            planned.original.relative_path, _REASON_OWNER_FAILED
-                        )
+                        _record_failure(p.relative_path, _REASON_CONVERSION, exc=error)
                     )
-            completed += len(planned.members)
-            yield _progress(completed)
+                    if planned.original is not None:
+                        failed.append(
+                            _record_failure(
+                                planned.original.relative_path, _REASON_OWNER_FAILED
+                            )
+                        )
+                completed += len(planned.members)
+                yield _progress(completed)
 
     yield CollectionCompleteEvent(
         markdown_files=markdown_count,
