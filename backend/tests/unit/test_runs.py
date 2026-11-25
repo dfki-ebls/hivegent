@@ -1,13 +1,16 @@
 """Tests for chat turns that run apart from the request that started them."""
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
+import pytest
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, TextDeltaChunk
 
+from hivegent import auth
 from hivegent.db.conversations import OwnedConversation, models
-from hivegent.runs import Prepared, Runs
+from hivegent.runs import Prepared, Run, Runs
 from hivegent.store import User
 
 _A = TextDeltaChunk(id="t", delta="a")
@@ -33,15 +36,15 @@ async def test_a_turn_outlives_its_follower_and_replays_to_the_next() -> None:
 
     runs = Runs()
     conversation = _conversation()
-    run = runs.start(conversation, None, _prepared(turn()))
-    first = run.follow()
+    run = runs.start(conversation, User("alice"), None, _prepared(turn()))
+    first = run.follow(User("alice"))
 
     assert await anext(first) == _A
     await first.aclose()
     assert runs.get(conversation) is run
     release.set()
 
-    assert [chunk async for chunk in run.follow()] == [_A, _B]
+    assert [chunk async for chunk in run.follow(User("alice"))] == [_A, _B]
     assert runs.get(conversation) is None
 
 
@@ -58,8 +61,8 @@ async def test_a_stopped_turn_stores_what_it_got_to_before_the_stop_returns() ->
 
     runs = Runs()
     conversation = _conversation()
-    run = runs.start(conversation, None, _prepared(turn()))
-    assert await anext(run.follow()) == _A
+    run = runs.start(conversation, User("alice"), None, _prepared(turn()))
+    assert await anext(run.follow(User("alice"))) == _A
 
     await runs.cancel(conversation)
 
@@ -84,7 +87,7 @@ async def test_a_turn_stopped_while_preparing_never_streams() -> None:
 
     runs = Runs()
     conversation = _conversation()
-    run = runs.start(conversation, None, prepare())
+    run = runs.start(conversation, User("alice"), None, prepare())
     _ = await preparing.wait()
 
     await runs.cancel(conversation)
@@ -102,7 +105,7 @@ async def test_a_refused_turn_frees_its_slot_and_keeps_the_refusal() -> None:
 
     runs = Runs()
     conversation = _conversation()
-    run = runs.start(conversation, None, prepare())
+    run = runs.start(conversation, User("alice"), None, prepare())
 
     assert not await run.prepared()
     assert isinstance(run.refusal, ValueError)
@@ -120,7 +123,7 @@ async def test_a_turn_is_hidden_from_other_users_of_its_id() -> None:
     runs = Runs()
     owner = _conversation()
     intruder = _conversation("mallory", owner.id)
-    run = runs.start(owner, None, _prepared(turn()))
+    run = runs.start(owner, User("alice"), None, _prepared(turn()))
 
     assert runs.get(intruder) is None
     await runs.cancel(intruder)
@@ -136,9 +139,40 @@ async def test_a_failing_turn_ends_on_an_error_chunk() -> None:
         yield _A
         raise RuntimeError("boom")
 
-    run = Runs().start(_conversation(), None, _prepared(turn()))
+    run = Runs().start(_conversation(), User("alice"), None, _prepared(turn()))
     await run.wait()
 
     assert run.chunks[0] == _A
     assert run.error is not None
     assert "boom" not in run.error
+
+
+async def test_a_turn_stops_once_no_request_renews_its_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh token of the same grants renews it, while a narrower one leaves it to lapse."""
+    monkeypatch.setattr(auth, "_RENEWAL_SECONDS", 0)
+    eng = frozenset({"eng"})
+
+    async def turn() -> AsyncIterator[BaseChunk]:
+        yield _A
+        _ = await asyncio.Event().wait()
+
+    def start() -> Run:
+        principal = User("alice", read_groups=eng, expires_at=time.time() + 0.05)
+        return Runs().start(_conversation(), principal, None, _prepared(turn()))
+
+    lapsed = start()
+    assert await anext(lapsed.follow(User("alice", read_groups=eng))) == _A
+    auth.leases.renew(User("alice", expires_at=time.time() + 3600))
+    await asyncio.wait_for(lapsed.wait(), 5)
+
+    renewed = start()
+    assert await anext(renewed.follow(User("alice", read_groups=eng))) == _A
+    auth.leases.renew(User("alice", read_groups=eng, expires_at=time.time() + 3600))
+    await asyncio.sleep(0.1)
+    assert not renewed.done
+
+    _ = renewed.task.cancel()
+    await asyncio.wait_for(renewed.wait(), 5)
+    assert lapsed.chunks == renewed.chunks == [_A]

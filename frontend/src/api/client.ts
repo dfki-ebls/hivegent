@@ -32,7 +32,8 @@ async function authFetch(url: RequestInfo | URL, options: RequestInit = {}): Pro
     headers.set(key, value);
   }
 
-  return fetch(url, { ...options, headers });
+  // Responses are per account, so none may come from or go into the HTTP cache.
+  return fetch(url, { cache: "no-store", ...options, headers });
 }
 
 /** Client-side fallback for a failed request, resolved in the interface language when the error is raised. */

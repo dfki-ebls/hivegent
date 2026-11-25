@@ -67,9 +67,10 @@ services:
         condition: service_healthy
     environment:
       # Networking. A *.localhost public URL resolves to loopback in the
-      # browser automatically, while the backend reaches it via `extra_hosts`.
+      # browser automatically, while the backend reaches it by the network
+      # alias below, on the same port.
       LISTEN_SCHEME: http
-      LISTEN_PORT_HTTP: "8080"
+      LISTEN_PORT_HTTP: "8081"
       PUB_URL: auth.localhost:8081
       PROXY_MODE: "false"
       HQL_INSECURE_COOKIE: "true" # the demo serves plain HTTP
@@ -87,8 +88,13 @@ services:
       RP_NAME: Hivegent SSO
     volumes:
       - rauthy-data:/app/data
+    networks:
+      default:
+        aliases:
+          - auth.localhost
+    # Loopback alone, since the demo serves plain HTTP with demo secrets.
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8081"
     # Rauthy ships as a distroless image (no shell), so it carries no
     # in-container healthcheck. The backend tolerates it not being ready yet
     # via its restart policy, and the proxy waits on the backend instead.
@@ -117,10 +123,6 @@ services:
         condition: service_started
       searxng:
         condition: service_started
-    extra_hosts:
-      # Resolve the public issuer host to the Docker host so the backend fetches
-      # OIDC discovery/JWKS from the same URL the browser uses.
-      - "auth.localhost:host-gateway"
     environment:
       # Caddy's listen address. Read by the proxy, not the backend's TOML.
       CADDY_SITE_ADDRESS: ":8080"
@@ -142,8 +144,9 @@ services:
     # `secrets` entry below:
     # secrets:
     #   - hivegent.LLM__PROVIDERS__LOCAL__API_KEY
+    # Loopback alone, a real deployment terminates TLS in front of it.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - hivegent-data:/data
     restart: unless-stopped

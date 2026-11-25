@@ -354,7 +354,8 @@ Die Content-Security-Policy des mitgelieferten Caddy lässt die App keinen ander
 Der Container nimmt sie durch Leerzeichen getrennt in `CADDY_IDP_ORIGINS`, das NixOS-Modul als Liste `services.hivegent.caddy.idpOrigins`.
 Ohne Origin wäre die Anmeldung blockiert, daher startet der Container nicht und das NixOS-Modul lässt sich nicht auswerten.
 
-Das Backend nimmt ein Access-Token nur an, wenn es mit einem asymmetrischen Algorithmus signiert ist, den der Anbieter ankündigt (RS, PS, ES, EdDSA oder Ed25519), den konfigurierten Issuer und eine Audience aus `auth.audience` nennt und `exp` und `iat` enthält.
+Das Backend nimmt ein Access-Token nur an, wenn es mit einem asymmetrischen Algorithmus signiert ist, den der Anbieter ankündigt (RS, PS, ES, EdDSA oder Ed25519), den konfigurierten Issuer und eine Audience aus `auth.audience` nennt, `exp` und `iat` enthält, seinen Client in `azp` oder `client_id` nennt und ein Access-Token ist, ausgewiesen durch den Header `typ: at+jwt` nach RFC 9068 oder den Claim `typ: Bearer` von Keycloak und Rauthy.
+Ein ID-Token desselben Clients wird abgelehnt, daher muss ein Anbieter, der seine Access-Tokens auf keine der beiden Arten kennzeichnet, auf Tokens nach RFC 9068 umgestellt werden.
 Das Discovery-Dokument des Anbieters muss denselben Issuer nennen und seine Schlüssel auf dem Origin des Issuers bereitstellen, Schema eingeschlossen.
 Der MCP-Endpunkt prüft Tokens genauso, für die Audience `mcp.base_url`, genau so geschrieben wie konfiguriert, oder `mcp.client_id`.
 Der mitgelieferte Caddy leitet `/mcp` und die OAuth-Discovery-Dokumente des Endpunkts unter `/.well-known/` weiter, etwa `/.well-known/oauth-protected-resource/mcp`, und im Modus `proxy` muss der Identitätsanbieter die Redirect-URI `<mcp.base_url>/auth/callback` erlauben.

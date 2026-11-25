@@ -31,9 +31,7 @@ from ....agents.compaction import compact_on_overflow
 from ....agents.transcripts import SubagentSteps
 from ....auth import (
     CurrentPrincipal,
-    TokenExpiry,
     refuse_expired,
-    until_expiry,
 )
 from ....config import parse_uuid
 from ....db.conversations import (
@@ -404,7 +402,7 @@ async def _answer(
     conversation: OwnedConversation,
     run: Run,
     accept: str | None,
-    expires_at: TokenExpiry,
+    user: User,
 ) -> Response:
     """The turn as it streams, or the stored conversation once it ended for a JSON client.
 
@@ -416,10 +414,10 @@ async def _answer(
         raise run.refusal
 
     if _quality(accept, _JSON) <= _quality(accept, SSE_CONTENT_TYPE):
-        return stream_response(until_expiry(run.follow(), expires_at))
+        return stream_response(run.follow(user))
 
     await run.wait()
-    refuse_expired(expires_at)
+    refuse_expired(user.expires_at)
 
     if (error := run.error) is not None:
         raise HTTPException(status_code=502, detail=error)
@@ -504,14 +502,14 @@ async def create_conversation_chat(
     user: CurrentPrincipal,
     config: ChatRequest,
     request: Request,
-    expires_at: TokenExpiry,
 ) -> Response:
     """Run a turn in a conversation, starting it at a fresh id the client chose.
 
     The turn runs on its own (:mod:`~hivegent.runs`), so a client that
     leaves only stops following it, a retry with the same user message follows
     the running turn, any other request is refused untouched while it runs,
-    and ``GET .../stream`` follows it again after a reload.
+    and ``GET .../stream`` follows it again after a reload.  Every request
+    of the user renews the turn's authorization (:class:`~hivegent.auth.Lease`).
     """
     conversation, _ = opened
     accept = request.headers.get("accept")
@@ -527,13 +525,14 @@ async def create_conversation_chat(
     if (run := runs.get(conversation)) is None:
         run = runs.start(
             conversation,
+            user,
             prompt or _continued(adapter),
             _prepare_turn(user, conversation, config, adapter, prompt),
         )
     elif prompt is None or run.message is None or run.message.id != prompt.id:
         raise HTTPException(status_code=409, detail=TURN_RUNNING.current)
 
-    return await _answer(conversation, run, accept, expires_at)
+    return await _answer(conversation, run, accept, user)
 
 
 @chat_router.get(
@@ -541,7 +540,9 @@ async def create_conversation_chat(
     response_class=StreamingResponse,
     responses=_RESUME_RESPONSES,
 )
-async def follow_conversation_turn(opened: Opened, expires_at: TokenExpiry) -> Response:
+async def follow_conversation_turn(
+    opened: Opened, user: CurrentPrincipal
+) -> Response:
     """Follow the running turn of a conversation from its first chunk.
 
     The AI SDK's resumable stream: ``204`` while no turn runs, so a client
@@ -554,7 +555,7 @@ async def follow_conversation_turn(opened: Opened, expires_at: TokenExpiry) -> R
     if run is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    return stream_response(until_expiry(run.follow(), expires_at))
+    return stream_response(run.follow(user))
 
 
 @router.delete(

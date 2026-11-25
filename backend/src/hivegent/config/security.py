@@ -46,6 +46,8 @@ class AuthSettings(Section):
     the API to its own clients, each named exactly.  A token whose ``aud``
     names none of them is rejected.  Required with an ``issuer``.
     ``jwks_timeout_seconds`` caps both the OIDC discovery and JWKS fetches.
+    ``jwks_max_age_seconds`` caps how long the keys of the last successful
+    fetch stay trusted while the issuer is unreachable.
 
     ``hivegent serve`` requires an ``issuer``, and ``hivegent dev`` refuses one,
     since every request there acts as a development user.
@@ -69,6 +71,7 @@ class AuthSettings(Section):
     jwks_cache_ttl: int = 3600
     jwks_force_refresh_min_interval_seconds: int = 60
     jwks_timeout_seconds: float = 10.0
+    jwks_max_age_seconds: int = 21600
 
     @property
     def enabled(self) -> bool:

@@ -1,18 +1,12 @@
 /**
- * Centralized localStorage utilities for all zustand persist stores.
- */
-
-const STORAGE_KEYS = ["hivegent-settings"] as const;
-
-/**
- * Remove all hivegent-related localStorage entries and reload the page.
+ * Clear everything the app keeps in the browser's storage and reload the page.
  *
  * Used by the error boundary and the settings dialog as an escape hatch
- * when persisted state becomes corrupted.
+ * when stored state becomes corrupted.  The origin is the app's own, so
+ * every entry is one of its stores or of its sign-in.
  */
 export function clearAllStorage(): void {
-  for (const key of STORAGE_KEYS) {
-    localStorage.removeItem(key);
-  }
+  localStorage.clear();
+  sessionStorage.clear();
   window.location.reload();
 }

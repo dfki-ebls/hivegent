@@ -13,7 +13,7 @@ from contextlib import aclosing
 from fastapi import APIRouter, status
 from fastapi.sse import EventSourceResponse
 
-from ...auth import CurrentUser, TokenExpiry, until_expiry
+from ...auth import CurrentUser, until_expiry
 from ...jobs import ADMINS, FeedEvent, JobView, manager
 from ...store import User
 from ...workspace_events import follows
@@ -40,7 +40,6 @@ async def list_jobs(
 @router.get("/jobs/events", response_class=EventSourceResponse)
 async def job_events(
     user: CurrentUser,
-    expires_at: TokenExpiry,
 ) -> AsyncIterable[FeedEvent]:
     """Stream the caller's job snapshots as Server-Sent Events.
 
@@ -52,7 +51,7 @@ async def job_events(
     reconnecting with a fresh one follows only what its grants still reach.
     """
     async with aclosing(manager.subscribe(_owners(user), follows(user))) as feed:
-        async for snapshot in until_expiry(feed, expires_at):
+        async for snapshot in until_expiry(feed, user.expires_at):
             yield snapshot
 
 

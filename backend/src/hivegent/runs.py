@@ -11,6 +11,10 @@ stops only the follower.  An explicit cancel, or the server shutting down,
 stops the turn itself, still preparing or running, which then stores what it
 got to like a turn cut short.
 
+A turn acts with the grants of the principal that started it, which only its
+token vouches for, so it stops too once that token expired and no request of
+the principal renewed it in time with a fresh one still holding them.
+
 A turn is keyed by its :class:`OwnedConversation`, which is the owner and the
 id together, so no other user finds it, even before the conversation's row
 exists.  The registry
@@ -28,6 +32,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DoneChunk, ErrorChunk
 
+from .auth import Lease, leases, until_expiry
 from .db.conversations import OwnedConversation
 from .shared.l10n import Localized
 from .store import User
@@ -67,12 +72,14 @@ class Run:
             user message or the assistant message carrying the decisions of a
             post-approval continuation, ``None`` for a regenerate or a
             compaction.
+        principal: Who started the turn, with the grants it acts with.
         history: The history the turn runs on, once it is prepared.
         refusal: Why its preparation refused the turn.
         started: Whether its preparation passed, so it streams.
     """
 
     message: UIMessage | None
+    principal: User
     history: list[ModelMessage] = field(default_factory=list[ModelMessage])
     chunks: list[BaseChunk] = field(default_factory=list[BaseChunk])
     refusal: Exception | None = None
@@ -97,7 +104,24 @@ class Run:
         stops reading.
         A failure of the stream or of settling is logged and ends the turn on an
         error chunk, so no follower sees it end unexplained.
+        The turn holds a lease of its principal's grants (:class:`Lease`),
+        which every request of the principal renews, and stops like a
+        cancelled one once it lapsed.
         """
+        with leases.hold(self.principal) as lease:
+            watch = asyncio.create_task(self._stop_on_lapse(lease))
+
+            try:
+                await self._pump(prepare)
+            finally:
+                _ = watch.cancel()
+
+    async def _stop_on_lapse(self, lease: Lease) -> None:
+        await lease.lapse()
+        logger.info("Chat turn stopped, since no request renewed its authorization")
+        _ = self.task.cancel()
+
+    async def _pump(self, prepare: Awaitable[Prepared]) -> None:
         try:
             prepared = await prepare
         # Raised again by every request that follows the turn.
@@ -159,8 +183,11 @@ class Run:
 
         return self.started
 
-    async def follow(self) -> AsyncGenerator[BaseChunk]:
-        """Every chunk from the first, then each one as it comes, until the turn ends."""
+    def follow(self, principal: User) -> AsyncGenerator[BaseChunk]:
+        """Every chunk from the first, then each one as it comes, until the turn or *principal*'s token ends."""
+        return until_expiry(self._chunks(), principal.expires_at)
+
+    async def _chunks(self) -> AsyncGenerator[BaseChunk]:
         sent = 0
 
         while True:
@@ -193,10 +220,11 @@ class Runs:
     def start(
         self,
         conversation: OwnedConversation,
+        principal: User,
         message: UIMessage | None,
         prepare: Awaitable[Prepared],
     ) -> Run:
-        """Run the turn *prepare* yields in the conversation's slot, which no turn may hold.
+        """Run the turn *prepare* yields for *principal* in the conversation's slot, which no turn may hold.
 
         Once started, the turn ends on the chunk it settles on (:meth:`Run.pump`).
 
@@ -206,7 +234,7 @@ class Runs:
         ahead of the followers, so one that saw the end finds the slot free.
         A refusal ends the task too, and :meth:`Run.prepared` tells it apart.
         """
-        run = self._runs[conversation] = Run(message)
+        run = self._runs[conversation] = Run(message, principal)
 
         def finish(_: asyncio.Task[None]) -> None:
             if self._runs.get(conversation) is run:

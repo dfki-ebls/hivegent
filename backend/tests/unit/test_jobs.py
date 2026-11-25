@@ -1,18 +1,19 @@
 """Unit tests for the generic background-job manager."""
 
 import asyncio
+import time
 from contextlib import aclosing
 
 import pytest
 
-from hivegent import workspace_events
+from hivegent import auth, workspace_events
 from hivegent.jobs import FeedReady, JobContext, JobManager, JobView
 from hivegent.server.operations.processing import (
     run_bulk_document_job,
     summarize_failed_files,
 )
 from hivegent.shared.l10n import Localized
-from hivegent.store import GroupScope, HostGrant, UserScope
+from hivegent.store import GroupScope, HostGrant, User, UserScope
 from hivegent.tools.changes import PathMove, WorkspaceChanged
 from hivegent.types import FailedFile, ProgressReporter
 
@@ -43,7 +44,7 @@ async def test_job_runs_reports_stage_and_succeeds() -> None:
         stages.append("ran")
         ctx.set_progress(1, 1)
 
-    view = manager.submit(kind="document.upload", title="a.pdf", owner="u1", work=work)
+    view = manager.submit(kind="document.upload", title="a.pdf", owner=User("u1"), work=work)
     assert view.status == "queued"
 
     final = await _run_to_terminal(manager, "u1", view.id)
@@ -59,7 +60,7 @@ async def test_job_cancel_marks_cancelled() -> None:
     async def work(_ctx: JobContext) -> None:
         await asyncio.sleep(10)
 
-    view = manager.submit(kind="x", title="slow", owner="u1", work=work)
+    view = manager.submit(kind="x", title="slow", owner=User("u1"), work=work)
 
     assert manager.cancel({"u1"}, view.id) is True
     final = await _run_to_terminal(manager, "u1", view.id)
@@ -76,7 +77,7 @@ async def test_unfinished_jobs_bound_admission_until_cancelled() -> None:
     async def work(_ctx: JobContext) -> None:
         await asyncio.sleep(10)
 
-    manager.submit(kind="x", title="a", owner="u1", work=work, spooled=60)
+    manager.submit(kind="x", title="a", owner=User("u1"), work=work, spooled=60)
 
     assert manager.admits("u1", 40)
     assert not manager.admits("u1", 41)
@@ -85,7 +86,7 @@ async def test_unfinished_jobs_bound_admission_until_cancelled() -> None:
     manager.submit(
         kind="x",
         title="b",
-        owner="u1",
+        owner=User("u1"),
         work=work,
         on_settled=lambda: settled.append("b"),
     )
@@ -124,13 +125,58 @@ async def test_job_failure_carries_message_and_owner_isolation() -> None:
     async def work(_ctx: JobContext) -> None:
         raise ValueError("boom")
 
-    view = manager.submit(kind="x", title="f", owner="u1", work=work)
+    view = manager.submit(kind="x", title="f", owner=User("u1"), work=work)
     final = await _run_to_terminal(manager, "u1", view.id)
     assert final.status == "failed"
     assert final.error == "boom"
 
     # Jobs are scoped to their owner.
     assert manager.list_jobs({"other"}) == []
+
+
+async def test_a_job_queued_past_its_deadline_never_starts() -> None:
+    """Its grants expired with the token that queued it, so it fails without running."""
+    manager = JobManager()
+    ran: list[str] = []
+
+    async def work(_ctx: JobContext) -> None:
+        ran.append("ran")
+
+    view = manager.submit(kind="x", title="f", owner=User("u1", expires_at=0), work=work)
+    final = await _run_to_terminal(manager, "u1", view.id)
+
+    assert final.status == "failed" and ran == []
+
+
+async def test_a_request_renews_a_queued_job_unless_its_token_lacks_the_grants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh token of the owner lets a job queued past the old one start, a narrower one does not."""
+    monkeypatch.setattr(auth, "_RENEWAL_SECONDS", 0)
+    manager = JobManager(max_concurrency=1)
+    gate = asyncio.Event()
+    eng = frozenset({"eng"})
+
+    async def block(_ctx: JobContext) -> None:
+        _ = await gate.wait()
+
+    async def work(_ctx: JobContext) -> None:
+        pass
+
+    def queue(owner: User) -> str:
+        return manager.submit(kind="x", title="f", owner=owner, work=work).id
+
+    _ = manager.submit(kind="x", title="b", owner=User("u0"), work=block)
+    renewed = queue(User("u1", expires_at=time.time() + 0.05))
+    lapsed = queue(User("u2", read_groups=eng, expires_at=time.time() + 0.05))
+    await asyncio.sleep(0.1)
+
+    auth.leases.renew(User("u1", expires_at=time.time() + 3600))
+    auth.leases.renew(User("u2", expires_at=time.time() + 3600))
+    gate.set()
+
+    assert (await _run_to_terminal(manager, "u1", renewed)).status == "succeeded"
+    assert (await _run_to_terminal(manager, "u2", lapsed)).status == "failed"
 
 
 async def test_subscribe_seeds_retained_jobs_then_ready_marker() -> None:
@@ -144,7 +190,7 @@ async def test_subscribe_seeds_retained_jobs_then_ready_marker() -> None:
     async def work(_ctx: JobContext) -> None:
         return None
 
-    view = manager.submit(kind="x", title="done", owner="u1", work=work)
+    view = manager.submit(kind="x", title="done", owner=User("u1"), work=work)
     await _run_to_terminal(manager, "u1", view.id)
 
     async with aclosing(manager.subscribe({"u1"})) as feed:

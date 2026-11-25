@@ -64,11 +64,17 @@ Die REST-API, die Job- und Chat-Streams und `/mcp` teilen nun eine Prüfung, die
   Mit `none` oder einem HMAC-Algorithmus (HS256, HS384, HS512) signierte Tokens werden abgelehnt.
 - Der `issuer` des Discovery-Dokuments muss `auth.issuer` bis auf einen abschließenden Schrägstrich gleichen, und das `iss` jedes Tokens muss dem `issuer` des Discovery-Dokuments Byte für Byte gleichen.
 - Die `jwks_uri` des Discovery-Dokuments muss auf dem Origin des Issuers liegen, Schema eingeschlossen, sodass ein `https`-Issuer seine Schlüssel per `https` ausliefert.
+- Ein Token muss ein Access-Token sein, ausgewiesen durch den Header `typ: at+jwt` nach RFC 9068 oder, wie Keycloak und Rauthy es ausstellen, durch den Claim `typ: Bearer`, sodass ein ID-Token desselben Clients abgelehnt wird.
+- Ein Token muss seinen Client in `azp` oder `client_id` nennen, und beide müssen übereinstimmen, wenn beide vorhanden sind, sodass ein Token der Bridge nie als das einer Person durchgeht.
+- Der Ablauf eines Tokens erhält 60 Sekunden Toleranz für Uhrabweichungen statt fünf Minuten.
+- Die zwischengespeicherten Signaturschlüssel bleiben bei unerreichbarem Issuer höchstens `auth.jwks_max_age_seconds` nach ihrem letzten erfolgreichen Abruf vertrauenswürdig, standardmäßig sechs Stunden.
 - `auth.audience` listet exakte Client-IDs, ist Pflicht und lehnt Platzhalter ab, ersetzen Sie also ein Muster wie `hivegent-*` durch jede Client-ID, die es traf.
 - Ein Token für `/mcp` muss `mcp.base_url`, genau so geschrieben wie konfiguriert, oder, falls gesetzt, `mcp.client_id` als Audience nennen.
   Den Grund, aus dem ein Token abgelehnt wird, protokolliert der Server.
 
 Langlebige Streams, der Job-Feed und ein laufender Chat-Zug, enden nun mit dem Ablauf ihres Tokens, und die App verbindet sich mit einem frischen neu, sodass eine entzogene Gruppenmitgliedschaft oder Admin-Rolle dann wirkt.
+Ein laufender Chat-Zug und ein eingereihter Dokumentauftrag handeln mit den Berechtigungen des Tokens, das sie startete, das jede spätere Anfrage desselben Benutzers verlängert, wie es die geöffnete App über ihre Streams tut.
+Ein Token, das ihre Berechtigungen nicht mehr hat, etwa nach dem Entzug einer Gruppe, verlängert keinen von beiden, sodass ein Zug eine Minute nach Ablauf des jüngsten verlängernden Tokens endet und speichert, was er erreicht hat, und ein eingereihter Auftrag dann ohne Start fehlschlägt.
 
 ## MCP-Endpunkt
 
@@ -94,6 +100,7 @@ Ein externer MCP-Server mit OAuth-Client-Credentials erreicht seinen eigenen Ori
 ## Teams-Bridge
 
 Die Bridge läuft nicht mehr ohne `auth.service_client_id`.
+Ihre `backendUrl` muss `https` sein, sofern sie keinen Loopback-Host nennt.
 Beim Start prüft sie, dass ihr Token sie als Service-Principal authentifiziert, und startet andernfalls nicht, da sich sonst alle Teams-Benutzer:innen ein gewöhnliches Konto mit dessen Gedächtnis und Unterhaltungen teilen würden.
 Sie braucht außerdem eine Allowlist der Microsoft-Teams-Tenants, die sie bedient, und lehnt Aktivitäten aus jedem anderen Tenant ab.
 

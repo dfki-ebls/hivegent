@@ -42,9 +42,16 @@ Several processes would each grant the full limit, so scaling out means moving t
 
 `auth.authenticate` verifies every bearer token, of the REST API, its streams, and `/mcp` (`mcp.app.HivegentVerifier`), the latter for its own audience, `mcp.base_url` or `mcp.client_id`.
 It accepts only asymmetric signatures (`auth.ASYMMETRIC_ALGORITHMS`, intersected with what discovery advertises), so neither `none` nor a shared secret passes whatever the provider advertises, and requires `iss`, `sub`, `aud`, `exp`, and `iat`.
+An ID token carries the same issuer, audience, and signature as an access token of its client, so only a token declaring itself an access token passes, by the RFC 9068 header `typ: at+jwt` or the `typ: Bearer` claim of Keycloak and Rauthy.
+It must name exactly one client in `azp` or `client_id`, which decides its principal kind, the service for `auth.service_client_id` and a person for every other client.
+A failed key refresh serves the cached keys, retried after `auth.jwks_force_refresh_min_interval_seconds`, until `auth.jwks_max_age_seconds` after the last successful one.
 The discovery document must name the configured issuer, and its `jwks_uri` must lie on the issuer's origin, scheme included, so an https issuer's keys come over https.
 A refused token answers 401 naming at most the claim, while the log names the reason.
-A stream (`/jobs/events`, `/conversations/{id}/stream`) ends when the token that opened it expires (`auth.until_expiry`), so its client reconnects with a fresh one and the grants are read again.
+The principal carries its token's expiry (`User.expires_at`), so whatever outlives a request trusts its grants no longer than that.
+A stream (`/jobs/events`, `/conversations/{id}/stream`) ends then (`auth.until_expiry`), so its client reconnects with a fresh one and the grants are read again.
+Work outliving its request, a chat turn or a queued job, holds a lease (`auth.Lease`) in the process's registry (`auth.leases`), which every token `authenticate` verifies renews for its principal while it holds the grants the work acts with, lapsing a minute past the latest such expiry.
+A turn whose lease lapsed stops, and a job fails instead of starting, so either runs on while any client of its user makes requests.
+Every response is `Cache-Control: no-store` (`server.no_store`), since one URL names another account's data for the next caller, and the client fetches with `cache: "no-store"` alike.
 
 ## Interface language
 

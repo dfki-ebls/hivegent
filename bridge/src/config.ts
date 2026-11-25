@@ -13,9 +13,6 @@ import { z } from "zod";
 const nonEmpty = z.string().min(1);
 const httpUrl = z.url({ protocol: /^https?$/ });
 
-// Paths are appended to these, so a trailing slash would double up.
-const baseUrl = httpUrl.refine((url) => !url.endsWith("/"), "must not end with a slash");
-
 /** Whether *host* names the loopback interface, as a URL hostname with IPv6 brackets or a bare bind address. */
 function isLoopback(host: string): boolean {
   return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(host) || host.endsWith(".localhost");
@@ -31,9 +28,12 @@ const secureUrl = httpUrl.refine(
   "must be https, or http on a loopback host",
 );
 
+// Carries the bearer token and the chat, and paths are appended to it, so a trailing slash would double up.
+const backendUrl = secureUrl.refine((url) => !url.endsWith("/"), "must not end with a slash");
+
 export const FileSchema = z
   .strictObject({
-    backendUrl: baseUrl,
+    backendUrl,
     host: nonEmpty.default("127.0.0.1"),
     port: z.int().min(1).max(65535).default(3003),
     botUserName: nonEmpty.default("hivegent"),

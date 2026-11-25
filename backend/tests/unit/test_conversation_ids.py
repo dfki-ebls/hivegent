@@ -191,7 +191,6 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
             User("u"),
             _chat_request(message_id),
             Request({"type": "http", "headers": []}),
-            None,
         )
 
     if isinstance(raised.value, HTTPException):

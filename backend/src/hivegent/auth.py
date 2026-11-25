@@ -4,21 +4,24 @@ import asyncio
 import logging
 import time
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterator,
     Awaitable,
     Callable,
     Collection,
+    Generator,
     Iterable,
     Iterator,
     Mapping,
     Sequence,
 )
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 
 import httpx2
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastmcp.server.auth.oidc_proxy import OIDCConfiguration
 from joserfc import jwt
@@ -50,7 +53,8 @@ __all__ = [
     "CurrentPrincipal",
     "CurrentUser",
     "GroupClaim",
-    "TokenExpiry",
+    "Lease",
+    "Leases",
     "authenticate",
     "build_discovery_url",
     "check_kind",
@@ -58,10 +62,10 @@ __all__ = [
     "fetch_oidc_configuration",
     "get_current_principal",
     "get_current_user",
+    "leases",
     "parse_group_claims",
     "refuse_expired",
     "require_admin",
-    "token_expiry",
     "until_expiry",
     "user_from_claims",
 ]
@@ -92,6 +96,13 @@ _INVALID_SUBJECT = Localized(
     de="Das Subjekt des Tokens ist keine gültige Benutzerkennung",
 )
 _NOT_AUTHENTICATED = Localized(en="Not authenticated", de="Nicht authentifiziert")
+_NOT_AN_ACCESS_TOKEN = Localized(
+    en="Token is not an access token", de="Das Token ist kein Zugriffstoken"
+)
+_NO_CLIENT = Localized(
+    en="Token names no unambiguous client",
+    de="Das Token nennt keinen eindeutigen Client",
+)
 
 ASYMMETRIC_ALGORITHMS: frozenset[str] = frozenset(
     {
@@ -115,7 +126,10 @@ accepted, whatever the provider advertises.  RFC 9864 replaces the generic
 ``EdDSA`` with ``Ed25519``, but IdPs still sign with the former.
 """
 
-_LEEWAY_SECONDS = 300
+_LEEWAY_SECONDS = 60
+
+_ACCESS_TOKEN_TYPES = frozenset({"at+jwt", "application/at+jwt"})
+"""The ``typ`` header values of an RFC 9068 access token, compared case-insensitively."""
 
 
 def build_discovery_url(issuer: str) -> str:
@@ -205,28 +219,38 @@ async def fetch_oidc_configuration(issuer: OperatorUrl) -> OIDCConfiguration:
 
 
 class _SingleFlightCache[T]:
-    """TTL cache whose refreshes are single-flighted with stale fallback.
+    """TTL cache whose refreshes are single-flighted with a bounded stale fallback.
 
-    Concurrent cache misses share one refresh, and a failed refresh
-    serves the previously cached value instead of failing the caller,
-    re-stamping the TTL so the next retry is a full interval away.
+    Concurrent cache misses share one refresh, and a failed refresh serves
+    the previously cached value instead of failing the caller, retried no
+    sooner than the force-refresh interval.  The fallback ends
+    ``jwks_max_age_seconds`` after the last successful refresh, so an outage
+    cannot keep a value trusted indefinitely.
     """
 
     def __init__(self, name: str) -> None:
         self._name = name
         self._value: T | None = None
-        self._time: float = 0
+        self._fetched: float = 0
+        self._attempted: float = 0
         self._lock = asyncio.Lock()
 
-    def _fresh(self, *, force_refresh: bool) -> T | None:
-        if self._value is None:
+    def _usable(self, now: float) -> T | None:
+        """The cached value while it is younger than the maximum age."""
+        if now - self._fetched >= settings.auth.jwks_max_age_seconds:
             return None
-        ttl = (
-            settings.auth.jwks_force_refresh_min_interval_seconds
-            if force_refresh
-            else settings.auth.jwks_cache_ttl
-        )
-        return self._value if time.time() - self._time < ttl else None
+
+        return self._value
+
+    def _fresh(self, *, force_refresh: bool) -> T | None:
+        now = time.time()
+        min_interval = settings.auth.jwks_force_refresh_min_interval_seconds
+        ttl = 0 if force_refresh else settings.auth.jwks_cache_ttl
+
+        if now - self._fetched < ttl or now - self._attempted < min_interval:
+            return self._usable(now)
+
+        return None
 
     async def get(
         self, refresh: Callable[[], Awaitable[T]], *, force_refresh: bool
@@ -242,17 +266,23 @@ class _SingleFlightCache[T]:
         async with self._lock:
             if (fresh := self._fresh(force_refresh=force_refresh)) is not None:
                 return fresh
+            self._attempted = time.time()
+
             try:
                 value = await refresh()
             except Exception as e:
-                if self._value is None:
+                if (stale := self._usable(self._attempted)) is None:
                     raise
+
                 logger.warning(
                     "%s refresh failed, serving cached copy: %s", self._name, e
                 )
-                value = self._value
+
+                return stale
+
             self._value = value
-            self._time = time.time()
+            self._fetched = self._attempted
+
             return value
 
 
@@ -526,15 +556,11 @@ def _rejected(reason: str, detail: Localized[str]) -> HTTPException:
 
 @dataclass(slots=True, frozen=True)
 class Credential:
-    """A verified token: the principal it names, its claims, and when it expires.
-
-    It expires once :func:`authenticate` would refuse it, its ``exp`` plus the
-    leeway, so a stream it opens lasts exactly as long as it is accepted.
-    """
+    """A verified token: the principal it names, expiring with it, its claims, and the client it was issued to."""
 
     user: User
     claims: Mapping[str, Any]
-    expires_at: float
+    client: str
 
 
 async def authenticate(token: str, audience: Collection[str]) -> Credential:
@@ -542,7 +568,11 @@ async def authenticate(token: str, audience: Collection[str]) -> Credential:
 
     The one verification the REST API, its streams, and ``/mcp`` share: an
     asymmetric signature by the issuer's current keys, the discovery
-    document's exact issuer, one of *audience*, and a subject, issue, and expiry time.
+    document's exact issuer, one of *audience*, a subject, issue, and expiry
+    time, an access token rather than an ID token of the same client, and
+    the one client it was issued to.  A verified token renews every lease of
+    its principal (:data:`leases`), so work it started runs on while any
+    client of the principal makes requests.
 
     Raises:
         HTTPException: 401 for a refused token, logged with its reason, and
@@ -574,24 +604,67 @@ async def authenticate(token: str, audience: Collection[str]) -> Credential:
         # cannot probe the configured issuer or audience.
         raise _rejected(f"invalid claim {e.claim!r}", _invalid_claim(e.claim)) from e
 
+    if not _is_access_token(decoded.header, decoded.claims):
+        raise _rejected("not an access token", _NOT_AN_ACCESS_TOKEN)
+
+    if (client := _client(decoded.claims)) is None:
+        raise _rejected("no unambiguous client", _NO_CLIENT)
+
     try:
         user = user_from_claims(decoded.claims)
     except ValueError as e:
         raise _rejected("invalid subject", _INVALID_SUBJECT) from e
 
-    return Credential(
-        user, decoded.claims, float(decoded.claims["exp"]) + _LEEWAY_SECONDS
-    )
+    leases.renew(user)
+
+    return Credential(user, decoded.claims, client)
+
+
+def _is_access_token(header: Mapping[str, Any], claims: Mapping[str, Any]) -> bool:
+    """Whether a token declares itself an access token.
+
+    An ID token carries the same issuer, audience, and signature, so only
+    its type tells them apart.  RFC 9068 declares it in the ``typ`` header,
+    Keycloak and Rauthy in a ``typ`` claim of ``Bearer``.
+
+    >>> _is_access_token({"typ": "AT+JWT"}, {})
+    True
+    >>> _is_access_token({"typ": "JWT"}, {"typ": "Bearer"})
+    True
+    >>> _is_access_token({"typ": "JWT"}, {"typ": "ID"})
+    False
+    """
+    typ = header.get("typ")
+
+    return (
+        isinstance(typ, str) and typ.lower() in _ACCESS_TOKEN_TYPES
+    ) or claims.get("typ") == "Bearer"
+
+
+def _client(claims: Mapping[str, Any]) -> str | None:
+    """The client *claims* were issued to, ``None`` unless named unambiguously.
+
+    OpenID Connect names it in ``azp``, RFC 9068 in ``client_id``, and a
+    token naming two different clients names none.
+
+    >>> _client({"azp": "spa", "client_id": "spa"})
+    'spa'
+    >>> _client({"azp": "spa", "client_id": "bot"}) is None
+    True
+    """
+    azp, client_id = _text(claims.get("azp")), _text(claims.get("client_id"))
+
+    if azp is not None and client_id is not None and azp != client_id:
+        return None
+
+    return azp or client_id
 
 
 def _is_service(claims: Mapping[str, Any]) -> bool:
-    """Whether *claims* were issued to the configured service client.
-
-    OpenID Connect names the client in ``azp``, RFC 9068 in ``client_id``.
-    """
+    """Whether *claims* were issued to the configured service client, every other client being a person's."""
     client = settings.auth.service_client_id
 
-    return client is not None and client in (claims.get("azp"), claims.get("client_id"))
+    return client is not None and _client(claims) == client
 
 
 def user_from_claims(claims: Mapping[str, Any]) -> User:
@@ -601,15 +674,22 @@ def user_from_claims(claims: Mapping[str, Any]) -> User:
     endpoint alike, so both grant the same groups with the same permissions.
     A token of the service client becomes a service principal, whose groups
     and roles are never read, so its capabilities follow from its kind alone.
+    The principal expires once :func:`authenticate` would refuse the token,
+    its ``exp`` plus the leeway, so a stream it opens lasts exactly as long
+    as it is accepted.
 
     Raises:
         ValueError: If the subject is no valid user ID.
     """
     sub = claims.get("sub")
     user_id = sanitize_user_id(sub if isinstance(sub, str) else "")
+    exp = claims.get("exp")
+    expires_at = float(exp) + _LEEWAY_SECONDS if isinstance(exp, int | float) else None
 
     if _is_service(claims):
-        return User(id=user_id, name=claims.get("name"), kind="service")
+        return User(
+            id=user_id, name=claims.get("name"), kind="service", expires_at=expires_at
+        )
 
     read_groups, write_groups, group_labels = _extract_groups(claims)
 
@@ -621,6 +701,7 @@ def user_from_claims(claims: Mapping[str, Any]) -> User:
         write_groups=write_groups,
         group_labels=group_labels,
         roles=_extract_roles(claims),
+        expires_at=expires_at,
     )
 
 
@@ -670,7 +751,6 @@ def check_kind(principal: User, expected: PrincipalKind | None) -> None:
 
 
 async def get_current_principal(
-    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     expected: Annotated[
         PrincipalKind | None, Header(alias=EXPECTED_PRINCIPAL_HEADER)
@@ -678,8 +758,7 @@ async def get_current_principal(
 ) -> User:
     """FastAPI dependency to get the current authenticated principal, a service too.
 
-    Verifies the bearer token for ``auth.audience`` with :func:`authenticate`,
-    and notes its expiry on the request for :func:`token_expiry`.  A client
+    Verifies the bearer token for ``auth.audience`` with :func:`authenticate`.  A client
     may declare the kind its token must authenticate as, as the Teams bridge
     declares a service on every request, so a token that turned into a
     person's never acts with that person's tools and data.
@@ -696,23 +775,9 @@ async def get_current_principal(
         )
 
     credential = await authenticate(credentials.credentials, settings.auth.audience)
-    request.state.token_expires_at = credential.expires_at
     check_kind(credential.user, expected)
 
     return credential.user
-
-
-def token_expiry(request: Request) -> float | None:
-    """When the request's token expires, as a UNIX time, ``None`` without a token.
-
-    A stream ends then, so its client reconnects with a fresh token and the
-    grants it holds are read again.
-    """
-    return getattr(request.state, "token_expires_at", None)
-
-
-TokenExpiry = Annotated[float | None, Depends(token_expiry)]
-"""When the request's token expires, for a route that outlives it."""
 
 
 def refuse_expired(expires_at: float | None) -> None:
@@ -721,13 +786,109 @@ def refuse_expired(expires_at: float | None) -> None:
     Raises:
         HTTPException: 401 once the token expired.
     """
-    if expires_at is not None and time.time() >= expires_at:
+    if _lapsed(expires_at):
         raise _rejected("expired while answering", _TOKEN_EXPIRED)
+
+
+def _lapsed(at: float | None) -> bool:
+    """Whether the UNIX time *at* passed, never for ``None``."""
+    return at is not None and time.time() >= at
+
+
+_RENEWAL_SECONDS = 60
+"""How long past its token work waits for a later one to renew its authorization."""
+
+
+def _lease_end(expires_at: float | None) -> float | None:
+    return None if expires_at is None else expires_at + _RENEWAL_SECONDS
+
+
+def _later(a: float | None, b: float | None) -> float | None:
+    """The later of two UNIX times, where ``None`` is never."""
+    return None if a is None or b is None else max(a, b)
+
+
+@dataclass(slots=True, eq=False)
+class Lease:
+    """The authorization of work outliving its request, such as a chat turn or a queued job.
+
+    The work acts with the grants of *principal*, which only its token vouches
+    for, so the lease lapses shortly after that token expired unless a later
+    token of the same principal still holding those grants renewed it.  A token
+    lacking them, such as one of a user a group was taken from meanwhile, or
+    one a client requested with fewer scopes, leaves it to lapse.
+    ``expires_at`` is the UNIX time it lapses, ``None`` for never.
+    """
+
+    principal: User
+    expires_at: float | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Lease until shortly after *principal*'s token expires."""
+        self.expires_at = _lease_end(self.principal.expires_at)
+
+    def renew(self, principal: User) -> None:
+        """Extend the lease to *principal*'s token if it holds the grants the work acts with.
+
+        >>> lease = Lease(User("a", read_groups=frozenset({"x"}), expires_at=0))
+        >>> lease.renew(User("a", expires_at=10**10))
+        >>> lease.expires_at
+        60
+        >>> lease.renew(User("a", read_groups=frozenset({"x"})))
+        >>> lease.expires_at is None
+        True
+        """
+        if principal.holds(self.principal):
+            self.expires_at = _later(self.expires_at, _lease_end(principal.expires_at))
+
+    @property
+    def expired(self) -> bool:
+        """Whether the lease lapsed."""
+        return _lapsed(self.expires_at)
+
+    async def lapse(self) -> None:
+        """Return once the lease lapsed, never while it has no expiry."""
+        while (at := self.expires_at) is None or at > time.time():
+            if at is None:
+                await asyncio.get_running_loop().create_future()
+            else:
+                await asyncio.sleep(at - time.time())
+
+
+@dataclass(slots=True)
+class Leases:
+    """The leases of this process by principal, each renewed by every token of its principal (:func:`authenticate`)."""
+
+    _held: dict[str, set[Lease]] = field(default_factory=dict[str, set[Lease]])
+
+    @contextmanager
+    def hold(self, principal: User) -> Generator[Lease]:
+        """Lease the grants of *principal* to the work run inside."""
+        lease = Lease(principal)
+        held = self._held.setdefault(principal.id, set())
+        held.add(lease)
+
+        try:
+            yield lease
+        finally:
+            held.discard(lease)
+
+            if not held:
+                _ = self._held.pop(principal.id, None)
+
+    def renew(self, principal: User) -> None:
+        """Renew every lease of *principal* with its token."""
+        for lease in list(self._held.get(principal.id, ())):
+            lease.renew(principal)
+
+
+leases = Leases()
+"""The leases of this process."""
 
 
 async def until_expiry[T](
     events: AsyncIterator[T], expires_at: float | None
-) -> AsyncIterator[T]:
+) -> AsyncGenerator[T]:
     """The *events* until the token expiring at *expires_at* does, all of them for ``None``.
 
     A stream is authorized once, when it opens, so it must not outlive the

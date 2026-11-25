@@ -37,8 +37,10 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from .auth import leases
 from .config import settings
 from .shared.l10n import Localized
+from .store import User
 from .tools.changes import WorkspaceChanged
 
 __all__ = [
@@ -68,6 +70,10 @@ JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 _TERMINAL: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
 
 _JOB_FAILED = Localized(en="Job failed", de="Auftrag fehlgeschlagen")
+_AUTHORIZATION_EXPIRED = Localized(
+    en="The sign-in that queued this job expired before it started, please try again",
+    de="Die Anmeldung, die diesen Auftrag eingereiht hat, lief vor seinem Start ab, bitte erneut versuchen",
+)
 
 
 class JobProgress(BaseModel):
@@ -285,7 +291,7 @@ class JobManager:
         *,
         kind: str,
         title: str,
-        owner: str,
+        owner: User,
         work: JobWork,
         on_settled: Callable[[], None] | None = None,
         spooled: int = 0,
@@ -298,6 +304,10 @@ class JobManager:
         path (success, failure, or a cancel even before it started), so a
         feature can release resources tied to the job (e.g. a spooled payload
         of *spooled* bytes, which :meth:`admits` counts until then).
+        It holds a lease of *owner*'s grants until it settled, which every
+        request of *owner* renews (:class:`~hivegent.auth.Lease`), so one
+        still queued once the lease lapsed fails instead of starting on grants
+        no token vouches for.
         """
         self._prune()
         now = time.monotonic()
@@ -305,16 +315,16 @@ class JobManager:
             id=str(uuid4()),
             kind=kind,
             title=title,
-            owner=owner,
+            owner=owner.id,
             spooled=spooled,
             status="queued",
             created_at=now,
             updated_at=now,
         )
-        self._jobs.setdefault(owner, {})[job.id] = job
-        job.task = asyncio.create_task(self._run(job, work))
+        self._jobs.setdefault(owner.id, {})[job.id] = job
+        job.task = asyncio.create_task(self._run(job, work, owner))
         job.task.add_done_callback(partial(self._settle, job, on_settled))
-        self.publish(owner, job.view())
+        self.publish(owner.id, job.view())
         return job.view()
 
     def publish(self, owner: str, event: FeedEvent) -> None:
@@ -343,11 +353,15 @@ class JobManager:
             if (event := event_for(subscription.follows)) is not None:
                 _enqueue(queue, event)
 
-    async def _run(self, job: _Job, work: JobWork) -> None:
-        async with self._semaphore:
-            job.status = "running"
-            self._touch(job)
-            await work(JobContext(job, self._touch))
+    async def _run(self, job: _Job, work: JobWork, owner: User) -> None:
+        with leases.hold(owner) as lease:
+            async with self._semaphore:
+                if lease.expired:
+                    raise PermissionError(_AUTHORIZATION_EXPIRED.current)
+
+                job.status = "running"
+                self._touch(job)
+                await work(JobContext(job, self._touch))
 
     def _settle(
         self,
@@ -394,11 +408,7 @@ class JobManager:
         and, by the bytes they hold spooled, against ``max_owner_spool_bytes``.
         """
         held = [
-            *(
-                job.spooled
-                for job in self._owners_jobs((owner,))
-                if job.status not in _TERMINAL
-            ),
+            *(job.spooled for job in self._unfinished(owner)),
             *(r.spooled for r in self._reservations if r.owner == owner),
         ]
 
@@ -428,11 +438,7 @@ class JobManager:
 
     async def cancel_owner(self, owner: str) -> None:
         """Cancel every unfinished job of *owner* and wait until each settled."""
-        tasks = [
-            job.task
-            for job in self._owners_jobs((owner,))
-            if job.task is not None and job.status not in _TERMINAL
-        ]
+        tasks = [job.task for job in self._unfinished(owner) if job.task is not None]
 
         for task in tasks:
             task.cancel()
@@ -477,6 +483,14 @@ class JobManager:
                 yield await queue.get()
         finally:
             del self._subscribers[queue]
+
+    def _unfinished(self, owner: str) -> list[_Job]:
+        """The jobs of *owner* that are still queued or running."""
+        return [
+            job
+            for job in self._jobs.get(owner, {}).values()
+            if job.status not in _TERMINAL
+        ]
 
     def _owners_jobs(self, owners: Collection[str]) -> list[_Job]:
         jobs = (job for owner in owners for job in self._jobs.get(owner, {}).values())

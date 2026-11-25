@@ -220,7 +220,7 @@ def _submit_document_job(
     return manager.submit(
         kind=kind,
         title=PurePosixPath(safe).name,
-        owner=user.id,
+        owner=user,
         work=work,
         on_settled=on_settled,
         spooled=spooled,
@@ -257,7 +257,7 @@ def _submit_bulk_job(
     return manager.submit(
         kind=kind,
         title=title(len(files)).current,
-        owner=user.id,
+        owner=user,
         work=work,
     )
 
@@ -429,7 +429,7 @@ async def upload_collection(
         return manager.submit(
             kind=DocumentJobKind.COLLECTION,
             title=file.filename or "collection.zip",
-            owner=user.id,
+            owner=user,
             work=work,
             on_settled=lambda: spool.unlink(missing_ok=True),
             spooled=file.size or 0,

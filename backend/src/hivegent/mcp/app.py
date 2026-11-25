@@ -53,9 +53,9 @@ class HivegentVerifier(TokenVerifier):
 
         return AccessToken(
             token=token,
-            client_id=str(claims.get("azp") or claims.get("client_id") or ""),
+            client_id=credential.client,
             scopes=scope.split() if isinstance(scope, str) else [],
-            expires_at=int(credential.expires_at),
+            expires_at=None if (end := credential.user.expires_at) is None else int(end),
             subject=credential.user.id,
             claims=dict(claims),
         )

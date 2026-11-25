@@ -35,6 +35,7 @@ from ..workspace import recover_changesets, sweep_partials
 from .access_log import install_probe_access_filter
 from .language import LanguageMiddleware
 from .maintenance import load_persisted_state
+from .no_store import NoStoreMiddleware
 from .problems import install_problem_handlers
 from .rate_limit import McpAdmission
 from .routes import api_router
@@ -221,6 +222,7 @@ def _create_app(*, dev: bool) -> FastAPI:
     )
     configure_observability(app)
     app.add_middleware(LanguageMiddleware)
+    app.add_middleware(NoStoreMiddleware)
     install_problem_handlers(app)
     app.include_router(public_router)
     app.include_router(api_router)

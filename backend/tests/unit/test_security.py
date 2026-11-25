@@ -4,8 +4,10 @@ from io import BytesIO
 
 import httpx2
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from pydantic import HttpUrl, ValidationError
+from starlette.responses import PlainTextResponse
+from starlette.testclient import TestClient
 
 from hivegent import security
 from hivegent.config import settings
@@ -17,6 +19,7 @@ from hivegent.security import (
     create_operator_client,
     create_safe_async_client,
 )
+from hivegent.server.no_store import NoStoreMiddleware
 from hivegent.server.operations import enforce_upload_size
 from hivegent.types import ChatRequest, Preferences
 from hivegent.workspace.paths import file_too_large
@@ -209,3 +212,15 @@ def test_a_stale_preference_falls_back_to_its_default(
     stored = Preferences.stored({"model": "gone", "mode": "read", "theme": "dark"})
 
     assert stored == Preferences(mode="read")
+
+
+def test_responses_are_never_cached() -> None:
+    """A response, a file one included, is kept out of every cache, since its URL names another account's data for the next caller."""
+    app = FastAPI()
+    app.add_middleware(NoStoreMiddleware)
+
+    @app.get("/file")
+    def file() -> PlainTextResponse:
+        return PlainTextResponse("private", headers={"Last-Modified": "x"})
+
+    assert TestClient(app).get("/file").headers["Cache-Control"] == "no-store"

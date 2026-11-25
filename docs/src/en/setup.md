@@ -354,7 +354,8 @@ The Content-Security-Policy of the bundled Caddy lets the app reach no other hos
 The container takes them space-separated in `CADDY_IDP_ORIGINS`, the NixOS module as the list `services.hivegent.caddy.idpOrigins`.
 Without an origin the sign-in would be blocked, so the container refuses to start and the NixOS module to evaluate.
 
-The backend accepts an access token only when it is signed with an asymmetric algorithm the provider advertises (RS, PS, ES, EdDSA, or Ed25519), names the configured issuer and one of `auth.audience`, and carries `exp` and `iat`.
+The backend accepts an access token only when it is signed with an asymmetric algorithm the provider advertises (RS, PS, ES, EdDSA, or Ed25519), names the configured issuer and one of `auth.audience`, carries `exp` and `iat`, names its client in `azp` or `client_id`, and is an access token, declared by the RFC 9068 header `typ: at+jwt` or the claim `typ: Bearer` of Keycloak and Rauthy.
+An ID token of the same client is refused, so a provider that marks its access tokens neither way must be set to issue RFC 9068 tokens.
 The provider's discovery document must name the same issuer and serve its keys on the issuer's origin, scheme included.
 The MCP endpoint verifies tokens the same way, for the audience `mcp.base_url`, spelled exactly as configured, or `mcp.client_id`.
 The bundled Caddy forwards `/mcp` and the OAuth discovery documents of the endpoint below `/.well-known/`, such as `/.well-known/oauth-protected-resource/mcp`, and in `proxy` mode the identity provider must allow the redirect URI `<mcp.base_url>/auth/callback`.

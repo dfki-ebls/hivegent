@@ -37,7 +37,7 @@ flowchart LR
   Only `hivegent dev`, which the dev stack runs on the loopback address, acts as a development user for every request and refuses an issuer, so the NixOS module and the container, which run `serve`, never have that user.
 - Authentication uses OIDC bearer tokens, with groups and roles read from their claims, whose audience names one of the exact client ids in `auth.audience`.
 - A token of `auth.service_client_id`, the Teams bridge, is a service principal: it sees the global workspace alone, runs in read mode, is offered no memory or conversation tools, and reaches only the chat route.
-- One verifier (`auth.authenticate`) checks every token of the API, its streams, and `/mcp`, an asymmetric signature of the configured issuer with `exp` and `iat`, and a stream ends when its token expires.
+- One verifier (`auth.authenticate`) checks every token of the API, its streams, and `/mcp`, an asymmetric signature of the configured issuer with `exp` and `iat` on an access token naming its client, and a stream ends when its token expires.
 - One uvicorn process serves the API, so the admission of every request, the maintenance gate and a request bucket for the API and `/mcp` alike, and per-user rate limits on the costly routes are token buckets in memory (`server.rate_limit`), forgetting a bucket once it refilled, while the unfinished upload jobs and spooled bytes of a user are bounded by `jobs.max_owner_jobs` and `jobs.max_owner_spool_bytes` and refused with 429.
 - Operator endpoints are `OperatorUrl`s only the settings mint, and the direct client opened for them reaches their origins alone (`http_client`).
   Neither it nor the shared web client keeps cookies, since each serves every caller.
@@ -116,6 +116,7 @@ flowchart LR
 - REST under `/api/v1` for documents, conversations, and settings, with typed bodies, idempotent methods wherever a retry lands the same state, and RFC 9457 problems for every error.
 - Vercel AI Data Stream Protocol for chat, Server-Sent Events for job progress, workspace changes, and conversation list changes.
 - A chat turn runs apart from its request, so a client that leaves only stops following it, follows it again at `GET /api/v1/conversations/{id}/stream`, and stops it with `DELETE` there.
+  It stops on its own once no request of its user renewed its authorization with a fresh token holding its grants, as a queued document job fails instead of starting then.
   The conversation list includes conversations whose first turn still runs.
 - The store holds pydantic-ai messages only, each carrying the id of the UI message it shows in, and their projection to UI messages is the one transcript: `GET .../messages` answers it, and every turn's stream ends on the stored turn, which the client swaps in for what it streamed.
 - Chat configuration (model, reasoning effort, mode, document filters, tools) travels with each chat request.

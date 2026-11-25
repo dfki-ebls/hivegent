@@ -89,7 +89,7 @@ Every query is keyed under a scope that `Register` restricts (`lib/query-client.
 Routes load their data in `loader` through the `queryClient` of the router context, after `enforceLogin`, and components read it with `useSuspenseQuery`.
 The mutation cache refetches those before the mutation settles and raises a toast on failure unless the mutation renders it (`meta.inlineError`) or has its own `onError`, so components neither refetch by hand nor copy server data into state.
 Zustand keeps what the browser owns: settings, chunks the model read, and dialog state.
-The assistant, agent mode, reasoning effort, and chat model are the user's preferences, which the server keeps (`api/preferences`), so a choice applies to every conversation and client at once, set optimistically and reconciled with what the server stored, while the draft lives in the composer and the browser keeps only the expanded folders (`settings-store`).
+The assistant, agent mode, reasoning effort, and chat model are the user's preferences, which the server keeps (`api/preferences`), so a choice applies to every conversation and client at once, set optimistically and reconciled with what the server stored, while the draft lives in the composer and the expanded folders in memory alone (`settings-store`), since they name private documents.
 
 Binary previews such as asset images and PDF originals are queries too, whose data is an object URL flagged `meta.objectUrl`, so every view of one file shares a URL and the cache revokes it once the entry drops or holds a new one.
 A conversation's stored messages load through `conversationQueries.messages` without being kept, since the chat owns them once it starts.

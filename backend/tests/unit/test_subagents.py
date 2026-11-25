@@ -148,7 +148,6 @@ async def _turn(
         User("u"),
         request,
         Request({"type": "http", "headers": []}),
-        None,
     )
     assert isinstance(response, StreamingResponse)
     chunks = [

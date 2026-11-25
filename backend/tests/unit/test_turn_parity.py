@@ -243,7 +243,6 @@ async def _turn(
         _USER,
         request,
         Request({"type": "http", "headers": []}),
-        None,
     )
     assert isinstance(response, StreamingResponse)
     chunks: list[dict[str, Any]] = []

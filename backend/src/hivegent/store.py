@@ -428,6 +428,10 @@ class User:
     provider additionally supplied, for the client to show in place of an
     opaque ID; nothing on the server reads it, so a rename upstream changes
     only what the UI renders.
+
+    ``expires_at`` is the UNIX time until which the token vouches for these
+    grants, so work outliving the request stops trusting them then, ``None``
+    for a principal no token authorizes, such as the development user.
     """
 
     id: str
@@ -438,6 +442,23 @@ class User:
     group_labels: Mapping[str, str] = field(default_factory=dict, compare=False)
     roles: frozenset[str] = field(default_factory=frozenset)
     kind: _PrincipalKind = "person"
+    expires_at: float | None = field(default=None, compare=False)
+
+    def holds(self, other: User) -> bool:
+        """Whether this principal holds every grant of *other*, so it may continue what *other* started.
+
+        >>> User("a", write_groups=frozenset({"x"})).holds(User("a", read_groups=frozenset({"x"})))
+        True
+        >>> User("a", read_groups=frozenset({"x"})).holds(User("a", write_groups=frozenset({"x"})))
+        False
+        """
+        return (
+            self.id == other.id
+            and self.kind == other.kind
+            and other.all_groups <= self.all_groups
+            and other.write_groups <= self.write_groups
+            and other.roles <= self.roles
+        )
 
     @property
     def is_service(self) -> bool:

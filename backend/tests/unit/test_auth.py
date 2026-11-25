@@ -46,6 +46,8 @@ def _claims(**changes: Any) -> dict[str, Any]:
         "iss": ISSUER,
         "sub": "user-1",
         "aud": "hivegent-api",
+        "azp": "hivegent-api",
+        "typ": "Bearer",
         "iat": now,
         "exp": now + 300,
     }
@@ -93,10 +95,12 @@ async def idp(
 async def test_a_signed_token_names_its_principal(
     idp: Callable[[Discovery], None],
 ) -> None:
-    """A token of the issuer, named byte for byte, names its principal, and no other ``iss`` passes."""
-    credential = await authenticate(_token(_claims()), AUDIENCE)
+    """A token of the issuer, named byte for byte, names its principal, renewing its leases, and no other ``iss`` passes."""
+    with auth.leases.hold(User("user-1", expires_at=0)) as lease:
+        credential = await authenticate(_token(_claims()), AUDIENCE)
 
     assert credential.user.id == "user-1"
+    assert lease.expires_at is not None and lease.expires_at > time.time()
 
     with pytest.raises(HTTPException, match="iss"):
         await authenticate(_token(_claims(iss=f"{ISSUER}/")), AUDIENCE)
@@ -139,6 +143,10 @@ async def test_only_asymmetric_algorithms_are_accepted(
         _claims(iss="https://evil.example.com"),
         _claims(aud="hivegent-api-x"),
         _claims(exp=int(time.time()) - 3600),
+        _claims(typ="ID"),
+        _claims(typ=None),
+        _claims(azp=None),
+        _claims(client_id="hivegent-bot"),
     ],
 )
 async def test_a_token_lacking_a_required_claim_is_refused(
@@ -201,12 +209,12 @@ async def test_mcp_tokens_name_the_advertised_resource(
     assert token is not None and token.claims["sub"] == "user-1"
 
 
-async def test_get_jwks_serves_stale_keys_when_refresh_fails() -> None:
-    """A failed refresh falls back to the cached keys and re-stamps their TTL."""
+async def test_get_jwks_serves_stale_keys_until_their_maximum_age() -> None:
+    """A failed refresh falls back to the cached keys, retried after a pause, until they are too old to trust."""
     fetcher = JWKSFetcher()
     stale = auth._Keys(KeySet([KEY]), ["RS256"], ISSUER)
     fetcher._keys._value = stale
-    fetcher._keys._time = 0
+    fetcher._keys._fetched = time.time() - settings.auth.jwks_cache_ttl
     calls: list[None] = []
 
     async def failing() -> auth._Keys:
@@ -218,6 +226,11 @@ async def test_get_jwks_serves_stale_keys_when_refresh_fails() -> None:
     assert await fetcher.get() is stale
     assert await fetcher.get() is stale
     assert len(calls) == 1
+
+    fetcher._keys._fetched = time.time() - settings.auth.jwks_max_age_seconds
+
+    with pytest.raises(HTTPException):
+        await fetcher.get()
 
 
 async def test_admin_is_a_role_not_a_group(idp: Callable[[Discovery], None]) -> None:

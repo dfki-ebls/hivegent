@@ -59,7 +59,10 @@ The spans of MCP and of the Monty sandbox are only recorded with it, since they 
 The REST API, the job and chat streams, and `/mcp` now share one verifier, which is stricter than before.
 
 - `auth.issuer` must be an `https` URL, unless its host is `localhost`, a subdomain of it, `127.0.0.1`, or `::1`.
-- A token must carry `exp` and `iat`.
+- A token must carry `exp` and `iat`, and its expiry is granted 60 seconds of clock skew instead of five minutes.
+- A token must be an access token, declared by the RFC 9068 header `typ: at+jwt` or, as Keycloak and Rauthy issue them, by the claim `typ: Bearer`, so an ID token of the same client is refused.
+- A token must name its client in `azp` or `client_id`, and the two must agree when both are present, so a token of the bridge never passes as a person's.
+- The cached signing keys stay trusted while the issuer is unreachable for at most `auth.jwks_max_age_seconds`, six hours by default, after their last successful fetch.
 - It must be signed with an asymmetric algorithm, RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512, EdDSA, or Ed25519, and only those of them the provider advertises in its discovery document are accepted.
   Tokens signed with `none` or an HMAC algorithm (HS256, HS384, HS512) are refused.
 - The `issuer` of the discovery document must equal `auth.issuer`, up to a trailing slash, and the `iss` of every token must equal the discovery document's `issuer` byte for byte.
@@ -69,6 +72,8 @@ The REST API, the job and chat streams, and `/mcp` now share one verifier, which
   The reason a token is refused is logged by the server.
 
 Long-lived streams, the job feed and following a running chat turn, now end when their token expires, and the app reconnects with a fresh one, so a removed group membership or admin role takes effect then.
+A running chat turn and a queued document job act with the grants of the token that started them, which every later request of the same user renews, as the open app does through its streams.
+A token no longer holding their grants, such as after a group was taken away, renews neither, so a turn stops a minute after the latest renewing token expired, storing what it got to, and a queued job then fails without starting.
 
 ## MCP endpoint
 
@@ -94,6 +99,7 @@ A plugin's `host.http_client()` is now the web client, which reaches only the pu
 ## Teams bridge
 
 The bridge no longer runs without `auth.service_client_id`.
+Its `backendUrl` must be `https`, unless it names a loopback host.
 At startup it checks that its token authenticates as the service principal and refuses to start otherwise, since all Teams users would else share one ordinary account with its memory and conversations.
 It also needs an allowlist of the Microsoft Teams tenants it serves and refuses activities from any other tenant.
 

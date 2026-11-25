@@ -72,7 +72,7 @@ One JSON file, read from `BRIDGE_CONFIG_FILE` (default `config.json`), holds eve
 }
 ```
 
-- `backendUrl` and `adapters.teams` are required. `backendUrl` is `http` or `https` without a trailing slash, while `oidc.issuer` is the issuer exactly as the IdP names it in `iss`, trailing slash included, and `https` unless it is a loopback host.
+- `backendUrl` and `adapters.teams` are required. `backendUrl` has no trailing slash, while `oidc.issuer` is the issuer exactly as the IdP names it in `iss`, trailing slash included, and both are `https` unless they name a loopback host.
 - `host` defaults to `127.0.0.1`, `port` to `3003`, `botUserName` to `hivegent`, and `adapters.web` to `false`.
 - The Teams adapter needs both `oidc` and `teams`, whose `allowedTenants` names the Microsoft Entra tenant ids it answers.
 - Omit `oidc` to run the Web adapter against `hivegent dev`, where the bot acts as the local dev user instead. The Web adapter answers anyone, so the configuration refuses it together with `oidc`, which leaves it no credentials to reach a real backend with.
