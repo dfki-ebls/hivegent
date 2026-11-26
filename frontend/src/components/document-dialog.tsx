@@ -94,7 +94,7 @@ function DocumentDialogBody({
     return { mode: "chunk", id: chunk.id };
   });
 
-  // Every view opens on the text, the original loads only once its tab is picked.
+  // Every view opens on the text, a parsed original loads only once its tab is picked.
   const [tab, setTab] = useState<PreviewTab>("text");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chunks");
   const [assetDescriptionDraft, setAssetDescriptionDraft] = useState("");

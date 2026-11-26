@@ -6,7 +6,9 @@ import { formatDateTime } from "@/i18n/format";
 import {
   type DocumentKind,
   type DocumentPreview,
+  type MediaPreview,
   type OriginalContent,
+  type ParsedPreview,
 } from "@/lib/original-preview";
 import { documentQueries } from "@/api/documents";
 import { AssetMedia } from "@/components/documents/asset-media";
@@ -22,7 +24,8 @@ export type PreviewTab = "preview" | "text" | "similarity";
 /**
  * A document as tabs: its text projection (*children*), its original rendered by the browser,
  * and the *similarity* of a case base, or only the text without either of the others.
- * Only the active tab mounts, so the original loads on demand.
+ * An image or video stays above the text describing it instead of taking a tab.
+ * Only the active tab mounts, so a parsed original loads on demand.
  */
 export function PreviewTabs({
   preview,
@@ -38,18 +41,21 @@ export function PreviewTabs({
   children: ReactNode;
 }) {
   const { t } = useTranslation();
+  const original = preview && preview.kind !== "media" ? preview : null;
+  const text =
+    preview?.kind === "media" ? <MediaAbove media={preview}>{children}</MediaAbove> : children;
 
-  if (!preview && !similarity) return children;
+  if (!original && !similarity) return text;
 
   const shown =
-    (tab === "preview" && !preview) || (tab === "similarity" && !similarity) ? "text" : tab;
+    (tab === "preview" && !original) || (tab === "similarity" && !similarity) ? "text" : tab;
 
   return (
     <Tabs value={shown} onValueChange={onTabChange} className="min-h-0 flex-1 gap-0">
       <div className="border-b px-4 py-2">
         <TabsList>
           <TabsTrigger value="text">{t(($) => $.documents.preview.textTab)}</TabsTrigger>
-          {preview && (
+          {original && (
             <TabsTrigger value="preview">{t(($) => $.documents.preview.previewTab)}</TabsTrigger>
           )}
           {similarity && (
@@ -58,11 +64,11 @@ export function PreviewTabs({
         </TabsList>
       </div>
       <TabsContent value="text" className="flex min-h-0 flex-col">
-        {children}
+        {text}
       </TabsContent>
-      {preview && (
+      {original && (
         <TabsContent value="preview" className="flex min-h-0 flex-col">
-          <OriginalPreview preview={preview} />
+          <OriginalPreview preview={original} />
         </TabsContent>
       )}
       {similarity && (
@@ -74,23 +80,27 @@ export function PreviewTabs({
   );
 }
 
-function OriginalPreview({ preview }: { preview: DocumentPreview }) {
+/** *media* pinned above the text describing it (*children*), which scrolls on its own. */
+function MediaAbove({ media, children }: { media: MediaPreview; children: ReactNode }) {
+  return (
+    <>
+      <div className="flex shrink-0 justify-center px-4 pt-4">
+        <AssetMedia
+          key={media.path}
+          filePath={media.path}
+          mediaType={media.mediaType}
+          alt={media.alt}
+          wrapperClassName="min-h-32 min-w-32 rounded-xl border"
+          className="max-h-[40dvh] w-auto max-w-full object-contain"
+        />
+      </div>
+      {children}
+    </>
+  );
+}
+
+function OriginalPreview({ preview }: { preview: ParsedPreview }) {
   switch (preview.kind) {
-    case "media":
-      return (
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="flex justify-center p-4">
-            <AssetMedia
-              key={preview.path}
-              filePath={preview.path}
-              mediaType={preview.mediaType}
-              alt={preview.alt}
-              wrapperClassName="min-h-32 min-w-32 rounded-xl border"
-              className="max-h-[70dvh] w-auto max-w-full object-contain"
-            />
-          </div>
-        </ScrollArea>
-      );
     case "pdf":
       return (
         <ParsedOriginal path={preview.documentPath} kind="pdf">

@@ -229,9 +229,9 @@ It walks the JS module graph, so CSS has to be imported from JS to be listed, li
 
 ## Originals preview in a tab
 
-`PreviewTabs` (`components/documents/preview-tabs.tsx`) shows every document, uploaded image, and extracted asset of the document dialog the same way, a Preview tab with the original and a Text tab with its markdown or plain text projection.
-The tabs only appear when the original has a renderer, picked by `previewKind` (`lib/original-preview.ts`) from its media type, else its extension, and a highlighted chunk opens on the text.
-Images and videos load through the asset route as before.
+`PreviewTabs` (`components/documents/preview-tabs.tsx`) shows the original of a document in the document dialog, picked by `previewKind` (`lib/original-preview.ts`) from its media type, else its extension.
+Where the text converts the original, as for a PDF, DOCX, or XLSX, the two are alternative renderings of the same content, so the original gets a Preview tab beside the Text tab, which a highlighted chunk opens on.
+Where the text describes the original, as for an uploaded image or video and an extracted asset, the media stays pinned above its scrolling description without a tab, loaded through the asset route.
 A PDF goes to the browser's own viewer in an unsandboxed `iframe`, since Chromium refuses PDFs in sandboxed frames, on an object URL retyped as `application/pdf`, so no pdf.js is bundled.
 A DOCX is converted by `mammoth` and sanitized by `dompurify` without styles, forms, ids, or names, its links opening in a new tab, and an XLSX is read by `read-excel-file` into a plain table of its first 500 rows, one sheet at a time.
 Only the active tab mounts, so `documentQueries.original` fetches the original from `/documents/original` only once the preview is opened, and the parsers are imported dynamically, keeping them out of the main bundle.

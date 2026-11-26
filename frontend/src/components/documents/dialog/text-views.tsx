@@ -15,10 +15,8 @@ import type { ContentChunk, ContentModel } from "@/components/documents/dialog/m
 import { CodeBlock, CodeBlockContent, CodeBlockHeader } from "@/components/ui/code-block";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspaceMarkdown } from "@/components/workspace-markdown";
-import type { DocumentPreview } from "@/lib/original-preview";
+import type { MediaPreview } from "@/lib/original-preview";
 import { basename, centerInScroller, cn, isWebUrl } from "@/lib/utils";
-
-type MediaPreview = Extract<DocumentPreview, { kind: "media" }>;
 
 /** The whole document, or the excerpts a tool read of it when its content was not fetched. */
 export function FullDocumentText({

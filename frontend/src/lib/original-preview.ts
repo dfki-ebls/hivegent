@@ -3,10 +3,14 @@ import type { Sheet } from "read-excel-file/browser";
 /** An original the browser renders through a parser rather than as plain media. */
 export type DocumentKind = "pdf" | "docx" | "xlsx";
 
-/** What the Preview tab of a document shows. */
-export type DocumentPreview =
-  | { kind: "media"; path: string; mediaType?: string | null; alt: string }
-  | { kind: DocumentKind; documentPath: string };
+/** An image or video, which its text describes, so both show together. */
+export type MediaPreview = { kind: "media"; path: string; mediaType?: string | null; alt: string };
+
+/** A document, which its text converts, so the original shows in a tab of its own. */
+export type ParsedPreview = { kind: DocumentKind; documentPath: string };
+
+/** The original of a document as the dialog shows it. */
+export type DocumentPreview = MediaPreview | ParsedPreview;
 
 const DOCUMENT_KINDS: readonly DocumentKind[] = ["pdf", "docx", "xlsx"];
 

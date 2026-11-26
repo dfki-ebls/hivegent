@@ -55,7 +55,8 @@ Alle Arbeitsbereiche teilen sich einen Baum.
 - Drücken Sie F2 oder klicken Sie auf den Stift, um einen Eintrag direkt umzubenennen.
 - Navigieren Sie mit den Pfeiltasten, und verschieben Sie die Auswahl mit Strg+Umschalt+D per Tastatur.
 
-Ein Dokument, dessen Original der Browser anzeigen kann, etwa ein PDF, ein Word-Dokument, eine Tabelle, ein Bild oder ein Video, öffnet sich im Tab Vorschau mit dem Original, neben dem Tab Text mit dem umgewandelten Text.
+Ein Dokument, dessen Original der Browser anzeigen kann, etwa ein PDF, ein Word-Dokument oder eine Tabelle, hat neben dem Tab Text mit dem umgewandelten Text einen Tab Vorschau mit dem Original.
+Ein Bild oder ein Video erscheint stattdessen über seiner Beschreibung.
 Eine Passage, die der Assistent gelesen hat, öffnet sich im Tab Text, im Dokument hervorgehoben.
 Außerdem können Sie Dokumente in die aktuelle Unterhaltung einschließen oder daraus ausschließen.
 

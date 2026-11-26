@@ -55,7 +55,8 @@ All workspaces share one tree.
 - Press F2 or click the pencil to rename an entry in place.
 - Use the arrow keys to navigate, and Ctrl+Shift+D to move the selection with the keyboard.
 
-A document whose original the browser can display, such as a PDF, a Word document, a spreadsheet, an image, or a video, opens on a Preview tab with the original, next to a Text tab with the converted text.
+A document whose original the browser can display, such as a PDF, a Word document, or a spreadsheet, has a Preview tab with the original next to the Text tab with the converted text.
+An image or a video shows above its description instead.
 A passage the assistant read opens on the Text tab, highlighted in the document.
 You can also include or exclude documents from the current conversation.
 
