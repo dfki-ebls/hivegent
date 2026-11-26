@@ -73,6 +73,7 @@ service_client_id = "hivegent-bot"
 - `llm.default`: das Chat-Modell, mit dem eine Unterhaltung beginnt, das ein großes Kontextfenster und Werkzeugaufrufe braucht.
   Gibt es mehrere Chat-Modelle, wählen Nutzer zwischen ihnen.
 - `llm.aux`: ein kleines, schnelles, vision-fähiges Modell für Umwandlung, Bildbeschreibungen und Titel, immer ohne Denken.
+  Ist es gesetzt, betitelt es auch neue Unterhaltungen und beschreibt die aus Dokumenten extrahierten Bilder automatisch, was sonst nur auf Anfrage geschieht.
   Alles, was dem Nutzer antwortet, darunter Unteragenten, Kompaktierung, Fallbasen und das `complete` der Sandbox, läuft auf dem Chat-Modell mit dem gewählten Denkaufwand.
   Standard ist `llm.default`.
 - `llm.stt`: ein Transkriptionsmodell wie `whisper-1` für Browser ohne Spracherkennung, aus, solange es nicht gesetzt ist.

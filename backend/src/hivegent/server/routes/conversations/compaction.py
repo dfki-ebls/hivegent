@@ -36,9 +36,10 @@ NOTHING_TO_COMPACT = Localized(
 
 @dataclass(slots=True)
 class SavedTurn:
-    """The turn a client swaps in once it is stored, ``None`` until it is."""
+    """The turn a client swaps in and the history stored with it, ``None`` until it is stored."""
 
     snapshot: BaseChunk | None = None
+    messages: list[ModelMessage] | None = None
 
 
 async def save_turn(
@@ -68,6 +69,7 @@ async def save_turn(
         ),
         None,
     )
+    saved.messages = messages
     saved.snapshot = turn_snapshot(
         messages,
         loaded.deferred_tool_requests,

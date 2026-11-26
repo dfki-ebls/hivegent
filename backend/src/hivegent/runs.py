@@ -62,6 +62,9 @@ class Prepared:
     settle: Settle = lambda: None
     """What the turn settles on once it ended (:meth:`Run.pump`)."""
 
+    after: Callable[[], Awaitable[None]] | None = None
+    """Work that follows a turn that was not stopped, holding neither its slot nor its followers."""
+
 
 @dataclass(slots=True, eq=False)
 class Run:
@@ -85,6 +88,7 @@ class Run:
     refusal: Exception | None = None
     started: bool = False
     done: bool = False
+    after: Callable[[], Awaitable[None]] | None = None
     task: asyncio.Task[None] = field(init=False)
     _changed: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -130,6 +134,7 @@ class Run:
             return
 
         self.history = prepared.history
+        self.after = prepared.after
         self.started = True
         self._notify()
         held: list[BaseChunk] = []
@@ -212,6 +217,7 @@ class Runs:
     _runs: dict[OwnedConversation, Run] = field(
         default_factory=dict[OwnedConversation, Run]
     )
+    _after: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]])
 
     def get(self, conversation: OwnedConversation) -> Run | None:
         """The turn of the conversation, preparing or running, if its user holds one."""
@@ -233,14 +239,20 @@ class Runs:
         context, its language among it, and leaves the slot when it ends,
         ahead of the followers, so one that saw the end finds the slot free.
         A refusal ends the task too, and :meth:`Run.prepared` tells it apart.
+        The work *prepare* puts after the turn starts once it ended unstopped.
         """
         run = self._runs[conversation] = Run(message, principal)
 
-        def finish(_: asyncio.Task[None]) -> None:
+        def finish(task: asyncio.Task[None]) -> None:
             if self._runs.get(conversation) is run:
                 del self._runs[conversation]
 
             run.end()
+
+            if run.after is not None and not task.cancelled():
+                after = asyncio.create_task(_logged(run.after()))
+                self._after.add(after)
+                after.add_done_callback(self._after.discard)
 
         run.task = asyncio.create_task(run.pump(prepare))
         run.task.add_done_callback(finish)
@@ -250,7 +262,7 @@ class Runs:
     async def cancel(self, conversation: OwnedConversation) -> None:
         """Stop the turn of the conversation, if any, once it stored what it got to."""
         if (run := self.get(conversation)) is not None:
-            await _stop([run])
+            await _stop([run.task])
 
     def running(self, user: User) -> set[UUID]:
         """The ids of *user*'s conversations with a turn, preparing or running."""
@@ -258,18 +270,27 @@ class Runs:
 
     async def cancel_all(self, user: User) -> None:
         """Stop every turn of *user*, once each stored what it got to."""
-        await _stop([run for c, run in self._runs.items() if c.owner == user.id])
+        await _stop([run.task for c, run in self._runs.items() if c.owner == user.id])
 
     async def aclose(self) -> None:
-        """Stop every turn once each stored what it got to."""
-        await _stop(list(self._runs.values()))
+        """Stop every turn once each stored what it got to, and the work after the ended ones."""
+        await _stop([run.task for run in self._runs.values()])
+        await _stop(list(self._after))
 
 
-async def _stop(stopped: list[Run]) -> None:
-    for run in stopped:
-        _ = run.task.cancel()
+async def _logged(work: Awaitable[None]) -> None:
+    """Await *work*, whose failure is only logged, since the turn it follows already ended."""
+    try:
+        await work
+    except Exception:
+        logger.warning("Work after a chat turn failed", exc_info=True)
 
-    _ = await asyncio.gather(*(run.task for run in stopped), return_exceptions=True)
+
+async def _stop(stopped: list[asyncio.Task[None]]) -> None:
+    for task in stopped:
+        _ = task.cancel()
+
+    _ = await asyncio.gather(*stopped, return_exceptions=True)
 
 
 runs = Runs()

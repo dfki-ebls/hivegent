@@ -176,3 +176,40 @@ async def test_a_turn_stops_once_no_request_renews_its_authorization(
     _ = renewed.task.cancel()
     await asyncio.wait_for(renewed.wait(), 5)
     assert lapsed.chunks == renewed.chunks == [_A]
+
+
+@pytest.mark.parametrize("stopped", [False, True], ids=["ended", "stopped"])
+async def test_the_work_after_a_turn_runs_once_it_ended_unstopped(
+    stopped: bool,
+) -> None:
+    """The work after a turn holds neither its slot nor its followers, and a stop skips it."""
+    release = asyncio.Event()
+    after = asyncio.Event()
+    slot_free: list[bool] = []
+
+    async def turn() -> AsyncIterator[BaseChunk]:
+        yield _A
+        _ = await release.wait()
+
+    async def title() -> None:
+        slot_free.append(runs.get(conversation) is None)
+        after.set()
+
+    async def prepare() -> Prepared:
+        return Prepared(turn(), [], after=title)
+
+    runs = Runs()
+    conversation = _conversation()
+    run = runs.start(conversation, User("alice"), None, prepare())
+    assert await anext(run.follow(User("alice"))) == _A
+
+    if stopped:
+        await runs.cancel(conversation)
+    else:
+        release.set()
+        await run.wait()
+        _ = await after.wait()
+
+    await runs.aclose()
+
+    assert slot_free == ([] if stopped else [True])

@@ -73,6 +73,7 @@ service_client_id = "hivegent-bot"
 - `llm.default`: the chat model a conversation starts on, which needs a large context and tool calling.
   Users pick among the chat models when there are several.
 - `llm.aux`: a small, fast, vision-capable model for conversion, captions, and titles, always with thinking off.
+  Setting it also titles new conversations and describes the images extracted from documents automatically, which otherwise happens only on request.
   Everything that answers the user, including subagents, compaction, case bases, and the sandbox's `complete`, runs on the chat model with the chosen reasoning effort.
   Defaults to `llm.default`.
 - `llm.stt`: a transcription model such as `whisper-1` for browsers without speech recognition, off when unset.

@@ -170,7 +170,10 @@ class LlmSettings(Section):
     ``complete`` reasons only at the effort the program asks for.  ``aux`` powers only one-off
     utility work with reasoning off, document conversion, alt-text and
     caption generation, titles, and LLM-guided chunking, so it must be small,
-    fast, and vision-capable, and it falls back to ``default``.  ``stt`` names an audio transcription
+    fast, and vision-capable, and it falls back to ``default``.  Setting it
+    also runs that work unasked where it pays off, titling a new conversation
+    and describing the images a conversion stores, which only a request does
+    otherwise.  ``stt`` names an audio transcription
     model (e.g. ``whisper-1``), which backs the speech input fallback for
     browsers without a working Web Speech API, disabled while it is unset.
 

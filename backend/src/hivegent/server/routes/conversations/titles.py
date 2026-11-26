@@ -1,30 +1,36 @@
-"""The route generating the title of a conversation."""
+"""The titles the aux model writes, on demand and after a new conversation's first turn."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from itertools import islice
 
 from exar.tools.files import BLOCK_SEP
 from fastapi import APIRouter, HTTPException
-from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, TextPart
 from starlette.requests import Request
 
 from ....agents import title_agent
 from ....db.conversations import (
     UNTITLED,
+    OwnedConversation,
+    is_prompt,
     load_conversation_data,
+    prompt_items,
+    prompt_text,
     set_conversation_title,
     title_line,
 )
 from ....llm import model_from_config, thinking_model_settings
-from ....llm_config import aux_llm
+from ....llm_config import LlmConfig, aux_llm
 from ....shared.l10n import Localized
 from ....types import GenerateTitleResponse
 from ...cancellation import run_until_disconnect
 from ...common import found
 from ...rate_limit import GENERATION_LIMIT
+from .compaction import SavedTurn
 from .deps import Owned
 
-__all__ = ["router"]
+__all__ = ["router", "title_first_turn"]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -59,23 +65,59 @@ _TITLE_FAILED = Localized(
 )
 
 
-def _extract_message_texts(
-    messages: Sequence[ModelMessage],
-    max_messages: int = 4,
-) -> list[str]:
-    """Extract text content from conversation messages."""
-    texts: list[str] = []
+def _texts(messages: Sequence[ModelMessage]) -> Iterator[str]:
+    """The texts of the user's prompts and of the answers in order, each clipped, attachments and blanks skipped."""
     for message in messages:
         for part in message.parts:
-            if (
-                isinstance(part, (UserPromptPart, TextPart))
-                and isinstance(part.content, str)
-                and (text := part.content.strip())
-            ):
-                texts.append(text[:500])
-                if len(texts) >= max_messages:
-                    return texts
-    return texts
+            texts: Iterable[str | None]
+
+            if is_prompt(part):
+                texts = map(prompt_text, prompt_items(part))
+            elif isinstance(part, TextPart):
+                texts = (part.content,)
+            else:
+                continue
+
+            for text in texts:
+                if text and (text := text.strip()):
+                    yield text[:500]
+
+
+async def _generate_title(
+    messages: Sequence[ModelMessage], llm: LlmConfig
+) -> str | None:
+    """A title for the first four texts of *messages* written by *llm*, ``None`` when they hold none."""
+    texts = list(islice(_texts(messages), 4))
+
+    if not texts:
+        return None
+
+    result = await title_agent.run(
+        _title_prompt(BLOCK_SEP.join(texts)).current,
+        model=model_from_config(llm),
+        model_settings=thinking_model_settings(llm),
+        instructions=_TITLE_INSTRUCTIONS.current,
+    )
+
+    return title_line(result.output.strip().strip("\"'"))
+
+
+async def title_first_turn(
+    conversation: OwnedConversation,
+    saved: SavedTurn,
+    llm: LlmConfig,
+    claimed: str | None,
+) -> None:
+    """Title a new conversation with *llm* from its first turn, its prompt and answer, once *saved* holds it stored.
+
+    Never over a title the user set in place of the *claimed* one, ``None``
+    for a conversation claimed untitled.
+    """
+    if saved.messages is None:
+        return
+
+    if (title := await _generate_title(saved.messages, llm)) is not None:
+        await set_conversation_title(conversation, title, expected_title=claimed)
 
 
 @router.post(
@@ -87,43 +129,32 @@ async def generate_conversation_title(
     http_request: Request,
 ) -> GenerateTitleResponse:
     """Generate a title for a conversation with the aux model."""
-    data = found(await load_conversation_data(conversation))
     aux = aux_llm()
+
     if aux is None:
         raise HTTPException(status_code=503, detail=_NO_TITLE_MODEL.current)
 
-    messages_text = _extract_message_texts(data.messages)
-    if not messages_text:
-        return GenerateTitleResponse(title=data.title or UNTITLED.current)
-
-    conversation_preview = BLOCK_SEP.join(messages_text)
-
-    async def _generate() -> str:
-        result = await title_agent.run(
-            _title_prompt(conversation_preview).current,
-            model=model_from_config(aux),
-            model_settings=thinking_model_settings(aux),
-            instructions=_TITLE_INSTRUCTIONS.current,
-        )
-
-        return result.output
+    data = found(await load_conversation_data(conversation))
 
     try:
-        output = await run_until_disconnect(http_request, _generate())
-        generated_title = title_line(output.strip().strip("\"'"))
-        # A title the user set while this one was generated wins, and the
-        # summary reads no title as an empty one.
-        summary = found(
-            await set_conversation_title(
-                conversation, generated_title, expected_title=data.title or None
-            )
+        title = await run_until_disconnect(
+            http_request, _generate_title(data.messages, aux)
         )
-
-        return GenerateTitleResponse(title=summary.title)
-    except HTTPException:
-        raise
     except Exception as exc:
         logger.exception(
             "Failed to generate title for conversation %s", conversation.id
         )
         raise HTTPException(status_code=500, detail=_TITLE_FAILED.current) from exc
+
+    if title is None:
+        return GenerateTitleResponse(title=data.title or UNTITLED.current)
+
+    # A title the user set while this one was generated wins, and the
+    # summary reads no title as an empty one.
+    summary = found(
+        await set_conversation_title(
+            conversation, title, expected_title=data.title or None
+        )
+    )
+
+    return GenerateTitleResponse(title=summary.title)

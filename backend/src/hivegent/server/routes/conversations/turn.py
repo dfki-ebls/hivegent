@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from functools import partial
 from itertools import chain
 from typing import Any
 from uuid import uuid4
@@ -43,6 +44,7 @@ from ....db.conversations import (
     render_prompt,
 )
 from ....llm import thinking_model_settings
+from ....llm_config import background_llm
 from ....runs import Prepared, Run, runs
 from ....shared.l10n import Localized, weighted_ranges
 from ....store import User
@@ -73,6 +75,7 @@ from .attachments import accept_attachments
 from .compaction import NOTHING_TO_COMPACT, SavedTurn, compact_history, save_turn
 from .deps import TURN_RUNNING, Adapter, Opened
 from .history import active_messages
+from .titles import title_first_turn
 
 __all__ = ["chat_router", "router"]
 
@@ -290,7 +293,8 @@ async def _prepare_turn(
     the id a reload shows.  A request flagged ``compact`` compacts the history
     instead of running a turn.  An absent conversation is claimed before
     deriving replay state, titled by its prompt so it is listed while the
-    turn runs.  A racing claim returns the stored state to replay instead.
+    turn runs, and by the aux model once it ended (:func:`.titles.title_first_turn`).
+    A racing claim returns the stored state to replay instead.
     """
     # Spent before any work, a continuation once the stored turn tells whether it answers anything.
     resumes = _resumes(config, adapter)
@@ -323,14 +327,21 @@ async def _prepare_turn(
     # persistence both see the admitted bytes.
     await accept_attachments(adapter.messages, llm=run_prefix.llm)
 
+    saved = SavedTurn()
+    after: Callable[[], Awaitable[None]] | None = None
+
     if loaded is None:
         # Resolve a racing claim, whose stored state the turn then runs on.
-        loaded = await _claimed(conversation, extract_title(adapter.messages))
+        claimed = extract_title(adapter.messages)
+        loaded = await _claimed(conversation, claimed)
         kept, pending, reply_id = _resolve_history(
             loaded.messages, loaded.deferred_tool_requests, config, prompt
         )
+
+        if (aux := background_llm()) is not None:
+            after = partial(title_first_turn, conversation, saved, aux, claimed)
+
     adapter.server_message_id = reply_id
-    saved = SavedTurn()
 
     # Ahead of the approvals and answers below, which a compaction leaves pending.
     if config.compact:
@@ -397,6 +408,7 @@ async def _prepare_turn(
         run_and_persist(adapter, stream, persist=persist),
         history,
         lambda: saved.snapshot,
+        after=after,
     )
 
 

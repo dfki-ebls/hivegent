@@ -158,6 +158,7 @@ Everything that answers the user runs on the turn's chat model, which keeps the 
 The main agent, its subagents, and the case base prompts reason with the turn's effort, compaction never reasons, since a summary gains little from it and thinking could spend its whole cap, and a program's `complete` reasons only at the effort the program asks for.
 A cap meant for an answer (`thinking_model_settings(config, answer_tokens)`) gets the thinking budget of the call's effort on top where the runtime enforces one (llama.cpp and vLLM), since it counts reasoning against the completion cap.
 The aux model serves only one-off utility work with thinking always off: conversion, captions, titles, and LLM-guided chunking, all through `llm.complete`.
+Setting `llm.aux` rather than leaving it to `llm.default` opts into the work nobody asked for (`llm_config.background_llm`), titling a new conversation and describing the images a conversion stores, which otherwise only a request runs, so a deployment with one model never spends it unasked.
 A model without `reasoning` takes any requested effort unchanged and `GET /settings` offers all levels for it, while an empty list turns thinking off and a list clamps to its levels.
 
 ### A provider is named for its runtime
@@ -435,7 +436,9 @@ The request that started it follows it, and a client that leaves only stops foll
 While a turn runs, `.../messages` shows the history the turn runs on with the client message the turn answers or continues, its new user message or the assistant message carrying a continuation's decisions, since the turn is stored only once it ends.
 A reload so shows the prompt the followed answer belongs to, and the client replays a continuation into the message it continues (`resumeStreamIsReplay: false`) rather than into a second one.
 A client that finds no turn to follow reads the history again, since the turn may have ended after the history was read.
-A new conversation's record is claimed before its first turn runs and titled by its prompt, and the list includes the conversations with a running turn (`runs.running`), so a tab closed mid-turn finds the conversation in its history and follows the turn again from there.
+A new conversation's record is claimed before its first turn runs and titled by its prompt, then by the aux model with `llm.aux` set (`titles.title_first_turn`), which reads the stored prompt and answer, since the answer grounds a terse prompt, and leaves a title the user set meanwhile.
+It is the turn's `Prepared.after`, which `runs` starts once a turn ended unstopped, so it holds neither the conversation's slot nor its followers, and `runs.aclose` stops it too.
+The list includes the conversations with a running turn (`runs.running`), so a tab closed mid-turn finds the conversation in its history and follows the turn again from there.
 A request takes the conversation's slot before it prepares or writes anything and gives it up when it is refused, so a retry of the running turn's request, the same user message id, follows that turn, and any other request is refused with 409 untouched.
 `DELETE /conversations/{id}/stream` is the only way to stop a turn, preparing or running, and returns once the turn stored what it got to and left its slot, as the shutdown does for every running turn before the database closes.
 The followed stream ends by itself once the turn is stored, so a steering message the client queued is sent to a free slot, and the client stops reading on its own only when the stop failed.
