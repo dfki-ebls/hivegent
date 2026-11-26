@@ -8,6 +8,7 @@ Die obere Leiste zeigt dann Ihren Namen und ein Menü für Einstellungen und Abm
 ## Mit Ihren Dokumenten chatten
 
 Geben Sie eine Frage ein und drücken Sie die Eingabetaste.
+Ein neuer Chat bietet drei Einstiege, mit denen der Assistent zuerst Ihre Dokumente oder letzten Konversationen durchsieht und Sie dann fragt, wie es weitergehen soll.
 Die Antwort erscheint im Stream, und die genutzten Dokumente werden im Kontextbereich angezeigt.
 Der Agent kann mehrere Schritte gehen, bevor er antwortet.
 Nachrichten, die Sie währenddessen senden, werden als nächste Runde eingereiht, womit Sie eine lange Antwort lenken können.

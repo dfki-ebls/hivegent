@@ -74,30 +74,20 @@ export const chat = {
     },
   },
   suggestions: {
-    overview: {
-      label: "Workspace overview",
+    explore: {
+      label: "Explore my documents",
       prompt:
-        "Give me a high-level overview of my document collection. List the main folders or categories and briefly describe the kinds of business documents in each.",
+        "Look through the workspaces I can access and summarize in a few sentences which topics and kinds of documents they hold. Then suggest three concrete questions or tasks you could help me with based on them, and ask me which one to start with.",
     },
-    actionItems: {
-      label: "Open action items",
+    resume: {
+      label: "Pick up where I left off",
       prompt:
-        "Search across my documents for open action items, tasks, and follow-ups. List each one with who is responsible and any mentioned deadline.",
+        "Look at my recent conversations and what you remember about me, and briefly summarize what I was working on. Then ask me which of these threads to continue, or whether I want to start something new.",
     },
-    deadlines: {
-      label: "Upcoming deadlines",
+    attention: {
+      label: "What needs my attention?",
       prompt:
-        "Find the key dates and deadlines mentioned across my documents and list them in chronological order, noting which document each one comes from.",
-    },
-    decisions: {
-      label: "Key decisions",
-      prompt:
-        "Identify the important decisions recorded across my documents. For each one, summarize what was decided and reference the document and date.",
-    },
-    risks: {
-      label: "Risks & blockers",
-      prompt:
-        "Search my documents for any risks, blockers, or open issues that have been raised, and summarize them grouped by topic.",
+        "Search my documents for open tasks, upcoming deadlines, and unresolved issues. Briefly list the most pressing ones with the document each comes from, then ask me which one to look into first.",
     },
   },
   conversations: {

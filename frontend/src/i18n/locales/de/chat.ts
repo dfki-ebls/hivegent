@@ -77,30 +77,20 @@ export const chat = {
     },
   },
   suggestions: {
-    overview: {
-      label: "Überblick über den Arbeitsbereich",
+    explore: {
+      label: "Meine Dokumente erkunden",
       prompt:
-        "Gib mir einen Überblick über meine Dokumentsammlung. Liste die wichtigsten Ordner oder Kategorien auf und beschreibe kurz, welche Arten von Geschäftsdokumenten jeweils enthalten sind.",
+        "Sieh dir die Arbeitsbereiche an, auf die ich zugreifen kann, und fasse in wenigen Sätzen zusammen, welche Themen und Arten von Dokumenten sie enthalten. Schlage mir dann drei konkrete Fragen oder Aufgaben vor, bei denen du mir damit helfen kannst, und frag mich, womit wir anfangen sollen.",
     },
-    actionItems: {
-      label: "Offene Aufgaben",
+    resume: {
+      label: "Weitermachen, wo ich aufgehört habe",
       prompt:
-        "Durchsuche meine Dokumente nach offenen Aufgaben, To-dos und Nachverfolgungen. Liste jede davon mit der verantwortlichen Person und einer eventuell genannten Frist auf.",
+        "Sieh dir meine letzten Konversationen an und was du über mich weißt, und fasse kurz zusammen, woran ich gearbeitet habe. Frag mich dann, welchen dieser Fäden ich fortsetzen oder ob ich etwas Neues beginnen möchte.",
     },
-    deadlines: {
-      label: "Anstehende Fristen",
+    attention: {
+      label: "Was braucht meine Aufmerksamkeit?",
       prompt:
-        "Finde die wichtigen Termine und Fristen in meinen Dokumenten und liste sie chronologisch auf. Gib jeweils an, aus welchem Dokument sie stammen.",
-    },
-    decisions: {
-      label: "Wichtige Entscheidungen",
-      prompt:
-        "Finde die wichtigen Entscheidungen, die in meinen Dokumenten festgehalten sind. Fasse für jede zusammen, was entschieden wurde, und nenne das Dokument und das Datum.",
-    },
-    risks: {
-      label: "Risiken und Hindernisse",
-      prompt:
-        "Durchsuche meine Dokumente nach Risiken, Hindernissen oder offenen Problemen, die angesprochen wurden, und fasse sie nach Thema gruppiert zusammen.",
+        "Durchsuche meine Dokumente nach offenen Aufgaben, anstehenden Fristen und ungelösten Problemen. Liste kurz die dringendsten mit dem jeweiligen Dokument auf und frag mich dann, welches wir uns zuerst ansehen sollen.",
     },
   },
   conversations: {

@@ -8,6 +8,7 @@ The top bar then shows your name and a menu for settings and sign out.
 ## Chatting with your documents
 
 Type a question and press Enter.
+A new chat offers three starters, which have the assistant look through your documents or recent conversations first and then ask you what to do next.
 The answer streams in, and the documents the assistant used appear in the context panel.
 The agent may take several steps before answering.
 Messages you send meanwhile are queued as the next turn, which lets you steer a long answer.

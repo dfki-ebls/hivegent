@@ -4,10 +4,13 @@ import { keyPrefix } from "@/i18n";
 
 const T_OPTIONS = keyPrefix(($) => $.chat.suggestions);
 
-/** Catalog ids of the starter prompts, each a short label plus the detailed prompt it sends. */
-const SUGGESTIONS = ["overview", "actionItems", "deadlines", "decisions", "risks"] as const;
+/**
+ * Catalog ids of the conversation starters, each a short label plus the prompt it sends,
+ * which has the assistant gather context first and then ask the user what to do with it.
+ */
+const SUGGESTIONS = ["explore", "resume", "attention"] as const;
 
-/** A row of starter prompts above the composer, which scrolls sideways when they do not fit. */
+/** A row of conversation starters above the composer, which scrolls sideways when they do not fit. */
 export function ChatSuggestions({ onSelect }: { onSelect: (prompt: string) => void }) {
   const { t } = useTranslation(undefined, T_OPTIONS);
 
