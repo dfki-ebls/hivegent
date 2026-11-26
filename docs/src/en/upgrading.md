@@ -197,7 +197,8 @@ A user message names the documents it is about in its metadata, `{"documents": {
 
 ## Removed features
 
-Users can no longer choose a personality, write a custom system message, add their own MCP servers, or bring their own model, endpoint, and key, so their saved custom prompts and servers are dropped.
+Users can no longer choose a personality, write a custom system message, add their own MCP servers, or bring their own model, endpoint, and key, so their saved servers are dropped.
+The app turns a custom system message that a browser kept into the personal assistant `custom` once that user signs in there, and chooses it unless they already chose one.
 The operator's model catalog, MCP catalog, and assistants take their place.
 The frontend feature flags are gone too, and with them the hidden pickers of the conversion and chunking pipelines and the asset mode, so every upload runs the operator's pipelines, and `conversion.assets` (`ignore`, `store`, the default, or `describe`) sets how every conversion handles the images it extracts.
 Users can no longer switch off tools themselves, an assistant or `tools.disabled` withholds them.

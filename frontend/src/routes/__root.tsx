@@ -6,6 +6,7 @@ import { MaintenanceScreen } from "@/components/maintenance-screen";
 import { Toaster } from "@/components/ui/toast";
 import { MaintenanceError } from "@/api/client";
 import { settingsQueries } from "@/api/settings";
+import { useLegacySystemMessageMigration } from "@/migrations/legacy-system-message";
 import { useOidc } from "@/oidc";
 
 function RootComponent() {
@@ -13,6 +14,7 @@ function RootComponent() {
   // The one observer that loads the server settings. A maintenance rejection
   // shows the maintenance screen while the query keeps retrying.
   const { failureReason } = useQuery({ ...settingsQueries.server(), enabled: isUserLoggedIn });
+  useLegacySystemMessageMigration(isUserLoggedIn);
 
   if (failureReason instanceof MaintenanceError) {
     return <MaintenanceScreen />;

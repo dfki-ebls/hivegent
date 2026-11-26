@@ -198,7 +198,8 @@ Eine Nachricht der Person nennt die Dokumente, um die es geht, in ihren Metadate
 
 ## Entfernte Funktionen
 
-Benutzer:innen können keine Persönlichkeit mehr wählen, keine eigene Systemnachricht schreiben, keine eigenen MCP-Server hinzufügen und kein eigenes Modell mit Endpunkt und Schlüssel mitbringen, ihre gespeicherten eigenen Prompts und Server entfallen daher.
+Benutzer:innen können keine Persönlichkeit mehr wählen, keine eigene Systemnachricht schreiben, keine eigenen MCP-Server hinzufügen und kein eigenes Modell mit Endpunkt und Schlüssel mitbringen, ihre gespeicherten Server entfallen daher.
+Eine eigene Systemnachricht, die ein Browser gespeichert hat, macht die App zum persönlichen Assistenten `custom`, sobald sich die Person dort anmeldet, und wählt ihn, sofern sie noch keinen gewählt hat.
 An ihre Stelle treten der Modellkatalog, der MCP-Katalog und die Assistenten des Betreibers.
 Auch die Feature-Flags des Frontends sind entfallen und mit ihnen die verborgene Auswahl der Konvertierungs- und Chunking-Pipelines und des Asset-Modus, sodass jeder Upload die Pipelines des Betreibers nutzt, und `conversion.assets` (`ignore`, `store` als Standard oder `describe`) legt fest, wie jede Konvertierung die extrahierten Bilder behandelt.
 Tools lassen sich nicht mehr selbst abschalten, ein Assistent oder `tools.disabled` hält sie zurück.
