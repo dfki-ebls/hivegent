@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type ZodType, z } from "zod";
 
+import { EXPORT_PARTS } from "@/api/account";
 import { DataIntegrationSchema, McpIntegrationSchema, PluginInfoSchema } from "@/api/admin";
 import { AssistantInfoSchema } from "@/api/assistants";
 import { CaseBaseSchema } from "@/api/case-bases";
@@ -103,6 +104,7 @@ const MIRRORS: [string, ZodType][] = [
   ["DataIntegration", DataIntegrationSchema],
   ["DirectoryTreeResponse", DirectoryTreeResponseSchema],
   ["DocumentChunksResponse", ChunkedDocumentResponseSchema],
+  ["ExportPart", z.enum(EXPORT_PARTS)],
   ["FeedEvent", FeedEventSchema],
   ["McpIntegration", McpIntegrationSchema],
   ["Mode", z.enum(AGENT_MODES)],

@@ -3,15 +3,21 @@
 from contextlib import nullcontext
 from pathlib import Path
 from uuid import UUID
+from zipfile import ZipFile
 
 import pytest
 
 from hivegent import conversation_files
+from hivegent.assistants import assistant_library
 from hivegent.db.conversations import OwnedConversation
+from hivegent.server import export
+from hivegent.server.export import ExportPart, build_export
 from hivegent.server.routes import account
 from hivegent.server.routes.conversations import history
-from hivegent.store import User
+from hivegent.skills import library
+from hivegent.store import User, UserScope
 from hivegent.tmp import tmp_dir
+from hivegent.types import ConversationArchive
 from tests.helpers import label_id, owned
 
 
@@ -96,3 +102,58 @@ async def test_a_replaced_conversation_keeps_its_folder_until_stored(
         await conversation_files.replace_conversation(owned("c1"), [])
 
     assert folder.exists() != stored
+
+
+async def test_the_export_holds_the_parts_asked_for(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each part on its own or all at once, without partial writes or symlinks."""
+    user = User(id="owner")
+    scope = UserScope(user.id)
+    conversation = owned("c1", user)
+    files = {
+        user.home.path / "notes/report.md": "report",
+        user.home.path / ".~0123456789abcdef.partial": "half",
+        library(scope).path / "lint/SKILL.md": "skill",
+        assistant_library(scope) / "helper.json": "{}",
+        tmp_dir(data_dir, conversation) / "result.txt": "tmp",
+    }
+
+    for path, text in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    (user.home.path / "link.md").symlink_to(data_dir)
+
+    async def conversations(_owner: User) -> list[OwnedConversation]:
+        return [conversation, owned("gone", user)]
+
+    async def archive(c: OwnedConversation) -> ConversationArchive | None:
+        return ConversationArchive() if c == conversation else None
+
+    async def memory(_owner: User) -> str:
+        return "remembered"
+
+    async def preferences(_owner: str) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr(export, "owned_conversations", conversations)
+    monkeypatch.setattr(export, "conversation_archive", archive)
+    monkeypatch.setattr(export, "load_memory", memory)
+    monkeypatch.setattr(export, "load_preferences", preferences)
+
+    async def names(parts: frozenset[ExportPart]) -> list[str]:
+        with await build_export(user, parts) as spool, ZipFile(spool) as zipped:
+            return zipped.namelist()
+
+    cid = conversation.id
+    assert await names(frozenset(ExportPart)) == [
+        "documents/notes/report.md",
+        f"conversations/{cid}.json",
+        f"conversations/{cid}/tmp/result.txt",
+        "memory.md",
+        "skills/lint/SKILL.md",
+        "assistants/helper.json",
+        "preferences.json",
+    ]
+    assert await names(frozenset({ExportPart.MEMORY})) == ["memory.md"]

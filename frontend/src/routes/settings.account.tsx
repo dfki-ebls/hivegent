@@ -7,6 +7,7 @@ import { deleteAllConversations } from "@/api/conversations";
 import { deleteAllDocuments, PERSONAL_SCOPE } from "@/api/documents";
 import { PageHeader } from "@/components/page-header";
 import { DangerZone } from "@/components/settings/danger-zone";
+import { ExportSection } from "@/components/settings/export-section";
 import { keyPrefix } from "@/i18n";
 import { clearAllStorage } from "@/stores/storage";
 
@@ -14,13 +15,14 @@ const ACCOUNT_T = keyPrefix(($) => $.settings.account);
 
 export const Route = createFileRoute("/settings/account")({ component: AccountPage });
 
-/** What the assistant keeps for the user, and the user's own data, each cleared behind a confirmation. */
+/** The export of the user's data, and what the assistant keeps for the user and the user's own data, each cleared behind a confirmation. */
 function AccountPage() {
   const { t } = useTranslation(undefined, ACCOUNT_T);
 
   return (
     <>
       <PageHeader title={t(($) => $.title)} description={t(($) => $.description)} />
+      <ExportSection />
       <DangerZone
         title={t(($) => $.title)}
         description={t(($) => $.description)}

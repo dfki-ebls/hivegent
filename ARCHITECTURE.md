@@ -109,6 +109,7 @@ flowchart LR
   Each is one long-lived connection, over Streamable HTTP or to a stdio process the backend starts, that reconnects with backoff, its tools named `<id>_<tool>` and each given the `Effect` that `effects` declares for it, else one from the server's hints only when it is `trusted`, otherwise `execute`.
   The boot refuses an id of a server, database, or API that prefixes a built-in tool, the delegation tools included, so no integration tool takes the name of one.
   A server with `groups` is seen by their members only, one without by everyone, and an unreachable one keeps offering the tools it last listed, failing their calls with a note, so neither the turn nor the cached prefix breaks.
+- A person downloads their own data as one ZIP archive of the parts they ask for, their documents, conversations, memory, skills, assistants, and preferences (`GET /api/v1/export`, `server.export`), a one-way copy no route imports, and the host exports any user's with `hivegent export <id> <file>`.
 - Wiping anything beyond the caller's own data runs only on the host, with `hivegent reset {workspace,database,factory}` for the deployment and `hivegent reset {user,group} <id>` for one owner, refused while a server holds the database's serving lock (`db.engine.serving`), never over HTTP, and pipelines are listed at `GET /api/v1/pipelines/{stage}`.
 
 ## Integration

@@ -7,16 +7,15 @@ An archive built here carries one finished entry, with its key facts, and
 whose judges ask a pydantic-ai model.
 """
 
-import hashlib
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import ExitStack
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from typing import IO, Literal, Self
 from uuid import uuid4
-from zipfile import ZIP_STORED, ZipFile, ZipInfo
+from zipfile import ZipFile
 
 import exar.eval
 from markdown_it import MarkdownIt
@@ -33,7 +32,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator
 
 from .shared.l10n import Language
-from .shared.zips import extended_timestamp
+from .shared.zips import build_zip, write_file
 
 __all__ = [
     "GRADES",
@@ -51,7 +50,6 @@ __all__ = [
     "RagoldRequest",
     "build_archive",
     "evaluators",
-    "iter_archive",
     "load",
     "plain_text",
 ]
@@ -172,9 +170,6 @@ class Archive(_Stamped):
     documents: dict[str, Document]
 
 
-# Archives up to this size stay in memory, larger ones roll over to disk.
-_SPOOL_MEMORY = 32 * 1024 * 1024
-_CHUNK_SIZE = 1024 * 1024
 _MARKDOWN = MarkdownIt("commonmark").enable("table")
 _HTML_TAG = re.compile(r"<[^>]*>")
 _SEPARATOR_ROW = re.compile(r"(?=.*\|)(?=.*-)[\s|:-]+")
@@ -287,26 +282,8 @@ class RagoldRequest(Entry):
         return self
 
 
-def _write_document(archive: ZipFile, file: Path, arcname: str) -> tuple[int, str]:
-    """Copy *file* into *archive*, returning its size and SHA-256 digest.
-
-    Its DOS date is in the server's local time, so the extended timestamp carries the exact one.
-    """
-    info = ZipInfo.from_file(file, arcname, strict_timestamps=False)
-    info.extra = extended_timestamp(file.stat().st_mtime)
-    digest = hashlib.sha256()
-
-    with file.open("rb") as source, archive.open(info, "w") as target:
-        while chunk := source.read(_CHUNK_SIZE):
-            digest.update(chunk)
-            target.write(chunk)
-
-    # Writing sets the size to the bytes actually copied.
-    return info.file_size, digest.hexdigest()
-
-
 def _write_archive(
-    out: IO[bytes],
+    archive: ZipFile,
     request: RagoldRequest,
     files: Mapping[str, Path],
     *,
@@ -318,30 +295,25 @@ def _write_archive(
     ids = {file: str(uuid4()) for file in files.values()}
     documents: dict[str, Document] = {}
 
-    with ZipFile(out, "w", ZIP_STORED) as archive:
-        for file, document_id in ids.items():
-            size, sha256 = _write_document(
-                archive, file, f"files/{document_id}/{file.name}"
-            )
-            documents[document_id] = Document(name=file.name, size=size, sha256=sha256)
+    for file, document_id in ids.items():
+        size, sha256 = write_file(archive, file, f"files/{document_id}/{file.name}")
+        documents[document_id] = Document(name=file.name, size=size, sha256=sha256)
 
-        annotation = Annotation(
-            **request.model_dump(by_alias=False, exclude={"passages", "documents"}),
-            passages=[
-                Passage(
-                    document_id=ids[files[item.path]], text=item.text, grade=item.grade
-                )
-                for item in request.passages
-            ],
-        )
-        envelope = Archive(
-            author=author,
-            project=project,
-            language=language,
-            annotations={str(uuid4()): annotation},
-            documents=documents,
-        )
-        archive.writestr("annotations.json", envelope.model_dump_json(indent=2))
+    annotation = Annotation(
+        **request.model_dump(by_alias=False, exclude={"passages", "documents"}),
+        passages=[
+            Passage(document_id=ids[files[item.path]], text=item.text, grade=item.grade)
+            for item in request.passages
+        ],
+    )
+    envelope = Archive(
+        author=author,
+        project=project,
+        language=language,
+        annotations={str(uuid4()): annotation},
+        documents=documents,
+    )
+    archive.writestr("annotations.json", envelope.model_dump_json(indent=2))
 
 
 def build_archive(
@@ -357,23 +329,16 @@ def build_archive(
     *files* maps every path of ``request.documents`` to the file it ships.
     Blocking: it reads every document.
     """
-    with ExitStack() as cleanup:
-        spool = cleanup.enter_context(SpooledTemporaryFile(max_size=_SPOOL_MEMORY))
-        _write_archive(
-            spool, request, files, author=author, project=project, language=language
+    return build_zip(
+        partial(
+            _write_archive,
+            request=request,
+            files=files,
+            author=author,
+            project=project,
+            language=language,
         )
-        spool.seek(0)
-        # Built in full, so the caller owns the open archive from here.
-        cleanup.pop_all()
-
-    return spool
-
-
-def iter_archive(spool: SpooledTemporaryFile[bytes]) -> Iterator[bytes]:
-    """Stream a built archive, closing it once read or abandoned."""
-    with spool:
-        while chunk := spool.read(_CHUNK_SIZE):
-            yield chunk
+    )
 
 
 def evaluators(

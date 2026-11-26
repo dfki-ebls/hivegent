@@ -138,6 +138,7 @@ export const app = {
       deleteDocuments: "Dokumente konnten nicht gelöscht werden",
       clearMemory: "Gedächtnis konnte nicht geleert werden",
       clearTmp: "Temporäre Dateien konnten nicht gelöscht werden",
+      exportUserData: "Benutzerdaten konnten nicht exportiert werden",
       deleteUserData: "Benutzerdaten konnten nicht gelöscht werden",
       readAdminOverview: "Die Admin-Übersicht konnte nicht geladen werden",
       adminAction: "Admin-Aktion fehlgeschlagen",

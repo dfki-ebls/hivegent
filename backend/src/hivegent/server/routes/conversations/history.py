@@ -1,11 +1,9 @@
 """Routes reading, renaming, deleting, exporting, and replacing the stored conversations."""
 
 import asyncio
-from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from starlette.responses import Response, StreamingResponse
 
@@ -21,21 +19,18 @@ from ....db.conversations import (
     load_conversation_summary,
     set_conversation_title,
 )
-from ....ragold import RagoldRequest, build_archive, iter_archive
+from ....ragold import RagoldRequest, build_archive
 from ....runs import Run, runs
 from ....shared.l10n import Localized, current_language
-from ....transparency import sign_provenance
 from ....types import (
     ConversationArchive,
     ConversationListResponse,
-    InstructionsSnapshot,
-    ServerConversation,
     UpdateTitleRequest,
 )
 from ...common import CONVERSATION_NOT_FOUND, found, resolve_workspace_path
-from ...operations import attachment_disposition
+from ...export import conversation_archive
+from ...operations import attachment_disposition, zip_response
 from ...rate_limit import GENERATION_LIMIT, UPLOAD_LIMIT
-from ...turns import ui_id
 from ...vercel import dump_transcript, load_archived
 from .attachments import accept_imported
 from .deps import TURN_RUNNING, Opened, Owned
@@ -144,39 +139,6 @@ async def get_conversation_messages(opened: Opened) -> list[UIMessage]:
     return await active_messages(conversation, run) if exists or run is not None else []
 
 
-def _instruction_snapshots(
-    messages: Sequence[ModelMessage],
-) -> list[InstructionsSnapshot]:
-    """Group *messages* by the system prompt each was sent under, by their UI message ids.
-
-    pydantic-ai stamps the fully composed prompt (agent-level blocks plus every
-    live capability's) onto each
-    ``ModelRequest`` it sends, and that survives into the stored history, so the
-    prompts are read back here rather than recomposed, since recomposing would
-    describe today's settings, not the ones the turn actually ran under.
-    Consecutive messages sharing a prompt collapse into one snapshot.
-    """
-    snapshots: list[InstructionsSnapshot] = []
-
-    for message in messages:
-        if (
-            not isinstance(message, ModelRequest)
-            or not message.instructions
-            or (message_id := ui_id(message)) is None
-        ):
-            continue
-
-        text = message.instructions
-
-        if snapshots and snapshots[-1].text == text:
-            if message_id not in snapshots[-1].message_ids:
-                snapshots[-1].message_ids.append(message_id)
-        else:
-            snapshots.append(InstructionsSnapshot(message_ids=[message_id], text=text))
-
-    return snapshots
-
-
 @router.get("/conversations/{conversation_id}/archive", dependencies=[GENERATION_LIMIT])
 async def get_conversation_archive(conversation: Owned) -> Response:
     """Export a conversation's active history as a downloadable archive.
@@ -187,23 +149,8 @@ async def get_conversation_archive(conversation: Owned) -> Response:
     export button fills that half in and downloads the same shape, and the
     counterpart :func:`put_conversation_archive` restores either one.
     """
-    summary, loaded = await asyncio.gather(
-        load_conversation_summary(conversation), load_conversation(conversation)
-    )
-    summary, loaded = found(summary), found(loaded)
-    server = ServerConversation(
-        id=str(summary.id),
-        title=summary.title,
-        messages=dump_transcript(loaded.messages, loaded.deferred_tool_requests),
-        instructions=_instruction_snapshots(loaded.messages),
-    )
+    archive = found(await conversation_archive(conversation))
 
-    # Signed metadata is the machine-readable marking a container format
-    # carries (Code of Practice, Sub-measure 1.1.1).
-    if settings.transparency is not None:
-        server.provenance = sign_provenance(settings.transparency, server)
-
-    archive = ConversationArchive(backend=server)
     return Response(
         content=archive.model_dump_json(indent=2),
         media_type="application/json",
@@ -245,11 +192,7 @@ async def export_ragold_route(
         language=current_language(),
     )
 
-    return StreamingResponse(
-        iter_archive(spool),
-        media_type="application/zip",
-        headers={"Content-Disposition": attachment_disposition("ragold.zip")},
-    )
+    return zip_response(spool, "ragold.zip")
 
 
 @router.put("/conversations/{conversation_id}/archive", dependencies=[UPLOAD_LIMIT])

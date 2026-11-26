@@ -1,6 +1,9 @@
-"""Routes for the user's preferences, memory, and user-wide cleanup."""
+"""Routes for the user's preferences, memory, export, and user-wide cleanup."""
 
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, status
+from starlette.responses import StreamingResponse
 
 from ...assistants import resolve_assistant
 from ...auth import CurrentUser
@@ -11,6 +14,9 @@ from ...shared.l10n import Localized
 from ...tmp import clear_tmp
 from ...types import Preferences, TmpClearedResponse
 from ..common import delete_user_data, effective_preferences
+from ..export import ExportPart, build_export, export_filename
+from ..operations import zip_response
+from ..rate_limit import GENERATION_LIMIT
 
 __all__ = ["router"]
 
@@ -46,6 +52,19 @@ async def patch_preferences(changes: Preferences, user: CurrentUser) -> Preferen
     )
 
     return (await effective_preferences(user, stored)).preferences
+
+
+@router.get("/export", dependencies=[GENERATION_LIMIT])
+async def export_user_data(
+    user: CurrentUser,
+    part: Annotated[frozenset[ExportPart], Query()] = frozenset(ExportPart),
+) -> StreamingResponse:
+    """Download each *part* of the caller's data, every one by default, as one ZIP archive (:func:`build_export`).
+
+    The archive is complete before the first byte is sent, so a failure is
+    an HTTP error, never a truncated archive.
+    """
+    return zip_response(await build_export(user, part), export_filename(part))
 
 
 @router.delete("/memory", status_code=status.HTTP_204_NO_CONTENT)

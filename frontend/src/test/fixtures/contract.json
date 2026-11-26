@@ -2221,6 +2221,19 @@
       "title": "Explanation",
       "description": "Breakdown of a similarity, by attribute for records and by mapping for graphs."
     },
+    "ExportPart": {
+      "type": "string",
+      "enum": [
+        "documents",
+        "conversations",
+        "memory",
+        "skills",
+        "assistants",
+        "preferences"
+      ],
+      "title": "ExportPart",
+      "description": "A part of what a person owns, exported on its own or with the others."
+    },
     "FeedEvent": {
       "anyOf": [
         {

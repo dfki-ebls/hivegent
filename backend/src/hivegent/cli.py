@@ -1,4 +1,4 @@
-"""CLI for Hivegent host operations: serving, migrating, reindexing, and resetting.
+"""CLI for Hivegent host operations: serving, migrating, reindexing, exporting, and resetting.
 
 It acts on the configured data directory and database directly, with the
 privileges of the host it runs on, and never over HTTP.
@@ -17,7 +17,7 @@ from .config import sanitize_user_id
 __all__ = ["app"]
 
 app = typer.Typer(
-    help="Hivegent host operations: serve, dev, migrate, reindex, and reset.",
+    help="Hivegent host operations: serve, dev, migrate, reindex, export, and reset.",
     no_args_is_help=True,
     pretty_exceptions_enable=False,
 )
@@ -59,13 +59,18 @@ def migrate(
     command.upgrade(build_alembic_config(), revision)
 
 
-def _on_host[T](run: Callable[[], Awaitable[T]]) -> T:
-    """Run *run* on the configured database while no server runs on it, ending the command on a refusal."""
+def _on_host[T](run: Callable[[], Awaitable[T]], *, exclusive: bool = True) -> T:
+    """Run *run* on the configured database, while no server runs on it when *exclusive*, ending the command on a refusal."""
+    from contextlib import nullcontext
+
     from .db import engine_lifespan
     from .db.engine import ServerRunning, no_server_running
 
     async def hosted() -> T:
-        async with engine_lifespan(), no_server_running():
+        async with (
+            engine_lifespan(),
+            no_server_running() if exclusive else nullcontext(),
+        ):
             return await run()
 
     try:
@@ -96,6 +101,42 @@ def reindex(
 
     count = _on_host(lambda: clear_content_states(workspace))
     typer.echo(f"Marked {count} documents to index again at the next start.")
+
+
+async def _export(owner: str, output: Path) -> None:
+    """Write everything the user *owner* owns to *output* (:func:`~hivegent.server.export.build_export`)."""
+    import shutil
+
+    from .db.users import user_exists
+    from .server.export import ExportPart, build_export
+    from .store import User
+
+    user = User(id=sanitize_user_id(owner))
+
+    if not await user_exists(user.id):
+        raise ValueError(f"Unknown user: {owner!r}")
+
+    with (
+        await build_export(user, frozenset(ExportPart)) as spool,
+        output.open("wb") as out,
+    ):
+        shutil.copyfileobj(spool, out)
+
+
+@app.command()
+def export(
+    owner: Annotated[str, typer.Argument(help="The id of the user to export.")],
+    output: Annotated[
+        Path, typer.Argument(help="The ZIP archive to write.", dir_okay=False)
+    ],
+) -> None:
+    """Export everything one user owns as a ZIP archive, such as to answer a request for their data.
+
+    It only reads, so it runs beside a server.  Users export their own data
+    in the UI, in parts or all at once.
+    """
+    _on_host(lambda: _export(owner, output), exclusive=False)
+    typer.echo(f"Exported {owner} to {output}.")
 
 
 class ResetTarget(StrEnum):

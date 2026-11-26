@@ -379,6 +379,7 @@ Der Zugriff richtet sich nach den Token-Claims, die Ihr Anbieter in das Access-T
   Keine HTTP-Route löscht die Daten einer anderen Person oder einer Gruppe, das geschieht nur auf dem Host.
   Löschungen des gesamten Deployments laufen auf dem Host mit `hivegent reset workspace`, `database` oder `factory` und verweigern sich, solange ein Server auf der Datenbank läuft.
   `hivegent reset user <id>` und `hivegent reset group <id>` löschen, was einer Person oder Gruppe gehört, während Benutzer ihre eigenen Daten unter Einstellungen, Account löschen.
+  `hivegent export <id> <datei.zip>` schreibt alles, was einer Person gehört, in ein ZIP-Archiv, auch neben einem laufenden Server, während Benutzer ihre eigenen Daten, alle oder einzelne Teile, unter Einstellungen, Account herunterladen.
   `hivegent-manage` führt jeden `hivegent`-Befehl genau so aus, wie der Dienst läuft, mit seiner Umgebung, seinen Zugangsdaten und Daten, und stoppt den Server für ein `reset` und startet ihn danach wieder.
   Im Container läuft es im laufenden Container:
 

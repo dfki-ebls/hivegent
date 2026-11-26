@@ -80,8 +80,44 @@ export const settings = {
   account: {
     title: "Account",
     description:
-      "Reset your preferences, clear what the assistant keeps for you, or delete the data of your account.",
+      "Export your data, clear what the assistant keeps for you, or delete the data of your account.",
     clear: "Clear",
+    export: {
+      title: "Export",
+      description:
+        "Download your data as a ZIP archive, everything at once or one part at a time. The archive is a copy to keep, not one to import again.",
+      download: "Download",
+      parts: {
+        all: {
+          label: "Everything",
+          description: "Every part below in one archive.",
+        },
+        documents: {
+          label: "Documents",
+          description: "The files of your personal workspace, originals and their markdown.",
+        },
+        conversations: {
+          label: "Conversations",
+          description: "Every chat with the system prompts it ran under, and its temporary files.",
+        },
+        memory: {
+          label: "Memory",
+          description: "What the assistant remembers about you across conversations.",
+        },
+        skills: {
+          label: "Skills",
+          description: "The files of your own skills.",
+        },
+        assistants: {
+          label: "Assistants",
+          description: "The definitions of your own assistants.",
+        },
+        preferences: {
+          label: "Preferences",
+          description: "The choices you made for your chats.",
+        },
+      },
+    },
     clearMemory: {
       label: "Clear Memory",
       description:

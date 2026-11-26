@@ -379,6 +379,7 @@ Access is driven by the token claims, which your provider must include in the ac
   No HTTP route wipes another user's or a group's data, that runs only on the host.
   Deployment-wide wipes run on the host with `hivegent reset workspace`, `database`, or `factory`, and refuse while a server runs on the database.
   `hivegent reset user <id>` and `hivegent reset group <id>` wipe what one user or group owns, while users wipe their own data under Settings, Account.
+  `hivegent export <id> <file.zip>` writes everything one user owns to a ZIP archive beside a running server, while users download their own data, all of it or one part, under Settings, Account.
   `hivegent-manage` runs any `hivegent` command exactly as the service runs, with its environment, credentials, and data, and stops the server around a `reset` and starts it again.
   In the container, it runs inside the running one:
 

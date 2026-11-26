@@ -135,6 +135,7 @@ export const app = {
       deleteDocuments: "Failed to delete documents",
       clearMemory: "Failed to clear memory",
       clearTmp: "Failed to clear temporary files",
+      exportUserData: "Failed to export user data",
       deleteUserData: "Failed to delete user data",
       readAdminOverview: "Failed to load the admin overview",
       adminAction: "Admin action failed",

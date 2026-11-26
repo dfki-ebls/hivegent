@@ -10,15 +10,22 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 from stat import S_ISREG
+from tempfile import SpooledTemporaryFile
 from urllib.parse import quote
 
 from exar.memory.mounts import entry_stat
 from exar.text import decode
 from fastapi import HTTPException
-from starlette.responses import FileResponse, PlainTextResponse, Response
+from starlette.responses import (
+    FileResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 
 from ...shared.formats import DOCUMENT_EXTENSION, is_textual_media_type, media_type
 from ...shared.l10n import Localized
+from ...shared.zips import iter_zip
 from ...store import Workspace
 from ...tools.entries import Part, stem_path_from_reference
 from ...types import AssetEntry, AssetListResponse
@@ -48,6 +55,17 @@ _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 def attachment_disposition(filename: str) -> str:
     """Return an RFC 6266 ``Content-Disposition: attachment`` header value."""
     return f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+def zip_response(
+    spool: SpooledTemporaryFile[bytes], filename: str
+) -> StreamingResponse:
+    """Stream the built ZIP archive *spool* as a download named *filename*."""
+    return StreamingResponse(
+        iter_zip(spool),
+        media_type="application/zip",
+        headers={"Content-Disposition": attachment_disposition(filename)},
+    )
 
 
 def attachment_response(path: Path) -> FileResponse:

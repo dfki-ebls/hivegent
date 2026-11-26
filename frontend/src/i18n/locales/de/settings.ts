@@ -83,8 +83,46 @@ export const settings = {
   account: {
     title: "Account",
     description:
-      "Setze deine Einstellungen zurück, leere, was der Assistent für dich aufbewahrt, oder lösche die Daten deines Accounts.",
+      "Exportiere deine Daten, leere, was der Assistent für dich aufbewahrt, oder lösche die Daten deines Accounts.",
     clear: "Leeren",
+    export: {
+      title: "Export",
+      description:
+        "Lade deine Daten als ZIP-Archiv herunter, alles auf einmal oder einzeln. Das Archiv ist eine Kopie zum Aufbewahren, nicht zum erneuten Importieren.",
+      download: "Herunterladen",
+      parts: {
+        all: {
+          label: "Alles",
+          description: "Alle folgenden Teile in einem Archiv.",
+        },
+        documents: {
+          label: "Dokumente",
+          description:
+            "Die Dateien deines persönlichen Arbeitsbereichs, Originale und ihr Markdown.",
+        },
+        conversations: {
+          label: "Konversationen",
+          description:
+            "Jeder Chat mit den Systemprompts, unter denen er lief, und seinen temporären Dateien.",
+        },
+        memory: {
+          label: "Gedächtnis",
+          description: "Was sich der Assistent über Konversationen hinweg über dich merkt.",
+        },
+        skills: {
+          label: "Skills",
+          description: "Die Dateien deiner eigenen Skills.",
+        },
+        assistants: {
+          label: "Assistenten",
+          description: "Die Definitionen deiner eigenen Assistenten.",
+        },
+        preferences: {
+          label: "Einstellungen",
+          description: "Die Entscheidungen, die du für deine Chats getroffen hast.",
+        },
+      },
+    },
     clearMemory: {
       label: "Gedächtnis leeren",
       description:

@@ -79,8 +79,8 @@ from hivegent.db.conversations import (
     is_user_request,
     store,
 )
+from hivegent.server.export import instruction_snapshots
 from hivegent.server.routes.conversations.attachments import accept_imported
-from hivegent.server.routes.conversations.history import _instruction_snapshots
 from hivegent.server.turns import (
     INTERRUPTED_TOOL_ERROR,
     Replay,
@@ -1088,14 +1088,14 @@ class TestInstructionSnapshots:
 
     def test_consecutive_identical_prompts_collapse(self) -> None:
         """A prompt that never changed is one snapshot, not one per turn."""
-        snapshots = _instruction_snapshots(self._pairs("SYS", "SYS", "SYS"))
+        snapshots = instruction_snapshots(self._pairs("SYS", "SYS", "SYS"))
 
         assert len(snapshots) == 1
         assert snapshots[0].message_ids == ["n0", "n1", "n2"]
 
     def test_a_changed_prompt_starts_a_new_snapshot(self) -> None:
         """Narrowing the document scope mid-conversation stays visible."""
-        snapshots = _instruction_snapshots(self._pairs("SYS", "SYS scoped", "SYS"))
+        snapshots = instruction_snapshots(self._pairs("SYS", "SYS scoped", "SYS"))
 
         assert [s.text for s in snapshots] == ["SYS", "SYS scoped", "SYS"]
         assert [s.message_ids for s in snapshots] == [["n0"], ["n1"], ["n2"]]
@@ -1106,7 +1106,7 @@ class TestInstructionSnapshots:
             ModelResponse(parts=[TextPart(content="a")]),
             *self._pairs(None),
         ]
-        assert _instruction_snapshots(messages) == []
+        assert instruction_snapshots(messages) == []
 
 
 class TestConversationArchive:

@@ -22,6 +22,7 @@ from .reads import (
     get_document_response,
     get_file_response,
     list_assets,
+    zip_response,
 )
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     "summarize_failed_files",
     "summarize_failures",
     "upload_body_limit",
+    "zip_response",
 ]

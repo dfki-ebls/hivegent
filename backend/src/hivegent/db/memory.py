@@ -21,7 +21,7 @@ from .engine import get_engine, session
 from .models import Memory
 from .users import ensure_user
 
-__all__ = ["clear_memory", "user_memory"]
+__all__ = ["clear_memory", "load_memory", "user_memory"]
 
 _PAGES = Memory.metadata.tables[Memory.__tablename__]
 
@@ -79,3 +79,11 @@ def user_memory(user: User) -> StorageMemory[str, str]:
 async def clear_memory(user: User) -> bool:
     """Delete the user's memory.  Returns ``True`` if a row was removed."""
     return bool(await _page(user).delete_where(sa.true()))
+
+
+async def load_memory(user: User) -> str | None:
+    """The user's memory page, ``None`` while they keep none."""
+    async with session() as s:
+        return await s.scalar(
+            sa.select(Memory.content).where(Memory.user_id == user.id)
+        )
