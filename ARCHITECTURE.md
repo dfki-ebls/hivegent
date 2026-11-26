@@ -43,12 +43,15 @@ flowchart LR
   Neither it nor the shared web client keeps cookies, since each serves every caller.
 - The admin debugging consoles exist only with `debug.enable`, and their chat debugger reads only the caller's own conversations.
 - Pydantic AI binds models, user-scoped dependencies, and toolsets into one agent, and each chat turn is one native run of it, streamed by pydantic-ai's Vercel adapter, as the root of an exar run whose trace holds the spans of pydantic-ai, instrumented into exar's tracer provider, which Logfire only adds exporters to.
-  The main agent delegates to its subagents with the `SubAgents` and `TaskControl` of pydantic-ai-harness (`agents/subagents.py`), in the foreground of a call or in the background, steers, cancels, or resumes them within the turn, and the turn waits for the running ones before it ends.
-  The subagents share the turn's deps and usage, so the turn's usage limits bound them all together.
+  The main agent delegates through Pydantic AI Harness (`agents/subagents.py`).
+  Browser tasks can outlive the turn, and a later turn can steer, cancel, or resume them.
+  A report reaches an active turn at its next model request or starts a continuation that gives way to the user's next message.
+  Teams gathers reports in the original reply stream.
+  Delegated work counts toward its originating turn's budget, including work that runs after the reply.
   A subagent never asks the user: a call that would ask is denied, so the main agent makes that change itself.
-  Shortly before its timeout a subagent is told to report what it found, so it ends with its findings rather than the harness's timeout note, and past that deadline it keeps its tools and instructions while its further tool calls are refused with a "report now" result (`ReportDeadline`).
+  After `subagents.max_steps` requests, or shortly before its timeout, a subagent is told to report what it found, so it ends with its findings, and past that deadline it keeps its tools and instructions while its further tool calls are refused with a "report now" result (`ReportDeadline`).
   A report longer than `llm.tool_output_max_chars` is cut with the whole text saved under `/tmp/.tool-results/`.
-  Every step of a subagent renders under the call that delegated to it: the chat stream maps the harness's task events to that call, and only these steps are stored on the call's return, never the subagent's history, so a subagent that timed out or was cancelled keeps the steps it got to, and the transcript renders from them at the end of the turn and on reload (`agents/transcripts.py`, `backend/README.md`, Subagents are delegated to with pydantic-ai-harness).
+  The browser's task owner saves each task with its history in the conversation's `tasks` folder, which the Tasks tab shows and the account export includes.
 - A history the context window refused is compacted by `exar.pydantic_ai.compaction`, the summary asked as the next turn under the run's own prefix (`agents/compaction.py`) so the provider's prompt cache answers for it.
 - `tools` is a self-contained package, importing only itself and the `shared` package, which imports only itself, as an AST test enforces, while the app hands it what needs it (settings, the executor of the decoders).
 - Tools are plain typed async functions with exar's conventions (`exar.tools`: `effect`, `Retry`, `run_batch`, the formatting helpers), each built per run by a factory over the run's deps (`agents.common.AgentTools`) and served to pydantic-ai by `exar.pydantic_ai.toolset` under the host's policy, which one `exar.pydantic_ai.EffectGate` per agent (`guards.HOST_GATE`) applies to every tool call, plugin and external MCP tools included.

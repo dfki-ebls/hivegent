@@ -5,6 +5,22 @@ export const documents = {
   canvas: {
     documents: "Dokumente",
     context: "Kontext",
+    tasks: "Aufgaben",
+  },
+  tasks: {
+    emptyTitle: "Delegierte Aufgaben werden hier angezeigt",
+    emptyDescription: "Der Assistent gibt Arbeit an Subagenten ab, die im Hintergrund laufen, während du chattest",
+    stop: "Aufgabe anhalten",
+    status: {
+      running: "Läuft",
+      ok: "Erledigt",
+      timeout: "Zeit überschritten",
+      budget: "Budget erschöpft",
+      failed: "Fehlgeschlagen",
+      contained: "Abgestürzt",
+      cancelled: "Angehalten",
+      error: "Fehlgeschlagen",
+    },
   },
   context: {
     emptyTitle: "Kontextdokumente werden hier angezeigt",

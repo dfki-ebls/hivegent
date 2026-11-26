@@ -31,7 +31,7 @@ export function ChatLayout({ id, messages }: ChatLayoutProps) {
   const { t } = useTranslation(undefined, T_OPTIONS);
   const [mobileDocumentsOpen, setMobileDocumentsOpen] = useState(false);
   const openChat = useDocumentCanvasStore((state) => state.openChat);
-  const { chat, subagents } = useHivegentChat(id, messages);
+  const chat = useHivegentChat(id, messages);
   const empty = messages.length === 0;
 
   // Single entry point for every navigation path (sidebar, links, a new chat):
@@ -42,7 +42,7 @@ export function ChatLayout({ id, messages }: ChatLayoutProps) {
   }, [id, empty, openChat]);
 
   return (
-    <ChatProvider chat={chat} conversationId={id} subagents={subagents}>
+    <ChatProvider chat={chat} conversationId={id}>
       <div className="flex h-full overflow-hidden">
         <div className="hidden h-full w-1/2 overflow-hidden border-r md:block">
           <DocumentCanvas />

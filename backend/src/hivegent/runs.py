@@ -34,6 +34,7 @@ from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DoneChunk, ErrorC
 
 from .auth import Lease, leases, until_expiry
 from .db.conversations import OwnedConversation
+from .jobs import ConversationActivity, manager
 from .shared.l10n import Localized
 from .store import User
 
@@ -79,10 +80,13 @@ class Run:
         history: The history the turn runs on, once it is prepared.
         refusal: Why its preparation refused the turn.
         started: Whether its preparation passed, so it streams.
+        preemptible: Whether a request of the user stops it to run its own,
+            as one the conversation started itself does.
     """
 
     message: UIMessage | None
     principal: User
+    preemptible: bool = False
     history: list[ModelMessage] = field(default_factory=list[ModelMessage])
     chunks: list[BaseChunk] = field(default_factory=list[BaseChunk])
     refusal: Exception | None = None
@@ -229,6 +233,8 @@ class Runs:
         principal: User,
         message: UIMessage | None,
         prepare: Awaitable[Prepared],
+        *,
+        preemptible: bool = False,
     ) -> Run:
         """Run the turn *prepare* yields for *principal* in the conversation's slot, which no turn may hold.
 
@@ -240,8 +246,10 @@ class Runs:
         ahead of the followers, so one that saw the end finds the slot free.
         A refusal ends the task too, and :meth:`Run.prepared` tells it apart.
         The work *prepare* puts after the turn starts once it ended unstopped.
+        Every client of the owner learns that the turn started, so one showing
+        the conversation follows a turn it did not start.
         """
-        run = self._runs[conversation] = Run(message, principal)
+        run = self._runs[conversation] = Run(message, principal, preemptible)
 
         def finish(task: asyncio.Task[None]) -> None:
             if self._runs.get(conversation) is run:
@@ -256,6 +264,21 @@ class Runs:
 
         run.task = asyncio.create_task(run.pump(prepare))
         run.task.add_done_callback(finish)
+        manager.publish(
+            conversation.owner,
+            ConversationActivity(conversation_id=conversation.id, kind="turn"),
+        )
+
+        return run
+
+    async def preempt(self, conversation: OwnedConversation) -> Run | None:
+        """The turn of the conversation once every preemptible one it ran stopped, if one still holds the slot.
+
+        A preemptible turn may start again while one stops, as a waking
+        conversation does, so it stops that one too.
+        """
+        while (run := self.get(conversation)) is not None and run.preemptible:
+            await self.cancel(conversation)
 
         return run
 

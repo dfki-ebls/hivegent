@@ -10,6 +10,7 @@ import {
 import { syncReadDocumentOutput } from "@/components/chat/tools/read-document";
 import { RunPythonTool } from "@/components/chat/tools/run-python";
 import { syncSearchOutput } from "@/components/chat/tools/search";
+import { DelegateTool } from "@/components/chat/tools/subagent";
 import { ToolFallback } from "@/components/chat/tools/tool-fallback";
 import { syncWebFetchOutput } from "@/components/chat/tools/web-fetch";
 import { syncWebSearchOutput } from "@/components/chat/tools/web-search";
@@ -42,6 +43,7 @@ const TOOL_HANDLERS: Partial<Record<ToolName, ToolHandler>> = {
   },
   write_document: { render: (props) => <WriteDocumentTool {...props} /> },
   ask_user: { render: (props) => <AskUserTool {...props} /> },
+  delegate_task: { render: (props) => <DelegateTool {...props} /> },
 };
 
 export function getToolHandler(name: string): ToolHandler | undefined {

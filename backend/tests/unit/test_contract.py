@@ -18,7 +18,6 @@ from pydantic import TypeAdapter
 
 from hivegent.agents.capabilities import SANDBOX_FUNCTION_NAMES, TOOL_NAMES
 from hivegent.agents.subagents import DELEGATION_TOOLS
-from hivegent.agents.transcripts import SubagentUpdate
 from hivegent.server.routes import api_router
 from hivegent.server.routes.public import router as public_router
 from hivegent.tools.changes import WriteMode
@@ -30,7 +29,6 @@ _REF = "#/components/schemas/{model}"
 
 # Wire shapes outside the REST API, by the name the frontend test looks them up by.
 _EXTRA = {
-    "SubagentUpdate": TypeAdapter(SubagentUpdate),
     "ChangesetOutcome": TypeAdapter(ChangesetOutcome),
     "WriteMode": TypeAdapter(WriteMode),
 }

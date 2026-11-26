@@ -2,8 +2,8 @@
 
 The archive holds their documents as the files of their workspace, each
 conversation as the archive its export button downloads beside the files of
-its ``/tmp``, their memory page, their skills and assistants as their files,
-and their preferences.
+its ``/tmp`` and its delegated tasks, their memory page, their skills and
+assistants as their files, and their preferences.
 It is built in full before the first byte is sent, so a failure is an
 error, never a truncated archive.
 """
@@ -30,11 +30,12 @@ from ..db.conversations import (
 )
 from ..db.memory import load_memory
 from ..db.users import load_preferences
+from ..delegations import TASKS_FOLDER
 from ..shared.tree import tree
 from ..shared.zips import build_zip, write_file
 from ..skills import library
 from ..store import User, UserScope
-from ..tmp import tmp_dir
+from ..tmp import TMP_FOLDER
 from ..transparency import sign_provenance
 from ..types import (
     ConversationArchive,
@@ -154,9 +155,10 @@ async def _conversations(user: User) -> dict[str, Path | str]:
 
         prefix = f"{ExportPart.CONVERSATIONS}/{conversation.id}"
         members[f"{prefix}.json"] = archive.model_dump_json(indent=2)
-        members |= await asyncio.to_thread(
-            _files, tmp_dir(settings.data_dir, conversation), f"{prefix}/tmp"
-        )
+        folder = conversation.folder(settings.data_dir)
+
+        for name in (TMP_FOLDER, TASKS_FOLDER):
+            members |= await asyncio.to_thread(_files, folder / name, f"{prefix}/{name}")
 
     return members
 

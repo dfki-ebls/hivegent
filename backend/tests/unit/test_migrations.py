@@ -23,11 +23,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 import hivegent
-from hivegent.agents.transcripts import (
-    SubagentStep,
-    SubagentTranscript,
-    subagent_transcript,
-)
 
 
 def _migration(name: str) -> ModuleType:
@@ -178,16 +173,15 @@ def test_a_subagent_history_becomes_its_transcript() -> None:
     [request] = ModelMessagesTypeAdapter.validate_python([entry.payload])
     [part] = request.parts
     assert isinstance(part, ToolReturnPart)
-    part.metadata = DataChunk.model_validate(part.metadata)
 
-    assert subagent_transcript(part) == SubagentTranscript(
-        transcript="subagent",
-        steps=(
-            SubagentStep(kind="reasoning"),
-            SubagentStep(kind="tool", tool_name="grep"),
-            SubagentStep(kind="message"),
-        ),
-    )
+    assert DataChunk.model_validate(part.metadata).data == {
+        "transcript": "subagent",
+        "steps": [
+            {"kind": "reasoning"},
+            {"kind": "tool", "tool_name": "grep"},
+            {"kind": "message"},
+        ],
+    }
 
 
 def test_a_request_keeps_only_instructions_it_changes() -> None:

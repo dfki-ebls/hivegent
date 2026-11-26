@@ -20,7 +20,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
  * Tabs of the document canvas, in display order. Persisted to sessionStorage,
  * so the schema doubles as the allow-list that validates the restored value.
  */
-const DocumentCanvasTabSchema = z.enum(["documents", "context"]);
+const DocumentCanvasTabSchema = z.enum(["documents", "context", "tasks"]);
 export type DocumentCanvasTab = z.infer<typeof DocumentCanvasTabSchema>;
 
 interface DocumentCanvasState {

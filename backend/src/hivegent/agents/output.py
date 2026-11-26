@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import Any, override
 
 from exar.tools.batch import as_return
-from pydantic import Field, PrivateAttr
+from pydantic import PrivateAttr
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 from pydantic_core import to_json
@@ -33,15 +33,10 @@ def _encode(data: object) -> bytes:
 class ToolOutputChunk(DataChunk):
     """The structured payload of a tool return, as the frontend receives it.
 
-    ``display_only`` marks data that is only what the client shows, such as a
-    subagent's transcript, so the text alone is the result.  It is excluded
-    from what is streamed and stored.
-
     The data is encoded once, by :meth:`data_json`, and that encoding is
     what both the output spill measures and saves and the stream sends.
     """
 
-    display_only: bool = Field(default=False, exclude=True)
     _json: bytes | None = PrivateAttr(default=None)
 
     def data_json(self) -> bytes:
@@ -65,7 +60,7 @@ def with_data_chunk(result: Any, tool_call_id: str | None) -> ToolReturn[Any]:
     The id is the only reliable link between a chunk and its tool part, since
     the Vercel AI SDK appends ``data-*`` parts to the end of a message.
     Text data is the return value itself and is not repeated, and a chunk
-    already built, such as a subagent's transcript, passes as it is.
+    already built passes as it is.
 
     >>> with_data_chunk(ToolReturn("text", metadata={"a": 1}), "call").metadata.id
     'call'

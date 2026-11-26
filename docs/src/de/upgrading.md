@@ -156,6 +156,17 @@ Führen Sie nach dem ersten Start einmal `VACUUM (ANALYZE) messages` aus, damit 
 `VACUUM FULL messages` oder pg_repack gibt ihn an das System zurück, doch das erste sperrt die Unterhaltungen währenddessen, planen Sie dafür also Ausfallzeit ein.
 Eine `.env`-Datei wird nicht mehr gelesen, ihre Werte gehören in die Umgebung, in Credentials oder in `config.toml`.
 
+## Unteragenten im Hintergrund
+
+- Unteragenten laufen standardmäßig im Hintergrund und überdauern den Zug, der sie gestartet hat, sodass du weiterchatten kannst, während sie arbeiten.
+  Der Assistent kann auf eine kurze Aufgabe warten, deren Ergebnis er braucht, die in den Hintergrund wechselt, wenn sie nach 30 Sekunden noch läuft.
+  Ihre Berichte erreichen den Assistenten bei seinem nächsten Schritt, oder, wenn gerade keine Antwort läuft, setzt die Konversation die letzte Antwort von sich aus fort, um sie zu lesen.
+- Eine Nachricht, die du sendest, während eine solche Antwort läuft, hält sie an, und dein Zug liest die Berichte stattdessen.
+- Der neue Tab Aufgaben neben dem Chat listet die delegierten Aufgaben mit allem, was ihre Unteragenten getan haben, und hält eine laufende an.
+- Aufgaben werden in einem Ordner `tasks` unter dem Ordner jeder Konversation im Datenverzeichnis gespeichert und mit der Konversation gelöscht.
+  Eine Aufgabe, die noch läuft, wenn der Server anhält, wird als angehalten geladen.
+- Die Schritte von Unteragenten aus früheren Versionen werden im Chat nicht mehr unter ihrer Delegation angezeigt.
+
 ## Prompt-Stabilität
 
 - Der System-Prompt enthält nicht mehr das Datum, es ist ein angehängter Hinweis wie der Modus-Hinweis, sodass das Prompt-Präfix einer Unterhaltung und sein Provider-Cache über Mitternacht gültig bleiben.

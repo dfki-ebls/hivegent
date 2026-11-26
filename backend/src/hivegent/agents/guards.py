@@ -404,13 +404,11 @@ class ConversationSpill(ToolOutputLimits[UserDeps]):
     async def _data(self, call: ToolCallPart, chunk: object) -> str | None:
         """Save the structured data of a spilled result as JSON, returning the note naming it.
 
-        ``None`` without a store, without structured data, for display-only data,
-        or when the data does not fit among the saved results.
+        ``None`` without a store, without structured data, or when the data
+        does not fit among the saved results.
         """
-        if (
-            not isinstance(self.store, SavedResults)
-            or not isinstance(chunk, ToolOutputChunk)
-            or chunk.display_only
+        if not isinstance(self.store, SavedResults) or not isinstance(
+            chunk, ToolOutputChunk
         ):
             return None
 

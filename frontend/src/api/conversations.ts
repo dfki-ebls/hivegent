@@ -101,7 +101,7 @@ export interface ChatRequestBody {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The API URL of *conversationId*'s route *rest*, refusing an id that is no UUID and so names none. */
-function conversationUrl(conversationId: string, rest = ""): string {
+export function conversationUrl(conversationId: string, rest = ""): string {
   if (!UUID.test(conversationId)) {
     throw new Error(`Not a conversation id: ${conversationId}`);
   }
@@ -251,7 +251,7 @@ export const conversationQueries = {
 };
 
 // Coalesces a burst of feed events, such as a turn's title and its end, into one read.
-const FEED_REFETCH_DELAY_MS = 250;
+export const FEED_REFETCH_DELAY_MS = 250;
 
 /**
  * Refetch the conversation list of *client* whenever the feed says it may have

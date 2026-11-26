@@ -155,6 +155,17 @@ Run `VACUUM (ANALYZE) messages` once after the first boot to make the space reus
 `VACUUM FULL messages` or pg_repack returns it to the system, but the first locks conversations while it runs, so plan downtime for it.
 A `.env` file is no longer read, so move its values into the environment, credentials, or `config.toml`.
 
+## Background subagents
+
+- Subagents run in the background by default and outlive the turn that started them, so you can keep chatting while they work.
+  The assistant may wait for a short task whose result it needs, which moves to the background if it still runs after 30 seconds.
+  Their reports reach the assistant at its next step, or, when no answer is running, the conversation continues the last reply on its own to read them.
+- A message you send while such a reply runs stops it, and your turn reads the reports instead.
+- The new Tasks tab beside the chat lists the delegated tasks with everything their subagents did, and stops a running one.
+- Tasks are saved in a `tasks` folder below each conversation's folder in the data directory and deleted with the conversation.
+  A task still running when the server stops loads as stopped.
+- The steps of subagents from earlier releases no longer show under their delegation in the chat.
+
 ## Prompt stability
 
 - The system prompt no longer holds the date, it is a note appended like the mode note, so the prompt prefix of a conversation, and its provider cache, stay valid across midnight.

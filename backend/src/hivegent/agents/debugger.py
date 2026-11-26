@@ -43,7 +43,6 @@ from ..db.conversations import CHAT_ERROR_KEY, render_prompt
 from ..tmp import RESULTS_DIR
 from ..types import DebugReport, ToolSchema
 from .app import default_model_settings, guards
-from .transcripts import SubagentTranscript, subagent_transcript
 
 __all__ = [
     "DebugDeps",
@@ -161,9 +160,7 @@ def conversation_steps(messages: Iterable[ModelMessage]) -> Iterator[Step]:
     """Flatten *messages* into numbered steps.
 
     Instructions are a step where they change, and a run error stored for
-    the chat banner one after the message holding it.  The subagent a call
-    delegated to follows its return, as an ``agent`` step listing the steps
-    of its transcript, the call naming its task.
+    the chat banner one after the message holding it.
     """
     n = count()
     instructions: str | None = None
@@ -193,14 +190,6 @@ def conversation_steps(messages: Iterable[ModelMessage]) -> Iterator[Step]:
                             status=part.outcome,
                             took=_since(called.get(part.tool_call_id), part.timestamp),
                         )
-
-                        if (transcript := subagent_transcript(part)) is not None:
-                            yield Step(
-                                next(n),
-                                "agent",
-                                _agent_text(transcript),
-                                call_id=part.tool_call_id,
-                            )
 
                     case RetryFeedbackPart():
                         yield Step(next(n), "retry", part.model_response())
@@ -246,17 +235,6 @@ def conversation_steps(messages: Iterable[ModelMessage]) -> Iterator[Step]:
 
         if error := (message.metadata or {}).get(CHAT_ERROR_KEY):
             yield Step(next(n), "error", str(error))
-
-
-def _agent_text(transcript: SubagentTranscript) -> str:
-    """The steps of *transcript* in order, a tool call by the tool's name."""
-    return (
-        ", ".join(
-            step.kind if step.tool_name is None else f"tool {step.tool_name}"
-            for step in transcript.steps
-        )
-        or "(no steps)"
-    )
 
 
 _TOKEN = re.compile(r"\w+(?:[@./:+'-]+\w+)*")

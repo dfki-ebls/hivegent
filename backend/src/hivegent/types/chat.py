@@ -21,6 +21,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     SubmitMessage,
     UIMessage,
 )
+from pydantic_ai_harness.sub_agents import DelegationOutcome
 
 from ..config import settings
 from ..config.llm import DEFAULT_REASONING_EFFORT
@@ -57,6 +58,25 @@ __all__ = [
     "UIChatRequest",
     "UpdateTitleRequest",
 ]
+
+
+class DelegatedTask(BaseModel):
+    """A task the main agent of a conversation delegated to a subagent, as the tasks panel lists it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    parent_id: str | None = Field(
+        description="The task that delegated it, none for one of the main agent"
+    )
+    agent_name: str = Field(description="The subagent it runs on")
+    prompt: str = Field(description="The task as the subagent got it")
+    status: Literal["running", "finished"]
+    outcome: DelegationOutcome | None = Field(description="How it ended, once it did")
+    output: str = Field(description="What it reported, once it ended")
+    started_at: float = Field(description="When it started, as a UNIX time")
+    finished_at: float | None = Field(description="When it ended, as a UNIX time")
+    user_stopped: bool = Field(description="Whether the user stopped it")
 
 
 class ToolInfo(BaseModel):

@@ -64,6 +64,17 @@ export type WorkspaceChanged = z.infer<typeof WorkspaceChangedSchema>;
 /** Marks a change to the user's conversations (see backend `ConversationsChanged`). */
 const ConversationsChangedSchema = z.object({ type: z.literal("conversations-changed") });
 
+/**
+ * Marks a turn starting or the delegated tasks changing in one of the user's conversations
+ * (see backend `ConversationActivity`).
+ */
+const ConversationActivitySchema = z.object({
+  type: z.literal("conversation-activity"),
+  conversation_id: z.string(),
+  kind: z.enum(["turn", "tasks"]),
+});
+export type ConversationActivity = z.infer<typeof ConversationActivitySchema>;
+
 /** The libraries the feed announces changes of, each named like the root of its query keys. */
 export type LibraryKind = "skills" | "assistants";
 
@@ -82,6 +93,7 @@ export const FeedEventSchema = z.union([
   FeedReadySchema,
   WorkspaceChangedSchema,
   ConversationsChangedSchema,
+  ConversationActivitySchema,
   LibraryChangedSchema,
   SourceChangedSchema,
 ]);
@@ -92,6 +104,7 @@ export interface FeedHandlers {
   onReady: () => void;
   onWorkspaceChanged: (changed: WorkspaceChanged) => void;
   onConversationsChanged: () => void;
+  onConversationActivity: (activity: ConversationActivity) => void;
   onLibraryChanged: (kind: LibraryKind) => void;
   onSourcesChanged: () => void;
 }
@@ -162,7 +175,8 @@ async function readSseEvents<T>(
  * Subscribe to the caller's job feed, invoking `onJob` for every snapshot,
  * `onReady` once the initial replay of current jobs is complete,
  * `onWorkspaceChanged` for every change to a workspace the user may read,
- * `onConversationsChanged` for every change to the user's conversations, and
+ * `onConversationsChanged` for every change to the user's conversations,
+ * `onConversationActivity` for every turn starting or tasks changing in one of them, and
  * `onLibraryChanged` for every change to a library the user sees,
  * `onSourcesChanged` for every change to the sync state of a source (admins only),
  * whoever made them, until the connection ends or `signal` aborts. The feed
@@ -175,6 +189,7 @@ export async function subscribeJobs(
     onReady,
     onWorkspaceChanged,
     onConversationsChanged,
+    onConversationActivity,
     onLibraryChanged,
     onSourcesChanged,
   }: FeedHandlers,
@@ -188,6 +203,7 @@ export async function subscribeJobs(
     if (!("type" in event)) onJob(event);
     else if (event.type === "ready") onReady();
     else if (event.type === "conversations-changed") onConversationsChanged();
+    else if (event.type === "conversation-activity") onConversationActivity(event);
     else if (event.type === "library-changed") onLibraryChanged(event.kind);
     else if (event.type === "source-changed") onSourcesChanged();
     else onWorkspaceChanged(event);

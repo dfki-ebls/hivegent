@@ -16,6 +16,7 @@ from ..config import API_PREFIX, API_VERSION, settings
 from ..conversation_files import sweep_conversations
 from ..db import apply_migrations, engine_lifespan, verify_schema
 from ..db.engine import serving
+from ..delegations import delegations
 from ..files import reset_transient
 from ..http_client import shared_http_client_lifespan
 from ..logging_config import configure_logging
@@ -96,8 +97,10 @@ async def lifespan(app: FastAPI, mcp: McpApp | None) -> AsyncGenerator[None]:
         )
         await stack.enter_async_context(background(sweeper))
         await stack.enter_async_context(integrations_lifespan())
-        # Unwound ahead of the engine, so a turn the shutdown stops is stored.
+        # Unwound ahead of the engine, so a turn the shutdown stops is stored,
+        # and the tasks first, so none wakes its conversation meanwhile.
         stack.push_async_callback(runs.aclose)
+        stack.push_async_callback(delegations.aclose)
         await load_persisted_state()
         await reconcile_index_state()
         await warm

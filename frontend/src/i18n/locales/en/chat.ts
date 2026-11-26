@@ -286,8 +286,7 @@ export const chat = {
       emptyContent: "The document is written empty.",
     },
     subagent: {
-      reasoning: "Reasoning",
-      response: "Response",
+      showTasks: "Show in Tasks",
     },
     binary: {
       pages_one: "Page {{pages}}",

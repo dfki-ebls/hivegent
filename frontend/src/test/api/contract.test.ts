@@ -8,6 +8,7 @@ import { CaseBaseSchema } from "@/api/case-bases";
 import { AGENT_MODES, REASONING_EFFORTS } from "@/api/conversations";
 import { ChunkedDocumentResponseSchema, DirectoryTreeResponseSchema } from "@/api/documents";
 import { FeedEventSchema } from "@/api/jobs";
+import { DelegatedTaskSchema } from "@/api/tasks";
 import { BackendSettingsSchema } from "@/api/settings";
 import { TransparencyDetectionResponseSchema } from "@/api/transparency";
 import { TOOL_ICONS } from "@/components/chat/tools/icons";
@@ -15,7 +16,6 @@ import { ChangesetOutcomeSchema } from "@/components/chat/tools/run-python";
 import { WriteInputSchema } from "@/components/chat/tools/write-document";
 import { chat as de } from "@/i18n/locales/de/chat";
 import { chat as en } from "@/i18n/locales/en/chat";
-import { SubagentUpdateSchema } from "@/lib/chat/subagent";
 
 type JsonSchema = z.core.JSONSchema.JSONSchema;
 
@@ -102,6 +102,7 @@ const MIRRORS: [string, ZodType][] = [
   ["CaseBaseResponse", CaseBaseSchema],
   ["ChangesetOutcome", ChangesetOutcomeSchema],
   ["DataIntegration", DataIntegrationSchema],
+  ["DelegatedTask", DelegatedTaskSchema],
   ["DirectoryTreeResponse", DirectoryTreeResponseSchema],
   ["DocumentChunksResponse", ChunkedDocumentResponseSchema],
   ["ExportPart", z.enum(EXPORT_PARTS)],
@@ -111,7 +112,6 @@ const MIRRORS: [string, ZodType][] = [
   ["PluginInfo", PluginInfoSchema],
   ["ReasoningEffort", z.enum(REASONING_EFFORTS)],
   ["SettingsResponse", BackendSettingsSchema],
-  ["SubagentUpdate", SubagentUpdateSchema],
   ["TransparencyDetectionResponse", TransparencyDetectionResponseSchema],
   ["WriteMode", WriteInputSchema.shape.mode],
 ];

@@ -4,6 +4,7 @@ import { create } from "zustand";
 import {
   subscribeJobs,
   TERMINAL_JOB_STATUSES,
+  type ConversationActivity,
   type JobView,
   type LibraryKind,
   type WorkspaceChanged,
@@ -60,6 +61,7 @@ const jobSettled = channel<[JobView]>();
 const jobStarted = channel<[JobView]>();
 const workspaceChanged = channel<[WorkspaceChanged]>();
 const conversationsChanged = channel<[]>();
+const conversationActivity = channel<[ConversationActivity]>();
 const libraryChanged = channel<[LibraryKind]>();
 const sourcesChanged = channel<[]>();
 /** Fired after the feed has replayed state on each connect. */
@@ -116,6 +118,25 @@ export function onWorkspaceStale(listener: (changed: WorkspaceChanged | "all") =
  */
 export function onConversationsStale(listener: () => void) {
   return unsubscribeAll(conversationsChanged.on(listener), feedReady.on(listener));
+}
+
+/**
+ * Register a callback fired whenever the conversation *conversationId* shows
+ * activity of *kind*: a turn starting, whoever started it, or its delegated
+ * tasks changing, which a feed handshake that may have missed some counts as.
+ * Returns an unsubscribe function.
+ */
+export function onConversationActivity(
+  conversationId: string,
+  kind: ConversationActivity["kind"],
+  listener: () => void,
+) {
+  return unsubscribeAll(
+    conversationActivity.on((activity) => {
+      if (activity.conversation_id === conversationId && activity.kind === kind) listener();
+    }),
+    feedReady.on(listener),
+  );
 }
 
 /**
@@ -237,6 +258,7 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
           },
           onWorkspaceChanged: publishWorkspaceChanged,
           onConversationsChanged: conversationsChanged.emit,
+          onConversationActivity: conversationActivity.emit,
           onLibraryChanged: libraryChanged.emit,
           onSourcesChanged: sourcesChanged.emit,
         });

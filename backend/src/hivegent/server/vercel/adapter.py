@@ -59,7 +59,6 @@ from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ErrorChunk
 from ...agents.approval import APPROVAL_NOTE, APPROVED_CHANGES, changes_digest
 from ...agents.common import ASK_USER_TOOL
 from ...agents.tools.ask import ANSWERS, DISMISSED_QUESTIONS
-from ...agents.transcripts import SubagentSteps
 from ...db.conversations import prompt_items
 from ...shared.l10n import Localized
 from ..turns import (
@@ -201,7 +200,7 @@ def denial_message(note: str | None) -> str:
 @dataclass
 class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     """Event stream that records how long each thinking part took to stream,
-    and shows compactions and the steps of subagents as they happen.
+    and shows compactions as they happen.
 
     Vercel AI and Pydantic AI do not expose a first-class reasoning duration.
     We persist this as application message metadata instead of provider
@@ -219,7 +218,6 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
 
     _thinking_started_at: float | None = None
     _thinking_durations_ms: list[int] = field(default_factory=list[int])
-    subagents: SubagentSteps = field(default_factory=SubagentSteps)
 
     @override
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
@@ -237,13 +235,10 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     async def handle_capability_event(
         self, event: CapabilityEvent
     ) -> AsyncIterator[BaseChunk]:
-        """Show a compaction the run made, as the stored one reloads, and what its subagents do under their calls."""
+        """Show a compaction the run made, as the stored one reloads."""
         if isinstance(event, Compacted):
             async for chunk in self.handle_compaction(event.part):
                 yield chunk
-
-        elif (update := self.subagents.update(event)) is not None:
-            yield update.chunk()
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
@@ -304,13 +299,7 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
 
     An attachment's filename, which the base adapter drops, is kept as the
     identifier of its ``BinaryContent``, which no model reads in a user prompt.
-
-    Args:
-        subagents: The steps of the turn's subagents, which its stream shows
-            live and the turn stores, so a reload shows what streamed.
     """
-
-    subagents: SubagentSteps = field(default_factory=SubagentSteps)
 
     @classmethod
     @override
@@ -373,7 +362,6 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
             sdk_version=self.sdk_version,
             server_message_id=self.server_message_id,
             manage_system_prompt=self.manage_system_prompt,
-            subagents=self.subagents,
         )
 
     @cached_property

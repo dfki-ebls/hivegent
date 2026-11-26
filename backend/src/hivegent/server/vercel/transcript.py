@@ -49,7 +49,6 @@ from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
 from starlette.responses import StreamingResponse
 
 from ...agents.output import DATA_CHUNK_TYPE
-from ...agents.transcripts import SUBAGENT_CHUNK_TYPE
 from ...db.conversations import is_hidden, is_prompt, is_user_request
 from ..turns import (
     IMPORTED_CALL_CLOSED,
@@ -82,7 +81,7 @@ _COMPACTION_CHUNK_TYPE = "data-compaction"
 # `frontend/src/lib/chat/message.ts`), kept in sync by hand.  Every other one
 # stays server side (see `backend/README.md`).
 CLIENT_DATA_TYPES = frozenset(
-    {_COMPACTION_CHUNK_TYPE, SUBAGENT_CHUNK_TYPE, TURN_CHUNK_TYPE, DATA_CHUNK_TYPE}
+    {_COMPACTION_CHUNK_TYPE, TURN_CHUNK_TYPE, DATA_CHUNK_TYPE}
 )
 
 UI_MESSAGES = TypeAdapter(list[UIMessage])

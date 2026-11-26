@@ -1,4 +1,4 @@
-import { Brain, Files, type LucideIcon } from "lucide-react";
+import { Bot, Brain, Files, type LucideIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -7,6 +7,7 @@ import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContextDocuments } from "@/components/documents/context-documents";
 import { DocumentManager } from "@/components/documents/document-manager";
+import { TasksPanel } from "@/components/chat/tasks/tasks-panel";
 
 interface TabDef {
   id: DocumentCanvasTab;
@@ -19,6 +20,7 @@ interface TabDef {
 const TABS: TabDef[] = [
   { id: "documents", icon: Files, Panel: DocumentManager },
   { id: "context", icon: Brain, Panel: ContextDocuments },
+  { id: "tasks", icon: Bot, Panel: TasksPanel },
 ];
 
 export function DocumentCanvas() {

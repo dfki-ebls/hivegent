@@ -51,7 +51,9 @@ SimilarCasesQueryArg = Annotated[
             "The example to rank by: a partial record of the case base's attributes, "
             "or for graphs an inline graph. Omit every query argument to get the "
             "attributes and how each is compared."
-        )
+        ),
+        # An empty query ranks nothing, and a strict schema that requires the argument would otherwise get `{}` for null.
+        min_length=1,
     ),
 ]
 

@@ -3,26 +3,23 @@
 While ``settings.subagents`` enables them, a turn's prefix carries the
 `SubAgents` capability of pydantic-ai-harness over the subagents of
 :data:`SUBAGENTS` (:func:`delegation`), with its `TaskControl`: the main agent
-delegates a task in the foreground of its ``delegate_task`` call or in the
-background, steers, cancels, or resumes it within the turn, and the turn waits
-for the running ones before it ends.  A turn that pauses for an approval
-cancels them, as the harness does.
+delegates a task in the background unless it waits for a short one
+(:class:`BackgroundByDefault`), and the tasks outlive the turn under the
+conversation's task owner
+(:mod:`hivegent.delegations`), so a later turn steers, cancels, or resumes them.
 
 A subagent runs on the turn's model with its reasoning and on its deps, and counts into the turn's usage,
-so the turn's ``UsageLimits`` bound the main agent and all its subagents
-together.  It never asks the user: `DenyUnanswered` denies every call that
+so the turn's ``UsageLimits`` bound the main agent and all the subagents it
+started together, however long they run.  It never asks the user: `DenyUnanswered` denies every call that
 would wait for an approval, so the main agent makes that change itself.  It
 is offered exactly the tools the policy of the turn's deps
 (``UserDeps.policy``) allows, and a list withholds a subagent by its name or the delegation tools by theirs.  Its
 history is compacted on overflow like a turn's (:mod:`.compaction`), a
 crash reaches the main agent as a retry, and a model error as a result it
-decides on.  Ahead of the harness's timeout, :class:`ReportDeadline` refuses
-its further calls and has it report what it found, a subagent the timeout
-still stops passes on its last text, and :class:`BoundedReport` bounds what
-it reports.
-
-What a subagent does renders under the call that delegated to it
-(:mod:`.transcripts`).
+decides on.  After ``subagents.max_steps`` model requests, or ahead of the
+harness's timeout, :class:`ReportDeadline` refuses its further calls and has
+it report what it found, a subagent the timeout still stops passes on its
+last text, and :class:`BoundedReport` bounds what it reports.
 """
 
 import math
@@ -37,6 +34,7 @@ from pydantic_ai import RunContext, SkipToolExecution
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
+    RawToolArgs,
     ValidatedToolArgs,
 )
 from pydantic_ai.messages import ToolCallPart
@@ -44,6 +42,7 @@ from pydantic_ai.output import OutputContext
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.sub_agents import SubAgent, SubAgents, TaskControl
+from pydantic_core import from_json
 
 from ..config import settings
 from ..llm import thinking_model_settings
@@ -68,6 +67,7 @@ __all__ = [
     "DELEGATE_TOOL",
     "DELEGATION_TOOLS",
     "SUBAGENTS",
+    "BackgroundByDefault",
     "BoundedReport",
     "ReportDeadline",
     "Subagent",
@@ -78,7 +78,7 @@ DELEGATE_TOOL = "delegate_task"
 """The tool that delegates to a subagent, without which a turn delegates nothing."""
 
 DELEGATION_TOOLS: Mapping[str, str] = {
-    DELEGATE_TOOL: "Delegates a task to a subagent, in the foreground or the background.",
+    DELEGATE_TOOL: "Delegates a task to a subagent, in the background unless it waits for it.",
     "list_tasks": "Lists the delegated tasks of the turn and their states.",
     "check_task": "Shows what a running task is doing now, without waiting for it.",
     "message_task": "Steers a running task with a message.",
@@ -91,6 +91,83 @@ They change nothing themselves, since every subagent is held to the host
 policy, and a list withholds them by name like any tool.
 """
 
+
+_AUTO_BACKGROUND_SECONDS = 30
+"""How long the main agent waits on a task it delegated in the foreground before the task moves to the background."""
+
+_BACKGROUND = "background"
+
+_BACKGROUND_SCHEMA: dict[str, Any] = {
+    "type": "boolean",
+    "default": True,
+    "description": (
+        "Run the task in the background, the default, and get its report later, so you "
+        "and the user go on meanwhile. Set false only for a short task whose result you "
+        "need to go on, which moves to the background if it still runs after "
+        f"{_AUTO_BACKGROUND_SECONDS} seconds."
+    ),
+}
+
+
+def _offers_background(tool_def: ToolDefinition) -> bool:
+    """Whether *tool_def* is ``delegate_task`` taking ``background``, which the harness offers only with a task owner."""
+    return tool_def.name == DELEGATE_TOOL and _BACKGROUND in tool_def.parameters_json_schema.get(
+        "properties", {}
+    )
+
+
+def _background_by_default(tool_def: ToolDefinition) -> ToolDefinition:
+    """*tool_def* of ``delegate_task`` with ``background`` defaulting to true."""
+    schema = tool_def.parameters_json_schema
+    properties: dict[str, Any] = {
+        **schema["properties"],
+        _BACKGROUND: _BACKGROUND_SCHEMA,
+    }
+
+    return replace(tool_def, parameters_json_schema={**schema, "properties": properties})
+
+
+class BackgroundByDefault(AbstractCapability[UserDeps]):
+    """Delegates a task in the background unless the main agent asks to wait for it.
+
+    The harness's ``delegate_task`` waits by default, which blocks the turn
+    and the user with it, so its ``background`` argument defaults to true in
+    the schema the model reads, and a call that leaves it out runs in the
+    background.  A task the main agent waits for moves to the background
+    after ``_AUTO_BACKGROUND_SECONDS`` (`TaskControl.auto_background_after`),
+    so it never blocks the user for long, while a short one returns its
+    report in the same reply rather than in a turn it wakes.
+    """
+
+    @override
+    async def prepare_tools(
+        self, ctx: RunContext[UserDeps], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        return [
+            _background_by_default(tool_def) if _offers_background(tool_def) else tool_def
+            for tool_def in tool_defs
+        ]
+
+    @override
+    async def before_tool_validate(
+        self,
+        ctx: RunContext[UserDeps],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+    ) -> RawToolArgs:
+        if not _offers_background(tool_def):
+            return args
+
+        try:
+            parsed = from_json(args or "{}") if isinstance(args, str) else args
+        except ValueError:
+            return args
+
+        return {_BACKGROUND: True, **parsed} if isinstance(parsed, dict) else args
+
+
 _REFUSAL = (
     "A subagent cannot ask the user for approval, so this call was not executed. "
     "Do not retry it, report the change to the agent that delegated to you instead, "
@@ -102,7 +179,7 @@ _REPORT_SHARE = 0.8
 """The share of ``settings.subagents.timeout_seconds`` after which a subagent reports what it found."""
 
 _REPORT_NOW = (
-    "Your time is almost up, so this call was not run and no further call will be. "
+    "Your budget is almost used up, so this call was not run and no further call will be. "
     "Report your findings now, with the paths and sources they rest on, and say "
     "what you did not get to."
 )
@@ -110,25 +187,32 @@ _REPORT_NOW = (
 
 @dataclass(kw_only=True)
 class ReportDeadline(AbstractCapability[UserDeps]):
-    """Has a subagent report what it found once *seconds* of its run passed, refusing its further calls.
+    """Has a subagent report what it found after *steps* model requests or *seconds* of its run, refusing its further calls.
 
-    The harness cancels a subagent that overran its timeout with a note and
-    its last text, which may stop mid-task, so this soft deadline ahead of it lets the subagent end with its
-    findings.  Every call after it returns the instruction to report in place
-    of its result, in English like every result, so its tools and
-    instructions stay as they were and the cached prefix holds.
+    A subagent ends with its findings rather than running on, and rather than
+    the harness's timeout cutting it off with a note and its last text, which
+    may stop mid-task.  Every call after the deadline returns the instruction
+    to report in place of its result, in English like every result, so its
+    tools and instructions stay as they were and the cached prefix holds,
+    which a final request without tools would break.  The steps count the
+    subagent's own requests, while the turn's usage limits, which it shares,
+    count those of the whole turn.
 
     Args:
-        seconds: How long the run works before it reports.
+        steps: How many model requests the run makes before it reports.
+        seconds: How long the run works before it reports, ``None`` for no bound.
     """
 
-    seconds: float
+    steps: int
+    seconds: float | None = None
     due: float = field(default=math.inf, init=False)
 
     @override
     async def for_run(self, ctx: RunContext[UserDeps]) -> Self:
         run = replace(self)
-        run.due = time.monotonic() + self.seconds
+
+        if self.seconds is not None:
+            run.due = time.monotonic() + self.seconds
 
         return run
 
@@ -141,7 +225,7 @@ class ReportDeadline(AbstractCapability[UserDeps]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        if time.monotonic() >= self.due:
+        if ctx.run_step >= self.steps or time.monotonic() >= self.due:
             raise SkipToolExecution(_REPORT_NOW)
 
         return args
@@ -215,9 +299,9 @@ class Subagent:
         """The delegate for the turn of *prefix* at delegation *level*, run with the *shared* capabilities.
 
         Its own capabilities and the shared ones are the prefix its history
-        is compacted under, so the summary keeps the cached prefix.  With a
-        timeout, it reports at 80% of it (:class:`ReportDeadline`), and its
-        report is bounded (:class:`BoundedReport`).
+        is compacted under, so the summary keeps the cached prefix.  It
+        reports after ``subagents.max_steps`` requests or 80% of the timeout
+        (:class:`ReportDeadline`), and its report is bounded (:class:`BoundedReport`).
         """
         timeout = settings.subagents.timeout_seconds
         own = [
@@ -229,8 +313,9 @@ class Subagent:
             *self.extras,
             *_delegation(prefix, level + 1, shared),
         ]
-        deadline = (
-            [] if timeout is None else [ReportDeadline(seconds=_REPORT_SHARE * timeout)]
+        deadline = ReportDeadline(
+            steps=settings.subagents.max_steps,
+            seconds=None if timeout is None else _REPORT_SHARE * timeout,
         )
         summary = replace(prefix, capabilities=[*own, *shared], instructions=None)
 
@@ -238,7 +323,12 @@ class Subagent:
             user_agent(
                 name,
                 str,
-                [*own, *deadline, BoundedReport(), compact_on_overflow(summary)],
+                [
+                    *own,
+                    deadline,
+                    BoundedReport(),
+                    compact_on_overflow(summary),
+                ],
                 model_settings=default_model_settings
                 | thinking_model_settings(prefix.llm),
             ),
@@ -327,9 +417,11 @@ def _delegation(
             contain_errors=True,
             max_depth=1 + limits.max_depth,
             task_control=TaskControl(
-                max_running_tasks=limits.max_running, forward_events=True
+                auto_background_after=_AUTO_BACKGROUND_SECONDS,
+                max_running_tasks=limits.max_running,
             ),
         ),
+        BackgroundByDefault(),
         DeclaredEffects(effects=dict.fromkeys(DELEGATION_TOOLS, "read")),
     ]
 

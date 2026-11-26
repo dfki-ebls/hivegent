@@ -290,8 +290,7 @@ export const chat = {
       emptyContent: "Das Dokument wird leer geschrieben.",
     },
     subagent: {
-      reasoning: "Denkprozess",
-      response: "Antwort",
+      showTasks: "In Aufgaben anzeigen",
     },
     binary: {
       pages_one: "Seite {{pages}}",

@@ -1,31 +1,11 @@
-import { BrainIcon, MessageSquareIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { BotIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 import { MarkdownText } from "@/components/chat/markdown/markdown-text";
-import { TraceStep } from "@/components/chat/trace-step";
 import { ToolCard } from "@/components/chat/tools/tool-card";
-import { ToolValue } from "@/components/chat/tools/display";
-import { ToolIcon } from "@/components/chat/tools/icons";
 import { Badge } from "@/components/ui/badge";
-import { Trace } from "@/components/ui/trace";
-import { useMessageLive } from "@/components/chat/chat-context";
-import type { SubagentStep } from "@/lib/chat/subagent";
-import { type ToolPart, toolDisplayName, toolInput, toolLineState } from "@/lib/chat/tool-part";
-
-function describeStep(t: TFunction, step: SubagentStep): { icon: ReactNode; label: string } {
-  switch (step.kind) {
-    case "reasoning":
-      return { icon: <BrainIcon />, label: t(($) => $.chat.tools.subagent.reasoning) };
-    case "message":
-      return { icon: <MessageSquareIcon />, label: t(($) => $.chat.tools.subagent.response) };
-    case "tool":
-      return {
-        icon: <ToolIcon name={step.tool_name ?? ""} />,
-        label: toolDisplayName(t, step.tool_name ?? "tool"),
-      };
-  }
-}
+import { Button } from "@/components/ui/button";
+import { type ToolRenderProps, toolInput } from "@/lib/chat/tool-part";
+import { useDocumentCanvasStore } from "@/stores/document-canvas-store";
 
 /**
  * The task handed to the subagent, under badges for the other arguments it was given,
@@ -50,60 +30,33 @@ function SubagentTask({ input: { task, ...args } }: { input: Record<string, unkn
   );
 }
 
-interface SubagentToolProps {
-  toolName: string;
-  part: ToolPart;
-  prompt: boolean;
-  /** Resolved transcript: the persisted one if available, else the live one. */
-  steps: SubagentStep[];
-}
-
 /**
- * Any subagent tool, with the task it delegated, its run as a nested trace of reasoning,
- * messages, and tool calls, and the run's report below it.
- * The line opens while the subagent works and closes once it returns, unless the user toggled it.
+ * A delegation as a line that stays closed until the user opens it to the task it handed over
+ * and its result: the report of a task the agent waited for, or the receipt of one in the
+ * background, which runs past the turn. Either run shows in the Tasks tab of the canvas.
  */
-export function SubagentTool({ toolName, part, prompt, steps }: SubagentToolProps) {
+export function DelegateTool({ part, prompt }: ToolRenderProps) {
   const { t } = useTranslation();
-  const running = toolLineState(part, useMessageLive()).label === "running";
+  const setActiveTab = useDocumentCanvasStore((state) => state.setActiveTab);
   const input = toolInput(part);
 
   return (
     <ToolCard
-      toolName={toolName}
+      toolName="delegate_task"
       part={part}
       prompt={prompt}
       parameters={input && <SubagentTask input={input} />}
-      autoOpen={running}
     >
-      {(steps.length > 0 || running) && (
-        <Trace>
-          {steps.map((step, index) => {
-            const { icon, label } = describeStep(t, step);
-
-            return (
-              <TraceStep
-                key={index}
-                icon={icon}
-                title={label}
-                status={running && index === steps.length - 1 ? "running" : undefined}
-              />
-            );
-          })}
-          {steps.length === 0 && (
-            <TraceStep
-              icon={<BrainIcon />}
-              title={t(($) => $.common.states.working)}
-              status="running"
-            />
-          )}
-        </Trace>
-      )}
-      {typeof part.output === "string" ? (
-        <MarkdownText>{part.output}</MarkdownText>
-      ) : (
-        part.output !== undefined && <ToolValue value={part.output} />
-      )}
+      {typeof part.output === "string" && <MarkdownText>{part.output}</MarkdownText>}
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start"
+        onClick={() => setActiveTab("tasks")}
+      >
+        <BotIcon data-icon="inline-start" />
+        {t(($) => $.chat.tools.subagent.showTasks)}
+      </Button>
     </ToolCard>
   );
 }

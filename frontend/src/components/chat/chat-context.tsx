@@ -10,15 +10,12 @@ import {
 } from "react";
 import { isChatBusy, liveOf } from "@/lib/chat/chat-utils";
 import type { ChatMessage } from "@/lib/chat/message";
-import type { SubagentLive } from "@/lib/chat/subagent";
 import type { Live } from "@/lib/chat/tool-part";
 
 interface ChatContextValue {
   chat: Chat<ChatMessage>;
   /** The stored conversation whose messages and temporary files are shown, none for a chat that stores nothing. */
   conversationId: string | null;
-  /** The live subagent transcripts of the chat, none for a chat that runs no subagents. */
-  subagents?: SubagentLive;
 }
 
 /**
@@ -40,8 +37,8 @@ interface ChatProviderProps extends ChatContextValue {
 }
 
 /** The chat the messages and their calls belong to, which stays the same while it streams. */
-export function ChatProvider({ chat, conversationId, subagents, children }: ChatProviderProps) {
-  return <ChatContext value={{ chat, conversationId, subagents }}>{children}</ChatContext>;
+export function ChatProvider({ chat, conversationId, children }: ChatProviderProps) {
+  return <ChatContext value={{ chat, conversationId }}>{children}</ChatContext>;
 }
 
 export function useChatContext(): ChatContextValue {

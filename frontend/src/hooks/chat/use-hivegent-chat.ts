@@ -1,12 +1,12 @@
 import { Chat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useState } from "react";
+import { useEffect } from "react";
 import { useChatInstance } from "@/components/chat/chat-context";
 import { chatFetch } from "@/api/client";
 import { chatUrl, getConversationMessages, parseMessages, turnUrl } from "@/api/conversations";
-import { settleTurn, shouldContinueRun } from "@/lib/chat/chat-utils";
+import { isChatBusy, settleTurn, shouldContinueRun } from "@/lib/chat/chat-utils";
 import { type ChatMessage, messageSchemas } from "@/lib/chat/message";
-import { SubagentLive } from "@/lib/chat/subagent";
+import { onConversationActivity } from "@/stores/jobs-store";
 /**
  * The transport of a conversation, which sends only the new message (none for
  * a regenerate or a compaction) plus the operation, since the server loads the
@@ -73,11 +73,7 @@ function transportOf(conversationId: string, onNoTurn: () => void) {
  * Every turn ends on its stored version, which replaces what streamed, so the
  * transcript is the one a reload shows, ids included.
  */
-function createChat(
-  id: string,
-  messages: ChatMessage[],
-  subagents: SubagentLive,
-): Chat<ChatMessage> {
+function createChat(id: string, messages: ChatMessage[]): Chat<ChatMessage> {
   // The stored version of the turn streaming now once it arrived, undefined when invalid.
   let stored: Promise<ChatMessage[] | undefined> | undefined;
   const reload = () => {
@@ -99,8 +95,6 @@ function createChat(
     dataPartSchemas: messageSchemas.dataSchemas,
     sendAutomaticallyWhen: shouldContinueRun,
     onData: (part) => {
-      if (part.type === "data-subagent") subagents.update(part.data);
-
       if (part.type === "data-turn") {
         stored = parseMessages(part.data).catch(() => undefined);
       }
@@ -136,10 +130,36 @@ function createChat(
   return chat;
 }
 
-/** One chat per conversation, created once for the component keyed by its id. */
+/**
+ * One chat per conversation, created once for the component keyed by its id.
+ *
+ * While it is idle, it follows a turn it did not start, such as one the
+ * conversation woke itself for the reports of its delegated tasks, or one of another tab.
+ */
 export function useHivegentChat(id: string, messages: ChatMessage[]) {
-  const [subagents] = useState(() => new SubagentLive());
-  const chat = useChatInstance(() => createChat(id, messages, subagents));
+  const chat = useChatInstance(() => createChat(id, messages));
 
-  return { chat, subagents };
+  useEffect(() => {
+    // A turn the feed announces while the chat streams is followed once it settled.
+    let pending = false;
+    const follow = () => {
+      if (!pending || isChatBusy(chat.status)) return;
+
+      pending = false;
+      void chat.resumeStream();
+    };
+    const offActivity = onConversationActivity(id, "turn", () => {
+      pending = true;
+      follow();
+    });
+    // The SDK publishes its status before running its stream cleanup.
+    const offStatus = chat["~registerStatusCallback"](() => queueMicrotask(follow));
+
+    return () => {
+      offActivity();
+      offStatus();
+    };
+  }, [chat, id]);
+
+  return chat;
 }

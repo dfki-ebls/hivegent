@@ -2,7 +2,6 @@ import type { UIMessage } from "ai";
 import { z } from "zod";
 
 import { DocumentSelectionSchema } from "@/api/filters";
-import { SubagentUpdateSchema } from "@/lib/chat/subagent";
 
 /**
  * UI-owned metadata the backend persists on a message and the client reads back
@@ -31,7 +30,6 @@ type ChatMessageMetadata = z.infer<typeof ChatMessageMetadataSchema>;
  */
 const chatDataSchemas = {
   compaction: z.object({ content: z.string() }),
-  subagent: SubagentUpdateSchema,
   "tool-output": z.unknown(),
   turn: z.array(z.unknown()),
 };

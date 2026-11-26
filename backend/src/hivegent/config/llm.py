@@ -286,15 +286,17 @@ class SubagentSettings(Section):
     ``enabled`` offers the main agent the harness's delegation tools over the
     subagents.  ``timeout_seconds`` bounds one delegation, ``None`` leaving it
     unbounded, and its expiry reaches the main agent as a note in place of the
-    subagent's result.  ``max_depth`` is how deeply subagents nest below the
+    subagent's result.  ``max_steps`` is how many model requests one
+    delegation makes before it is told to report what it found.  ``max_depth`` is how deeply subagents nest below the
     main agent, 1 for its own subagents alone, ``max_running`` how many tasks
-    run at once, and ``max_cost`` the cost in US dollars the turn's agents may
-    spend together, ``None`` for no bound.  It counts only the usage of models
+    run at once, and ``max_cost`` the cost in US dollars a turn's agents and
+    the subagents it started may spend together, ``None`` for no bound.  It counts only the usage of models
     pydantic-ai can price, so the request limit alone bounds a self-hosted one.
     """
 
     enabled: bool = True
     timeout_seconds: PositiveFloat | None = 600.0
+    max_steps: PositiveInt = 30
     max_depth: PositiveInt = 1
     max_running: PositiveInt = 8
     max_cost: Annotated[Decimal, Field(gt=0)] | None = None

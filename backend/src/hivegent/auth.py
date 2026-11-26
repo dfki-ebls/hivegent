@@ -16,7 +16,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 
@@ -839,6 +839,25 @@ class Lease:
         """
         if principal.holds(self.principal):
             self.expires_at = _later(self.expires_at, _lease_end(principal.expires_at))
+
+    @property
+    def current(self) -> User:
+        """The principal as the lease vouches for it now, which work the lease starts later acts as.
+
+        Such work, a turn waking its conversation, then holds a lease of its
+        own that lapses with this one rather than at once.
+
+        >>> lease = Lease(User("a", expires_at=0))
+        >>> lease.renew(User("a", expires_at=100))
+        >>> lease.current.expires_at
+        100
+        """
+        return replace(
+            self.principal,
+            expires_at=None
+            if self.expires_at is None
+            else self.expires_at - _RENEWAL_SECONDS,
+        )
 
     @property
     def expired(self) -> bool:

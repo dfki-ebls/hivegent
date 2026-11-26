@@ -46,6 +46,10 @@ The CLI's Base UI variants and animations are vendored unchanged as `src/shadcn.
 `blocksOf` (`lib/chat/layout.ts`) sorts a reply's parts into steps and blocks.
 Each run of steps between two blocks is one Chain of Thought that opens to its `Trace`.
 Every step is a trace line that expands to its detail, including subagents, changesets, and the steering queue.
+A delegation's line stays closed until the user opens it to its result, the report of a task the agent waited for or the receipt of a background one, so a batch of delegations leaves the chat compact, and it links to the Tasks tab of the canvas, which shows both alike.
+The Tasks tab (`components/chat/tasks/tasks-panel.tsx`) lists the conversation's tasks, newest first, each a line that opens to its subagent's run, rendered with the reply's own parts and chains of thought, and stops a running one.
+The feed's `conversation-activity` events keep it and its open transcripts current.
+When the feed announces a new turn, an open chat follows it with `resumeStream` as soon as its current stream settles (`useHivegentChat`).
 An approval or `ask_user` question is a block, an `Item` outside the trace, until it is answered or a later message abandons it.
 The live state decides whether a line still runs, so a call a stop cut off reads as stopped, and an abandoned prompt as the backend closes it, an approval as denied and a question as failed.
 A failed or stopped step is routine for an agent, so its line stays muted and only says so, with the error in its detail, while red is left to errors that end the run.

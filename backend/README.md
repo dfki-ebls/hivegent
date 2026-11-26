@@ -173,6 +173,7 @@ Thinking goes out as pydantic-ai's unified `thinking`, and llama.cpp, vLLM, and 
 vLLM enforces a tool sent with `strict` through an xgrammar grammar that takes the properties in their declared order.
 With optional properties, a model that writes a later one first can no longer write any declared before it, which left `similar_cases` with only `limit` of `path`, `query`, and `limit`, every time and even at temperature zero.
 `llm.StrictJsonSchemaTransformer` therefore requires every property of a strict schema on vLLM, an optional one as nullable, so each argument has its place and the model writes null for the ones it leaves out.
+A nullable string made required takes no empty string (`minLength: 1`), since a model forced to write it wrote `""` for the null it meant, and `delegate_task(resume="")` refused the delegation as resuming an unknown task.
 pydantic-ai's `OpenAIJsonSchemaTransformer` does not fit, since it drops `strict` from every tool with an optional argument, or, forced to strict, closes a free-form object such as a query record.
 
 ### Cost counts priced models only
@@ -561,25 +562,42 @@ Every write asks the user in every mode, `write` included, since an instruction 
 A chat turn is one native pydantic-ai run of the chat agent, streamed by pydantic-ai's Vercel adapter, with no runtime around it.
 While `subagents.enabled`, its prefix carries the `SubAgents` capability of pydantic-ai-harness with its `TaskControl` (`agents.subagents.delegation`), over the subagents of `SUBAGENTS`: `explore` over the documents, `write` that edits them in a turn of the `write` mode, `conversations` over past conversations, and `web` while web tools are configured.
 The prefix carries it, so the compaction's summary declares its tools too and keeps the cached prefix.
-The main agent delegates a task with `delegate_task`, in the foreground of the call by default or in the background, and checks on, steers, cancels, or resumes it with `check_task`, `message_task`, `cancel_task`, and `delegate_task(resume=...)` within the turn.
+The main agent delegates a task with `delegate_task` in the background, which `BackgroundByDefault` makes the default of its `background` argument, the harness's own being to wait, and fills in where a call leaves it out.
+It may wait for a short task whose result it needs to go on, whose report then returns in the same reply instead of in a turn it wakes, and `TaskControl(auto_background_after=30)` moves a task still running after 30 seconds to the background, so the user is never blocked for long, as Claude Code's subagents run in the background by default.
+It checks on, steers, cancels, or resumes a task with `check_task`, `message_task`, `cancel_task`, and `delegate_task(resume=...)` within the turn.
 These tools change nothing themselves, so `exar.pydantic_ai.DeclaredEffects` declares them `read` ahead of `HOST_GATE`, read mode offers them too, and each subagent stays held to the host policy of the turn's mode and to the tools the policy of the turn's deps allows, so a withheld tool is withheld from every subagent too (see Registered or excluded).
 A background task's report reaches the main agent as a prompt framed by the harness, which `db.conversations.is_prompt` tells from the user's own, so it is hidden from the transcript and never counts as a user turn.
 The output spill never sees that prompt, so `BoundedReport` cuts what every subagent reports to `llm.tool_output_max_chars` where it writes it, saving the whole under `/tmp/.tool-results/` (`guards.spill_text`).
-The turn waits for the running tasks before it ends, and a turn that pauses for an approval cancels them, as the harness does.
 A subagent is an agent of its own per turn, on the turn's model and deps, so it runs in the turn's mode and language, and answers the main agent in English as its instructions say.
 It never asks the user: the harness's `DenyUnanswered`, one of its `shared_capabilities`, denies every call that would wait for an approval with the instruction to report it, so the main agent makes that change itself and asks for it.
 An overflow is compacted, a crash reaches the main agent as a retry (`contain_errors`), a model error as a result it decides on (`on_model_error="return"`), and a timeout of `subagents.timeout_seconds` as a note in place of the result, followed by the subagent's last text (`keep_partial_output`).
-At 80% of that timeout `ReportDeadline` refuses every further call of the subagent with the instruction to report what it found, as the call's result, so it ends with its findings rather than the harness's note, which stays the hard backstop.
-Its tools and instructions stay as they were, so every request of the subagent keeps the cached prefix.
+After `subagents.max_steps` model requests of its own, or at 80% of that timeout, `ReportDeadline` refuses every further call of the subagent with the instruction to report what it found, as the call's result, so it ends with its findings rather than running on or the harness's note, which stays the hard backstop.
+Its tools and instructions stay as they were, so every request of the subagent keeps the cached prefix, which neither `WrapUpAtLimits` nor a per-delegate `usage_limits` would: the first sends its last request without tools, and the second counts the turn's shared requests, the main agent's included.
 `subagents.max_depth` bounds the nesting and `max_running` the tasks running at once.
-Subagents live within the turn: no later turn resumes them, and nothing of them but their steps is stored beside the conversation.
 
-Every step of a subagent renders under the call of the main agent that delegated to it, live and on reload alike.
-`TaskControl(forward_events=True)` forwards the events of a task's run as `TaskProgressEvent`s, and the assignment of a task names its call (`TaskAssignedEvent.tool_call_id`), so `ChatEventStream.handle_capability_event` streams every step, a reasoning, a message, or a tool call, as a transient `data-subagent` snapshot addressed to that call (`agents.transcripts.SubagentSteps`).
-The turn's `ChatAdapter` owns that one `SubagentSteps`, so a task that timed out or was cancelled keeps the steps it got to, and a reload shows exactly what streamed.
-At the end of the turn `SubagentSteps.record` stores them on the return of that call as its `data-tool-output` transcript, which the snapshot the turn ends on and every reload render as any tool's data, and the frontend renders a `delegate_task` call as it rendered `explore`.
-Only the steps are stored, never the subagent's history, whose tool results and images would bloat every return past `max_data_bytes` and be loaded on every reload, so the chat debugger lists the steps after the call as an `agent` step, and the call names the task.
-The debugger therefore shows a subagent's steps only, never its tool results.
+### Delegated tasks outlive their turn
+
+Browser turns bind a shared `DelegationTasks` owner keyed by `conversation_id` (`delegations.Delegations`).
+A turn can reply with a receipt while a background task runs, and later turns can check, steer, cancel, or resume that task.
+The owner saves task histories beside `/tmp` in the conversation's `tasks` folder.
+The Tasks panel shows interrupted tasks as cancelled after a restart, and deleting the conversation removes its task files.
+Teams uses the harness's run-scoped owner, which waits for its tasks and delivers their reports in the original stream.
+
+A report reaches a running turn at its next model request (`DelegationReports(priority="asap")`), the harness's queued-message seam.
+When the slot is free, `turn._wake` continues the last reply with the waiting reports as its first model request, without using the user's request quota.
+Pending approvals and answers defer the continuation, and the user's next message preempts it (`Runs.preempt`).
+The owner's feed announces turn starts and identifies changed tasks through `conversation-activity` events.
+Deletion and replacement suspend wake-ups before stopping the turn and draining its tasks.
+
+The owner stays open while a turn binds it, a task runs, a report waits, or usage waits to be stored, and closes once none holds.
+It holds a lease of the grants of the user (`auth.Lease`), so its tasks stop once no request renewed it, like a turn, and a wake-up acts as its principal until the lease lapses (`Lease.current`), with the grants it started with, so it does not lapse at once.
+The registry lives in the process like the turns, so tasks end with it.
+
+Tasks share the usage of the turn that started them (`forward_usage`) and inherit its limits, so `turn_usage_limits` bounds a turn and every task it started however long they run, the tree-wide budget of Claude Code's `maxBudgetUsd` and Codex's rollout budget, and a task over it fails without ending another turn.
+What they spend after a turn's usage snapshot goes into the next stored turn (`Delegations.usage_for_save`).
+
+`GET /conversations/{id}/tasks` lists the tasks, `GET .../tasks/{task_id}/messages` shows a subagent's history as UI messages, live for a running one, and `DELETE .../tasks/{task_id}` stops one as the user, which the model then cannot resume on its own.
+Only the receipt and the report enter the conversation, never a subagent's history, which stays in its task file, so the chat debugger shows the delegation and the report only.
 
 ### Budgets of a turn
 

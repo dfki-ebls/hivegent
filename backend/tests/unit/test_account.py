@@ -10,6 +10,7 @@ import pytest
 from hivegent import conversation_files
 from hivegent.assistants import assistant_library
 from hivegent.db.conversations import OwnedConversation
+from hivegent.delegations import TASKS_FOLDER
 from hivegent.server import export
 from hivegent.server.export import ExportPart, build_export
 from hivegent.server.routes import account
@@ -117,6 +118,7 @@ async def test_the_export_holds_the_parts_asked_for(
         library(scope).path / "lint/SKILL.md": "skill",
         assistant_library(scope) / "helper.json": "{}",
         tmp_dir(data_dir, conversation) / "result.txt": "tmp",
+        conversation.folder(data_dir) / TASKS_FOLDER / "child.json": "task history",
     }
 
     for path, text in files.items():
@@ -151,6 +153,7 @@ async def test_the_export_holds_the_parts_asked_for(
         "documents/notes/report.md",
         f"conversations/{cid}.json",
         f"conversations/{cid}/tmp/result.txt",
+        f"conversations/{cid}/tasks/child.json",
         "memory.md",
         "skills/lint/SKILL.md",
         "assistants/helper.json",

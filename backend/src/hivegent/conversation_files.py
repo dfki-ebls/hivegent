@@ -6,7 +6,8 @@ Each conversation owns one folder
 (:mod:`hivegent.staging`), each module keeping its own content's rules.  No row
 cascade reaches the folder, so this module is where it ends: deleting
 conversations stops their turns and deletes their folders and then their rows
-(:func:`delete_conversation`, :func:`delete_conversations`), replacing one
+(:func:`delete_conversation`, :func:`delete_conversations`), each stopping
+its delegated tasks too (:mod:`hivegent.delegations`), replacing one
 deletes its folder once its new history is stored (:func:`replace_conversation`),
 a reset deletes every folder (:func:`reset_conversation_files`), and
 :func:`sweep_conversations` removes an idle ``/tmp``, and the whole idle folder
@@ -32,6 +33,7 @@ from .db.conversations import (
     remove_conversation,
     remove_owned_conversations,
 )
+from .delegations import delegations
 from .files import remove_path, rmdir_if_empty, touched_since
 from .runs import runs
 from .store import User
@@ -54,20 +56,24 @@ __all__ = [
 
 
 async def delete_conversation(conversation: OwnedConversation) -> bool:
-    """Stop *conversation*'s turn and delete its folder and row, returning whether it had a row."""
-    await runs.cancel(conversation)
-    await asyncio.to_thread(remove_path, conversation.folder(settings.data_dir))
+    """Stop *conversation*'s turn and tasks and delete its folder and row, returning whether it had a row."""
+    with delegations.suspend_wakeups(conversation):
+        await runs.cancel(conversation)
+        await delegations.close(conversation)
+        await asyncio.to_thread(remove_path, conversation.folder(settings.data_dir))
 
-    return await remove_conversation(conversation)
+        return await remove_conversation(conversation)
 
 
 async def delete_conversations(user: User) -> None:
-    """Stop *user*'s turns and delete every conversation they own, their folders first."""
-    await runs.cancel_all(user)
-    await asyncio.to_thread(
-        remove_path, OwnedConversation.user_root(settings.data_dir, user.id)
-    )
-    await remove_owned_conversations(user)
+    """Stop *user*'s turns and tasks and delete every conversation they own, their folders first."""
+    with delegations.suspend_wakeups(user.id):
+        await runs.cancel_all(user)
+        await delegations.close_all(user)
+        await asyncio.to_thread(
+            remove_path, OwnedConversation.user_root(settings.data_dir, user.id)
+        )
+        await remove_owned_conversations(user)
 
 
 async def replace_conversation(
@@ -81,19 +87,23 @@ async def replace_conversation(
     The folder of what it replaced goes only once the import committed, so a
     failed import leaves the conversation whole.
     """
-    await runs.cancel(conversation)
-    summary = await import_conversation(conversation, messages, title=title)
+    with delegations.suspend_wakeups(conversation):
+        await runs.cancel(conversation)
+        await delegations.close(conversation)
+        summary = await import_conversation(conversation, messages, title=title)
 
-    if summary is not None:
-        await asyncio.to_thread(remove_path, conversation.folder(settings.data_dir))
+        if summary is not None:
+            await asyncio.to_thread(remove_path, conversation.folder(settings.data_dir))
 
     return summary
 
 
 async def reset_conversation_files() -> None:
-    """Stop every turn and delete every conversation's folder, as a reset of the conversations does."""
-    await runs.aclose()
-    await asyncio.to_thread(remove_path, OwnedConversation.root(settings.data_dir))
+    """Stop every turn and task and delete every conversation's folder, as a reset of the conversations does."""
+    with delegations.suspend_wakeups():
+        await runs.aclose()
+        await delegations.aclose()
+        await asyncio.to_thread(remove_path, OwnedConversation.root(settings.data_dir))
 
 
 def _expire(path: Path, cutoff: float) -> bool:

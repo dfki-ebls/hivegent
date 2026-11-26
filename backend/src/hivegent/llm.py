@@ -151,20 +151,50 @@ class StrictJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
     got only ``limit`` of ``path``, ``query`` and ``limit``.  Required, each
     property has its place, an argument typed ``X | None`` taking null and
     any other one its value, the default included.
+    A nullable string made required takes no empty string, since a model
+    forced to write it writes ``""`` for the null it means, which a tool such
+    as ``delegate_task`` reads as a value (``resume=""`` naming no task).
 
     Examples:
-        >>> StrictJsonSchemaTransformer(
-        ...     {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "integer"}}}
-        ... ).walk()["required"]
+        >>> schema = StrictJsonSchemaTransformer(
+        ...     {
+        ...         "type": "object",
+        ...         "properties": {
+        ...             "a": {"type": "string"},
+        ...             "b": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
+        ...         },
+        ...         "required": ["a"],
+        ...     }
+        ... ).walk()
+        >>> schema["required"]
         ['a', 'b']
+        >>> schema["properties"]["b"]["anyOf"][0]
+        {'type': 'string', 'minLength': 1}
     """
 
     def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
         """*schema* with every property required unless the schema is not strict."""
         if self.strict is not False and "properties" in schema:
-            schema["required"] = list(schema["properties"])
+            properties: dict[str, Any] = schema["properties"]
+
+            for name in properties.keys() - set(schema.get("required", ())):
+                _forbid_empty_string(properties[name])
+
+            schema["required"] = list(properties)
 
         return schema
+
+
+def _forbid_empty_string(schema: dict[str, Any]) -> None:
+    """Require a non-empty string in the string member of a nullable *schema*, so null stays the only way to omit it."""
+    members: list[dict[str, Any]] = schema.get("anyOf", [])
+
+    if {"type": "null"} not in members:
+        return
+
+    for member in members:
+        if member.get("type") == "string":
+            _ = member.setdefault("minLength", 1)
 
 
 # Wins over the family transformer, such as Qwen's, which inlines definitions

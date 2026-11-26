@@ -77,8 +77,9 @@ service_client_id = "hivegent-bot"
   Everything that answers the user, including subagents, compaction, case bases, and the sandbox's `complete`, runs on the chat model with the chosen reasoning effort.
   Defaults to `llm.default`.
 - `llm.stt`: a transcription model such as `whisper-1` for browsers without speech recognition, off when unset.
-- `subagents.max_cost`: the most a chat turn may spend in US dollars, its subagents included, unbounded when unset.
+- `subagents.max_cost`: the most a chat turn may spend in US dollars, its subagents included, also those still running after it, unbounded when unset.
   It counts only models pydantic-ai can price, so a self-hosted one is bounded by `llm.request_limit` and the token limits alone.
+- `subagents.max_steps`: how many model requests a subagent makes before it is told to report what it found, 30 by default.
 - `embedding.endpoint`, `rerank.endpoint`, and `transparency.endpoint`: the provider a remote embedder (`embedding.provider = "openai"`), reranker (`rerank.provider = "http"`, its `/rerank` route), or watermark detector (at `transparency.detector_path`) is served from, sharing that provider's key.
   A path is resolved against the provider's `base_url` like a link, below it if relative, such as `rerank`, and on its origin if absolute, such as llmhop's `/llmhop/proxy/watermark/detect`.
   A remote embedder also needs `model` and its output size `dimension`.

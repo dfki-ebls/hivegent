@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from types import MappingProxyType
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 
@@ -45,6 +45,7 @@ from .tools.changes import WorkspaceChanged
 
 __all__ = [
     "ADMINS",
+    "ConversationActivity",
     "ConversationsChanged",
     "FeedEvent",
     "FeedReady",
@@ -144,6 +145,18 @@ class ConversationsChanged(BaseModel):
     type: Literal["conversations-changed"] = "conversations-changed"
 
 
+class ConversationActivity(BaseModel):
+    """Marks a turn starting or the delegated tasks changing in one of the owner's conversations.
+
+    A client showing the conversation follows a turn it did not start, such as
+    one a finished task woke, and reads the tasks again.
+    """
+
+    type: Literal["conversation-activity"] = "conversation-activity"
+    conversation_id: UUID
+    kind: Literal["turn", "tasks"]
+
+
 class LibraryChanged(BaseModel):
     """Marks a change to a library the subscriber sees, whose list a client reads again."""
 
@@ -162,6 +175,7 @@ type FeedEvent = (
     | FeedReady
     | WorkspaceChanged
     | ConversationsChanged
+    | ConversationActivity
     | LibraryChanged
     | SourceChanged
 )

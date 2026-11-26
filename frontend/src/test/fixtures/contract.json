@@ -953,6 +953,36 @@
       "title": "ClientConversation",
       "description": "A conversation exactly as the browser tab held it, errors included."
     },
+    "ConversationActivity": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "conversation-activity",
+          "title": "Type",
+          "default": "conversation-activity"
+        },
+        "conversation_id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Conversation Id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "turn",
+            "tasks"
+          ],
+          "title": "Kind"
+        }
+      },
+      "type": "object",
+      "required": [
+        "conversation_id",
+        "kind"
+      ],
+      "title": "ConversationActivity",
+      "description": "Marks a turn starting or the delegated tasks changing in one of the owner's conversations.\n\nA client showing the conversation follows a turn it did not start, such as\none a finished task woke, and reads the tasks again."
+    },
     "ConversationArchive": {
       "properties": {
         "backend": {
@@ -1138,6 +1168,107 @@
       ],
       "title": "DataUIPart",
       "description": "Data part with dynamic type based on data name."
+    },
+    "DelegatedTask": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id",
+          "description": "The task that delegated it, none for one of the main agent"
+        },
+        "agent_name": {
+          "type": "string",
+          "title": "Agent Name",
+          "description": "The subagent it runs on"
+        },
+        "prompt": {
+          "type": "string",
+          "title": "Prompt",
+          "description": "The task as the subagent got it"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "finished"
+          ],
+          "title": "Status"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "ok",
+                "timeout",
+                "budget",
+                "failed",
+                "contained",
+                "cancelled",
+                "error"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Outcome",
+          "description": "How it ended, once it did"
+        },
+        "output": {
+          "type": "string",
+          "title": "Output",
+          "description": "What it reported, once it ended"
+        },
+        "started_at": {
+          "type": "number",
+          "title": "Started At",
+          "description": "When it started, as a UNIX time"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finished At",
+          "description": "When it ended, as a UNIX time"
+        },
+        "user_stopped": {
+          "type": "boolean",
+          "title": "User Stopped",
+          "description": "Whether the user stopped it"
+        }
+      },
+      "type": "object",
+      "required": [
+        "id",
+        "parent_id",
+        "agent_name",
+        "prompt",
+        "status",
+        "outcome",
+        "output",
+        "started_at",
+        "finished_at",
+        "user_stopped"
+      ],
+      "title": "DelegatedTask",
+      "description": "A task the main agent of a conversation delegated to a subagent, as the tasks panel lists it."
     },
     "DeleteKind": {
       "type": "string",
@@ -2247,6 +2378,9 @@
         },
         {
           "$ref": "#/components/schemas/ConversationsChanged"
+        },
+        {
+          "$ref": "#/components/schemas/ConversationActivity"
         },
         {
           "$ref": "#/components/schemas/LibraryChanged"
@@ -3879,78 +4013,6 @@
       "type": "object",
       "title": "StepStartUIPart",
       "description": "A step boundary part of a message."
-    },
-    "SubagentStep": {
-      "description": "One coarse action of a subagent: reasoning, a message, or a tool call.",
-      "properties": {
-        "kind": {
-          "enum": [
-            "reasoning",
-            "message",
-            "tool"
-          ],
-          "title": "Kind",
-          "type": "string"
-        },
-        "tool_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Tool Name"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "title": "SubagentStep",
-      "type": "object"
-    },
-    "SubagentTranscript": {
-      "description": "The steps of the subagent a call delegated to, tagged so the client recognizes it on any tool.",
-      "properties": {
-        "transcript": {
-          "const": "subagent",
-          "title": "Transcript",
-          "type": "string"
-        },
-        "steps": {
-          "items": {
-            "$ref": "#/components/schemas/SubagentStep"
-          },
-          "title": "Steps",
-          "type": "array"
-        }
-      },
-      "required": [
-        "transcript",
-        "steps"
-      ],
-      "title": "SubagentTranscript",
-      "type": "object"
-    },
-    "SubagentUpdate": {
-      "description": "A live transcript addressed to the call that delegated to the subagent.",
-      "properties": {
-        "tool_call_id": {
-          "title": "Tool Call Id",
-          "type": "string"
-        },
-        "transcript": {
-          "$ref": "#/components/schemas/SubagentTranscript"
-        }
-      },
-      "required": [
-        "tool_call_id",
-        "transcript"
-      ],
-      "title": "SubagentUpdate",
-      "type": "object"
     },
     "TextUIPart": {
       "properties": {

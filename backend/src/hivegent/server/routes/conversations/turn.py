@@ -3,7 +3,8 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from functools import partial
 from itertools import chain
 from typing import Any
@@ -18,6 +19,7 @@ from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai.request_types import UIMessage
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.sub_agents import DelegationReports
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
@@ -29,12 +31,11 @@ from ....agents import (
     turn_usage_limits,
 )
 from ....agents.compaction import compact_on_overflow
-from ....agents.transcripts import SubagentSteps
 from ....auth import (
     CurrentPrincipal,
     refuse_expired,
 )
-from ....config import parse_uuid
+from ....config import parse_uuid, settings
 from ....db.conversations import (
     OwnedConversation,
     claim_conversation,
@@ -43,6 +44,7 @@ from ....db.conversations import (
     load_conversation,
     render_prompt,
 )
+from ....delegations import delegations
 from ....llm import thinking_model_settings
 from ....llm_config import background_llm
 from ....runs import Prepared, Run, runs
@@ -142,6 +144,11 @@ _MESSAGE_ID_TAKEN = Localized(
     de="Eine Nachricht mit dieser ID existiert bereits, sende sie unter einer neuen ID",
 )
 
+_AWAITS_ANSWERS = Localized(
+    en="The conversation awaits approvals or answers",
+    de="Die Konversation wartet auf Freigaben oder Antworten",
+)
+
 _CONVERSATION_CHANGED = Localized(
     en="The conversation changed since it was loaded, reload it and answer again",
     de="Die Konversation hat sich seit dem Laden geändert, lade sie neu und antworte erneut",
@@ -200,46 +207,116 @@ def _resolve_history(
     return history, pending, reply_id
 
 
-def _stream(
+@asynccontextmanager
+async def _delegating(
+    conversation: OwnedConversation, user: User
+) -> AsyncGenerator[list[DelegationReports]]:
+    """Bind the conversation's task owner while the turn runs, with what delivers the reports of its tasks.
+
+    The tasks the turn delegates run in the background past it, and a report
+    reaches the turn at its next model request, or wakes the conversation
+    once no turn takes it (:func:`_wake`).
+    A service, such as the Teams bridge, reads only the turn's own stream, so
+    its turn binds no owner and the harness waits for its tasks within it.
+    """
+    if user.is_service or not settings.subagents.enabled:
+        yield []
+        return
+
+    async with delegations.turn(conversation, user, _wake) as owner:
+        with owner.bind():
+            yield [
+                DelegationReports(
+                    owner, conversation_id=conversation.key, priority="asap"
+                )
+            ]
+
+
+async def _stream(
+    conversation: OwnedConversation,
+    user: User,
     adapter: Adapter,
     run_prefix: RunPrefix,
     history: list[ModelMessage],
     deferred: DeferredToolResults | None,
     usage: RunUsage,
     end: RunEnd,
-) -> AsyncIterator[BaseChunk]:
+) -> AsyncGenerator[BaseChunk]:
     """The stream of the turn, the root invocation `chat` of an exar run, which only traces."""
-    return adapter.transform_stream(
-        traced_events(
-            agent_events(
-                chat_agent.run_stream_events(
-                    adapter.prompt if deferred is None else None,
-                    message_history=history,
-                    deferred_tool_results=deferred,
-                    **run_prefix.run_kwargs(),
-                    model_settings=thinking_model_settings(run_prefix.llm),
-                    usage_limits=turn_usage_limits,
-                    usage=usage,
-                    capabilities=[
-                        *run_prefix.capabilities,
-                        compact_on_overflow(run_prefix),
-                    ],
+    async with _delegating(conversation, user) as reports:
+        async for chunk in adapter.transform_stream(
+            traced_events(
+                agent_events(
+                    chat_agent.run_stream_events(
+                        adapter.prompt if deferred is None else None,
+                        message_history=history,
+                        deferred_tool_results=deferred,
+                        **run_prefix.run_kwargs(),
+                        model_settings=thinking_model_settings(run_prefix.llm),
+                        usage_limits=turn_usage_limits,
+                        usage=usage,
+                        capabilities=[
+                            *run_prefix.capabilities,
+                            compact_on_overflow(run_prefix),
+                            *reports,
+                        ],
+                    ),
+                    end,
                 ),
-                end,
-            ),
-            ""
-            if adapter.prompt is None
-            else render_prompt(UserPromptPart(adapter.prompt)),
-            run_prefix.deps.run_config,
-            name="chat",
+                ""
+                if adapter.prompt is None
+                else render_prompt(UserPromptPart(adapter.prompt)),
+                run_prefix.deps.run_config,
+                name="chat",
+            )
+        ):
+            yield chunk
+
+
+_wakers: dict[OwnedConversation, asyncio.Task[None]] = {}
+"""The wake-ups waiting for their conversation's slot, one per conversation."""
+
+
+def _wake(conversation: OwnedConversation, user: User) -> None:
+    """Start a turn without a prompt for the reports of *conversation*'s tasks, once no turn runs."""
+    if conversation in _wakers:
+        return
+
+    waker = _wakers[conversation] = asyncio.create_task(_wake_up(conversation, user))
+    waker.add_done_callback(lambda _: _wakers.pop(conversation, None))
+
+
+async def _wake_up(conversation: OwnedConversation, user: User) -> None:
+    """Wait for the conversation's slot, then read the reports no turn took in a turn of its own.
+
+    The turn continues the last reply, as a post-approval continuation does,
+    and its stream is followed like any (``GET .../stream``), which the
+    clients of the conversation learn of on their feed.  It gives way to a
+    request of the user, whose turn then reads the reports it did not.
+    """
+    while (run := runs.get(conversation)) is not None:
+        await run.wait()
+
+    if delegations.pending(conversation):
+        config = ChatRequest(id=conversation.key, messages=[])
+        adapter = ChatAdapter(
+            agent=chat_agent,
+            run_input=config.run_input(),
+            accept=SSE_CONTENT_TYPE,
+            sdk_version=SDK_VERSION,
         )
-    )
+        _ = runs.start(
+            conversation,
+            user,
+            None,
+            _prepare_turn(user, conversation, config, adapter, None, woken=True),
+            preemptible=True,
+        )
 
 
 def _persister(
     conversation: OwnedConversation,
     loaded: RunConversation,
-    subagents: SubagentSteps,
     *,
     replay: Replay,
     kept: list[ModelMessage],
@@ -250,13 +327,17 @@ def _persister(
     end: RunEnd,
     saved: SavedTurn,
 ) -> Callable[[Sequence[ModelMessage]], Awaitable[None]]:
-    """What saves the turn on top of the *kept* history once it ended."""
+    """What saves the turn on top of the *kept* history once it ended.
+
+    Its usage includes what the tasks of earlier turns spent since those were
+    stored (:meth:`~hivegent.delegations.Delegations.usage_for_save`).
+    """
     started = time.time()
 
     async def persist(messages: Sequence[ModelMessage]) -> None:
         turn = replay.turn(messages)
-        subagents.record(turn.messages)
-        loaded.usage = loaded.usage + usage
+        spent, stored = delegations.usage_for_save(conversation, usage)
+        loaded.usage += spent
 
         loaded.deferred_tool_requests = end.deferred
         await save_turn(
@@ -265,6 +346,7 @@ def _persister(
             stored_turn(turn, kept, declined, prompt_id=prompt_id, reply_id=reply_id),
             saved,
         )
+        stored()
         await retain_awaited_changes(
             conversation, loaded.deferred_tool_requests, started
         )
@@ -278,6 +360,8 @@ async def _prepare_turn(
     config: ChatRequest,
     adapter: Adapter,
     prompt: UIMessage | None,
+    *,
+    woken: bool = False,
 ) -> Prepared:
     """The turn *config* asks for, every check that can refuse it passed.
 
@@ -295,11 +379,16 @@ async def _prepare_turn(
     deriving replay state, titled by its prompt so it is listed while the
     turn runs, and by the aux model once it ended (:func:`.titles.title_first_turn`).
     A racing claim returns the stored state to replay instead.
+
+    A turn *woken* by the reports of the conversation's tasks (:func:`_wake`)
+    spends no request of the user's, and is refused while the conversation
+    awaits approvals or answers, which it would abandon, so the turn that
+    answers them reads the reports.
     """
     # Spent before any work, a continuation once the stored turn tells whether it answers anything.
     resumes = _resumes(config, adapter)
 
-    if not resumes:
+    if not resumes and not woken:
         CHAT.spend(user)
 
     loaded, effective = await asyncio.gather(
@@ -343,6 +432,9 @@ async def _prepare_turn(
 
     adapter.server_message_id = reply_id
 
+    if woken and pending is not None:
+        raise HTTPException(status_code=409, detail=_AWAITS_ANSWERS.current)
+
     # Ahead of the approvals and answers below, which a compaction leaves pending.
     if config.compact:
         return Prepared(
@@ -356,7 +448,7 @@ async def _prepare_turn(
     # The client's decisions and answers count only for the calls the stored
     # conversation still awaits, each with the kind of result it was deferred for.
     try:
-        deferred = adapter.resume(pending, kept)
+        deferred = None if woken else adapter.resume(pending, kept)
     except StaleAnswers as exc:
         raise HTTPException(
             status_code=409, detail=_CONVERSATION_CHANGED.current
@@ -389,11 +481,12 @@ async def _prepare_turn(
     # Shared with the subagents, so it holds what the whole turn spent however it ended.
     usage = RunUsage()
     end = RunEnd()
-    stream = _stream(adapter, run_prefix, history, deferred, usage, end)
+    stream = _stream(
+        conversation, user, adapter, run_prefix, history, deferred, usage, end
+    )
     persist = _persister(
         conversation,
         loaded,
-        adapter.subagents,
         replay=Replay.of(history),
         kept=kept,
         declined=declined,
@@ -522,7 +615,8 @@ async def create_conversation_chat(
     The turn runs on its own (:mod:`~hivegent.runs`), so a client that
     leaves only stops following it, a retry with the same user message follows
     the running turn, any other request is refused untouched while it runs,
-    and ``GET .../stream`` follows it again after a reload.  Every request
+    unless the conversation woke that turn itself for its tasks' reports,
+    which the request stops, and ``GET .../stream`` follows it again after a reload.  Every request
     of the user renews the turn's authorization (:class:`~hivegent.auth.Lease`).
     """
     conversation, _ = opened
@@ -535,8 +629,9 @@ async def create_conversation_chat(
     )
     prompt = _prompt(adapter)
 
-    # A retry of the running turn's request follows it, any other is refused.
-    if (run := runs.get(conversation)) is None:
+    # A turn woken for reports gives way, a retry of the running turn's
+    # request follows it, and any other is refused.
+    if (run := await runs.preempt(conversation)) is None:
         run = runs.start(
             conversation,
             user,

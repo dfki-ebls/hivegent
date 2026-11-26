@@ -3,6 +3,22 @@ export const documents = {
   canvas: {
     documents: "Documents",
     context: "Context",
+    tasks: "Tasks",
+  },
+  tasks: {
+    emptyTitle: "Delegated tasks will appear here",
+    emptyDescription: "The assistant hands work to subagents, which run in the background while you chat",
+    stop: "Stop task",
+    status: {
+      running: "Running",
+      ok: "Done",
+      timeout: "Timed out",
+      budget: "Out of budget",
+      failed: "Failed",
+      contained: "Crashed",
+      cancelled: "Stopped",
+      error: "Failed",
+    },
   },
   context: {
     emptyTitle: "Context documents will appear here",

@@ -77,8 +77,9 @@ service_client_id = "hivegent-bot"
   Alles, was dem Nutzer antwortet, darunter Unteragenten, Kompaktierung, Fallbasen und das `complete` der Sandbox, läuft auf dem Chat-Modell mit dem gewählten Denkaufwand.
   Standard ist `llm.default`.
 - `llm.stt`: ein Transkriptionsmodell wie `whisper-1` für Browser ohne Spracherkennung, aus, solange es nicht gesetzt ist.
-- `subagents.max_cost`: höchstens so viele US-Dollar darf ein Chat-Zug samt seiner Unteragenten ausgeben, unbegrenzt, solange es nicht gesetzt ist.
+- `subagents.max_cost`: höchstens so viele US-Dollar darf ein Chat-Zug samt seiner Unteragenten ausgeben, auch jener, die nach ihm noch laufen, unbegrenzt, solange es nicht gesetzt ist.
   Es zählt nur Modelle, die pydantic-ai bepreisen kann, daher begrenzen ein selbst betriebenes allein `llm.request_limit` und die Token-Grenzen.
+- `subagents.max_steps`: so viele Modellanfragen stellt ein Unteragent, bevor er aufgefordert wird, seine Ergebnisse zu berichten, standardmäßig 30.
 - `embedding.endpoint`, `rerank.endpoint` und `transparency.endpoint`: der Anbieter, über den ein entfernter Embedder (`embedding.provider = "openai"`), Reranker (`rerank.provider = "http"`, dessen Route `/rerank`) oder Wasserzeichendetektor (unter `transparency.detector_path`) läuft, mit dessen Schlüssel.
   Ein Pfad wird wie ein Link gegen die `base_url` des Anbieters aufgelöst, relativ darunter, wie `rerank`, und absolut auf deren Origin, wie `/llmhop/proxy/watermark/detect` von llmhop.
   Ein entfernter Embedder braucht außerdem `model` und dessen Ausgabegröße `dimension`.
