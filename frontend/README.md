@@ -66,6 +66,9 @@ oidc-spa hands scripts placeholders instead of tokens, which only requests to th
 DPoP stays off, since the backend accepts bearer tokens only.
 
 Workspace documents render with markdown-to-jsx, since Streamdown is too slow for documents of hundreds of pages.
+They mount their blocks progressively, a group of them per frame (`useProgressive`), so a document of thousands of chunks opens without blocking the page.
+They are not virtualized, since their blocks differ in height, links within the page need their targets, and the browser's search needs the text.
+Long lists of uniform rows, the document tree and the chunks beside a document, mount only the rows in and near view (`VirtualList`), keeping the focused row mounted so the keyboard moves on from it.
 They are styled by shadcn/typeset, vendored unchanged as `src/typeset.css`, so refresh it from the URL in its header.
 Their links open in a new tab, except those within the page, so a document never replaces the app.
 Replies keep Streamdown's own styles, since it has no unstyled mode.
@@ -78,8 +81,9 @@ A value whose last possible mutation comes after a hook call is not memoized, so
 Hook results are immutable to the compiler, which is why a hook that derives data around another one splits off a small hook of its own, such as `useTreeIndex` or `useDocumentContent`.
 `MessageBubble` stays wrapped in `memo`, since the compiler caches the elements of a list as a whole, and the message list changes with every streamed chunk.
 `TreeRow` does too, and opts out of the compiler with `"use no memo"`, since it reads the mutable tree item while rendering.
+It takes its place in the tree as values, since the tree rebuilds its meta objects with every change, which would render every row again.
 An explicit `useMemo` remains only for the search index in `useFuzzySearch`, since the compiler takes a search for a mutation of the index and would rebuild it with every keystroke.
-Setting `compiler: { logDiagnostics: true }` in `vite.config.ts` lists the components and hooks it skips, currently only the generated toast.
+Setting `compiler: { logDiagnostics: true }` in `vite.config.ts` lists the components and hooks it skips, currently the generated toast and `VirtualList`, whose virtualizer is a mutable instance.
 
 ## Server state lives in TanStack Query, client state in Zustand
 

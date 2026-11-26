@@ -25,6 +25,7 @@
     "@streamdown/mermaid": "^1",
     "@tanstack/react-query": "^5",
     "@tanstack/react-router": "^1",
+    "@tanstack/react-virtual": "^3",
     "ai": "^7",
     "class-variance-authority": ">=0.7 <1",
     "cn": ">=0.5 <1",

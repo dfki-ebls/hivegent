@@ -109,6 +109,13 @@ export function previewText(text: string, maxChars = 300): string {
   return text.trimStart().slice(0, maxChars);
 }
 
+/** The distance from the top of the content of *container* to *element*, or a text range. */
+export function offsetInScroller(element: Element | Range, container: Element): number {
+  return (
+    element.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+  );
+}
+
 /**
  * Scroll *container* so *element*, or a text range, sits centered in it, or starts at its top when taller.
  * Unlike `scrollIntoView`, it leaves every other ancestor alone, so no clipping one shifts.
@@ -118,10 +125,9 @@ export function centerInScroller(
   container: HTMLElement,
   behavior: ScrollBehavior = "auto",
 ): void {
-  const box = element.getBoundingClientRect();
-  const top = box.top - container.getBoundingClientRect().top + container.scrollTop;
+  const { height } = element.getBoundingClientRect();
   container.scrollTo({
-    top: top - Math.max(0, (container.clientHeight - box.height) / 2),
+    top: offsetInScroller(element, container) - Math.max(0, (container.clientHeight - height) / 2),
     behavior,
   });
 }

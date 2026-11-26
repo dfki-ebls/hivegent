@@ -1,11 +1,13 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { useState } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type ChangeOperation, type DirectoryTreeResponse, documentQueries } from "@/api/documents";
 import type { WorkspaceChanged } from "@/api/jobs";
 import type { Workspace } from "@/lib/document-tree";
 import { useDocumentTree } from "@/hooks/use-document-tree";
 import { DocumentTreeView } from "@/components/documents/document-tree";
+import { stubLayout } from "@/test/layout";
 import { createQueryWrapper, createTestQueryClient } from "@/test/render";
 
 const { applyChanges, served } = vi.hoisted(() => ({
@@ -49,10 +51,15 @@ vi.mock("@/api/client", async (importOriginal) => ({
 
 const workspaces: Workspace[] = [{ scope: "~", kind: "user", label: "Me", writable: true }];
 
-function Harness() {
-  const docTree = useDocumentTree({ workspaces, searchQuery: "", onUpload: () => {} });
+function Harness({ scopes = workspaces }: { scopes?: Workspace[] }) {
+  const docTree = useDocumentTree({ workspaces: scopes, searchQuery: "", onUpload: () => {} });
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
 
-  return <DocumentTreeView docTree={docTree} />;
+  return (
+    <div ref={setScroller}>
+      <DocumentTreeView docTree={docTree} scrollElement={scroller} />
+    </div>
+  );
 }
 
 function renderTree() {
@@ -63,6 +70,15 @@ function renderTree() {
 }
 
 describe("DocumentTreeView", () => {
+  beforeEach(() => stubLayout());
+
+  it("renders before the workspace list is available", () => {
+    render(<Harness scopes={[]} />, { wrapper: createQueryWrapper() });
+
+    expect(screen.getByRole("tree")).toBeTruthy();
+    expect(screen.queryByRole("treeitem")).toBeNull();
+  });
+
   it("expands a folder on click and renames an entry inline", async () => {
     applyChanges.mockResolvedValue({
       type: "workspace-changed",

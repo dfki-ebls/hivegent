@@ -16,9 +16,12 @@ import { StatusPanel } from "@/components/common/status-panel";
 import { DeleteDialog } from "@/components/documents/delete-dialog";
 import { SimilarityDialog } from "@/components/documents/similarity-dialog";
 import { TreeRow } from "@/components/documents/tree-row";
+import { VirtualList } from "@/components/common/virtual-list";
 
 interface DocumentTreeViewProps {
   docTree: DocumentTree;
+  /** The element scrolling the tree, whose rows mount only while in and near its view. */
+  scrollElement: HTMLElement | null;
 }
 
 /**
@@ -26,7 +29,7 @@ interface DocumentTreeViewProps {
  * confirmation and the dialog of the open document. While something is dragged over a folder, the folder and its
  * shown entries light up as the drop target.
  */
-export function DocumentTreeView({ docTree }: DocumentTreeViewProps) {
+export function DocumentTreeView({ docTree, scrollElement }: DocumentTreeViewProps) {
   const { t } = useTranslation();
   const { tree, nodes, openPath, deleteDialog, similarityDialog } = docTree;
   const mutatingPaths = useMutatingPaths();
@@ -81,6 +84,8 @@ export function DocumentTreeView({ docTree }: DocumentTreeViewProps) {
       : null;
   const dragged = new Set(dnd?.draggedItems?.map((item) => item.getId()));
   const items = tree().getItems();
+  // The focused row stays mounted out of view, so it keeps the focus and the keyboard moves on from it.
+  const focusedIndex = tree().getFocusedItem()?.getItemMeta().index;
 
   // The document the dialog is open on, resolved once for the write-action gates below.
   const openNode = openPath === null ? undefined : nodes.get(openPath);
@@ -100,34 +105,45 @@ export function DocumentTreeView({ docTree }: DocumentTreeViewProps) {
       ) : (
         <div
           {...tree().getContainerProps(t(($) => $.documents.canvas.documents))}
-          className="flex min-h-16 flex-col gap-0.5 outline-none"
+          className="min-h-16 outline-none"
         >
           <AssistiveTreeDescription tree={tree()} getLabel={describeMove} />
-          {items.map((item) => {
-            const id = item.getId();
-            const node = item.getItemData();
+          <VirtualList
+            items={items}
+            getKey={(item) => item.getId()}
+            scrollElement={scrollElement}
+            estimateSize={36}
+            gap={2}
+            pinned={focusedIndex}
+          >
+            {(item) => {
+              const id = item.getId();
+              const node = item.getItemData();
+              const { level, posInSet, setSize } = item.getItemMeta();
 
-            return (
-              <TreeRow
-                key={id}
-                item={item}
-                node={node}
-                meta={item.getItemMeta()}
-                selected={item.isSelected()}
-                expanded={item.isExpanded()}
-                focused={item.isFocused()}
-                renameValue={renamingItem === id ? (renamingValue ?? "") : null}
-                filterState={
-                  includedSet.has(id) ? "included" : excludedSet.has(id) ? "excluded" : undefined
-                }
-                isDropTarget={dropId !== null && below(id, dropId) !== null}
-                isDragged={dragged.has(id)}
-                isMutating={mutatingPaths.has(id)}
-                onDelete={deleteEntry}
-                onSimilarity={isCaseBaseFolder(node) ? openSimilarity : undefined}
-              />
-            );
-          })}
+              return (
+                <TreeRow
+                  item={item}
+                  node={node}
+                  level={level}
+                  posInSet={posInSet}
+                  setSize={setSize}
+                  selected={item.isSelected()}
+                  expanded={item.isExpanded()}
+                  focused={item.isFocused()}
+                  renameValue={renamingItem === id ? (renamingValue ?? "") : null}
+                  filterState={
+                    includedSet.has(id) ? "included" : excludedSet.has(id) ? "excluded" : undefined
+                  }
+                  isDropTarget={dropId !== null && below(id, dropId) !== null}
+                  isDragged={dragged.has(id)}
+                  isMutating={mutatingPaths.has(id)}
+                  onDelete={deleteEntry}
+                  onSimilarity={isCaseBaseFolder(node) ? openSimilarity : undefined}
+                />
+              );
+            }}
+          </VirtualList>
         </div>
       )}
 

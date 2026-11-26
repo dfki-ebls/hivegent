@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RunPythonTool } from "@/components/chat/tools/run-python";
 import { DocumentDialog } from "@/components/document-dialog";
 import { ImageRef } from "@/components/image-ref";
@@ -7,6 +7,7 @@ import { WorkspaceImage } from "@/components/workspace-image";
 import { AssetMedia } from "@/components/documents/asset-media";
 import type { ToolPart } from "@/lib/chat/tool-part";
 import { createTestChat, renderWithChat } from "@/test/chat";
+import { stubLayout } from "@/test/layout";
 
 const { requestBlob, requestText } = vi.hoisted(() => ({
   requestBlob: vi.fn<(url: string) => Promise<Blob>>(),
@@ -21,8 +22,6 @@ vi.mock("@/api/client", async (importOriginal) => ({
 
 vi.mock("@/hooks/use-in-view", () => ({ useInView: () => [() => {}, true] }));
 vi.mock("@/hooks/use-workspaces", () => ({ useWorkspaces: () => [] }));
-
-afterEach(() => vi.unstubAllGlobals());
 
 const finished: ToolPart = {
   type: "tool-run_python",
@@ -152,6 +151,7 @@ describe("temporary document previews", () => {
   });
 
   it("loads complete temporary text with its owning conversation", async () => {
+    stubLayout();
     requestText.mockResolvedValue("Temporary document contents");
 
     renderWithChat(

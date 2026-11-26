@@ -78,6 +78,9 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // Every spy and stubbed global is restored after each test.
+    restoreMocks: true,
+    unstubGlobals: true,
     include: ["src/**/*.test.{ts,tsx}"],
   },
 });

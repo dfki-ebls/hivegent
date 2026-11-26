@@ -48,7 +48,7 @@ export function FullDocumentText({
   if (content) {
     return (
       <ScrollArea className="min-h-0 flex-1">
-        <WorkspaceMarkdown className="lazy-blocks p-4" documentPath={filename}>
+        <WorkspaceMarkdown className="p-4" documentPath={filename}>
           {content}
         </WorkspaceMarkdown>
       </ScrollArea>

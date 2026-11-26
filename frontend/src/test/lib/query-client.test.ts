@@ -1,8 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createTestQueryClient } from "@/test/render";
-
-afterEach(() => vi.unstubAllGlobals());
 
 describe("object URL queries", () => {
   it("revoke a URL once its entry holds another one or drops", () => {

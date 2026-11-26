@@ -1,6 +1,7 @@
-import Markdown, { type MarkdownToJSX } from "markdown-to-jsx";
-import type { ComponentProps } from "react";
+import { compiler, type MarkdownToJSX } from "markdown-to-jsx/react";
+import { Children, type ComponentProps, Fragment } from "react";
 import { WorkspaceImage } from "@/components/workspace-image";
+import { useProgressive } from "@/hooks/use-progressive";
 import { cn } from "@/lib/utils";
 
 /** A link of a document, opened in a new tab so the app stays, unless it points within the page. */
@@ -47,16 +48,22 @@ interface WorkspaceMarkdownProps {
   className?: string;
 }
 
+/** The blocks mounted per frame, grouped so each frame reconciles the groups shown, not their blocks. */
+const BLOCKS_PER_FRAME = 200;
+
 /**
  * Renders a workspace document as markdown, styled by typeset, and, when a document path is given,
  * resolves workspace-relative image sources.
+ * A long document mounts its blocks progressively and skips laying out those off screen,
+ * so opening it never blocks the page.
  */
 export function WorkspaceMarkdown({ children, documentPath, className }: WorkspaceMarkdownProps) {
   const options = documentPath ? workspaceOptions(documentPath) : BASE_OPTIONS;
+  const blocks = Children.toArray(compiler(children, options));
+  const groups = Array.from({ length: Math.ceil(blocks.length / BLOCKS_PER_FRAME) }, (_, i) => (
+    <Fragment key={i}>{blocks.slice(i * BLOCKS_PER_FRAME, (i + 1) * BLOCKS_PER_FRAME)}</Fragment>
+  ));
+  const shown = useProgressive(groups);
 
-  return (
-    <div className={cn("typeset min-w-0", className)}>
-      <Markdown options={options}>{children}</Markdown>
-    </div>
-  );
+  return <div className={cn("typeset lazy-blocks min-w-0", className)}>{shown}</div>;
 }

@@ -36,6 +36,7 @@ export function DocumentManager() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directoryInputRef = useRef<HTMLInputElement>(null);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [newDocOpen, setNewDocOpen] = useState(false);
@@ -143,7 +144,7 @@ export function DocumentManager() {
   };
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div ref={setScroller} className="flex h-full flex-col overflow-y-auto">
       {/* One scroll container with a header that sticks on tall enough windows:
           the upload area, pipeline bar, and search stay pinned while the
           document tree scrolls. Keeping the header inside the scroll container
@@ -202,7 +203,7 @@ export function DocumentManager() {
       </div>
 
       <div className="px-4 pb-4">
-        <DocumentTreeView docTree={docTree} />
+        <DocumentTreeView docTree={docTree} scrollElement={scroller} />
       </div>
 
       <DocumentDialog

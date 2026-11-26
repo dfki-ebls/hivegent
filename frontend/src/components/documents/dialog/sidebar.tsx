@@ -1,4 +1,5 @@
 import { CircleAlertIcon, FileText, ImageIcon } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { type AssetEntry } from "@/api/documents";
@@ -6,6 +7,7 @@ import { previewText } from "@/lib/utils";
 import { type ContentModel, type SidebarTab, type View } from "@/components/documents/dialog/model";
 import { SidebarItem } from "@/components/documents/dialog/parts";
 import { StatusPanel } from "@/components/common/status-panel";
+import { VirtualList } from "@/components/common/virtual-list";
 import { Badge } from "@/components/ui/badge";
 import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
@@ -35,6 +37,9 @@ export function DocumentSidebar({
   assetsLoading: boolean;
 }) {
   const { t } = useTranslation();
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const chunks = contentModel.chunks.filter((item) => !item.isFullDocument);
+  const isActive = (id: string) => view.mode === "chunk" && id === view.id;
 
   if (contentModel.error) {
     return (
@@ -68,19 +73,22 @@ export function DocumentSidebar({
         contentModel.chunks.length > 0 && <Separator />
       )}
 
-      <div className="lazy-blocks flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-        {sidebarTab === "chunks" &&
-          contentModel.chunks
-            .filter((item) => !item.isFullDocument)
-            .map((item) => {
-              const active = view.mode === "chunk" && item.id === view.id;
+      <div ref={setScroller} className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+        {/* A document of thousands of chunks mounts only those in view, so the dialog opens at once. */}
+        {sidebarTab === "chunks" && (
+          <VirtualList
+            items={chunks}
+            getKey={(item) => item.id}
+            scrollElement={scroller}
+            estimateSize={56}
+            gap={4}
+            pinned={chunks.findIndex((item) => isActive(item.id))}
+          >
+            {(item) => {
+              const active = isActive(item.id);
 
               return (
-                <SidebarItem
-                  key={item.id}
-                  active={active}
-                  onClick={() => onSelect({ mode: "chunk", id: item.id })}
-                >
+                <SidebarItem active={active} onClick={() => onSelect({ mode: "chunk", id: item.id })}>
                   <ItemContent className="min-w-0">
                     <ItemTitle>
                       <Badge variant={active ? "default" : "outline"}>{item.badge}</Badge>
@@ -96,7 +104,9 @@ export function DocumentSidebar({
                   </ItemContent>
                 </SidebarItem>
               );
-            })}
+            }}
+          </VirtualList>
+        )}
 
         {sidebarTab === "assets" &&
           (assetsLoading ? (

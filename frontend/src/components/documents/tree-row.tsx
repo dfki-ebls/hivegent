@@ -1,4 +1,4 @@
-import type { ItemInstance, ItemMeta } from "@headless-tree/core";
+import type { ItemInstance } from "@headless-tree/core";
 import { FileText, Folder, FolderOpen, type LucideIcon, Pencil, Scale, Trash2 } from "lucide-react";
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
@@ -62,7 +62,13 @@ function RowIcon({ node, expanded }: { node: TreeNode; expanded: boolean }) {
 interface TreeRowProps {
   item: ItemInstance<TreeNode>;
   node: TreeNode;
-  meta: ItemMeta;
+  /**
+   * The row's place in the tree, as values since the tree rebuilds its meta objects with every change.
+   * `item.getProps()` reads them for the aria attributes, so a change must render the row again.
+   */
+  level: number;
+  posInSet: number;
+  setSize: number;
   selected: boolean;
   expanded: boolean;
   focused: boolean;
@@ -85,7 +91,7 @@ interface TreeRowProps {
 export const TreeRow = memo(function TreeRow({
   item,
   node,
-  meta,
+  level,
   selected,
   expanded,
   focused,
@@ -120,7 +126,10 @@ export const TreeRow = memo(function TreeRow({
         isDragged && "opacity-50",
       )}
     >
+      {/* A named checkbox positions its hidden input absolute instead of fixed,
+          as thousands of fixed inputs stall the compositor on every repaint. */}
       <Checkbox
+        name="selected"
         checked={selected}
         onCheckedChange={() => item.toggleSelect()}
         tabIndex={-1}
@@ -128,7 +137,7 @@ export const TreeRow = memo(function TreeRow({
       />
       <div
         className="flex min-w-0 flex-1 items-center gap-2"
-        style={{ paddingLeft: `${meta.level * TREE_INDENT}px` }}
+        style={{ paddingLeft: `${level * TREE_INDENT}px` }}
       >
         <RowIcon node={node} expanded={expanded} />
         {renameValue === null ? (

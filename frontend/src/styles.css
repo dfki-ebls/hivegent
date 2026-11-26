@@ -168,7 +168,7 @@
   color: var(--foreground);
 }
 
-/* The blocks of a long list or document skip layout and paint while off screen.
+/* The blocks of a long document skip layout and paint while off screen.
    Containment keeps the first child margin of a block from collapsing into it,
    so it is dropped, which the larger typeset block margins absorbed anyway. */
 @utility lazy-blocks {
