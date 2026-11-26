@@ -29,7 +29,11 @@ const T_OPTIONS = keyPrefix(($) => $.documents.tasks);
 export function TasksPanel() {
   const conversationId = useConversationId();
 
-  return conversationId === null ? <NoTasks /> : <ConversationTasks conversationId={conversationId} />;
+  return conversationId === null ? (
+    <NoTasks />
+  ) : (
+    <ConversationTasks conversationId={conversationId} />
+  );
 }
 
 function NoTasks({ loading = false }: { loading?: boolean }) {

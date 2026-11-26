@@ -36,7 +36,8 @@ export const settings = {
       description:
         "A SKILL.md opens with frontmatter that names the skill and describes when to use it, followed by its instructions. Upload a folder to add scripts or other files.",
       name: "Name",
-      nameHint: "Lowercase letters, digits, and hyphens, such as csv-check. It must match the name in the frontmatter.",
+      nameHint:
+        "Lowercase letters, digits, and hyphens, such as csv-check. It must match the name in the frontmatter.",
       content: "SKILL.md",
       templateDescription: "What the skill does and when to use it.",
       templateBody: "The instructions to follow.",

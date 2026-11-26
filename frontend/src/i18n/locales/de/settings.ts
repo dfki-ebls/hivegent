@@ -38,7 +38,8 @@ export const settings = {
       description:
         "Eine SKILL.md beginnt mit einem Frontmatter, das den Skill benennt und beschreibt, wann er passt, gefolgt von seinen Anweisungen. Lade einen Ordner hoch, um Skripte oder andere Dateien hinzuzufügen.",
       name: "Name",
-      nameHint: "Kleinbuchstaben, Ziffern und Bindestriche, etwa csv-check. Er muss dem Namen im Frontmatter entsprechen.",
+      nameHint:
+        "Kleinbuchstaben, Ziffern und Bindestriche, etwa csv-check. Er muss dem Namen im Frontmatter entsprechen.",
       content: "SKILL.md",
       templateDescription: "Was der Skill tut und wann er passt.",
       templateBody: "Die Anweisungen, denen zu folgen ist.",

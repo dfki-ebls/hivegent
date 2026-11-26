@@ -12,7 +12,9 @@ export const DelegatedTaskSchema = z.object({
   agent_name: z.string(),
   prompt: z.string(),
   status: z.enum(["running", "finished"]),
-  outcome: z.enum(["ok", "timeout", "budget", "failed", "contained", "cancelled", "error"]).nullable(),
+  outcome: z
+    .enum(["ok", "timeout", "budget", "failed", "contained", "cancelled", "error"])
+    .nullable(),
   output: z.string(),
   started_at: z.number(),
   finished_at: z.number().nullable(),
@@ -86,5 +88,6 @@ export function syncTaskQueries(client: QueryClient, conversationId: string): ()
 
 export const taskMutations = {
   /** Stop a running task, the feed reflects the resulting state. */
-  stop: () => mutationOptions({ mutationKey: ["conversations", "tasks", "stop"], mutationFn: stopTask }),
+  stop: () =>
+    mutationOptions({ mutationKey: ["conversations", "tasks", "stop"], mutationFn: stopTask }),
 };

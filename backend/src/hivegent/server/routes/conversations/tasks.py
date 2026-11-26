@@ -14,7 +14,8 @@ __all__ = ["router"]
 router = APIRouter()
 
 _TASK_NOT_FOUND = Localized(
-    en="The conversation has no such task", de="Die Konversation hat keine solche Aufgabe"
+    en="The conversation has no such task",
+    de="Die Konversation hat keine solche Aufgabe",
 )
 
 

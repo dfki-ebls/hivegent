@@ -7,7 +7,8 @@ export const documents = {
   },
   tasks: {
     emptyTitle: "Delegated tasks will appear here",
-    emptyDescription: "The assistant hands work to subagents, which run in the background while you chat",
+    emptyDescription:
+      "The assistant hands work to subagents, which run in the background while you chat",
     stop: "Stop task",
     status: {
       running: "Running",

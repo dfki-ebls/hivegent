@@ -111,8 +111,9 @@ _BACKGROUND_SCHEMA: dict[str, Any] = {
 
 def _offers_background(tool_def: ToolDefinition) -> bool:
     """Whether *tool_def* is ``delegate_task`` taking ``background``, which the harness offers only with a task owner."""
-    return tool_def.name == DELEGATE_TOOL and _BACKGROUND in tool_def.parameters_json_schema.get(
-        "properties", {}
+    return (
+        tool_def.name == DELEGATE_TOOL
+        and _BACKGROUND in tool_def.parameters_json_schema.get("properties", {})
     )
 
 
@@ -124,7 +125,9 @@ def _background_by_default(tool_def: ToolDefinition) -> ToolDefinition:
         _BACKGROUND: _BACKGROUND_SCHEMA,
     }
 
-    return replace(tool_def, parameters_json_schema={**schema, "properties": properties})
+    return replace(
+        tool_def, parameters_json_schema={**schema, "properties": properties}
+    )
 
 
 class BackgroundByDefault(AbstractCapability[UserDeps]):
@@ -144,7 +147,9 @@ class BackgroundByDefault(AbstractCapability[UserDeps]):
         self, ctx: RunContext[UserDeps], tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition]:
         return [
-            _background_by_default(tool_def) if _offers_background(tool_def) else tool_def
+            _background_by_default(tool_def)
+            if _offers_background(tool_def)
+            else tool_def
             for tool_def in tool_defs
         ]
 

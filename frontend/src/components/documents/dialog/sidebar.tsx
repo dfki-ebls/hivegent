@@ -88,7 +88,10 @@ export function DocumentSidebar({
               const active = isActive(item.id);
 
               return (
-                <SidebarItem active={active} onClick={() => onSelect({ mode: "chunk", id: item.id })}>
+                <SidebarItem
+                  active={active}
+                  onClick={() => onSelect({ mode: "chunk", id: item.id })}
+                >
                   <ItemContent className="min-w-0">
                     <ItemTitle>
                       <Badge variant={active ? "default" : "outline"}>{item.badge}</Badge>

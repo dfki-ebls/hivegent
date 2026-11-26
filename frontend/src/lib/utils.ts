@@ -112,7 +112,9 @@ export function previewText(text: string, maxChars = 300): string {
 /** The distance from the top of the content of *container* to *element*, or a text range. */
 export function offsetInScroller(element: Element | Range, container: Element): number {
   return (
-    element.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+    element.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop
   );
 }
 

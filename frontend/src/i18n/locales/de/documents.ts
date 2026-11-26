@@ -9,7 +9,8 @@ export const documents = {
   },
   tasks: {
     emptyTitle: "Delegierte Aufgaben werden hier angezeigt",
-    emptyDescription: "Der Assistent gibt Arbeit an Subagenten ab, die im Hintergrund laufen, während du chattest",
+    emptyDescription:
+      "Der Assistent gibt Arbeit an Subagenten ab, die im Hintergrund laufen, während du chattest",
     stop: "Aufgabe anhalten",
     status: {
       running: "Läuft",
