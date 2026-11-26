@@ -22,8 +22,7 @@ notes in the run's language and supplies what only Hivegent knows:
 * :data:`HOST_GATE` holds every tool of every agent to the policy of the exar
   run it runs in, the host policy of its deps (``UserDeps.run_config``), the built-in, plugin, and external MCP tools alike:
   it hides what the mode does not offer and the run withholds (the withheld
-  names, people-only tools from a service principal, derived content from a
-  confined run), failing closed for a
+  names, people-only tools from a service principal), failing closed for a
   tool that declares no effect unless `exar.pydantic_ai.DeclaredEffects`
   declares it, and asks before each call the policy asks about.
 * :data:`TOOL_OUTPUT_FENCE` is the `ToolOutputFence` that marks what a tool

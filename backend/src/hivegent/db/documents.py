@@ -403,12 +403,7 @@ def accessible_documents(reach: Reach) -> sa.Select[UUID]:
         if (document_filter := reach.filter(store)) is None:
             return owned
 
-        clauses = [owned, sa.not_(_selected(document_filter.excluded))]
-
-        if document_filter.allowed is not None:
-            clauses.append(_selected(document_filter.allowed))
-
-        return sa.and_(*clauses)
+        return sa.and_(owned, sa.not_(_selected(document_filter.excluded)))
 
     return select(Document.id).where(sa.or_(sa.false(), *map(visible, reach.stores)))
 

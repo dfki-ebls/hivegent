@@ -1,4 +1,4 @@
-"""What skills and assistants share: a library per scope, listed most specific first.
+"""Skill libraries by scope, listed most specific first.
 
 A user sees the items of every scope in the order user, groups, global.  A
 name is unique only within its scope, so an item is referenced by its scope's

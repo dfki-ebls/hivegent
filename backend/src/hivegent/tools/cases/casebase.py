@@ -1,8 +1,7 @@
 """Opening and caching the case bases that a query ranks, and binding the host's models.
 
-Every file is reached through the search paths, so the document filters and
-an assistant's allowlist hold for the case base, each member of a folder, and
-a query graph alike, and the size of the case base and the work of one query
+Every file is reached through the search paths, so the document filters hold
+for the case base, each member of a folder, and a query graph alike, and the size of the case base and the work of one query
 are capped, on top of the limits of its configuration.  A case base is listed
 by the stats of its visible files, which key the :class:`CaseBaseCache` of
 loaded case bases, and its files are read only to load it anew or to plan a

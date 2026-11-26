@@ -76,12 +76,12 @@ const ConversationActivitySchema = z.object({
 export type ConversationActivity = z.infer<typeof ConversationActivitySchema>;
 
 /** The libraries the feed announces changes of, each named like the root of its query keys. */
-export type LibraryKind = "skills" | "assistants";
+export type LibraryKind = "skills";
 
-/** Marks a change to a skill or assistant library the user sees (see backend `LibraryChanged`). */
+/** Marks a change to a skill library the user sees (see backend `LibraryChanged`). */
 const LibraryChangedSchema = z.object({
   type: z.literal("library-changed"),
-  kind: z.enum(["skills", "assistants"]),
+  kind: z.enum(["skills"]),
 });
 
 /** Marks a change to the sync state of a source, which only admins' feeds carry (see backend `SourceChanged`). */

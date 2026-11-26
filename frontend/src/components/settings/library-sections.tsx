@@ -8,9 +8,8 @@ import { Section } from "@/components/settings/section";
 import { Button } from "@/components/ui/button";
 import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { useWorkspaces } from "@/hooks/use-workspaces";
-import { cn } from "@/lib/utils";
 
-/** An entry of a scoped library, such as a skill or an assistant. */
+/** An entry of a scoped library, such as a skill. */
 interface LibraryEntry {
   name: string;
   scope: string;
@@ -28,12 +27,11 @@ interface LibrarySectionsProps<T extends LibraryEntry> {
     deleteTitle: (entry: T) => string;
     deleteDescription: string;
   };
-  listClassName?: string;
+
   entryKey: (entry: T) => string;
   /** What an entry shows next to its actions. */
   renderEntry: (entry: T) => ReactNode;
-  /** The actions of a writable entry before its delete button. */
-  renderActions?: (entry: T) => ReactNode;
+
   /** What a scope offers below its entries when the user may change its library. */
   renderLibrary: (scope: string) => ReactNode;
 }
@@ -44,10 +42,10 @@ export function LibrarySections<T extends LibraryEntry>({
   global = false,
   remove,
   labels,
-  listClassName,
+
   entryKey,
   renderEntry,
-  renderActions,
+
   renderLibrary,
 }: LibrarySectionsProps<T>) {
   const workspaces = useWorkspaces();
@@ -68,13 +66,12 @@ export function LibrarySections<T extends LibraryEntry>({
       {scopes.map(({ scope, label, library, entries }) => (
         <Section key={scope} title={label}>
           {entries.length > 0 ? (
-            <ul className={cn("flex flex-col gap-2", listClassName)}>
+            <ul className="flex flex-col gap-2">
               {entries.map((entry) => (
                 <li key={entryKey(entry)} className="flex items-start justify-between gap-2">
                   <div className="min-w-0">{renderEntry(entry)}</div>
                   {entry.writable && (
                     <div className="flex shrink-0 gap-1">
-                      {renderActions?.(entry)}
                       <WithTooltip label={labels.delete}>
                         <Button
                           variant="ghost"

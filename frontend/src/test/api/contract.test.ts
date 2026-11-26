@@ -3,7 +3,6 @@ import { type ZodType, z } from "zod";
 
 import { EXPORT_PARTS } from "@/api/account";
 import { DataIntegrationSchema, McpIntegrationSchema, PluginInfoSchema } from "@/api/admin";
-import { AssistantInfoSchema } from "@/api/assistants";
 import { CaseBaseSchema } from "@/api/case-bases";
 import { AGENT_MODES, REASONING_EFFORTS } from "@/api/conversations";
 import { ChunkedDocumentResponseSchema, DirectoryTreeResponseSchema } from "@/api/documents";
@@ -98,7 +97,6 @@ function frontendEnums(schema: ZodType): Map<string, Set<unknown>> {
 
 /** Each zod schema of a wire shape, by the backend schema it mirrors. */
 const MIRRORS: [string, ZodType][] = [
-  ["AssistantInfo", AssistantInfoSchema],
   ["CaseBaseResponse", CaseBaseSchema],
   ["ChangesetOutcome", ChangesetOutcomeSchema],
   ["DataIntegration", DataIntegrationSchema],

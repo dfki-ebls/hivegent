@@ -1,9 +1,8 @@
 """Shared helpers for server routes and operations."""
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
-from typing import Any
+from collections.abc import Awaitable, Callable, Iterator, Sequence
+from dataclasses import replace
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -12,17 +11,11 @@ from .. import workspace
 from ..agents import RunPrefix, UserDeps, build_capabilities
 from ..agents.integrations import integration_capabilities
 from ..agents.subagents import delegation
-from ..assistants import (
-    Assistant,
-    apply_assistant,
-    assistant_library,
-    resolve_assistant,
-)
-from ..config import parse_uuid, sanitize_document_path
+from ..config import parse_uuid, sanitize_document_path, settings
 from ..conversation_files import delete_conversations
 from ..db.conversations import OwnedConversation
 from ..db.users import delete_user, load_preferences
-from ..files import remove_paths
+from ..files import remove_path
 from ..jobs import manager
 from ..libraries import LibraryGrant
 from ..llm import model_from_config
@@ -43,22 +36,20 @@ from ..types import (
     DocumentSelection,
     FilterEntry,
     Preferences,
-    RunChoices,
 )
 
 __all__ = [
     "CONVERSATION_NOT_FOUND",
-    "Effective",
     "build_run_prefix",
     "delete_scope_data",
     "delete_user_data",
-    "effective_preferences",
     "found",
     "parse_document_scope",
     "require_chat_llm",
     "resolve_workspace",
     "resolve_workspace_path",
     "safe_path",
+    "user_preferences",
 ]
 
 
@@ -108,7 +99,6 @@ def parse_document_scope(
     included_documents: Sequence[FilterEntry],
     excluded_documents: Sequence[FilterEntry],
     user: User,
-    allowed_documents: Sequence[FilterEntry] = (),
 ) -> tuple[frozenset[str], dict[WorkspaceScope, DocumentFilter]]:
     """Parse the request's document selection into its two halves.
 
@@ -126,13 +116,9 @@ def parse_document_scope(
     list becomes a :class:`DocumentFilter`, and only for the scopes it names,
     every other scope stays unfiltered.
 
-    An assistant's *allowed_documents*, unless empty, confine every scope
-    *user* sees to the entries naming it, so a scope none names is hidden
-    whole, as is everything when no entry is addressable.
-
     Returns:
         The canonical paths to name to the model, and one filter per scope
-        the excluded list names, or per visible scope with an allowlist.
+        the excluded list names.
     """
     visible = {store.scope.prefix: store.scope for store in user.workspaces()}
 
@@ -154,83 +140,36 @@ def parse_document_scope(
         for scope, local in scoped(included_documents)
     )
 
-    def grouped(
-        entries: Sequence[FilterEntry],
-    ) -> dict[WorkspaceScope, frozenset[FilterEntry]]:
-        """The local entries of *entries* by the scope they name."""
-        groups: dict[WorkspaceScope, set[FilterEntry]] = {}
+    hidden: dict[WorkspaceScope, set[FilterEntry]] = {}
 
-        for scope, local in scoped(entries):
-            groups.setdefault(scope, set()).add(local)
-
-        return {scope: frozenset(locals_) for scope, locals_ in groups.items()}
-
-    hidden = grouped(excluded_documents)
-
-    if not allowed_documents:
-        return relevant, {
-            scope: DocumentFilter(excluded=locals_) for scope, locals_ in hidden.items()
-        }
-
-    allowed = grouped(allowed_documents)
+    for scope, local in scoped(excluded_documents):
+        hidden.setdefault(scope, set()).add(local)
 
     return relevant, {
-        scope: DocumentFilter(
-            excluded=hidden.get(scope, frozenset()),
-            allowed=allowed.get(scope, frozenset()),
-        )
-        for scope in visible.values()
+        scope: DocumentFilter(excluded=frozenset(locals_))
+        for scope, locals_ in hidden.items()
     }
 
 
-@dataclass(frozen=True, slots=True)
-class Effective:
-    """A user's preferences as runs apply them, with the assistant they name."""
-
-    preferences: Preferences
-    assistant: Assistant | None
-
-
-async def effective_preferences(
-    user: User, stored: Mapping[str, Any] | None = None
-) -> Effective:
-    """The preferences *stored*, the user's own if None, as runs apply them.
-
-    An assistant the user no longer sees is none, since a stored choice
-    outlives what it names, so what the preferences show is what a run applies.
-    """
-    preferences = Preferences.stored(
-        await load_preferences(user.id) if stored is None else stored
-    )
-    assistant = (
-        None
-        if preferences.assistant is None
-        else await resolve_assistant(user, preferences.assistant)
-    )
-
-    if assistant is None and preferences.assistant is not None:
-        preferences = preferences.model_copy(update={"assistant": None})
-
-    return Effective(preferences, assistant)
+async def user_preferences(user: User) -> Preferences:
+    """The preferences *user* stored, as runs apply them."""
+    return Preferences.stored(await load_preferences(user.id))
 
 
 async def build_run_prefix(
     selection: DocumentSelection,
-    effective: Effective,
+    preferences: Preferences,
     user: User,
     conversation: OwnedConversation,
 ) -> RunPrefix:
-    """Compose the prompt prefix of *user*'s *effective* preferences and the documents of *selection*, for a turn or a compaction.
+    """Compose the prompt prefix of *user*'s *preferences* and the documents of *selection*, for a turn or a compaction.
 
     A compaction asks for its summary as one more turn of the conversation,
     which only pays off while its instructions and tool schemas match the turn
     before it token for token, so both run under the prefix built here.
 
     It also owns the preconditions of that match, so no caller can compose a
-    prefix that differs by forgetting one: the preferred assistant narrows
-    the rest, a withheld name no tool has withholds nothing, since tools come
-    and go with the operator's settings while a client's choices persist,
-    the LLM config is resolved (and
+    prefix that differs by forgetting one: the LLM config is resolved (and
     returned on the result, since prefix and model go together), the
     request's interface language is read once and handed to every part of the
     prefix explicitly, and the subagents the turn delegates to join it
@@ -238,33 +177,19 @@ async def build_run_prefix(
     listing are part of it.
     """
     language = current_language()
-    assistant = effective.assistant
-    config = RunChoices(
-        **effective.preferences.model_dump(),
-        included_documents=selection.included,
-        excluded_documents=selection.excluded,
-    )
-
-    if assistant is not None:
-        config = apply_assistant(config, assistant)
-
-    llm = require_chat_llm(config.model, config.reasoning_effort)
+    llm = require_chat_llm(preferences.model, preferences.reasoning_effort)
     relevant_documents, document_filters = parse_document_scope(
-        config.included_documents,
-        config.excluded_documents,
-        user,
-        () if assistant is None else assistant.spec.allowed_documents,
+        selection.included, selection.excluded, user
     )
 
     deps = await UserDeps(
         user=user,
         # A service answers many people at once, so it only ever reads.
-        mode="read" if user.is_service else config.mode,
+        mode="read" if user.is_service else preferences.mode,
         conversation=conversation,
         document_filters=document_filters,
         relevant_documents=relevant_documents,
-        disabled_tools=frozenset(config.disabled_tools),
-        assistant=assistant,
+        instructions=preferences.instructions,
         llm=llm,
         language=language,
     ).with_roots()
@@ -274,7 +199,7 @@ async def build_run_prefix(
         capabilities=build_capabilities(
             deps, extra=integration_capabilities(user, language)
         ),
-        instructions=compose_instructions(language),
+        instructions=compose_instructions(language, settings.llm.instructions),
         llm=llm,
         model=model_from_config(llm),
     )
@@ -329,13 +254,10 @@ def resolve_workspace(user: User, scope: str, *, write: bool = False) -> Workspa
 
 
 async def delete_scope_data(granted: LibraryGrant) -> None:
-    """Delete the workspace, skills, and assistants of *granted*'s scope, announcing the emptied workspace."""
-    scope = granted.scope
+    """Delete the workspace and skills of *granted*'s scope, announcing the emptied workspace."""
     await asyncio.gather(
         workspace.delete_all(granted.store),
-        asyncio.to_thread(
-            remove_paths, [library(scope).path, assistant_library(scope)]
-        ),
+        asyncio.to_thread(remove_path, library(granted.scope).path),
     )
 
 

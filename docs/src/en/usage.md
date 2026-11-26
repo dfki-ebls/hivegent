@@ -98,7 +98,8 @@ A divider marks where the summary starts, and opens to show it.
 - Reasoning effort: Low, Medium (the default), or High, trading depth against speed and cost.
 - Mode: Interactive asks before each workspace change, Write applies changes to every workspace you may write without asking, and Read allows no changes.
   Changes to skills and memory always ask, in every mode, since they shape later conversations.
-- Assistant: when assistants exist, pick one in the composer (see below).
+- Instructions: your own standing instructions for every conversation, such as a tone or a house rule, under Settings, Instructions.
+  They reach the assistant as your own words and cannot override its rules.
 
 ## Memory
 
@@ -113,23 +114,13 @@ The assistant sees the name and description of every skill you can use and loads
 Start a message with `/<name>` to have the assistant load that skill first, the composer suggests matching skills as you type.
 Skills of different scopes may share a name, so such a skill is invoked by its reference, such as `/~/<name>`, `/@<group>/<name>`, or `/srv/<name>`, which the suggestions insert.
 The text after the command fills every `$ARGUMENTS` in the skill's instructions, so `/review src/app.py` hands `src/app.py` to a skill that reviews `$ARGUMENTS`.
-A skill's frontmatter may hold `disable-model-invocation: true`, so only you and assistants load it, never the assistant on its own, or `user-invocable: false`, so it is not offered as a command and the assistant loads it when a task matches.
+A skill's frontmatter may hold `disable-model-invocation: true`, so only you load it, never the assistant on its own, or `user-invocable: false`, so it is not offered as a command and the assistant loads it when a task matches.
 Every frontmatter value is read as written, so `version: 1.0` stays text, and a key given twice makes the skill invalid.
 Settings, Skills lists the organisation's skills, your groups', and your own, opens each one's `SKILL.md`, and shows why a skill cannot be used.
 Upload a skill folder or its ZIP archive to your own skills or to a group you may write, where it replaces a skill of the same name, and delete it there.
 The assistant may also write a skill when you ask, and asks before every change, in every mode.
 Scripts in a skill run in the Python sandbox when they define a `main` function, others stay for reading.
 A skill the assistant loaded stays loaded when a long conversation is summarized.
-
-## Assistants
-
-An assistant is a named set of instructions for a recurring kind of work, such as answering from the HR handbook.
-It may also load skills, switch tools off, lower the highest mode, and focus on or hide documents, but it never allows more than you could without it.
-It may also name the only documents and folders a chat with it reaches, which is enforced, unlike your own selection in the file browser.
-Pick one in the composer, which shows the selector only when assistants exist.
-Settings, Assistants lists the organisation's assistants, your groups', and your own, and creates, edits, and deletes your own and those of groups you may write.
-The selector names each assistant by its scope and name, such as `~/legal` or `@team/legal`, so one of a group never stands in for your own.
-The organisation's assistants speak with the operator's authority, while the instructions of your own or a group's reach the assistant as quoted content that cannot override its rules.
 
 ## Beyond the web interface
 

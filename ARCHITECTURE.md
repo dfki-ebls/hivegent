@@ -62,7 +62,7 @@ flowchart LR
   Conversions and the `semantic` chunker run in worker processes, while the cheap chunkers, which load no model, run in a thread of the server, so they never queue behind conversions.
 - Plugins are Python packages advertising `hivegent.plugins` entry points, loaded only when `plugins.enabled` names them, which contribute features, converters, chunkers, and skill directories through the facade `plugins.api`, every id unique among Hivegent's and every plugin's and every tool declaring its `Effect`.
 - Run state that changes during a conversation, the date and the mode among it, is an instruction whose changes are appended to the history rather than rewriting the instructions, which keeps the provider's prompt cache valid, so the prompt prefix of a conversation survives midnight.
-  Changing mode, tools, assistant, model, or language between turns changes it by design, and so does an external MCP server that lists other tools after reconnecting.
+  Changing mode, tools, model, or language between turns changes it by design, and so does an external MCP server that lists other tools after reconnecting.
   A request stores its system prompt in `messages.instructions` only where it differs from the one in effect at its parent, so a conversation keeps each prompt once per change and stays self-contained.
 - PostgreSQL with `pgvector` and cbrkit 2 (its async `Pgvector` storage, embedders through Pydantic AI or sentence-transformers, and `Rerank`) provide dense, sparse, and hybrid retrieval, plus conversations and memory.
   The chunks a caller may read and each person's memory page are exar memories over cbrkit storages scoped by SQL to them (`retrieval.document_memory`, `db.memory.user_memory`).
@@ -93,11 +93,10 @@ flowchart LR
   A library is `Reviewed`, so the agent writes a skill only with approval in every mode, and a group's only with the group's write grant, while users install whole skills as ZIP archives over REST.
   A skill's instructions are cut to `llm.tool_output_max_chars` however they are loaded, pointing at the rest in `SKILL.md`.
   The catalog lists skills the user's first, then groups, then global, each by its reference, its scope's prefix and its name (`~/<name>`, `@<group>/<name>`, `/srv/<name>`), since a name is unique only within its scope, and reaches the model only as `load_skill` results, never as instructions, appended whenever it changed.
-  The host loads a skill the same way for a prompt that starts with `/<reference>`, or `/<name>` while no other skill the user sees has that name, for the run's assistant, and again after a compaction for every skill the window before it had loaded.
-- Assistants belong to a scope too (`assistants.py`): the global ones are `<name>.json` files in the operator's `assistants.dir`, a group's and a user's are `data/assistants/<owner>/<name>.json`, written only over REST, a group's only with its write grant, and out of reach of every agent tool.
-  A chat request names one assistant by its reference, resolved exactly, which the server applies by narrowing alone: it withholds tools, caps the mode, adds to the document selection, and may confine the run to an enforced allowlist of paths.
-  Its instructions carry the authority of whoever wrote it: the operator's join the run's instructions, while a group's or a user's reach the model as the user's, framed in their turn and appended to the history, so the cached prefix stays.
-- Changes to a skill or assistant library reach every client following its scope as a `library-changed` feed event, as workspace changes do.
+  The host loads a skill the same way for a prompt that starts with `/<reference>`, or `/<name>` while no other skill the user sees has that name, and again after a compaction for every skill the window before it had loaded.
+- Personal instructions are a preference of the user (`Preferences.instructions`), rendered every run as a run note at the user's authority, so they reach the model framed in the user's turn and appended to the history, never in the system prompt, and the cached prefix stays.
+  The operator's `llm.instructions` join the system prompt at operator authority for every user alike.
+- Changes to a skill library reach every client following its scope as a `library-changed` feed event, as workspace changes do.
 - Every write, edit, move, delete, upload, and new directory is one changeset that `workspace.changeset` plans and commits all or nothing.
   A workspace root carries rows, indexing, and per-item approval, while a folder (`/tmp`, a skill library) holds plain files within its size cap and asks by its policy.
 - Approval follows the audience of what a call changes (`agents/policy.py`), derived from each tool's declared effect (`read`, `write`, `execute`) and each root's `CommitPolicy`, and expressed as an exar `Policy` (`host_policy`) that denies what a mode does not offer and asks before writes outside the gateway and every `execute` tool.
@@ -112,7 +111,7 @@ flowchart LR
   Each is one long-lived connection, over Streamable HTTP or to a stdio process the backend starts, that reconnects with backoff, its tools named `<id>_<tool>` and each given the `Effect` that `effects` declares for it, else one from the server's hints only when it is `trusted`, otherwise `execute`.
   The boot refuses an id of a server, database, or API that prefixes a built-in tool, the delegation tools included, so no integration tool takes the name of one.
   A server with `groups` is seen by their members only, one without by everyone, and an unreachable one keeps offering the tools it last listed, failing their calls with a note, so neither the turn nor the cached prefix breaks.
-- A person downloads their own data as one ZIP archive of the parts they ask for, their documents, conversations, memory, skills, assistants, and preferences (`GET /api/v1/export`, `server.export`), a one-way copy no route imports, and the host exports any user's with `hivegent export <id> <file>`.
+- A person downloads their own data as one ZIP archive of the parts they ask for, their documents, conversations, memory, skills, and preferences (`GET /api/v1/export`, `server.export`), a one-way copy no route imports, and the host exports any user's with `hivegent export <id> <file>`.
 - Wiping anything beyond the caller's own data runs only on the host, with `hivegent reset {workspace,database,factory}` for the deployment and `hivegent reset {user,group} <id>` for one owner, refused while a server holds the database's serving lock (`db.engine.serving`), never over HTTP, and pipelines are listed at `GET /api/v1/pipelines/{stage}`.
 
 ## Integration
@@ -150,7 +149,7 @@ sequenceDiagram
 ## Agent features
 
 Each feature bundles the tools a factory builds per run with their instructions (`agents/capabilities.py`).
-A feature is withheld by a chat mode that withholds any of its tools' effects, or when the run's policy (`UserDeps.policy`) lists none of its tools: an assistant's `disabled_tools`, `settings.tools.disabled`, a service principal for people-only tools, and an assistant's allowlist for the conversation and memory tools.
+A feature is withheld by a chat mode that withholds any of its tools' effects, or when the run's policy (`UserDeps.policy`) lists none of its tools: `settings.tools.disabled` and a service principal for people-only tools.
 The one rule holds on every surface, the main agent, the subagents, the sandbox, MCP, and the debug console.
 Enabled plugins add their features after these, held to the same effects and approvals.
 The tools of the external MCP servers a user sees follow as `<id>_<tool>`, held to the mode and approvals tool by tool.

@@ -5,7 +5,7 @@ deleted, and every other mutation the workspaces it changed, or clients stay
 stale.  A client follows the workspaces its user may read, so a change to the
 global workspace reaches everyone, one to a group workspace every member,
 whoever made it, and one to a personal workspace only its owner.  A scope's
-skill or assistant library reaches the same clients its workspace does.
+skill library reaches the same clients its workspace does.
 """
 
 from collections.abc import Collection, Mapping
@@ -41,9 +41,7 @@ def announce_workspace_changed(
     manager.notify(lambda followed: _visible(announced, keys, followed))
 
 
-def announce_library_changed(
-    kind: Literal["skills", "assistants"], scope: Scope
-) -> None:
+def announce_library_changed(kind: Literal["skills"], scope: Scope) -> None:
     """Tell every client following the workspace of *scope* that its library of *kind* changed."""
     event = LibraryChanged(kind=kind)
     manager.notify(lambda followed: event if scope.key in followed else None)

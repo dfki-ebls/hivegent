@@ -210,7 +210,9 @@ async def test_refuses_a_group_the_user_may_only_read(
     assert routed == []
 
 
-def test_run_python_paths_end_with_the_conversation_s_tmp(deps: UserDeps) -> None:
+def test_run_python_paths_end_with_the_conversation_s_tmp(
+    deps: UserDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
     filtered = replace(
         deps,
         document_filters={
@@ -246,11 +248,10 @@ def test_run_python_paths_end_with_the_conversation_s_tmp(deps: UserDeps) -> Non
     assert len(program_writes(filtered).paths) == 5
 
     # Read mode, or a withheld apply_changes, changes no workspace and keeps `/tmp`.
-    for narrowed in (
-        replace(filtered, mode="read"),
-        replace(filtered, disabled_tools=frozenset({"apply_changes"})),
-    ):
-        assert program_writes(narrowed).paths == (tmp,)
+    assert program_writes(replace(filtered, mode="read")).paths == (tmp,)
+
+    monkeypatch.setattr(settings.tools, "disabled", ["apply_changes"])
+    assert program_writes(filtered).paths == (tmp,)
 
 
 def _asked(exc: pytest.ExceptionInfo[ApprovalRequired]) -> dict[str, Any]:

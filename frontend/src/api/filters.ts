@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** A document or directory a selection names by its canonical path (see backend `FilterEntry`). */
-export const FilterEntrySchema = z.object({ path: z.string(), directory: z.boolean() });
+const FilterEntrySchema = z.object({ path: z.string(), directory: z.boolean() });
 export type FilterEntry = z.infer<typeof FilterEntrySchema>;
 
 /** The documents a user message is about, which its metadata carries (see backend `DocumentSelection`). */

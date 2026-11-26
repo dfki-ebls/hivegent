@@ -7,8 +7,8 @@ folder holds what they refer to: ``scripts/``, ``references/``, and
 where skills live and who sees them is the app's.
 
 The frontmatter keeps to the specification's fields and to two of Claude
-Code's: ``disable-model-invocation``, which leaves a skill to the user and the
-assistants that preload it, and ``user-invocable``, which leaves it to the
+Code's: ``disable-model-invocation``, which leaves a skill to the user, and
+``user-invocable``, which leaves it to the
 model.  A key it does not know, such as one another client reads, is reported
 as a warning rather than refused, as the client guide advises, and
 ``allowed-tools`` is accepted but never read, since nothing a skill declares
@@ -103,10 +103,10 @@ class SkillManifest(BaseModel):
     disable_model_invocation: _Flag = Field(
         default=False, alias="disable-model-invocation"
     )
-    """Whether only the user and the assistants that preload it load it, never the model."""
+    """Whether only the user loads it, never the model."""
 
     user_invocable: _Flag = Field(default=True, alias="user-invocable")
-    """Whether a user invokes it by ``/<reference>``, else only the model and assistants load it."""
+    """Whether a user invokes it by ``/<reference>``, else only the model loads it."""
 
 
 @dataclass(frozen=True, slots=True)

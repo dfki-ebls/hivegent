@@ -18,8 +18,8 @@ whole through the REST API.
 
 The catalog lists the skills a user sees in the order user, groups, global,
 each by its reference (:func:`~hivegent.libraries.library_ref`), its scope's
-prefix and its name, which is how the model loads one and an assistant names
-one, so no scope can stand in for another's.
+prefix and its name, which is how the model loads one, so no scope can stand
+in for another's.
 """
 
 import asyncio

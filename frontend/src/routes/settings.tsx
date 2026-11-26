@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ContactRoundIcon, SparklesIcon, UserCogIcon, UserIcon } from "lucide-react";
+import { ScrollTextIcon, SparklesIcon, UserCogIcon, UserIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { settingsQueries } from "@/api/settings";
@@ -25,7 +25,7 @@ function SettingsLayout() {
       title={t(($) => $.title)}
       pages={[
         { to: "/settings/profile", label: t(($) => $.profile), icon: UserIcon },
-        { to: "/settings/assistants", label: t(($) => $.assistants), icon: ContactRoundIcon },
+        { to: "/settings/instructions", label: t(($) => $.instructions), icon: ScrollTextIcon },
         { to: "/settings/skills", label: t(($) => $.skills), icon: SparklesIcon },
         { to: "/settings/account", label: t(($) => $.account), icon: UserCogIcon },
       ]}

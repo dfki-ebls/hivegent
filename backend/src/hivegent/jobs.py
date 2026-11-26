@@ -161,7 +161,7 @@ class LibraryChanged(BaseModel):
     """Marks a change to a library the subscriber sees, whose list a client reads again."""
 
     type: Literal["library-changed"] = "library-changed"
-    kind: Literal["skills", "assistants"]
+    kind: Literal["skills"]
 
 
 class SourceChanged(BaseModel):

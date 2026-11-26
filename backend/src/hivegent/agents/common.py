@@ -24,7 +24,6 @@ from pydantic_ai.tools import ToolDefinition, ToolPrepareFunc
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from ..assistants import Assistant
 from ..auth import PROBE
 from ..config import settings
 from ..db.conversations import OwnedConversation
@@ -174,23 +173,15 @@ class UserDeps:
     # instructions and injected notes, while tool schemas and results stay
     # English.  The default serves runs without a user interface (MCP).
     language: Language = DEFAULT_LANGUAGE
-    # What the conversation hides of each scope's workspace, none of the rest,
-    # or with an assistant's allowlist, a filter for every scope the user sees.
+    # What the conversation hides of each scope's workspace, none of the rest.
     document_filters: Mapping[WorkspaceScope, DocumentFilter] = field(
         default_factory=dict
     )
     # Canonical paths the user pointed the conversation at.  Advisory: they are
     # named to the model and restrict no tool, so they never reach a filter.
     relevant_documents: frozenset[str] = frozenset()
-    # Tool names this *request* withheld.  Only the request's half: the
-    # operator's `settings.tools.disabled` is global and joins it in
-    # `withheld_tools`, so a deps site that forgets this field still cannot
-    # hand a program an excluded tool.
-    disabled_tools: frozenset[str] = frozenset()
-    # The assistant the request named, already applied to the mode, the
-    # document selection, and the withheld tools, whose instructions and
-    # skills the run reports to the model.
-    assistant: Assistant | None = None
+    # The user's own instructions, which the run follows at their authority.
+    instructions: str = ""
     # The chat model the request named, which subagents reuse.  None where no
     # request named one, as on MCP, which then runs on the default.
     llm: LlmConfig | None = None
@@ -241,26 +232,18 @@ class UserDeps:
 
     @property
     def withheld_tools(self) -> frozenset[str]:
-        """The tools this run may not call: the request's and the operator's."""
-        return self.disabled_tools.union(settings.tools.disabled)
-
-    @property
-    def confined(self) -> bool:
-        """Whether an assistant's allowlist confines the documents this run reaches."""
-        return any(f.allowed is not None for f in self.document_filters.values())
+        """The tools this run may not call, the operator's ``tools.disabled``."""
+        return frozenset(settings.tools.disabled)
 
     @property
     def policy(self) -> Policy:
         """The host policy of this run, which every surface asks what a tool may do.
 
-        The mode's, narrowed by the withheld names, the people-only tools of a
-        service principal, and the derived tools of a confined run.
+        The mode's, narrowed by the withheld names and the people-only tools of
+        a service principal.
         """
         return host_policy(
-            self.mode,
-            withheld=self.withheld_tools,
-            service=self.user.is_service,
-            confined=self.confined,
+            self.mode, withheld=self.withheld_tools, service=self.user.is_service
         )
 
     @property
@@ -333,26 +316,11 @@ class UserDeps:
         it was projected to, so the block is the first and cheapest place the
         run can learn that the original is there to be queried instead.
         """
-        filters = [
-            (store.scope, document_filter)
+        hidden = frozenset(
+            store.scope.render_filter_entry(entry.path, directory=entry.directory)
             for store in self.user.workspaces()
             if (document_filter := self.reach.filter(store)) is not None
-        ]
-        hidden = frozenset(
-            scope.render_filter_entry(entry.path, directory=entry.directory)
-            for scope, document_filter in filters
             for entry in document_filter.excluded
-        )
-        allowed = (
-            frozenset(
-                scope.render_filter_entry(entry.path, directory=entry.directory)
-                for scope, document_filter in filters
-                for entry in document_filter.allowed or ()
-            )
-            if any(
-                document_filter.allowed is not None for _, document_filter in filters
-            )
-            else None
         )
         paths = self.search_paths() if self.relevant_documents else ()
         resolved = (
@@ -364,7 +332,7 @@ class UserDeps:
             for file_path, entry in resolved
         }
 
-        return format_document_scope(relevant, hidden, self.language, allowed)
+        return format_document_scope(relevant, hidden, self.language)
 
 
 class PrefixRunKwargs(TypedDict):
@@ -470,8 +438,6 @@ class AgentTools:
         gateway: Whether every write of the tools lands through the changeset gateway.
         people_only: Whether the tools act on one person's own data, which a
             service principal is never offered.
-        derived: Whether the tools return stored text derived from content
-            beyond the workspaces, which a confined run is never offered.
         seeing: The names of the tools whose result is only of use to a model that sees images.
         timeout: The bound of each call, which pydantic-ai applies only to the
             tools an agent registers itself unless a toolset states it.  A tool
@@ -481,7 +447,6 @@ class AgentTools:
     factory: ToolFactory
     gateway: bool = False
     people_only: bool = False
-    derived: bool = False
     seeing: frozenset[str] = frozenset()
     timeout: float | None = field(
         default_factory=lambda: settings.llm.tool_timeout_seconds
@@ -515,7 +480,6 @@ class AgentTools:
             flags = ToolFlags(
                 gateway=self.gateway,
                 people_only=self.people_only,
-                derived=self.derived,
                 seeing=name in self.seeing,
             )
             tool.metadata = {**(tool.metadata or {}), HOST_FLAGS: asdict(flags)}

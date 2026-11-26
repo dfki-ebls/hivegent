@@ -40,7 +40,7 @@ from ..http_client import create_trusted_http_client
 from ..security import Origin, origin
 from ..shared.l10n import Localized
 from ..store import User
-from ..types import McpIntegration, ToolInfo
+from ..types import McpIntegration
 from .common import UserDeps
 
 __all__ = ["CATALOG", "USER_HEADER", "CatalogServer", "caller_id"]
@@ -267,17 +267,6 @@ class CatalogServer:
     def instructions(self) -> None:
         """None, since a trusted server's instructions reach the run through its :attr:`toolset`."""
         return None
-
-    def tool_infos(self) -> list[ToolInfo]:
-        """The tools of the server while it is connected."""
-        return [
-            ToolInfo(
-                name=f"{self.id}_{name}",
-                description=tool.description or "",
-                group=self.id,
-            )
-            for name, tool in (self.client.tools or {}).items()
-        ]
 
     def integration(self) -> McpIntegration:
         """The server as the admin listing shows it, without any secret."""

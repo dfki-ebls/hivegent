@@ -11,10 +11,13 @@ import { jsonRequest, requestJson } from "@/api/client";
 import { AGENT_MODES, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS } from "@/api/conversations";
 import { apiUrl } from "@/lib/health";
 
+/** The backend's limit on the user's instructions (`MAX_INSTRUCTIONS_CHARS`). */
+export const MAX_INSTRUCTIONS = 20_000;
+
 /** The choices the user made for their runs, which the server applies to every turn (see backend `Preferences`). */
 const PreferencesSchema = z.object({
-  /** Reference of the chosen assistant, such as `~/name`, null for none. */
-  assistant: z.string().nullable(),
+  /** The user's own instructions, which every run follows. */
+  instructions: z.string(),
   mode: z.enum(AGENT_MODES),
   /** Catalog id of the chosen chat model, null for the server's default. */
   model: z.string().nullable(),
@@ -24,7 +27,7 @@ export type Preferences = z.infer<typeof PreferencesSchema>;
 
 /** What the server answers for a user who never chose, shown until the preferences load. */
 const DEFAULTS: Preferences = {
-  assistant: null,
+  instructions: "",
   mode: "interactive",
   model: null,
   reasoning_effort: DEFAULT_REASONING_EFFORT,

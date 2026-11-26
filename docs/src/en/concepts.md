@@ -45,7 +45,7 @@ The agent picks from these toolsets for each request.
 | Conversation history  | Open earlier conversations directly                                                                          | Unless disabled by the operator |
 | Memory                | Save facts to recall in later conversations                                                                  | Not in Read mode                |
 | Skills                | Load the instructions and scripts of a skill that matches the task                                           | Always                          |
-| Assistant             | Follow the instructions of the assistant you picked                                                          | When you pick one               |
+| Your instructions     | Follow the standing instructions you wrote in the settings                                                   | When you wrote some             |
 | Document editing      | Create, edit, move, or delete documents, with your approval in Interactive mode                              | Not in Read mode                |
 | Case bases            | Store accepted solutions in a case base and clean it up, with your approval in Interactive mode              | Not in Read mode                |
 | Web                   | Search the web and fetch pages                                                                               | When enabled by the operator    |

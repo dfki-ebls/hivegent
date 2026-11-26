@@ -156,13 +156,12 @@ _OWNED = frozenset({ResetTarget.USER, ResetTarget.GROUP})
 async def _reset_owner(target: ResetTarget, owner: str) -> None:
     """Wipe everything the user or group *owner* owns.
 
-    A user loses their workspace, skills, assistants, conversations, memory,
-    and identity row, which a later sign-in creates again, a group its
-    workspace, skills, and assistants.  The user is built here with no groups
+    A user loses their workspace, skills, conversations, memory, and identity
+    row, which a later sign-in creates again, a group its workspace and
+    skills.  The user is built here with no groups
     or roles, as the operator acts on the host and the token that would carry
     them is never held.
     """
-    from .assistants import assistant_library
     from .db.groups import list_group_ids
     from .db.users import user_exists
     from .libraries import LibraryGrant
@@ -173,11 +172,7 @@ async def _reset_owner(target: ResetTarget, owner: str) -> None:
     if target is ResetTarget.GROUP:
         granted = LibraryGrant(HostGrant().workspace(GroupScope(owner)))
         # A group's row only comes with its first document, its libraries on disk.
-        folders = (
-            granted.store.path,
-            library(granted.scope).path,
-            assistant_library(granted.scope),
-        )
+        folders = (granted.store.path, library(granted.scope).path)
 
         if not any(folder.exists() for folder in folders) and (
             owner not in await list_group_ids()
@@ -197,7 +192,6 @@ async def _reset_owner(target: ResetTarget, owner: str) -> None:
 
 async def _reset(target: ResetTarget, owner: str | None) -> None:
     """Wipe *target* in the configured data directory and database."""
-    from .assistants import remove_assistants_root
     from .config import settings
     from .conversation_files import reset_conversation_files
     from .db.sources import prune_sources
@@ -222,7 +216,6 @@ async def _reset(target: ResetTarget, owner: str | None) -> None:
 
     if target is ResetTarget.FACTORY:
         await remove_skills_root()
-        await remove_assistants_root()
 
     await delete_all_workspaces()
     # Their mirrors' rows went, so every source syncs afresh into an empty mirror.

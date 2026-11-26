@@ -64,7 +64,7 @@ The agent's instructions and injected notes are composed in the run's language (
 Tool names, descriptions, schemas, results, and retries stay English, since models call tools most reliably from English schemas, and `EnglishToolCalls` runs every tool call in English.
 A query argument says which language to phrase the query in, since copying the user's language into a search over documents in another language is the common failure.
 Features and integrations hold one capability per language around the same toolset rather than an instruction callable, which pydantic-ai would render before every request and move behind the cache boundary, and a block rendered from the run, such as the functions the sandbox declares, is an exar `RunNote` with `on_change='rewrite'`, rendered once per run as fixed text.
-pydantic-ai keeps the order of fixed blocks, the run notes included, so `build_capabilities` composes the blocks every run shares first, then those following the run's policy, and the ones that differ between conversations, the document scope, the date, the mode, and the assistant, last.
+pydantic-ai keeps the order of fixed blocks, the run notes included, so `build_capabilities` composes the blocks every run shares first, then those following the run's policy, and the ones that differ between conversations, the document scope, the date, the mode, and the user's instructions, last.
 State that changes during a conversation is an instruction that appends its changes (see below).
 
 ## Database
@@ -256,7 +256,7 @@ A service principal (`User.kind == "service"`, the Teams bridge, built from a to
 Its one identity holds every Teams user's conversations, which is why nothing that lists or reads them by id is reachable for it.
 Deleting conversations stops their turns first (`conversation_files`), so no caller can forget it.
 A `Workspace` carries its grant and a request derives it from its `User` alone, and an `OwnedConversation` has no public constructor either.
-A skill or assistant library is changed under a `libraries.LibraryGrant`, the write grant of its scope's workspace, which wiping a scope's data takes too (`server.common.delete_scope_data`).
+A skill library is changed under a `libraries.LibraryGrant`, the write grant of its scope's workspace, which wiping a scope's data takes too (`server.common.delete_scope_data`).
 `tests/unit/test_access_scope.py` keeps the builders of a `User`, a `HostGrant`, and a `Reach` the only ones.
 Disk reads resolve through `Workspace.locate`, which folds `..` and refuses any path through a symlink (`exar.memory.mounts.canonical`), so nothing escapes a workspace and no alias is followed, `query_table` runs on a DuckDB database without file access, and `jq` refuses module directives and runs without the server's environment.
 
@@ -374,7 +374,7 @@ A message names the conversation that stored it, so deleting a conversation dele
 The columns hold the record's own types, the ids as text over `uuid` (`models.StoreId`) and `usage` and `deferred_tool_requests` through `models.PydanticJSONB`, so a row and a record convert field by field.
 A message travels as JSON text (`models.JSONText`), which pydantic parses straight into the message and the cache keeps as read.
 pydantic-ai stamps the whole system prompt on every request, about 21k characters, so the payload never holds it: `messages.instructions` does where a request changes it, `''` for none, and every message below inherits it, so a conversation stores each prompt once per change on each branch and stays self-contained.
-A prompt changes when pydantic-ai opens a new instruction window, at a compaction or a change of mode, assistant, or language, and pydantic-ai rebuilds a paused turn's prefix from the instructions its last request recorded, so they read back exactly as sent.
+A prompt changes when pydantic-ai opens a new instruction window, at a compaction or a change of mode or language, and pydantic-ai rebuilds a paused turn's prefix from the instructions its last request recorded, so they read back exactly as sent.
 `read_history` walks a history up from its head in one recursive query over ids and that column alone, joining the payloads of its window, and a window of the last messages walks on up to the nearest change, which its first one inherits.
 Stored messages never change, so the store keeps the messages it reads or writes, with the instructions in effect at each, in a `cachetools.LRUCache` bounded to 64 MiB of JSON and changed instructions, interned so a prompt is held once, and a read queries only the older messages the cache misses.
 The ownership check reads `user_id` alone.
@@ -535,9 +535,9 @@ The window stays, since only an adapter that honors compaction boundaries drops 
 ### Run state appends its changes
 
 The instructions and tool schemas precede the whole history, so anything rendered into them that changes during a conversation has the provider reread all of it.
-The date, the mode, and the document scope (`agents/context.py`) are therefore `on_change='append'` instructions, and nothing else of the instructions changes with the day or the request beyond the language: the first value stays in the prefix, and pydantic-ai appends each later change to the history as an `InstructionDeltaPart`, persisted with the turn, so a change only extends the cached prefix.
+The date, the mode, the document scope, and the user's instructions (`agents/context.py`) are therefore `on_change='append'` instructions, and nothing else of the instructions changes with the day or the request beyond the language: the first value stays in the prefix, and pydantic-ai appends each later change to the history as an `InstructionDeltaPart`, persisted with the turn, so a change only extends the cached prefix.
 The UI adapter leaves these changes out of the messages the frontend receives.
-Instructions carry operator authority, so only state the application controls goes there, a fixed mode note and the paths the user selected, while the instructions of an assistant the operator did not write are lowered to the user's authority (see Assistants).
+Instructions carry operator authority, so only state the application controls goes there, a fixed mode note and the paths the user selected, while the user's own instructions are lowered to the user's authority (see Instructions carry their author's authority).
 The modes that may write compose the same instructions and tools and differ only in their mode note, while read mode drops the write features and starts a new prefix.
 The chat templates of the self-hosted runtimes reject a `system` message after the first user turn, so the self-hosted profile turns `supports_inline_system_prompts` off and a change goes out as `<system>`-tagged user text.
 Both change only between turns, so that text joins the user's prompt: a user message in the middle of a turn is what Qwen's template takes for a new query, rendering the steps before it without their reasoning, which voids the cache.
@@ -683,7 +683,7 @@ The global skills, `/skills/srv/<name>`, are read in place from `skills.dir` and
 ### Names resolve by scope
 
 `skills.visible_skills` lists the skills of `User.scopes` in their order, user, groups, global, and a name is unique only within its scope.
-A skill is named by its reference (`libraries.library_ref`), its scope's prefix and its name as a document path spells them, `/srv/<name>`, `@<group>/<name>`, or `~/<name>`, which the catalog lists, `load_skill` and an assistant's `skills` take, and a prompt invokes by `/<reference>`, a global one's leading slash dropped.
+A skill is named by its reference (`libraries.library_ref`), its scope's prefix and its name as a document path spells them, `/srv/<name>`, `@<group>/<name>`, or `~/<name>`, which the catalog lists, `load_skill` takes, and a prompt invokes by `/<reference>`, a global one's leading slash dropped.
 A bare name names the skill of the narrowest scope that has it, the user's own before a group's before a global one, and none while two groups have it (`skills.resolve_skill`), so no saver can make a skill of a wider audience stand in for the user's own.
 `PUT /api/v1/skills/{~|@<group>}` installs one ZIP archive, the skill folder or its content, validated whole (paths sanitized, OS junk dropped, `skills.max_files` and `skills.max_bytes` checked against the sizes the archive declares before anything is inflated) and swapped in with one rename under the library's lock, replacing a skill of its name, within the library's `skills.library_max_bytes` as an agent write is.
 Its scripts are checked in the sandbox pool, as every listing checks them, by at most half its workers at once (`check_skill_script`), so neither an upload nor a load starves `run_python`.
@@ -696,38 +696,26 @@ Most skills are written by users, so no skill reaches the model as an instructio
 `SKILLS_NOTE` (`agents/tools/skills.py`) renders the catalog before each model request and reports it as a synthetic `load_skill` call without a name, as `MEMORY_NOTE` reports the memory, wherever the window shows another catalog or none, so a change appends and the cached prefix stays.
 `load_skill(name)` returns the body and a capped listing of the skill's files, each script marked runnable with its `main` signature or reference-only with the first diagnostic, fenced like every result.
 
-The host loads a skill the model did not ask for by the same synthetic call, hidden from the transcript, wherever the window has not loaded it yet: one the run's assistant names and every skill the window before the latest compaction loaded, so a summary never drops the instructions the conversation works by.
+The host loads a skill the model did not ask for by the same synthetic call, hidden from the transcript, wherever the window has not loaded it yet: every skill the window before the latest compaction loaded, so a summary never drops the instructions the conversation works by.
 A skill the latest prompt invokes by starting with `/<reference> <text>` or `/<name> <text>` is loaded with every `$ARGUMENTS` of its body replaced by the text, and again whenever that changes its result, since the note skips a result the window already shows.
-`disable-model-invocation: true` leaves a skill out of the catalog and has `load_skill` refuse it, while a prompt and an assistant still load it, and `user-invocable: false` keeps a prompt from invoking it and the composer from suggesting it, while the model and an assistant still load it.
+`disable-model-invocation: true` leaves a skill out of the catalog and has `load_skill` refuse it, while a prompt still loads it, and `user-invocable: false` keeps a prompt from invoking it and the composer from suggesting it, while the model still loads it.
 A library change, an install, a delete, or an approved agent write through the folder's `on_commit` hook, is announced as a `library-changed` feed event to every client following the library's scope.
 
-## Assistants
+## Preferences and instructions
 
-### An assistant only narrows a run
+### Preferences are the user's, the request is the AI SDK's
 
-An assistant (`types.AssistantSpec`) is a description, instructions, skills to load, tools to withhold, documents to focus on, to hide, and to reach only, and the highest mode a run with it may take.
-A user's preferences name one by its reference in `assistant`, such as `~/legal`, which `build_run_prefix` resolves exactly for the user, so no assistant of another scope stands in for it, and one they no longer see applies none, since a stored choice outlives what it names.
-`assistants.apply_assistant` narrows the run with it before anything else reads it: the withheld tools are joined, the mode is capped by `MODE_ORDER`, and the document lists are extended.
-
-The preferences, the assistant, mode, chat model, and reasoning effort (`types.Preferences`), live in `users.preferences`, only the fields a user set, so a default the operator changes reaches everyone who never chose, and `PATCH /preferences` merges the fields it sends, so two clients changing different ones never undo each other.
-A stored value that no longer validates, such as a model the catalog dropped, reads as its default (`Preferences.stored`), and a chat request is the AI SDK's body alone, so every client's turns run alike.
+The preferences, the mode, chat model, reasoning effort, and instructions (`types.Preferences`), live in `users.preferences`, only the fields a user set, so a default the operator changes reaches everyone who never chose, and `PATCH /preferences` merges the fields it sends, so two clients changing different ones never undo each other (`server.common.user_preferences` loads them).
+A stored value that no longer validates, such as a model the catalog dropped, reads as its default (`Preferences.stored`), and a chat request is the AI SDK's body alone, so every client's turns run alike and a field such as `assistant` or `disabled_tools` is a 422.
 A user message names the documents it is about in its metadata (`types.DocumentSelection` under `documents`), which is stored with it, so a regenerate, a resumed turn, and a compaction run with the selection of the question they answer (`DocumentSelection.of`).
-Its `allowed_documents` never enter the request, so only a selected assistant confines a run to them (see Scope and filters).
-Nothing an assistant holds can widen what the request already allows, so a client cannot gain a tool, a mode, or a document by naming one.
-
-### Assistants are files by scope
-
-The global assistants are `<name>.json` files in `assistants.dir`, which the boot parses with every tool they withhold checked like `tools.disabled`.
-A group's and a user's are `data/assistants/<owner>/<name>.json`, written only by `PUT` and `DELETE /api/v1/assistants/{~|@<group>}/{name}`, a group's only with its write grant, and lie outside every root a tool reads or writes, so no agent can author or change one.
-`GET /api/v1/assistants` lists them user, groups, global, each with its reference, and a name is unique only within its scope, as a skill's is.
-A user's reset and `hivegent reset {user,group}` remove the owner's assistants, and `hivegent reset factory` all of them.
+Nothing a preference holds can widen what the request already allows, so a client cannot gain a tool, a mode, or a document by setting one.
 
 ### Instructions carry their author's authority
 
-The assistant's instructions are one capability of the run (`agents.context.assistant_instructions`), an appending instruction like the mode note, which names the assistant's author.
-The operator's carry operator authority and join the run's instructions.
-A group's or a user's was written by people the operator did not vet, but the user chose to run with it, so the capability is lowered to the user's authority (`Assistant.authority`), and pydantic-ai sends its instructions framed in the user's turn, attributed to the user, and never in the system prompt.
-The capability keeps one id whatever the assistant, so switching or dropping it appends a withdrawal of the earlier instructions, and the cached prefix stays.
+The operator's `llm.instructions` join the system prompt (`prompts.compose_instructions`) before the language block, at operator authority, for all users alike.
+The user's own `Preferences.instructions` (at most 20,000 characters) are one run note of every run (`agents.context.PERSONAL_INSTRUCTIONS`, id `instructions`), an appending instruction like the mode note.
+They are written by a person the operator did not vet, so the note carries the user's authority, and pydantic-ai sends its text framed in the user's turn, attributed to the user, and never in the system prompt.
+A change between turns appends the new text, and the cached prefix stays.
 
 ## Case bases
 
@@ -767,7 +755,7 @@ Whether a file or folder may be a case base is cbrkit's `io.is_casebase`, which 
 
 `similar_cases` (effect `read`) takes the path of a case base and one example, a partial record, a graph file (`query_path`), an inline graph, or the key of one of its cases, it returns the ranked cases with cbrkit's `sim.explain`: per attribute its similarity, weight, contribution, and both values, for graphs the mapping of the query's nodes with coverage and whether it is exact, serialized by cbrkit's `model_dump(mode="json")`.
 Without an example it returns the configuration, decision by decision, and the attributes a query may name.
-Every file resolves through the search paths, so the document filters and an assistant's allowlist hold, and `tools.cases.Limits` caps the size on disk (`limits.max_file_size_bytes`) and the cases, and tightens the configuration's `limits` (`max_limit` for the hits, `max_node_pairs` for a graph query), which cbrkit's `System` enforces.
+Every file resolves through the search paths, so the document filters hold, and `tools.cases.Limits` caps the size on disk (`limits.max_file_size_bytes`) and the cases, and tightens the configuration's `limits` (`max_limit` for the hits, `max_node_pairs` for a graph query), which cbrkit's `System` enforces.
 
 ### Retain and maintain land as a changeset
 
@@ -810,7 +798,7 @@ Plugin pipelines are built with the same host facts and operator options as the 
 FastMCP's own `StdioMCPServer` and `RemoteMCPServer` are not reused, since they allow unknown fields and carry proxy options hivegent does not honor.
 Secrets come from credential files (`hivegent.MCP_SERVERS__<ID>__SECRET_HEADERS__<NAME>`, `...__OAUTH__CLIENT_SECRET`, `...__SECRET_ENV__<NAME>`), while plain `headers` and `env` sit in the configuration, so no request, user, or group can add a server or reach its secrets.
 The id is a `CatalogId`, so it holds no underscore and `<id>_` prefixes exactly that server's tools, and `check_tool_settings` refuses an id prefixing a built-in tool, so no two tools of a run share a name.
-An assistant's `disabled_tools` and `tools.disabled` accept any name a configured id prefixes, so a switch stays valid while its server is down.
+`tools.disabled` accepts any name a configured id prefixes, so a switch stays valid while its server is down.
 Over HTTP only Streamable HTTP is spoken, an SSE URL is refused at boot, and the URL is an operator endpoint reached directly by a client confined to its origin, its OAuth issuer's, and the origins of the endpoints the issuer's own discovery metadata names once the flow fetched it, not through the egress proxy.
 The headers reach the server alone, never the issuer.
 A `stdio` server is a subprocess of the backend, started and ended with its connection (`StdioTransport` without `keep_alive`, so a restart after a failure spawns a fresh one), whose environment is the MCP client's minimal base (`PATH`, `HOME`, and a few more) plus the configured `env` and `secret_env`, never the service's own, which holds its secrets.
@@ -831,7 +819,7 @@ A run never connects: the toolset of `McpClient` enters nothing, offers the list
 Outputs pass the same fence and spill as every tool, and subagents and `run_python` are offered no catalog tools.
 A server set to `forward_user` is called on a connection of each call's own, built by pydantic-ai's per-run `headers` function, whose requests carry `X-Hivegent-User` with the caller's token subject, or `auth.service_client_id` for the service principal, and nothing else about them, while the shared connection lists the tools without naming anyone.
 A `trusted` server's instructions join the run's as operator text, appended as a change when a later connection brings others, while an untrusted server's never reach the model.
-`GET /tools` lists the connected tools of the servers the user sees, grouped by id, and `GET /admin/integrations` lists every server with its host, groups, trust, status, last error, and each tool's effect, never a URL path, header, or secret.
+`GET /admin/integrations` lists every server with its host, groups, trust, status, last error, and each tool's effect, never a URL path, header, or secret.
 
 ## Databases and APIs
 
@@ -843,8 +831,8 @@ The model never writes SQL, so no string it sends can escape a read-only transac
 Selections and read statements still run in a read-only transaction with a statement timeout as a second line, write statements commit, and the privileges of the account bound both.
 The client of an API is `http_client.create_trusted_http_client`, confined to the origin of its URL like an MCP server's, carrying the configured headers, and `OpenApi` sends only the operations allowed, checking required parameters before it sends.
 Each toolset is a `FunctionToolset` of `exar.pydantic_ai.toolset` with the effect of every tool as metadata, so `HOST_GATE` decides as for any tool: `GET` and `HEAD`, selections, and read statements read, any other method and a write statement write and ask, and a mode that does not write withholds the writes.
-The tools carry no `ToolFlags`, as a server's tools carry none, so a service principal is offered the sources without `groups` (`User.scopes`) and a run confined to an assistant's documents is offered them as well, since they return no workspace content.
-Their instructions list the source and its tools beside the operator's `instructions`, and `build_capabilities` composes each toolset as an extra, next to the catalog's, as `GET /tools` lists them.
+The tools carry no `ToolFlags`, as a server's tools carry none, so a service principal is offered the sources without `groups` (`User.scopes`).
+Their instructions list the source and its tools beside the operator's `instructions`, and `build_capabilities` composes each toolset as an extra, next to the catalog's.
 Every server, database, and API is an `agents.integrations.Integration` of one registry, `INTEGRATIONS`, which `User.sees` filters by groups, and whose lifespan disposes an engine or closes a client.
 
 ## External sources
@@ -908,7 +896,7 @@ A tool is a plain typed async function with the conventions of `exar.tools`: a f
 Generic wording, the descriptions of arguments and the rendering of results, is exar's default and is never repeated here, so the tools that follow migrate the same way.
 It returns a pydantic-ai `ToolReturn[T]` (`exar.tools.batch.tool_return`), whose `return_value` is the compact text the model reads, with any files after it, and whose `metadata` is the typed data a program and the client receive, so the two channels need no envelope of their own and no adapter.
 `T` names that data, which pydantic-ai publishes as the return schema the sandbox declares, and `agents.guards.ConversationSpill` wraps it into the `data-tool-output` chunk stamped with the call's id (`agents.output.with_data_chunk`).
-`agents.common.AgentTools` builds a feature's tools per run from the run's deps and serves them through `exar.pydantic_ai.toolset` with their effects as metadata, which `HOST_GATE` holds to `host_policy`, installing the per-call hooks a tool declares by wrapping it in `Hooked` (an argument validator, a `prepare` hook) and the typed `ToolFlags` of the host (gateway, people-only, derived, seeing) as one metadata entry that `host_policy` and the guards read back with `flags_of`, while `static_tools` lists their definitions once, as a probe principal (`auth.PROBE`) in `write` mode is offered them, so nothing built for listing can be called.
+`agents.common.AgentTools` builds a feature's tools per run from the run's deps and serves them through `exar.pydantic_ai.toolset` with their effects as metadata, which `HOST_GATE` holds to `host_policy`, installing the per-call hooks a tool declares by wrapping it in `Hooked` (an argument validator, a `prepare` hook) and the typed `ToolFlags` of the host (gateway, people-only, seeing) as one metadata entry that `host_policy` and the guards read back with `flags_of`, while `static_tools` lists their definitions once, as a probe principal (`auth.PROBE`) in `write` mode is offered them, so nothing built for listing can be called.
 `AgentTools.build` builds a run's tools for every surface, the agents and their subagents, the sandbox, MCP, and the debug console, and `HOST_GATE` holds them to the run's policy (`UserDeps.policy`).
 The app's MCP endpoint serves the same tools through `mcp.adapter`.
 `tools/__init__.py` re-exports nothing, so importing the layout loads no tool.
@@ -927,14 +915,10 @@ Batching lets a call share work, so `search` embeds and ranks its queries in one
 ### Scope and filters
 
 A selection's `included` documents are advisory and only named in the prompt, so a run can follow a reference out of the selection.
-Only its `excluded` ones become a `DocumentFilter`, enforced by the path tools through the `exclude` globs of the mounts (`DocumentFilter.globs`, which names the files of each file entry exactly, listed from the folder of the entry when the mounts are built, so `report.v2.pdf` is no file of `report.pdf` for an allowlist and an exclude alike), by the write gateway through `SearchPath.filter_func`, and by retrieval in `db.documents.accessible_chunks`.
+Only its `excluded` ones become a `DocumentFilter`, enforced by the path tools through the `exclude` globs of the mounts (`DocumentFilter.globs`, which names the files of each file entry exactly, listed from the folder of the entry when the mounts are built, so `report.v2.pdf` is no file of `report.pdf`), by the write gateway through `SearchPath.filter_func`, and by retrieval in `db.documents.accessible_chunks`.
 Every entry is a `types.FilterEntry`, a path with an explicit `directory` flag, so no path syntax tells a directory from a document.
-The stores and their filters travel together as one `reach.Reach`, built from `UserDeps` (`UserDeps.reach`), or from a REST caller's `User` with no filters, and it is the only input of the path tools' mounts (`Reach.search_paths`), `retrieval.document_memory`, and `db.documents.accessible_*`, so no caller can drop an assistant's allowlist by forgetting an argument.
-A selected assistant's `allowed_documents` join the same filter as its `allowed` entries, and `parse_document_scope` then gives every scope the user sees a filter, so a scope no entry names is hidden whole.
-An allowed entry admits what it selects and the directories above it, so a listing still reaches it, while an excluded entry wins over it.
-The prompt names the allowlist beside the hidden entries, and the parity test runs both halves against an in-memory SQLite database.
-A confined run is offered no tool marked `derived`, the conversation and memory tools and with them the `conversations` subagent, since past conversations and the memory may quote any document.
-The conversation's own history and `/tmp`, which hold what earlier turns read, stay the run's, as the model already holds that history.
+The stores and their filters travel together as one `reach.Reach`, built from `UserDeps` (`UserDeps.reach`), or from a REST caller's `User` with no filters, and it is the only input of the path tools' mounts (`Reach.search_paths`), `retrieval.document_memory`, and `db.documents.accessible_*`, so no caller can drop a filter by forgetting an argument.
+The parity test runs the filter's two halves, the path tools' and retrieval's, against an in-memory SQLite database.
 The planner refuses a directory move that would carry an excluded entry (`PathFilter.hides_within`), with the run's filters for an agent change and the approver's current ones for a staged changeset, while the HTTP routes pass none.
 
 Retrieval scopes a search with one subquery on `documents` (`db.documents.accessible_chunks`), passed to cbrkit as a SQLAlchemy predicate, which matches the caller's owners and compiles the hidden entries to SQL as `DocumentFilter` reads them.
@@ -999,7 +983,7 @@ The source mirrors' pruning skips hidden names, so it never takes the staging ar
 Every undo is idempotent and an undo whose record cannot be written is merely replayed, so a retry never fails on what an earlier attempt did.
 A rollback stops at the first step that fails and keeps the staging area and the journal, marking the journal kept and logging both, since the staging area holds the parked files, and an undo never replaces a path that changed since its step.
 While any change is kept or any journal cannot be read (`workspace.kept_changes`), reconciliation, at boot or by `POST /admin/reindex`, is refused with a `409`, since it would take the parked files for deleted and drop their rows.
-Every file the server keeps is written through `cbrkit.io.atomic_write`, a flushed sibling renamed over it, so neither a crash nor a power loss leaves a partial one: a file a change stages, a skill, an assistant, and a staged program changeset.
+Every file the server keeps is written through `cbrkit.io.atomic_write`, a flushed sibling renamed over it, so neither a crash nor a power loss leaves a partial one: a file a change stages, a skill, and a staged program changeset.
 
 An upload is a `workspace.Upload` item only the host builds, so a stored `Changeset[str]` never carries bytes.
 An `overwrite` replaces the entry at its stem under the gateway's locks and keeps its origin, in place when the upload consists of the entry's files and by deleting the entry first otherwise.
@@ -1071,12 +1055,11 @@ The text is passed as read, so a malformed file is reported in jq's own words as
 
 A tool is either in the model's initial context or not registered for the run, and there is no `defer_loading`.
 A model whose tool list lacks a name works around a pointer to it rather than searching for it, and `OpenAIChatModel` has no wire-level deferral.
-`settings.tools.disabled` is the operator's list of tool names, unioned with the assistant's `disabled_tools` into `UserDeps.withheld_tools`.
-Offering is decided by the deps alone, `UserDeps.policy` (the `host_policy` of the run): a withheld name, a people-only tool for a service principal, and a tool marked `derived` (the conversation and memory tools) while an assistant's allowlist confines the run.
+`settings.tools.disabled` is the operator's list of tool names, the only way to withhold one, since a request or a user cannot.
+Offering is decided by the deps alone, `UserDeps.policy` (the `host_policy` of the run): a withheld name, and a people-only tool for a service principal.
 `HOST_GATE` applies it to every agent's tools, `OFFERED_TOOLS` hides the `sandbox_only` ones from the model, and `listed` does so for MCP, so the main agent, every subagent, the extra toolsets, the sandbox, MCP, and the debug console hold to one rule, and `build_capabilities` drops a feature none of whose tools is offered, with its instruction block.
-The lists also take the delegation tools and the subagent names: withholding `delegate_task` drops `SubAgents`, and a subagent is dropped when its name or every one of its tools is withheld.
-Both lists are held to `capabilities.KNOWN_TOOL_NAMES`, the operator's at startup and a request's with a 422 problem, since a misspelt name withholds nothing.
-`GET /tools` lists `capabilities.tool_infos`, the canonical catalog of every name a chat model may call, the feature tools, the delegation tools and subagents in the group `subagents`, and the readers of saved results (`guards.SPILL_TOOLS`), each marked `switchable` when a list takes it.
+The list also takes the delegation tools and the subagent names: withholding `delegate_task` drops `SubAgents`, and a subagent is dropped when its name or every one of its tools is withheld.
+The lists are held to `capabilities.KNOWN_TOOL_NAMES` at startup, since a misspelt name withholds nothing.
 It defaults to empty, and `check_tool_settings` refuses an entry that matches nothing at startup.
 `query_hint` keys its pointer to `query_table` on the entry rather than the requested path, since an uploaded table is served as its `<stem>.md`.
 
@@ -1180,7 +1163,7 @@ Scripts written for CPython (argparse, subprocess, third-party packages) do not 
 
 Only tools whose answers lie outside the sandbox are injected as host functions by `tools/monty.py` (`search`, `query_table`), plus `complete`.
 Only a `read` effect the policy allows outright is injected, since a running program cannot stop for an approval, and `web_search` and `web_fetch` are not injected, since a program looping over the links of a planted page would carry data out through its choice of URLs far faster than the model choosing them call by call.
-A function is gated like the tool of the same name, by `UserDeps.policy`, which unions `settings.tools.disabled` with `deps.disabled_tools` itself, so a `UserDeps` built without that union still cannot hand a program a disabled tool, and it honors the people-only and derived flags too.
+A function is gated like the tool of the same name, by `UserDeps.policy`, which reads `settings.tools.disabled` itself, so no `UserDeps` can hand a program a disabled tool, and it honors the people-only flag too.
 
 The functions are taken by name from the very list that builds the explore tools (`agents.tools.explore.INJECTED`), plus `complete`, from which `SANDBOX_FUNCTION_NAMES` and `INJECTABLE_TOOL_NAMES` follow, and a function's guidance (`COMPLETE_INSTRUCTIONS`) rides with it.
 The stubs are rendered by pydantic-ai's `FunctionSignature` from each function's tool definition, its return schema being the type of its `ToolReturn` data, and a host function passes the program that data.
@@ -1205,7 +1188,7 @@ The stubs add one untyped `open` line, since `open` is host-provided and a hand-
 `settings.tools.sandbox_only` injects a tool and drops it from the tool list, limited to `INJECTABLE_TOOL_NAMES` and overridden by `disabled`, which saves sending both a schema and a declaration.
 The catalog lives in the agent instructions rather than `run_python`'s description, so the tool definitions stay byte-stable for caching.
 A tool stays registered while the frontend consumes its tool part (citations from `search`) or a refusal hint points at it (`query_table` through `query_hint`).
-`build_capabilities` unlists them from the main agent's tool list alone, and `tool_infos` leaves them out of `GET /tools`.
+`build_capabilities` unlists them from the main agent's tool list alone.
 
 ### Budgets
 

@@ -63,7 +63,6 @@ export const chat = {
     removeAttachment: "{{name}} entfernen",
     removeImage: "Bild entfernen",
     removeFilter: "{{name}} aus dem Filter entfernen",
-    noAssistant: "Kein Assistent",
     skillSuggestions: "Skills",
     attachmentErrors: {
       vision: "Das gewählte Modell nimmt keine Bilder an.",

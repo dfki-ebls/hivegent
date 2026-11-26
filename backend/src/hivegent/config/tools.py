@@ -8,7 +8,6 @@ from pydantic import Field, PositiveInt
 from .common import HttpOperatorUrl, Section
 
 __all__ = [
-    "AssistantSettings",
     "ConversationSettings",
     "SandboxSettings",
     "SkillSettings",
@@ -30,8 +29,7 @@ class ToolsSettings(Section):
     an expensive or rate-limited one, and a call past it is answered with a
     refusal the model reads rather than run.  It is checked like ``disabled``.
 
-    ``disabled`` names individual tools to withhold, sharing both the word and
-    the effect with a chat request's ``disabled_tools``: the schema
+    ``disabled`` names individual tools to withhold from every run: the schema
     never reaches the model, and a feature whose every tool is named loses its
     instruction block too.  It is what is left of ``defer_loading``, which hid
     a tool from the initial request and offered it back through tool search.
@@ -209,16 +207,3 @@ class SkillSettings(Section):
     max_bytes: int = Field(default=16 * 1024 * 1024, gt=0)
     max_files: int = Field(default=512, gt=0)
     library_max_bytes: int = Field(default=128 * 1024 * 1024, gt=0)
-
-
-class AssistantSettings(Section):
-    """Where the global assistants come from.
-
-    ``dir`` is the operator's directory of global assistants, one
-    ``<name>.json`` file each, read in place and never changed through
-    Hivegent.  A user's and a group's assistants live in
-    ``<data_dir>/assistants/<owner>/<name>.json``, written only through the
-    REST API, so no agent tool reaches them.
-    """
-
-    dir: Path | None = None

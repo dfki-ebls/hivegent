@@ -229,6 +229,9 @@ class LlmSettings(Section):
     has no ``/tmp``, and a retry prompt is clamped to it too.
     ``tool_data_max_bytes`` is the most structured data (frontend-facing, as
     JSON) a tool return streams and stores, and a larger one is dropped.
+
+    ``instructions`` are the operator's own, which every chat run follows at
+    the operator's authority in its system prompt, for all users alike.
     """
 
     providers: dict[CatalogId, LlmProviderSettings] = {}
@@ -251,6 +254,7 @@ class LlmSettings(Section):
     tool_output_max_chars: int = 60_000
     tool_data_max_bytes: int = 1_000_000
     retries: int = 20
+    instructions: str = ""
 
     @model_validator(mode="after")
     def _check_catalog(self) -> Self:

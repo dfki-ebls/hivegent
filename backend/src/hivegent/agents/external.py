@@ -10,9 +10,7 @@ asks the user and is offered by the modes that write alone.
 
 A source whose ``groups`` the user is in no member of is invisible to them, and
 one with no ``groups`` is the global scope's, the only one a service principal
-sees.  No tool is flagged as a person's own or derived, as with an MCP server's,
-so a run an assistant confines to documents is offered them too, since what they
-return is no workspace content.
+sees.  No tool is flagged as a person's own, as with an MCP server's.
 """
 
 import asyncio
@@ -35,7 +33,7 @@ from ..config import reveal, settings
 from ..config.integrations import ApiSettings, SqlDatabaseSettings
 from ..http_client import create_trusted_http_client
 from ..shared.l10n import Localized
-from ..types import DataIntegration, ToolInfo
+from ..types import DataIntegration
 from .common import UserDeps
 
 __all__ = ["SOURCES", "DataSource"]
@@ -55,13 +53,6 @@ class DataSource:
 
     def __post_init__(self) -> None:
         self.toolset.timeout = settings.llm.tool_timeout_seconds
-
-    def tool_infos(self) -> list[ToolInfo]:
-        """The tools of the source."""
-        return [
-            ToolInfo(name=name, description=tool.description or "", group=self.id)
-            for name, tool in self.toolset.tools.items()
-        ]
 
     def integration(self) -> DataIntegration:
         """The source as the admin listing shows it, without any secret."""

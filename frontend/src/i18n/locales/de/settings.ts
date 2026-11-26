@@ -5,8 +5,8 @@ export const settings = {
   nav: {
     title: "Einstellungen",
     profile: "Profil",
+    instructions: "Anweisungen",
     skills: "Skills",
-    assistants: "Assistenten",
     account: "Account",
   },
   danger: {
@@ -41,44 +41,14 @@ export const settings = {
       description: "Der Skill und alle seine Dateien werden für alle gelöscht, die ihn sehen.",
     },
   },
-  assistants: {
-    title: "Assistenten",
+  instructions: {
+    title: "Anweisungen",
     description:
-      "Benannte Anweisungen, die du im Chat auswählst, mit den Skills, die sie laden, und den Tools, dem Modus und den Dokumenten, auf die sie den Assistenten beschränken. Die der Organisation stellt der Betrieb bereit, die einer Gruppe teilen sich ihre Mitglieder.",
-    empty: "Noch keine Assistenten.",
-    create: "Neuer Assistent",
-    edit: "Bearbeiten",
-    saved: "Assistent {{name}} gespeichert",
-    delete: {
-      label: "Löschen",
-      title: "Assistent {{name}} löschen?",
-      description: "Der Assistent wird für alle gelöscht, die ihn sehen.",
-    },
-    form: {
-      createTitle: "Neuer Assistent",
-      editTitle: "{{name}} bearbeiten",
-      description: "Alles außer den Anweisungen schränkt nur ein, was ein Chat mit ihm tun darf.",
-      name: "Name",
-      nameHint: "Kleinbuchstaben, Ziffern und Bindestriche, etwa support-team.",
-      summary: "Beschreibung",
-      instructions: "Anweisungen",
-      instructionsHint:
-        "Anweisungen einer Gruppe oder deine eigenen erreichen den Assistenten als zitierter Inhalt, nie als Regeln, die die des Betriebs außer Kraft setzen.",
-      skills: "Zu ladende Skills",
-      disabledTools: "Auszuschaltende Tools",
-      maxMode: "Höchster Modus",
-      includedDocuments: "Dokumente im Fokus",
-      excludedDocuments: "Auszublendende Dokumente",
-      allowedDocuments: "Nur diese Dokumente",
-      documentsHint: "Pfade wie ~/handbuch oder @team/faq.md.",
-      allowedDocumentsHint:
-        "Verbindlich, solange der Assistent gewählt ist, keine für keine Einschränkung.",
-      directory: "Verzeichnis",
-      addPath: "Pfad hinzufügen",
-      removePath: "Pfad entfernen",
-      save: "Speichern",
-      cancel: "Abbrechen",
-    },
+      "Was der Assistent in all deinen Chats beachtet, etwa deine Rolle, die Sprache und den Ton, die du bevorzugst, oder wie Antworten formatiert sein sollen. Was nur manche Aufgaben brauchen, gehört in einen Skill.",
+    label: "Deine Anweisungen",
+    hint: "Sie erreichen den Assistenten als deine eigenen Worte, nie als Regeln, die die des Betriebs außer Kraft setzen.",
+    save: "Speichern",
+    saved: "Deine Anweisungen sind gespeichert",
   },
   account: {
     title: "Account",
@@ -112,10 +82,6 @@ export const settings = {
         skills: {
           label: "Skills",
           description: "Die Dateien deiner eigenen Skills.",
-        },
-        assistants: {
-          label: "Assistenten",
-          description: "Die Definitionen deiner eigenen Assistenten.",
         },
         preferences: {
           label: "Einstellungen",
@@ -151,7 +117,7 @@ export const settings = {
       resetEverything: {
         label: "Alles zurücksetzen",
         description:
-          "Lösche endgültig alle Spuren deines Accounts auf dem Server (Konversationen, Dokumente, Gedächtnis, Skills, Assistenten) und alle lokalen Browserdaten. Diese Aktion kann nicht widerrufen werden.",
+          "Lösche endgültig alle Spuren deines Accounts auf dem Server (Konversationen, Dokumente, Gedächtnis, Skills) und alle lokalen Browserdaten. Diese Aktion kann nicht widerrufen werden.",
       },
     },
   },

@@ -170,7 +170,7 @@ Eine `.env`-Datei wird nicht mehr gelesen, ihre Werte gehören in die Umgebung, 
 ## Prompt-Stabilität
 
 - Der System-Prompt enthält nicht mehr das Datum, es ist ein angehängter Hinweis wie der Modus-Hinweis, sodass das Prompt-Präfix einer Unterhaltung und sein Provider-Cache über Mitternacht gültig bleiben.
-  Ein Wechsel von Modus, Tools, Assistent, Modell oder Sprache zwischen Zügen ändert es weiterhin, ebenso der Ausfall eines externen MCP-Servers, der die Tool-Liste ändert.
+  Ein Wechsel von Modus, Tools, Modell oder Sprache zwischen Zügen ändert es weiterhin, ebenso der Ausfall eines externen MCP-Servers, der die Tool-Liste ändert.
 - Ein Subagent nach seiner Berichtsfrist behält seine Tools und Anweisungen, und seine weiteren Tool-Aufrufe werden mit einem Ergebnis abgelehnt, das ihn zum Berichten auffordert.
 - Der Abschlussbericht eines Subagenten wird auf `llm.tool_output_max_chars` gekürzt, der ganze Text liegt unter `/tmp/.tool-results/`, wie bei jedem Tool-Ergebnis.
 - Skill-Anweisungen werden, wie auch immer geladen, auf `llm.tool_output_max_chars` gekürzt und verweisen auf den Rest in `SKILL.md`.
@@ -211,14 +211,15 @@ Eine Nachricht der Person nennt die Dokumente, um die es geht, in ihren Metadate
 ## Entfernte Funktionen
 
 Benutzer:innen können keine Persönlichkeit mehr wählen, keine eigene Systemnachricht schreiben, keine eigenen MCP-Server hinzufügen und kein eigenes Modell mit Endpunkt und Schlüssel mitbringen, ihre gespeicherten Server entfallen daher.
-Eine eigene Systemnachricht, die ein Browser gespeichert hat, macht die App zum persönlichen Assistenten `custom`, sobald sich die Person dort anmeldet, und wählt ihn, sofern sie noch keinen gewählt hat.
-An ihre Stelle treten der Modellkatalog, der MCP-Katalog und die Assistenten des Betreibers.
+Eine eigene Systemnachricht, die ein Browser gespeichert hat, macht die App zu den Anweisungen der Person (Einstellungen, Anweisungen), sobald sie sich dort anmeldet, sofern sie noch keine geschrieben hat.
+An ihre Stelle treten der Modellkatalog und der MCP-Katalog des Betreibers, und seine eigenen Anweisungen sind `llm.instructions`.
+Assistenten gibt es nicht mehr, weder die des Betreibers noch die einer Gruppe oder einer Person.
 Auch die Feature-Flags des Frontends sind entfallen und mit ihnen die verborgene Auswahl der Konvertierungs- und Chunking-Pipelines und des Asset-Modus, sodass jeder Upload die Pipelines des Betreibers nutzt, und `conversion.extract_assets` legt fest, ob jede Konvertierung die Bilder eines Dokuments extrahiert.
-Tools lassen sich nicht mehr selbst abschalten, ein Assistent oder `tools.disabled` hält sie zurück.
+Tools lassen sich nicht mehr selbst abschalten, nur `tools.disabled` hält sie zurück.
 
 ## Präferenzen liegen auf dem Server
 
-Assistent, Modus, Chat-Modell und Denkaufwand, die eine Person wählt, speichert der Server (`GET /preferences`, `PATCH /preferences`), sodass sie über Browser und Geräte hinweg gelten und für jeden Client, auch den Teams-Bot, dessen Dienstkonto eigene hat.
+Modus, Chat-Modell, Denkaufwand und Anweisungen, die eine Person wählt, speichert der Server (`GET /preferences`, `PATCH /preferences`), sodass sie über Browser und Geräte hinweg gelten und für jeden Client, auch den Teams-Bot, dessen Dienstkonto eigene hat.
 Eine Chat-Anfrage ist nur noch der Body des AI SDK samt `compact` und wird mit 422 abgelehnt, wenn sie ein anderes Feld sendet, etwa `assistant`, `mode`, `model`, `reasoning_effort` oder `disabled_tools`.
 Der Browser speichert nur noch die aufgeklappten Ordner, sodass die früheren Einstellungen jeder Person einmalig zurückgesetzt werden.
 

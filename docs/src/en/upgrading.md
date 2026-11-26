@@ -169,7 +169,7 @@ A `.env` file is no longer read, so move its values into the environment, creden
 ## Prompt stability
 
 - The system prompt no longer holds the date, it is a note appended like the mode note, so the prompt prefix of a conversation, and its provider cache, stay valid across midnight.
-  Changing the mode, tools, assistant, model, or language between turns still changes it, and so does an outage of an external MCP server, which changes the tool list.
+  Changing the mode, tools, model, or language between turns still changes it, and so does an outage of an external MCP server, which changes the tool list.
 - A subagent past its report deadline keeps its tools and instructions, and its further tool calls are refused with a result telling it to report now.
 - A subagent's final report is cut to `llm.tool_output_max_chars` with the whole text saved under `/tmp/.tool-results/`, as for any tool result.
 - Skill instructions, however loaded, are cut to `llm.tool_output_max_chars` and point at the rest in `SKILL.md`.
@@ -210,14 +210,15 @@ A user message names the documents it is about in its metadata, `{"documents": {
 ## Removed features
 
 Users can no longer choose a personality, write a custom system message, add their own MCP servers, or bring their own model, endpoint, and key, so their saved servers are dropped.
-The app turns a custom system message that a browser kept into the personal assistant `custom` once that user signs in there, and chooses it unless they already chose one.
-The operator's model catalog, MCP catalog, and assistants take their place.
+The app turns a custom system message that a browser kept into the user's instructions (Settings, Instructions) once that user signs in there, unless they already wrote some.
+The operator's model catalog and MCP catalog take their place, and the operator's own instructions are `llm.instructions`.
+There are no assistants, neither the operator's, a group's, nor a user's.
 The frontend feature flags are gone too, and with them the hidden pickers of the conversion and chunking pipelines and the asset mode, so every upload runs the operator's pipelines, and `conversion.extract_assets` sets whether every conversion extracts the images of a document.
-Users can no longer switch off tools themselves, an assistant or `tools.disabled` withholds them.
+Users can no longer switch off tools themselves, only `tools.disabled` withholds them.
 
 ## Preferences are kept on the server
 
-The assistant, mode, chat model, and reasoning effort a user chooses are kept by the server (`GET /preferences`, `PATCH /preferences`), so they follow the user across browsers and devices and apply to every client, the Teams bot included, whose service principal keeps its own.
+The mode, chat model, reasoning effort, and instructions a user chooses are kept by the server (`GET /preferences`, `PATCH /preferences`), so they follow the user across browsers and devices and apply to every client, the Teams bot included, whose service principal keeps its own.
 A chat request is the AI SDK's body alone, plus `compact`, and is refused with a 422 when it sends any other field, such as `assistant`, `mode`, `model`, `reasoning_effort`, or `disabled_tools`.
 The browser keeps only the expanded folders, so each user's earlier choices are reset once.
 

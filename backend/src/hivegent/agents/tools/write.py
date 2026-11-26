@@ -212,8 +212,8 @@ async def validate_document_deletions(
 def _program_roots(deps: UserDeps) -> tuple[Root, ...]:
     """The roots a ``run_python`` program may change.
 
-    The workspaces only where ``apply_changes`` is not withheld, by the request
-    or the operator: that tool is the switch for a program's workspace
+    The workspaces only where the operator does not withhold ``apply_changes``:
+    that tool is the switch for a program's workspace
     changes, so withholding it must not leave write mode's direct path open as
     a side door.  A run without a conversation has nowhere to stage them.
     """

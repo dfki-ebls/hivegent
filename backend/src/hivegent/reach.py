@@ -17,8 +17,7 @@ class Reach:
     The one input of every read spanning workspaces, the path tools' roots
     (:meth:`search_paths`), the chunk index (``retrieval.document_memory``),
     and the documents query (``db.documents.accessible_documents``), so a
-    store never travels without its filter and an assistant's allowlist is
-    never dropped by a forgotten argument.  The stores come from the user
+    store never travels without its filter.  The stores come from the user
     alone, so a reach can narrow what the user sees but never widen it.
 
     Attributes:

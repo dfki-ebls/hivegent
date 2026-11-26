@@ -1,4 +1,4 @@
-"""Document filters, the documents a conversation hides from its operations or reaches only."""
+"""Document filters, the documents a conversation hides from its operations."""
 
 import glob
 from dataclasses import dataclass, field
@@ -32,7 +32,7 @@ class FilterEntry:
 
 @dataclass(slots=True, frozen=True)
 class DocumentFilter:
-    """The documents a conversation hides from its document operations, or reaches only.
+    """The documents a conversation hides from its document operations.
 
     A directory entry selects its subtree including the directory itself, the
     empty one the whole store, and a file entry selects the logical document:
@@ -46,15 +46,9 @@ class DocumentFilter:
     a question is about steers the run without cutting the rest of the
     workspace out from under it.  The model can still follow a reference out
     of them, and no write is refused for landing outside the selection.
-
-    An assistant's :attr:`allowed` entries are enforced instead: with them,
-    only what they select passes, plus the directories above an entry so a
-    listing can still reach it.  ``None`` restricts nothing, while an empty set
-    hides the whole store.
     """
 
     excluded: frozenset[FilterEntry] = field(default_factory=frozenset)
-    allowed: frozenset[FilterEntry] | None = None
 
     @staticmethod
     def _selects(entry: FilterEntry, path: str) -> bool:
@@ -68,42 +62,13 @@ class DocumentFilter:
 
     def __call__(self, path: str) -> bool:
         """Return whether the file or directory *path* passes the filter."""
-        if any(self._selects(entry, path) for entry in self.excluded):
-            return False
-
-        return self.allowed is None or any(
-            self._selects(entry, path) or is_below(entry.path, path)
-            for entry in self.allowed
-        )
+        return not any(self._selects(entry, path) for entry in self.excluded)
 
     def hides_within(self, path: str) -> bool:
         """Whether the filter hides *path* or anything below it, asked of its entries alone."""
         return any(
             is_below(entry.path, path) or self._selects(entry, path)
             for entry in self.excluded
-        ) or (
-            self.allowed is not None
-            and not any(self._selects(entry, path) for entry in self.allowed)
-        )
-
-    def _owned(self, entry: FilterEntry, root: Path) -> tuple[str, ...]:
-        """The globs, anchored at the store, of exactly the paths below *root* that *entry* selects.
-
-        A file entry is resolved against the folder it lies in, so its description,
-        its original of any suffix, and its ``.assets`` payload are named one by
-        one and a sibling that merely starts like it is not.
-        """
-        if entry.directory:
-            return _tree(entry.path)
-
-        folder = PurePosixPath(entry.path).parent
-
-        return tuple(
-            chain.from_iterable(
-                _tree(path)
-                for name in list_names(root / folder)
-                if self._selects(entry, path := (folder / name).as_posix())
-            )
         )
 
     def _hidden(self, entry: FilterEntry, root: Path) -> tuple[str, ...]:
@@ -133,34 +98,11 @@ class DocumentFilter:
     def globs(self, root: Path) -> tuple[str, ...]:
         """The filter as the ``exclude`` globs of a :class:`~exar.memory.mounts.Mount` over *root*.
 
-        An allowlist excludes everything and re-includes what its entries select and
-        the directories above them, then the excluded entries follow, so they win.
         An excluded entry re-includes only what the filter shows, so the order of
         the entries never matters.
         """
-        allowed = (
-            ()
-            if self.allowed is None
-            else (
-                "**",
-                *(
-                    f"!{pattern}"
-                    for entry in self.allowed
-                    for pattern in (
-                        *self._owned(entry, root),
-                        *(
-                            f"/{glob.escape(parent.as_posix())}"
-                            for parent in PurePosixPath(entry.path).parents
-                            if parent.parts
-                        ),
-                    )
-                ),
-            )
-        )
-
-        return (
-            *allowed,
-            *chain.from_iterable(self._hidden(entry, root) for entry in self.excluded),
+        return tuple(
+            chain.from_iterable(self._hidden(entry, root) for entry in self.excluded)
         )
 
 

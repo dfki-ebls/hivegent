@@ -52,7 +52,6 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 
-from ..assistants import global_assistants
 from ..config import settings
 from ..plugins import api
 from ..plugins.loader import merge
@@ -73,7 +72,6 @@ from ..types import (
     MODE_VALUES,
     WRITABLE_MODES,
     Mode,
-    ToolInfo,
     ToolSchema,
 )
 from .app import turn_usage_limits
@@ -83,7 +81,7 @@ from .context import (
     DATE_NOTE,
     DOCUMENT_SCOPE,
     MODE_NOTE,
-    assistant_instructions,
+    PERSONAL_INSTRUCTIONS,
 )
 from .guards import HOST_GATE, SPILL_TOOLS
 from .integrations import is_integration_tool
@@ -119,7 +117,6 @@ __all__ = [
     "collect_tool_schemas",
     "feature_tools",
     "invoke_agent_tool",
-    "tool_infos",
     "unknown_tool_names",
 ]
 
@@ -398,7 +395,7 @@ def build_capabilities(
     )
     result.extend(extra)
     result.extend(note for feature in features for note in feature.extras)
-    result.extend([DATE_NOTE, MODE_NOTE, assistant_instructions(deps)])
+    result.extend([DATE_NOTE, MODE_NOTE, PERSONAL_INSTRUCTIONS])
 
     # Cross-cutting run-loop safeguards, applied to every run regardless of mode.
     # The output spill rides on the agents (`agents/app.py`).
@@ -417,8 +414,8 @@ KNOWN_TOOL_NAMES = (
 )
 """Every name a list of withheld tools may hold.
 
-The switchable agent tools, the program-only functions, and while subagents
-are enabled the delegation tools and the subagents.
+The agent tools, the program-only functions, and while subagents are enabled
+the delegation tools and the subagents.
 """
 
 
@@ -453,13 +450,10 @@ def check_tool_settings() -> None:
     the harness's reader of saved results, and the delegation tools
     included, whether or not subagents are enabled, or one of its tools could take that tool's name.
 
-    The operator's assistants are parsed here too, each tool they withhold
-    held to the same names as ``disabled``.
 
     Raises:
         ValueError: If a name is not a built-in tool, or is not one the
-            sandbox can be given, or a server, database, or API id prefixes a built-in tool, or
-            an operator's assistant is invalid.
+            sandbox can be given, or a server, database, or API id prefixes a built-in tool.
     """
     taken = KNOWN_TOOL_NAMES | DELEGATION_TOOLS.keys() | SPILL_TOOLS.keys()
 
@@ -488,13 +482,6 @@ def check_tool_settings() -> None:
             f"{', '.join(sorted(INJECTABLE_TOOL_NAMES))}"
         )
 
-    for assistant in global_assistants():
-        if unknown := unknown_tool_names(assistant.spec.disabled_tools):
-            raise ValueError(
-                f"The assistant {assistant.name!r} withholds no such tool: "
-                f"{', '.join(unknown)}"
-            )
-
 
 def feature_tools() -> Iterator[tuple[str, ToolDefinition]]:
     """The definition of every agent tool with the id of the feature it belongs to."""
@@ -507,10 +494,7 @@ def collect_tool_schemas() -> list[ToolSchema]:
     """Collect each tool's metadata and the JSON Schema of its parameters.
 
     Derived from the same :data:`FEATURES` the agent is composed from, grouped
-    by feature id, so the listing matches what an agent can actually call.  The
-    richer counterpart to a bare name/description listing: callers that only
-    need :class:`ToolInfo` fields rely on the response model to drop
-    ``parameters``.
+    by feature id, so the listing matches what an agent can actually call.
 
     Returns:
         Flat list of tool schema entries.
@@ -524,49 +508,6 @@ def collect_tool_schemas() -> list[ToolSchema]:
         )
         for feature_id, tool_def in feature_tools()
     ]
-
-
-def tool_infos() -> list[ToolInfo]:
-    """Every name a chat model may call or a list withhold, the canonical tool catalog of ``GET /tools``.
-
-    The feature tools by their feature, the delegation tools and the
-    subagents in the group ``subagents`` while subagents are enabled, and the
-    harness's reader of saved results.  ``switchable`` marks what a list of
-    withheld tools takes (:data:`KNOWN_TOOL_NAMES`), and every name the
-    operator withholds or places ``sandbox_only`` is left out, since the model
-    never calls it.
-    """
-    hidden = {*settings.tools.disabled, *settings.tools.sandbox_only}
-    subagents = settings.subagents.enabled
-    infos = [
-        *(
-            ToolInfo(
-                name=tool_def.name,
-                description=tool_def.description or "",
-                group=feature_id,
-                switchable=tool_def.name in KNOWN_TOOL_NAMES,
-            )
-            for feature_id, tool_def in feature_tools()
-        ),
-        *(
-            ToolInfo(name=name, description=description, group="subagents")
-            for name, description in DELEGATION_TOOLS.items()
-            if subagents
-        ),
-        *(
-            ToolInfo(name=name, description=subagent.description, group="subagents")
-            for name, subagent in SUBAGENTS.items()
-            if subagents
-        ),
-        *(
-            ToolInfo(
-                name=name, description=description, group="harness", switchable=False
-            )
-            for name, description in SPILL_TOOLS.items()
-        ),
-    ]
-
-    return [info for info in infos if info.name not in hidden]
 
 
 def _feature_of(name: str) -> Feature:

@@ -2,8 +2,8 @@
 
 The archive holds their documents as the files of their workspace, each
 conversation as the archive its export button downloads beside the files of
-its ``/tmp`` and its delegated tasks, their memory page, their skills and
-assistants as their files, and their preferences.
+its ``/tmp`` and its delegated tasks, their memory page, their skills as their
+files, and their preferences.
 It is built in full before the first byte is sent, so a failure is an
 error, never a truncated archive.
 """
@@ -20,7 +20,6 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from cbrkit.io import is_partial
 from pydantic_ai.messages import ModelMessage, ModelRequest
 
-from ..assistants import assistant_library
 from ..config import settings
 from ..db.conversations import (
     OwnedConversation,
@@ -62,7 +61,6 @@ class ExportPart(StrEnum):
     CONVERSATIONS = "conversations"
     MEMORY = "memory"
     SKILLS = "skills"
-    ASSISTANTS = "assistants"
     PREFERENCES = "preferences"
 
 
@@ -177,8 +175,6 @@ async def _members(user: User, part: ExportPart) -> _Members:
             return {} if memory is None else {"memory.md": memory}
         case ExportPart.SKILLS:
             return await asyncio.to_thread(_files, library(scope).path, part)
-        case ExportPart.ASSISTANTS:
-            return await asyncio.to_thread(_files, assistant_library(scope), part)
         case ExportPart.PREFERENCES:
             preferences = Preferences.stored(await load_preferences(user.id))
 

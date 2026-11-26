@@ -29,7 +29,6 @@ from ..db.conversations import ConversationSummary
 from ..db.conversations.messages import is_user_request
 from ..llm_config import ReasoningEffort
 from ..shared.l10n import Localized
-from .assistants import LibraryRef
 from .common import Mode
 from .filters import FilterEntry
 
@@ -49,9 +48,7 @@ __all__ = [
     "InstructionsSnapshot",
     "ModelId",
     "Preferences",
-    "RunChoices",
     "ServerConversation",
-    "ToolInfo",
     "ToolRunResult",
     "ToolSchema",
     "TranscriptionResponse",
@@ -79,24 +76,12 @@ class DelegatedTask(BaseModel):
     user_stopped: bool = Field(description="Whether the user stopped it")
 
 
-class ToolInfo(BaseModel):
-    """Metadata about an available agent tool, or a subagent the model delegates to."""
+class ToolSchema(BaseModel):
+    """An agent tool with the JSON Schema of its call parameters, so a client can render a form to invoke it."""
 
     name: str
     description: str
     group: str
-    switchable: bool = Field(
-        default=True, description="Whether a list of withheld tools may name it."
-    )
-
-
-class ToolSchema(ToolInfo):
-    """Tool metadata plus the JSON Schema of its call parameters.
-
-    Extends :class:`ToolInfo` with the full parameter schema so a client
-    can render a form to invoke the tool generically.
-    """
-
     parameters: dict[str, Any] = Field(
         description="JSON Schema of the tool's call parameters."
     )
@@ -211,6 +196,9 @@ class DebugReport(BaseModel):
     )
 
 
+MAX_INSTRUCTIONS_CHARS = 20_000
+"""How long a user's own instructions may be."""
+
 _STORED = "stored"
 """The validation context of stored preferences, which tolerates stale values."""
 
@@ -224,9 +212,10 @@ class Preferences(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    assistant: LibraryRef | None = Field(
-        default=None,
-        description="The reference of the assistant runs apply, such as ~/name, which only narrows the rest",
+    instructions: str = Field(
+        default="",
+        max_length=MAX_INSTRUCTIONS_CHARS,
+        description="The user's own instructions, which every run follows at their authority",
     )
     mode: Mode = Field(
         default="interactive",
@@ -312,14 +301,6 @@ class DocumentSelection(BaseModel):
             selection = None
 
         return selection or cls()
-
-
-class RunChoices(Preferences):
-    """What a run applies: the user's preferences, the documents its question is about, and the tools its assistant withholds."""
-
-    included_documents: list[FilterEntry] = Field(default_factory=list)
-    excluded_documents: list[FilterEntry] = Field(default_factory=list)
-    disabled_tools: list[str] = Field(default_factory=list)
 
 
 class ChatRequest(UIChatRequest[UUID]):

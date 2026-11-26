@@ -46,7 +46,6 @@ from .retrieval import (
 )
 from .security import AuthSettings, ClaimSettings, SecuritySettings
 from .tools import (
-    AssistantSettings,
     ConversationSettings,
     SandboxSettings,
     SkillSettings,
@@ -147,7 +146,6 @@ class Settings(BaseSettings):
     conversations: ConversationSettings = ConversationSettings()
     tmp: TmpSettings = TmpSettings()
     skills: SkillSettings = SkillSettings()
-    assistants: AssistantSettings = AssistantSettings()
     compute: ComputeSettings = ComputeSettings()
     conversion: ConversionSettings = ConversionSettings()
     chunking: ChunkingSettings = ChunkingSettings()

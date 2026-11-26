@@ -2,13 +2,18 @@
 
 import asyncio
 from collections.abc import Sequence
-from dataclasses import replace
 
 import pytest
-from pydantic_ai import FunctionToolset
+from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.agent import AgentInstructions
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    InstructionDeltaPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -17,15 +22,13 @@ from hivegent.agents.app import chat_agent
 from hivegent.agents.capabilities import (
     FEATURES,
     build_capabilities,
-    collect_tool_schemas,
 )
 from hivegent.agents.common import UserDeps
-from hivegent.agents.guards import SPILL_TOOLS
+from hivegent.agents.context import PERSONAL_INSTRUCTIONS
 from hivegent.agents.tools.python import sandbox_surface
-from hivegent.prompts import GROUNDING_INSTRUCTIONS
-from hivegent.server.routes.meta import list_tools
-from hivegent.store import User, UserScope
-from hivegent.types import DocumentFilter, Mode
+from hivegent.prompts import GROUNDING_INSTRUCTIONS, compose_instructions
+from hivegent.store import User
+from hivegent.types import Mode
 from tests.helpers import in_run, owned, run_context
 
 _EXPLORE = next(feature for feature in FEATURES if feature.id == "explore")
@@ -42,31 +45,40 @@ def _static_texts(instructions: AgentInstructions[UserDeps]) -> list[str]:
     return []
 
 
-def _deps(disabled: Sequence[str] = (), mode: Mode = "interactive") -> UserDeps:
-    return UserDeps(user=User("u"), mode=mode, disabled_tools=frozenset(disabled))
+def _deps(mode: Mode = "interactive") -> UserDeps:
+    return UserDeps(user=User("u"), mode=mode)
 
 
-def _instructions(disabled: Sequence[str]) -> str:
+def _withhold(monkeypatch: pytest.MonkeyPatch, names: Sequence[str]) -> None:
+    """Have the operator withhold *names*."""
+    monkeypatch.setattr(capabilities.settings.tools, "disabled", list(names))
+
+
+def _instructions() -> str:
     """Every static instruction the composed capabilities contribute."""
     return "\n".join(
         text
-        for capability in build_capabilities(_deps(disabled))
+        for capability in build_capabilities(_deps())
         for text in _static_texts(capability.get_instructions())
     )
 
 
-def test_grounding_rides_with_the_retrieval_tools() -> None:
-    """Disabling every explore tool must retract the search-first mandate."""
-    assert GROUNDING_INSTRUCTIONS["en"] in _instructions(())
+def test_grounding_rides_with_the_retrieval_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Withholding every explore tool must retract the search-first mandate."""
+    assert GROUNDING_INSTRUCTIONS["en"] in _instructions()
 
-    disabled = sorted(_EXPLORE.tool_names)
-    assert GROUNDING_INSTRUCTIONS["en"] not in _instructions(disabled)
+    _withhold(monkeypatch, sorted(_EXPLORE.tool_names))
+    assert GROUNDING_INSTRUCTIONS["en"] not in _instructions()
 
 
-def test_shared_block_survives_on_its_remaining_feature() -> None:
+def test_shared_block_survives_on_its_remaining_feature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Path guidance is owned by explore *and* write, so write alone keeps it."""
-    disabled = sorted(_EXPLORE.tool_names)
-    ids = {capability.id for capability in build_capabilities(_deps(disabled))}
+    _withhold(monkeypatch, sorted(_EXPLORE.tool_names))
+    ids = {capability.id for capability in build_capabilities(_deps())}
     assert "workspace-paths" in ids
 
 
@@ -74,7 +86,6 @@ def _turn(
     *,
     relevant: frozenset[str] = frozenset(),
     mode: Mode = "interactive",
-    disabled: Sequence[str] = (),
 ) -> ModelRequestParameters:
     """Run one turn against a stub model, returning what it was first handed."""
     captured: list[ModelRequestParameters] = []
@@ -88,7 +99,6 @@ def _turn(
         mode=mode,
         conversation=owned("c1"),
         relevant_documents=relevant,
-        disabled_tools=frozenset(disabled),
     )
     _ = asyncio.run(
         in_run(
@@ -108,7 +118,9 @@ def _instruction_text(params: ModelRequestParameters) -> str:
     return "\n".join(part.content for part in params.instruction_parts or [])
 
 
-def test_document_scope_rides_with_the_retrieval_tools() -> None:
+def test_document_scope_rides_with_the_retrieval_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The note naming the user's selection must reach the model.
 
     It is the only thing that ties a bare "these documents" to the files the
@@ -118,10 +130,8 @@ def test_document_scope_rides_with_the_retrieval_tools() -> None:
     selected = frozenset({"~/a.md"})
     assert "~/a.md" in _instruction_text(_turn(relevant=selected))
 
-    disabled = sorted(_EXPLORE.tool_names)
-    assert "~/a.md" not in _instruction_text(
-        _turn(relevant=selected, disabled=disabled)
-    )
+    _withhold(monkeypatch, sorted(_EXPLORE.tool_names))
+    assert "~/a.md" not in _instruction_text(_turn(relevant=selected))
 
 
 def _tool_names(mode: Mode = "interactive") -> set[str]:
@@ -186,17 +196,6 @@ def test_an_operator_exclusion_never_reaches_the_model(
     assert not excluded & _tool_names()
 
 
-def test_an_operator_exclusion_retracts_the_feature_it_empties(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """One namespace, one mechanism: it drops instructions as a user's does."""
-    monkeypatch.setattr(
-        capabilities.settings.tools, "disabled", sorted(_EXPLORE.tool_names)
-    )
-
-    assert GROUNDING_INSTRUCTIONS["en"] not in _instructions(())
-
-
 def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -236,21 +235,6 @@ def test_an_exclusion_reaches_the_tools_an_mcp_server_brought(
     assert "remote_thing" not in names()
 
 
-async def test_an_excluded_tool_offers_the_user_no_switch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The settings dialog renders a checkbox per entry of this listing.
-
-    A tool the deployment withholds must not appear there switched on, so the
-    user-facing listing drops the exclusions while the admin console, which is
-    where the name to exclude is read, keeps them.
-    """
-    monkeypatch.setattr(capabilities.settings.tools, "disabled", ["query_table"])
-
-    assert "query_table" in {tool.name for tool in collect_tool_schemas()}
-    assert "query_table" not in {tool.name for tool in await list_tools(User(id="u"))}
-
-
 def test_a_misspelled_exclusion_is_a_startup_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -262,30 +246,41 @@ def test_a_misspelled_exclusion_is_a_startup_error(
         capabilities.check_tool_settings()
 
 
-def test_delegation_is_known_and_listed() -> None:
-    """A list may withhold the delegation tools and the subagents, and the catalog names them."""
-    infos = {info.name: info for info in capabilities.tool_infos()}
-
+def test_delegation_is_known() -> None:
+    """The operator may withhold the delegation tools and the subagents."""
     assert capabilities.unknown_tool_names(["delegate_task", "explore"]) == []
-    assert {"delegate_task", "cancel_task", "explore", "load_skill"} <= infos.keys()
-    assert infos["delegate_task"].switchable
-    assert not any(infos[name].switchable for name in SPILL_TOOLS)
 
 
-async def test_a_withheld_tool_is_called_through_no_surface() -> None:
+async def test_a_withheld_tool_is_called_through_no_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The debug console and MCP build the tools by the same rule a run does."""
+    _withhold(monkeypatch, ["delete_documents"])
+
     with pytest.raises(KeyError):
         await capabilities.invoke_agent_tool(
-            "delete_documents", {"file_paths": ["~/a.md"]}, _deps(["delete_documents"])
+            "delete_documents", {"file_paths": ["~/a.md"]}, _deps()
         )
 
 
-def test_an_allowlist_withholds_derived_content() -> None:
-    """Past conversations and the memory may quote any document beyond the allowlist."""
-    memory = next(feature for feature in FEATURES if feature.id == "memory")
-    confined = replace(
-        _deps(), document_filters={UserScope("u"): DocumentFilter(allowed=frozenset())}
-    )
+async def test_the_users_instructions_reach_the_model_as_theirs() -> None:
+    """They never join the system prompt, which only the operator's instructions do."""
 
-    assert memory.live(_deps())
-    assert not memory.live(confined)
+    def reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart("ok")])
+
+    deps = UserDeps(user=User("u"), mode="interactive", instructions="Rhyme.")
+    result = await Agent(deps_type=UserDeps).run(
+        "hi",
+        model=FunctionModel(reply),
+        deps=deps,
+        instructions=compose_instructions("en", "Cite the handbook."),
+        capabilities=[PERSONAL_INSTRUCTIONS],
+    )
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    lowered = [part for part in request.parts if isinstance(part, InstructionDeltaPart)]
+
+    assert [part.authority for part in lowered] == ["user"]
+    assert "Rhyme." not in (request.instructions or "")
+    assert "Cite the handbook." in (request.instructions or "")

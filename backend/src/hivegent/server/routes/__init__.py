@@ -8,7 +8,6 @@ from ..problems import PROBLEM_RESPONSES
 from ..rate_limit import ADMISSION
 from .account import router as account_router
 from .admin import router as admin_router
-from .assistants import router as assistants_router
 from .cases import router as cases_router
 from .conversations import chat_router
 from .conversations import router as conversations_router
@@ -39,7 +38,6 @@ people_router.include_router(transparency_router)
 people_router.include_router(documents_router)
 people_router.include_router(cases_router)
 people_router.include_router(skills_router)
-people_router.include_router(assistants_router)
 people_router.include_router(account_router)
 people_router.include_router(admin_router)
 

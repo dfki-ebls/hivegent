@@ -101,7 +101,7 @@ Common extras are `HIVEGENT_TOOLS__SEARCH_URL` for web search, `HIVEGENT_SECURIT
 `HIVEGENT_DOCS_URL` names where this handbook is served, such as `/docs/`, which shows a link to it in the app, and the NixOS module and the container set it from where they serve the handbook, if they bundle one.
 In the container, `-e HIVEGENT_DOCS_URL=https://docs.example.com/` points the link at a handbook served elsewhere.
 
-`tools.disabled` withholds tools from the model by the names `GET /api/v1/tools` lists.
+`tools.disabled` withholds tools from the model by name, such as `web_search`, and is the only way to withhold one, since neither users nor requests can.
 It is empty by default, and a withheld tool is withheld from the subagents too, so naming the conversation tools also switches off the `conversations` subagent.
 An unknown name stops the server at startup with an error listing the valid ones.
 
@@ -113,14 +113,13 @@ Skills are folders of instructions and scripts following the [Agent Skills](http
 Users install their own and their groups' skills in the settings as ZIP archives, kept in `<data_dir>/skills/`, each at most `skills.max_files` files (default 512) in `skills.max_bytes` (default 16 MiB).
 Skill scripts run in the Python sandbox, so only scripts written for it, defining a `main` function, run, while the others stay readable.
 
-Assistants are named instructions users pick in the chat, with skills to load, tools to switch off, a highest mode, and documents to focus on, hide, or reach only, all of which only narrow a chat.
-`assistants.dir` names a directory of global assistants, one `<name>.json` file each holding `instructions` and optionally `description`, `skills`, `disabled_tools`, `max_mode`, `included_documents`, `excluded_documents`, and `allowed_documents`, checked at startup.
-Each document entry is an object such as `{"path": "~/handbook", "directory": true}`.
-Their instructions carry the authority of your configuration, while users keep their own and their groups' assistants in `<data_dir>/assistants/`, written only through the settings and reaching the assistant as quoted content.
-
-A skill or assistant of a group runs with the grants of whoever uses it, never with those of its author.
+A skill of a group runs with the grants of whoever uses it, never with those of its author.
 So it reaches nothing its reader could not reach alone, but a writer of a group's library steers what the runs of its readers do within their grants, for example which documents they read or which changes they propose.
-Grant write access to a group only to people its readers trust with that, and review changes to its skills and assistants like code.
+Grant write access to a group only to people its readers trust with that, and review changes to its skills like code.
+
+`llm.instructions` holds your own instructions for every chat, such as house rules or a tone, added to the system prompt with the authority of your configuration, for all users alike.
+It is empty by default.
+Users add their own under Settings, Instructions, which reach the assistant as the user's own words and cannot override its rules.
 
 [Plugins](plugins.md) add tools, converters, chunkers, and skills, enabled by name in `plugins.enabled`.
 The Nix build installs them from their project directories into the backend's virtualenv, so the container image and the NixOS module take them as a build input, not at runtime.
@@ -190,7 +189,7 @@ With the NixOS module, `services.hivegent.mcpPackages` puts the packages providi
 A tool that reads runs in every mode, any other is not offered in Read mode and asks before every call, which leaves the Teams bridge only the reading tools of servers without `groups`.
 Every call acts with the deployment's credentials rather than the user's, so grant a server only what every member of its `groups` may do.
 Hivegent keeps one connection per server (one process for stdio) and reconnects with a growing backoff, and while a server is unreachable its tools are withheld with a short note to the assistant instead of failing the reply.
-Admins see each server's status and its tools' effects under Administration, Integrations, and users switch the tools off under Settings, Tools like any other.
+Admins see each server's status and its tools' effects under Administration, Integrations.
 
 `databases.<id>` lets the assistant explore and read a SQL database and run the statements the operator wrote and `apis.<id>` lets it call the operations of an HTTP API, as tools named `<id>_<tool>` with the same id rules as an MCP server's, which are shared, so no id names two of them.
 
@@ -235,9 +234,9 @@ headers = {}
 - `groups` and `instructions`: the groups whose members see it, everyone and the Teams bridge when empty, and what the assistant is told about its data or when to use it.
 
 A selection, a read statement, and a `GET` or `HEAD` operation read and run in every mode, a write statement and any other method are not offered in Read mode and ask before every call, which leaves the Teams bridge only the reading tools of sources without `groups`.
-Like the tools of an MCP server, they are not tied to a person or to the workspaces, so an assistant that confines the documents still offers them.
+Like the tools of an MCP server, they are not tied to a person or to the workspaces, so they are offered whichever documents a chat selects.
 Every call acts with the deployment's credentials rather than the user's, so grant an account or API key only what every member of the `groups` may do.
-Admins see each one's host, groups, and tools' effects under Administration, Integrations, and users switch the tools off under Settings, Tools like any other.
+Admins see each one's host, groups, and tools' effects under Administration, Integrations.
 
 `sources.<id>` mirrors an external file store, such as a Nextcloud folder, into Hivegent, where the members of its `groups` find it at `/mnt/<id>` and search, cite, and preview it like any workspace.
 Only this configuration declares sources, with their secrets in credential files, so no user or group can add one or reach its credentials.

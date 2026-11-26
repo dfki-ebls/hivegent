@@ -52,7 +52,7 @@ from ....shared.l10n import Localized, weighted_ranges
 from ....store import User
 from ....tmp import open_tmp
 from ....types import ChatRequest, DocumentSelection
-from ...common import CONVERSATION_NOT_FOUND, build_run_prefix, effective_preferences
+from ...common import CONVERSATION_NOT_FOUND, build_run_prefix, user_preferences
 from ...problems import problem_response
 from ...rate_limit import CHAT, RESUME
 from ...turns import (
@@ -391,8 +391,8 @@ async def _prepare_turn(
     if not resumes and not woken:
         CHAT.spend(user)
 
-    loaded, effective = await asyncio.gather(
-        load_conversation(conversation), effective_preferences(user)
+    loaded, preferences = await asyncio.gather(
+        load_conversation(conversation), user_preferences(user)
     )
 
     if loaded is None and config.compact:
@@ -408,7 +408,10 @@ async def _prepare_turn(
     # The documents of the question the turn answers, the new one's or the one a
     # regenerate, a resumed turn, or a compaction answers again.
     run_prefix = await build_run_prefix(
-        DocumentSelection.of([*kept, *adapter.messages]), effective, user, conversation
+        DocumentSelection.of([*kept, *adapter.messages]),
+        preferences,
+        user,
+        conversation,
     )
 
     # Gate the new user message's attachments before the run. Sanitisation

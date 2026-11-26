@@ -50,15 +50,11 @@ class ToolFlags:
     Attributes:
         gateway: Whether every write of the tool lands through the changeset gateway.
         people_only: Whether the tool acts on one person's own data, which a service principal is never offered.
-        derived: Whether the tool returns stored text derived from content beyond the workspaces.
-            Past conversations and the memory may quote any document, so a run an
-            assistant confines to an allowlist is never offered such a tool.
         seeing: Whether the result of the tool is only of use to a model that sees images.
     """
 
     gateway: bool = False
     people_only: bool = False
-    derived: bool = False
     seeing: bool = False
 
 
@@ -126,13 +122,12 @@ def host_policy(
     *,
     withheld: frozenset[str] = frozenset(),
     service: bool = False,
-    confined: bool = False,
 ) -> Policy:
     """The host's policy on the tool calls of a run in *mode*, the policy of its exar run (``UserDeps.run_config``).
 
     It allows the agent invocations the host makes itself, such as summaries and completions.
-    It denies every tool the run *withheld* by name, a people-only tool for a
-    *service* principal, and a derived one for a *confined* run.
+    It denies every tool the run *withheld* by name and a people-only tool for a
+    *service* principal.
     A mode denies every tool whose effect it does not offer (:func:`offered`).
     A write of a tool flagged :attr:`ToolFlags.gateway` is allowed here
     and asked about per item by the root it lands in (``agents/tools/write.py``),
@@ -158,11 +153,7 @@ def host_policy(
 
         flags = flags_of(action.metadata)
 
-        if (
-            action.name in withheld
-            or (service and flags.people_only)
-            or (confined and flags.derived)
-        ):
+        if action.name in withheld or (service and flags.people_only):
             return "deny"
 
         gateway = action.effect == "write" and flags.gateway

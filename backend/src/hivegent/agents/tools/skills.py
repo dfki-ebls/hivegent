@@ -13,13 +13,12 @@ A skill is named by its reference, its scope's prefix and its name such as
 ``~/csv-check``, or by its bare name while no other skill the user sees has
 it (:func:`~hivegent.skills.resolve_skill`), so no scope stands in for
 another's.  The host loads a skill the same way where the model did not ask
-for it: one the run's assistant names, one the user invokes by starting a
-prompt with ``/<reference>`` or ``/<name>``, its ``$ARGUMENTS`` replaced by the
-text after it, and after a compaction every one the window before it had
-loaded, so a summary never drops the instructions the conversation works by.
-A skill that disables model invocation is left out of the catalog and refused
-by ``load_skill``, and one that is not user-invocable is never invoked by a
-prompt, while an assistant preloads either.
+for it: one the user invokes by starting a prompt with ``/<reference>`` or
+``/<name>``, its ``$ARGUMENTS`` replaced by the text after it, and after a
+compaction every one the window before it had loaded, so a summary never drops
+the instructions the conversation works by.  A skill that disables model
+invocation is left out of the catalog and refused by ``load_skill``, and one
+that is not user-invocable is never invoked by a prompt.
 """
 
 import asyncio
@@ -301,14 +300,9 @@ async def _skills_reads(
     shown = latest_read(window, load_skill.__name__)
     previous = post_compaction_window(ctx.messages[: len(ctx.messages) - len(window)])
     loaded = _resolved(skills, _loaded(window)).keys()
-    assistant = ctx.deps.assistant
-    wanted = [
-        *([] if assistant is None else assistant.spec.skills),
-        *_loaded(previous),
-    ]
     loads: dict[str, tuple[Skill, str | None]] = {
         ref: (skill, None)
-        for ref, skill in _resolved(skills, wanted).items()
+        for ref, skill in _resolved(skills, _loaded(previous)).items()
         if ref not in loaded
     }
 
@@ -343,9 +337,9 @@ SKILLS_NOTE = ToolNote[UserDeps](
 
 The catalog is reported where the window shows another catalog or none,
 unless there are no skills to report at all.  A skill is loaded where the
-window has not loaded it yet but the run's assistant preloads it or the
-window before the latest compaction loaded it, and where the latest prompt
-invokes it with arguments the window has not loaded it with.
+window has not loaded it yet but the window before the latest compaction
+loaded it, and where the latest prompt invokes it with arguments the window
+has not loaded it with.
 The user never asked for any of it, so the transcript leaves it out
 (:data:`HIDDEN_KEY`).
 """

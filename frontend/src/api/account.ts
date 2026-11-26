@@ -28,7 +28,6 @@ export const EXPORT_PARTS = [
   "conversations",
   "memory",
   "skills",
-  "assistants",
   "preferences",
 ] as const;
 export type ExportPart = (typeof EXPORT_PARTS)[number];

@@ -42,21 +42,6 @@ class TestDocumentFilter:
     def test_root_entry_hides_the_whole_store(self) -> None:
         assert not DocumentFilter(excluded=frozenset({folder("")}))("any/file.md")
 
-    def test_allowlist_admits_its_entries_and_their_ancestors_only(self) -> None:
-        f = DocumentFilter(allowed=frozenset({folder("docs/deep"), doc("notes/a.md")}))
-        assert f("docs") and f("docs/deep/x.md") and f("notes/a.assets/fig.png")
-        assert not f("docs/other.md")
-        assert not f("notes/b.md")
-        assert f.hides_within("docs") and not f.hides_within("docs/deep")
-
-    def test_exclude_wins_over_the_allowlist(self) -> None:
-        f = DocumentFilter(frozenset({doc("docs/x.md")}), frozenset({folder("docs")}))
-        assert not f("docs/x.md")
-        assert f("docs/y.md")
-
-    def test_empty_allowlist_hides_everything(self) -> None:
-        assert not DocumentFilter(allowed=frozenset())("any/file.md")
-
 
 class TestDocumentFilterGlobs:
     """The `exclude` globs of a filter hide exactly what it hides, as the mount of a search path sees them."""
@@ -81,12 +66,6 @@ class TestDocumentFilterGlobs:
         DocumentFilter(excluded=frozenset({folder("docs"), folder("100%_done")})),
         DocumentFilter(excluded=frozenset({doc("notes/a.md")})),
         DocumentFilter(excluded=frozenset({doc("notes/a.v2.pdf")})),
-        DocumentFilter(allowed=frozenset()),
-        DocumentFilter(allowed=frozenset({folder("docs/deep"), doc("notes/a.md")})),
-        DocumentFilter(allowed=frozenset({doc("notes/a.pdf")})),
-        DocumentFilter(allowed=frozenset({doc("notes/a.v2.pdf"), doc("notes/a.md")})),
-        DocumentFilter(allowed=frozenset({folder("notes"), doc("notes/a.md")})),
-        DocumentFilter(frozenset({doc("docs/x.md")}), frozenset({folder("docs")})),
     )
 
     @pytest.mark.parametrize("filter_", FILTERS)
@@ -146,18 +125,6 @@ class TestParseDocumentScope:
         )
         assert relevant == frozenset({"~/", "/srv/"})
 
-    def test_allowlist_hides_every_scope_it_does_not_name(self) -> None:
-        _relevant, filters = parse_document_scope(
-            [],
-            [doc("~/docs/x.md")],
-            self._user,
-            [folder("~/docs"), doc("@stranger/a.md")],
-        )
-        assert set(filters) == set(self._user.scopes())
-        assert filters[UserScope("u")]("docs/y.md")
-        assert not filters[UserScope("u")]("docs/x.md")
-        assert not filters[GroupScope("team")]("notes.md")
-
     def test_unaddressable_entries_are_skipped(self) -> None:
         relevant, filters = parse_document_scope(
             [folder("@stranger/docs"), doc("no-prefix.md")],
@@ -191,11 +158,6 @@ class TestFormatDocumentScope:
         assert "Hidden from this conversation:" in text
         assert "- ~/secret.md" in text
         assert "Most relevant:" not in text
-
-    def test_allowlist_is_named_even_when_empty(self) -> None:
-        text = format_document_scope({}, frozenset(), "en", frozenset({"~/docs/"}))
-        assert "Reachable in this conversation:\n- ~/docs/" in text
-        assert "- nothing" in format_document_scope({}, frozenset(), "en", frozenset())
 
     def test_both_halves_render_together(self) -> None:
         text = format_document_scope(

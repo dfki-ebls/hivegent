@@ -101,7 +101,7 @@ Häufige Ergänzungen sind `HIVEGENT_TOOLS__SEARCH_URL` für die Websuche, `HIVE
 `HIVEGENT_DOCS_URL` nennt, wo dieses Handbuch bereitgestellt wird, etwa `/docs/`, und zeigt in der App einen Link darauf, das NixOS-Modul und der Container setzen es dorthin, wo sie das Handbuch bereitstellen, sofern sie eines mitliefern.
 Im Container lenkt `-e HIVEGENT_DOCS_URL=https://docs.example.com/` den Link auf ein anderswo bereitgestelltes Handbuch.
 
-`tools.disabled` hält Werkzeuge vom Modell fern, benannt wie in `GET /api/v1/tools`.
+`tools.disabled` hält Werkzeuge vom Modell fern, benannt etwa wie `web_search`, und ist der einzige Weg dazu, da weder Benutzer:innen noch Anfragen es können.
 Voreingestellt ist die leere Liste, und ein zurückgehaltenes Werkzeug bleibt auch den Unteragenten verwehrt, sodass die Gesprächswerkzeuge zu nennen auch den Unteragenten `conversations` abschaltet.
 Ein unbekannter Name verhindert den Serverstart mit einem Fehler, der die gültigen Namen aufzählt.
 
@@ -113,14 +113,13 @@ Skills sind Ordner mit Anweisungen und Skripten im Format [Agent Skills](https:/
 Benutzer:innen installieren ihre eigenen Skills und die ihrer Gruppen in den Einstellungen als ZIP-Archive, abgelegt in `<data_dir>/skills/`, je höchstens `skills.max_files` Dateien (Standard 512) mit `skills.max_bytes` (Standard 16 MiB).
 Skill-Skripte laufen in der Python-Sandbox, daher laufen nur dafür geschriebene Skripte mit einer Funktion `main`, die übrigen bleiben lesbar.
 
-Assistenten sind benannte Anweisungen, die Benutzer:innen im Chat wählen, mit zu ladenden Skills, auszuschaltenden Tools, einem höchsten Modus und Dokumenten im Fokus, ausgeblendet oder als einzige erreichbar, die einen Chat alle nur einschränken.
-`assistants.dir` nennt ein Verzeichnis globaler Assistenten, je eine Datei `<name>.json` mit `instructions` und optional `description`, `skills`, `disabled_tools`, `max_mode`, `included_documents`, `excluded_documents` und `allowed_documents`, geprüft beim Start.
-Jeder Dokumenteintrag ist ein Objekt wie `{"path": "~/handbuch", "directory": true}`.
-Ihre Anweisungen tragen die Autorität Ihrer Konfiguration, während Benutzer:innen ihre eigenen Assistenten und die ihrer Gruppen in `<data_dir>/assistants/` ablegen, geschrieben nur über die Einstellungen und beim Assistenten als zitierter Inhalt ankommend.
-
-Ein Skill oder Assistent einer Gruppe läuft mit den Rechten derer, die ihn nutzen, nie mit denen seiner Autor:innen.
+Ein Skill einer Gruppe läuft mit den Rechten derer, die ihn nutzen, nie mit denen seiner Autor:innen.
 Er erreicht also nichts, was seine Nutzer:innen nicht auch allein erreichen, doch wer die Bibliothek einer Gruppe schreibt, lenkt, was die Läufe ihrer Leser:innen innerhalb deren Rechte tun, etwa welche Dokumente sie lesen oder welche Änderungen sie vorschlagen.
-Gewähren Sie Schreibzugriff auf eine Gruppe nur Personen, denen ihre Leser:innen das zutrauen, und prüfen Sie Änderungen an ihren Skills und Assistenten wie Code.
+Gewähren Sie Schreibzugriff auf eine Gruppe nur Personen, denen ihre Leser:innen das zutrauen, und prüfen Sie Änderungen an ihren Skills wie Code.
+
+`llm.instructions` enthält Ihre eigenen Anweisungen für jeden Chat, etwa Hausregeln oder einen Ton, und wird dem System-Prompt mit der Autorität Ihrer Konfiguration hinzugefügt, für alle Benutzer:innen gleich.
+Voreingestellt ist leer.
+Benutzer:innen tragen ihre eigenen unter Einstellungen, Anweisungen ein, die den Assistenten als eigene Worte der Benutzer:in erreichen und seine Regeln nicht außer Kraft setzen können.
 
 [Plugins](plugins.md) ergänzen Tools, Konverter, Chunker und Skills, aktiviert per Name in `plugins.enabled`.
 Der Nix-Build installiert sie aus ihren Projektverzeichnissen in die virtuelle Umgebung des Backends, daher nehmen das Container-Image und das NixOS-Modul sie beim Bauen auf, nicht zur Laufzeit.
@@ -190,7 +189,7 @@ Mit dem NixOS-Modul legt `services.hivegent.mcpPackages` die Pakete, die den Bef
 Ein lesendes Tool läuft in jedem Modus, jedes andere wird im Modus Lesen nicht angeboten und fragt vor jedem Aufruf nach, sodass der Teams-Bridge nur die lesenden Tools von Servern ohne `groups` bleiben.
 Jeder Aufruf handelt mit den Zugangsdaten des Deployments statt denen der Person, geben Sie einem Server daher nur, was jedes Mitglied seiner `groups` tun darf.
 Hivegent hält eine Verbindung pro Server (bei stdio einen Prozess) und verbindet sich mit wachsendem Abstand neu, und solange ein Server nicht erreichbar ist, werden seine Tools mit einem kurzen Hinweis an den Assistenten zurückgehalten, statt die Antwort scheitern zu lassen.
-Admins sehen den Status jedes Servers und die Wirkung seiner Tools unter Administration, Integrationen, und Nutzer schalten die Tools wie jedes andere unter Einstellungen, Tools ab.
+Admins sehen den Status jedes Servers und die Wirkung seiner Tools unter Administration, Integrationen.
 
 `databases.<id>` lässt den Assistenten eine SQL-Datenbank erkunden und lesen sowie die Statements ausführen, die der Betreiber geschrieben hat, und `apis.<id>` die Operationen einer HTTP-API aufrufen, als Tools namens `<id>_<tool>` mit denselben ID-Regeln wie bei einem MCP-Server, die gemeinsam gelten, sodass keine ID zwei davon benennt.
 
@@ -235,9 +234,9 @@ headers = {}
 - `groups` und `instructions`: die Gruppen, deren Mitglieder sie sehen, bei leerer Liste alle und auch die Teams-Bridge, und was der Assistent über ihre Daten erfährt oder wann er sie nutzen soll.
 
 Eine Auswahl, ein lesendes Statement und eine Operation per `GET` oder `HEAD` lesen und laufen in jedem Modus, ein schreibendes Statement und jede andere Methode werden im Modus Lesen nicht angeboten und fragen vor jedem Aufruf nach, sodass der Teams-Bridge nur die lesenden Tools von Quellen ohne `groups` bleiben.
-Wie die Tools eines MCP-Servers gehören sie weder zu einer Person noch zu den Arbeitsbereichen, ein Assistent, der die Dokumente eingrenzt, bietet sie also weiterhin an.
+Wie die Tools eines MCP-Servers gehören sie weder zu einer Person noch zu den Arbeitsbereichen, sie werden also unabhängig davon angeboten, welche Dokumente ein Chat auswählt.
 Jeder Aufruf handelt mit den Zugangsdaten des Deployments statt denen der Person, geben Sie einem Konto oder API-Schlüssel daher nur, was jedes Mitglied der `groups` tun darf.
-Admins sehen Host, Gruppen und die Wirkung der Tools jeder Quelle unter Administration, Integrationen, und Nutzer schalten die Tools wie jedes andere unter Einstellungen, Tools ab.
+Admins sehen Host, Gruppen und die Wirkung der Tools jeder Quelle unter Administration, Integrationen.
 
 `sources.<id>` spiegelt eine externe Dateiablage, etwa einen Nextcloud-Ordner, in Hivegent, wo die Mitglieder ihrer `groups` sie unter `/mnt/<id>` finden und wie jeden Arbeitsbereich durchsuchen, zitieren und ansehen.
 Nur diese Konfiguration legt Quellen an, ihre Geheimnisse in Credential-Dateien, sodass weder Nutzer noch Gruppen eine hinzufügen oder ihre Zugangsdaten erreichen.

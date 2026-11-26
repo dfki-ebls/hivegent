@@ -8,7 +8,6 @@ from zipfile import ZipFile
 import pytest
 
 from hivegent import conversation_files
-from hivegent.assistants import assistant_library
 from hivegent.db.conversations import OwnedConversation
 from hivegent.delegations import TASKS_FOLDER
 from hivegent.server import export
@@ -116,7 +115,6 @@ async def test_the_export_holds_the_parts_asked_for(
         user.home.path / "notes/report.md": "report",
         user.home.path / ".~0123456789abcdef.partial": "half",
         library(scope).path / "lint/SKILL.md": "skill",
-        assistant_library(scope) / "helper.json": "{}",
         tmp_dir(data_dir, conversation) / "result.txt": "tmp",
         conversation.folder(data_dir) / TASKS_FOLDER / "child.json": "task history",
     }
@@ -156,7 +154,6 @@ async def test_the_export_holds_the_parts_asked_for(
         f"conversations/{cid}/tasks/child.json",
         "memory.md",
         "skills/lint/SKILL.md",
-        "assistants/helper.json",
         "preferences.json",
     ]
     assert await names(frozenset({ExportPart.MEMORY})) == ["memory.md"]

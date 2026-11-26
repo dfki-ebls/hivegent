@@ -97,7 +97,7 @@ Every query is keyed under a scope that `Register` restricts (`lib/query-client.
 Routes load their data in `loader` through the `queryClient` of the router context, after `enforceLogin`, and components read it with `useSuspenseQuery`.
 The mutation cache refetches those before the mutation settles and raises a toast on failure unless the mutation renders it (`meta.inlineError`) or has its own `onError`, so components neither refetch by hand nor copy server data into state.
 Zustand keeps what the browser owns: settings, chunks the model read, and dialog state.
-The assistant, agent mode, reasoning effort, and chat model are the user's preferences, which the server keeps (`api/preferences`), so a choice applies to every conversation and client at once, set optimistically and reconciled with what the server stored, while the draft lives in the composer and the expanded folders in memory alone (`settings-store`), since they name private documents.
+The agent mode, reasoning effort, chat model, and personal instructions are the user's preferences, which the server keeps (`api/preferences`), so a choice applies to every conversation and client at once, set optimistically and reconciled with what the server stored, while the draft lives in the composer and the expanded folders in memory alone (`settings-store`), since they name private documents.
 
 Binary previews such as asset images and PDF originals are queries too, whose data is an object URL flagged `meta.objectUrl`, so every view of one file shares a URL and the cache revokes it once the entry drops or holds a new one.
 A conversation's stored messages load through `conversationQueries.messages` without being kept, since the chat owns them once it starts.
@@ -181,15 +181,14 @@ The chat debugger opens only the user's own conversations, since the server find
 
 ## Settings and administration are routed pages
 
-`/settings` holds every user's own pages, profile, assistants, skills, and account, and `/admin` the read-only view of what the operator configured, models, plugins, integrations, pipelines, global skills, plus the maintenance switch and the reindex.
+`/settings` holds every user's own pages, profile, instructions, skills, and account, and `/admin` the read-only view of what the operator configured, models, plugins, integrations, pipelines, global skills, plus the maintenance switch and the reindex.
 Both are one `SettingsShell` with a side navigation over an `Outlet`, and their pages compose the same `Section` card and `DangerZone`, whose every action runs behind one confirmation.
 The admin pages render for an admin only, as the `admin` role in `/settings` says, while the server refuses everyone else on every route, so the gate spares the rest only failed requests.
-Nothing the server configures is spelled in the client: models, plugins, servers, pipelines, skills, assistants, and tools all come from their listings.
+Nothing the server configures is spelled in the client: models, plugins, servers, pipelines, and skills all come from their listings.
 
 ## External MCP servers are read-only here
 
 The host configuration declares the external MCP servers, so `/admin/integrations` only lists them (`GET /admin/integrations`) by kind, MCP servers, databases, and APIs, with each one's host, groups, and tools by effect, and an MCP server's status as well.
-Their tools are listed under the server's id wherever tools are, such as the assistant dialog, and since they come and go with the connection, `GET /tools` is refetched on every visit rather than cached for the process like the debug schemas.
 
 ## Sources are listed, synced on demand
 
@@ -202,14 +201,12 @@ A source's mirror arrives as a workspace of kind `source` named by its id, so th
 A skill's `SKILL.md` opens in the document viewer like a `/tmp` file, through `GET /documents/{path}`, since a skill is no workspace entry and has no chunks.
 The global skills come from the operator, so they get no upload or delete, and `/admin/skills` lists only them.
 A draft that is a slash and one word suggests the skills it may invoke, and the server loads the skill named by the first word after a message's leading slash, so the client sends the text as typed.
-A `library-changed` feed event refetches the skills and the assistants wherever someone changed them.
+A `library-changed` feed event refetches the skills wherever someone changed them.
 
-## Assistants are picked, the server applies them
+## Instructions are a preference
 
-`/settings/assistants` lists the assistants of every scope the user sees (`GET /assistants`) and creates, edits, and deletes those of the scopes the user writes in one form.
-The composer offers them only when there are any, and a chat request carries the chosen name alone, which the server resolves and applies, so the client never sends an assistant's tools, mode, or documents itself.
-The assistant form edits the enforced `allowed_documents`, beside the advisory include and hide lists, as rows of a path and a directory toggle, which the form sends as `{path, directory}` like every filter entry.
-A chosen assistant that disappears is dropped, so no request names one the server no longer knows.
+`/settings/instructions` is one textarea over the `instructions` preference (`GET` and `PATCH /preferences`), which the server renders into every run at the user's authority, so the client sends no instructions with a chat request.
+The legacy migration (`migrations/legacy-system-message.ts`) turns a custom system message a browser kept into these instructions once the user signs in there, only while they are empty.
 
 ## Interface language
 

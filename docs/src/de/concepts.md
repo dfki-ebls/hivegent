@@ -45,7 +45,7 @@ Der Agent wählt für jede Anfrage aus diesen Werkzeuggruppen.
 | Unterhaltungsverlauf | Frühere Unterhaltungen direkt öffnen                                                                                            | Außer vom Betreiber abgeschaltet |
 | Gedächtnis           | Fakten für spätere Unterhaltungen speichern                                                                                     | Nicht im Modus Lesen             |
 | Skills               | Anweisungen und Skripte eines Skills laden, der zur Aufgabe passt                                                               | Immer                            |
-| Assistent            | Den Anweisungen des gewählten Assistenten folgen                                                                                | Wenn Sie einen wählen            |
+| Ihre Anweisungen     | Den dauerhaften Anweisungen folgen, die Sie in den Einstellungen geschrieben haben                                              | Wenn Sie welche haben            |
 | Dokumentbearbeitung  | Dokumente anlegen, bearbeiten, verschieben oder löschen, im Modus Interaktiv nach Ihrer Zustimmung                              | Nicht im Modus Lesen             |
 | Fallbasen            | Akzeptierte Lösungen in einer Fallbasis speichern und sie bereinigen, im Modus Interaktiv nach Ihrer Zustimmung                 | Nicht im Modus Lesen             |
 | Web                  | Im Web suchen und Seiten abrufen                                                                                                | Wenn vom Betreiber aktiviert     |

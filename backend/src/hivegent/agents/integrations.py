@@ -14,7 +14,6 @@ from pydantic_ai.toolsets import AbstractToolset
 from ..shared.l10n import Language, Localized
 from ..store import User
 from ..types import Integration as IntegrationInfo
-from ..types import ToolInfo
 from .catalog import CATALOG
 from .common import UserDeps
 from .external import SOURCES
@@ -23,7 +22,6 @@ __all__ = [
     "INTEGRATIONS",
     "Integration",
     "integration_capabilities",
-    "integration_tool_infos",
     "integrations_lifespan",
     "is_integration_tool",
 ]
@@ -46,10 +44,6 @@ class Integration(Protocol):
     @property
     def instructions(self) -> Localized[str] | None:
         """What a run is told about the tools besides their schemas, ``None`` where the toolset tells it."""
-        ...
-
-    def tool_infos(self) -> list[ToolInfo]:
-        """The tools it offers right now."""
         ...
 
     def integration(self) -> IntegrationInfo:
@@ -100,11 +94,6 @@ def integration_capabilities(
         )
         for integration in _visible(user)
     ]
-
-
-def integration_tool_infos(user: User) -> list[ToolInfo]:
-    """The tools of the integrations *user* sees, grouped by integration."""
-    return [info for integration in _visible(user) for info in integration.tool_infos()]
 
 
 @asynccontextmanager

@@ -254,8 +254,8 @@ in
 
         `skills.dir` names a directory of global skills, one folder with a
         `SKILL.md` each, read in place, so a path in the store works.
-        `assistants.dir` likewise names a directory of global assistants,
-        one `<name>.json` file each.
+        `llm.instructions` holds the operator's own instructions, which
+        every chat follows.
 
         `data_dir` defaults to the unit's `StateDirectory`; override
         here only if you need a different layout.

@@ -11,7 +11,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/i18n";
 import { createQueryClient } from "@/lib/query-client";
 import { syncSourceQueries } from "@/api/admin";
-import { preferenceQueries } from "@/api/preferences";
 import { syncConversationQueries } from "@/api/conversations";
 import { syncWorkspaceQueries } from "@/api/documents";
 import { OidcInitializationGate } from "@/oidc";
@@ -35,10 +34,6 @@ syncWorkspaceQueries(queryClient);
 syncConversationQueries(queryClient);
 syncSourceQueries(queryClient);
 syncLibraryQueries(queryClient, "skills");
-// The server reports a chosen assistant gone from the library as none.
-syncLibraryQueries(queryClient, "assistants", () => {
-  void queryClient.invalidateQueries(preferenceQueries.get());
-});
 
 const router = createRouter({
   routeTree,

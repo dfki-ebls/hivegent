@@ -13,15 +13,6 @@ from .admin import (
     PluginInfo,
     SourceStatus,
 )
-from .assistants import (
-    AssistantInfo,
-    AssistantName,
-    AssistantSpec,
-    LibraryRef,
-    SkillInfo,
-    SkillInstalledResponse,
-    SkillScriptInfo,
-)
 from .chat import (
     DOCUMENTS_KEY,
     AttachmentLimits,
@@ -39,9 +30,7 @@ from .chat import (
     InstructionsSnapshot,
     ModelId,
     Preferences,
-    RunChoices,
     ServerConversation,
-    ToolInfo,
     ToolRunResult,
     ToolSchema,
     TranscriptionResponse,
@@ -88,6 +77,11 @@ from .meta import (
     UserResponse,
     WorkspaceInfo,
 )
+from .skills import (
+    SkillInfo,
+    SkillInstalledResponse,
+    SkillScriptInfo,
+)
 
 __all__ = [
     "DOCUMENTS_KEY",
@@ -102,9 +96,6 @@ __all__ = [
     "AdminUserInfo",
     "AssetEntry",
     "AssetListResponse",
-    "AssistantInfo",
-    "AssistantName",
-    "AssistantSpec",
     "AttachmentLimits",
     "ChatRequest",
     "ClientConversation",
@@ -131,7 +122,6 @@ __all__ = [
     "GenerateTitleResponse",
     "InstructionsSnapshot",
     "Integration",
-    "LibraryRef",
     "McpIntegration",
     "Mode",
     "ModelId",
@@ -141,7 +131,6 @@ __all__ = [
     "PluginInfo",
     "Preferences",
     "ProgressReporter",
-    "RunChoices",
     "ServerConversation",
     "SettingsResponse",
     "SkillInfo",
@@ -149,7 +138,6 @@ __all__ = [
     "SkillScriptInfo",
     "SourceStatus",
     "TmpClearedResponse",
-    "ToolInfo",
     "ToolRunResult",
     "ToolSchema",
     "TranscriptionResponse",

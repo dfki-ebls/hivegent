@@ -47,9 +47,9 @@ from hivegent.db.conversations import (
 from hivegent.delegations import TASKS_FOLDER, delegations
 from hivegent.runs import Prepared, runs
 from hivegent.server.routes.conversations import history, tasks, turn
-from hivegent.store import User, UserScope
+from hivegent.store import User
 from hivegent.tools.base import ToolFunc
-from hivegent.types import ChatRequest, DocumentFilter, Mode
+from hivegent.types import ChatRequest, Mode
 from tests.helpers import label_id, owned, sse_chunks
 
 type Script = Callable[[list[ModelMessage], AgentInfo], ModelResponse]
@@ -212,9 +212,7 @@ async def _stored() -> list[ModelMessage]:
     return list(loaded.messages)
 
 
-def _register(
-    monkeypatch: pytest.MonkeyPatch, name: str, tool: ToolFunc
-) -> None:
+def _register(monkeypatch: pytest.MonkeyPatch, name: str, tool: ToolFunc) -> None:
     """Offer the subagent *name*, whose one tool is *tool*."""
     monkeypatch.setitem(
         subagents_module.SUBAGENTS,  # pyright: ignore[reportArgumentType]
@@ -410,7 +408,11 @@ async def test_a_waited_task_reports_in_the_same_turn(
     def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if _responses(messages) == 0:
             return _call(
-                "delegate_task", "d1", agent_name="explore", task="look", background=False
+                "delegate_task",
+                "d1",
+                agent_name="explore",
+                task="look",
+                background=False,
             )
 
         return _echo(messages)
@@ -444,7 +446,11 @@ async def test_a_waited_task_moves_to_the_background_in_time(
     def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if _responses(messages) == 0:
             return _call(
-                "delegate_task", "d1", agent_name="waiter", task="look", background=False
+                "delegate_task",
+                "d1",
+                agent_name="waiter",
+                task="look",
+                background=False,
             )
 
         return _echo(messages)
@@ -472,7 +478,9 @@ async def test_a_later_turn_steers_a_running_task(
             case "question":
                 return _call("delegate_task", "d1", agent_name="looper", task="loop")
             case "steer":
-                return _call("message_task", "m1", task_id=task_ids[0], message="stop now")
+                return _call(
+                    "message_task", "m1", task_id=task_ids[0], message="stop now"
+                )
             case _:
                 return _echo(messages)
 
@@ -484,7 +492,9 @@ async def test_a_later_turn_steers_a_running_task(
 
     scripts: dict[str, Script] = {"question": chat, "loop": looper}
     await _turn(monkeypatch, run_prefix, scripts, quiet=False)
-    task_ids.extend(task.id for task in await tasks.list_conversation_tasks(_CONVERSATION))
+    task_ids.extend(
+        task.id for task in await tasks.list_conversation_tasks(_CONVERSATION)
+    )
     await _turn(monkeypatch, run_prefix, scripts, prompt="steer")
     [task] = await tasks.list_conversation_tasks(_CONVERSATION)
 
@@ -674,46 +684,35 @@ async def test_a_subagent_is_offered_no_withheld_tool(
 
         return _text("done")
 
-    deps = replace(run_prefix.deps, disabled_tools=withheld)
+    monkeypatch.setattr(subagents_module.settings.tools, "disabled", sorted(withheld))
     await _turn(
-        monkeypatch,
-        replace(run_prefix, deps=deps),
-        {"question": chat, "look": subagent},
-        mode=mode,
+        monkeypatch, run_prefix, {"question": chat, "look": subagent}, mode=mode
     )
 
     assert offered
     assert not offered & withheld
 
 
-def _subagents(
-    run_prefix: RunPrefix, *withheld: str, confined: bool = False
-) -> set[str]:
-    """The subagents a turn withholding *withheld* delegates to, under an allowlist if *confined*."""
-    filters = {UserScope("u"): DocumentFilter(allowed=frozenset())} if confined else {}
-    deps = replace(
-        run_prefix.deps, disabled_tools=frozenset(withheld), document_filters=filters
-    )
-
-    return {
-        str(subagent.resolved_name)
-        for capability in delegation(replace(run_prefix, deps=deps))
-        if isinstance(capability, SubAgents)
-        for subagent in capability.agents
-    }
-
-
 def test_a_list_withholds_delegation_and_each_subagent(
     monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
 ) -> None:
-    monkeypatch.setattr(subagents_module.settings.tools, "disabled", [])
     conversations = subagents_module.SUBAGENTS["conversations"].tools[0]
     tool_names = {
         tool_def.name for tool_def in subagents_module.static_tools(conversations)
     }
 
-    assert {"explore", "conversations"} <= _subagents(run_prefix)
-    assert _subagents(run_prefix, "delegate_task") == set()
-    assert "explore" not in _subagents(run_prefix, "explore")
-    assert "conversations" not in _subagents(run_prefix, *tool_names)
-    assert "conversations" not in _subagents(run_prefix, confined=True)
+    def offered(*withheld: str) -> set[str]:
+        """The subagents a turn delegates to while the operator withholds *withheld*."""
+        monkeypatch.setattr(subagents_module.settings.tools, "disabled", list(withheld))
+
+        return {
+            str(subagent.resolved_name)
+            for capability in delegation(run_prefix)
+            if isinstance(capability, SubAgents)
+            for subagent in capability.agents
+        }
+
+    assert {"explore", "conversations"} <= offered()
+    assert offered("delegate_task") == set()
+    assert "explore" not in offered("explore")
+    assert "conversations" not in offered(*tool_names)

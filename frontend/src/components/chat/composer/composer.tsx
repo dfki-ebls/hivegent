@@ -2,7 +2,6 @@ import type { FileUIPart } from "ai";
 import { ImagePlusIcon } from "lucide-react";
 import { type SubmitEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AssistantSelector } from "@/components/chat/composer/assistant-selector";
 import { AttachedFiles, type ComposerFile } from "@/components/chat/composer/attached-files";
 import { ChatTextarea } from "@/components/chat/composer/chat-textarea";
 import { DictateButton } from "@/components/chat/composer/dictate-button";
@@ -200,7 +199,6 @@ export function Composer({ onSubmit }: { onSubmit: (text: string, files: FileUIP
           )}
           <DictateButton transcribe={transcribe} onText={dictate} />
           <div className="ml-auto" />
-          <AssistantSelector />
           <ModelSelector />
           <ReasoningEffortSelector
             value={reasoningEffort}

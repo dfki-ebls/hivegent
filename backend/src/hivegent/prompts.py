@@ -38,10 +38,10 @@ __all__ = [
     "WORKSPACE_PATH_INSTRUCTIONS",
     "WRITE_INSTRUCTIONS",
     "WRITE_MODE_NOTE",
-    "assistant_note",
     "compose_instructions",
     "date_note",
     "format_document_scope",
+    "personal_instructions_note",
     "sandbox_api_instructions",
 ]
 
@@ -51,8 +51,8 @@ def _join_instructions(parts: Iterable[str]) -> str:
     return "\n\n".join(part.strip() for part in parts)
 
 
-def compose_instructions(language: Language) -> str:
-    """The agent-level system prompt of a run in *language*.
+def compose_instructions(language: Language, operator: str = "") -> str:
+    """The agent-level system prompt of a run in *language*, with the *operator*'s own instructions.
 
     Only the guidance tied to no tool at all belongs here; everything
     describing what a tool does or returns rides on the capability that owns
@@ -60,23 +60,25 @@ def compose_instructions(language: Language) -> str:
     with the day or the run, so the cached prefix stays: the date is a run
     note that appends its changes (``agents.context.DATE_NOTE``).  The
     language block comes last so the agent-level prompt ends on its pin.
+
+    >>> "Cite the handbook." in compose_instructions("en", "Cite the handbook.")
+    True
     """
     return _join_instructions(
         [
             BASE_INSTRUCTIONS[language],
             MATH_INSTRUCTIONS[language],
+            *([operator] if operator.strip() else []),
             LANGUAGE_INSTRUCTIONS[language],
         ]
     )
 
 
-def assistant_note(
-    name: str, author: Localized[str], instructions: str
-) -> Localized[str]:
-    """The block naming the assistant *name* the run acts as, with the *instructions* its *author* gave it."""
+def personal_instructions_note(instructions: str) -> Localized[str]:
+    """The block holding the *instructions* the user gave for every conversation."""
     return Localized(
-        en=f"You act as the assistant {name}, to which {author.en} gave these instructions:\n\n{instructions}",
-        de=f"Du arbeitest als Assistent {name}, dem {author.de} diese Anweisungen gegeben hat:\n\n{instructions}",
+        en=f"The user gave these instructions for all their conversations:\n\n{instructions}",
+        de=f"Die Benutzer:in hat diese Anweisungen für alle ihre Konversationen gegeben:\n\n{instructions}",
     )
 
 
@@ -96,9 +98,6 @@ class _ScopeText:
     relevant_heading: str
     hidden: str
     hidden_heading: str
-    allowed: str
-    allowed_heading: str
-    allowed_none: str
     live: str
 
 
@@ -119,15 +118,6 @@ _SCOPE_TEXT = Localized(
             "these will not be returned by any of them."
         ),
         hidden_heading="Hidden from this conversation:",
-        allowed=(
-            "The assistant of this conversation confines your document tools to "
-            "the paths below, whatever else this block says. No document outside "
-            "them is returned by any tool, and the tools over past conversations "
-            "and memory are withheld, so tell the user when an answer needs a "
-            "document beyond them."
-        ),
-        allowed_heading="Reachable in this conversation:",
-        allowed_none="- nothing",
         live=(
             "The user controls this selection live and may change it between "
             "turns, so it can differ from what was visible earlier in the "
@@ -153,16 +143,6 @@ _SCOPE_TEXT = Localized(
             "Tools zur Verfügung, aber diese gibt keines von ihnen zurück."
         ),
         hidden_heading="In dieser Konversation ausgeblendet:",
-        allowed=(
-            "Der Assistent dieser Konversation beschränkt deine Dokument-Tools auf "
-            "die folgenden Pfade, gleich was dieser Block sonst sagt. Kein Dokument "
-            "außerhalb davon gibt eines der Tools zurück, und die Tools für "
-            "frühere Konversationen und das Gedächtnis sind entzogen, sag der "
-            "Benutzer:in also Bescheid, wenn eine Antwort ein Dokument darüber "
-            "hinaus braucht."
-        ),
-        allowed_heading="In dieser Konversation erreichbar:",
-        allowed_none="- nichts",
         live=(
             "Die Benutzer:in steuert diese Auswahl live und kann sie zwischen "
             "zwei Runden ändern, sie kann also von dem abweichen, was früher in "
@@ -182,7 +162,6 @@ def format_document_scope(
     relevant: Mapping[str, str],
     hidden: frozenset[str],
     language: Language,
-    allowed: frozenset[str] | None = None,
 ) -> str:
     """Render the active document scope as a prompt block for the agent.
 
@@ -191,8 +170,7 @@ def format_document_scope(
     everyone), and they are not
     symmetric: *relevant* is what the user pointed the conversation at, which
     only this block enforces by telling the model where to start, while
-    *hidden* is what the document tools will not return at all.  *allowed*,
-    unless ``None``, is an assistant's allowlist, all the tools return.  A relevant
+    *hidden* is what the document tools will not return at all.  A relevant
     path maps to the hint that follows it in parentheses, empty for the
     ordinary document that needs none: a spreadsheet is selected under the
     markdown it was projected to, and this block is the first place the run
@@ -216,7 +194,7 @@ def format_document_scope(
     ... )
     True
     """
-    if not relevant and not hidden and allowed is None:
+    if not relevant and not hidden:
         return ""
 
     text = _SCOPE_TEXT[language]
@@ -238,14 +216,6 @@ def format_document_scope(
         lines.append("")
         lines.append(text.hidden_heading)
         lines.extend(f"- {path}" for path in sorted(hidden))
-
-    if allowed is not None:
-        if lines:
-            lines.append("")
-        lines.append(text.allowed)
-        lines.append("")
-        lines.append(text.allowed_heading)
-        lines.extend([f"- {path}" for path in sorted(allowed)] or [text.allowed_none])
 
     lines.append("")
     lines.append(text.live)

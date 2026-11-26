@@ -27,7 +27,7 @@ import { Route as DebugChatRouteImport } from './routes/debug.chat'
 import { Route as DebugToolsRouteImport } from './routes/debug.tools'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
-import { Route as SettingsAssistantsRouteImport } from './routes/settings.assistants'
+import { Route as SettingsInstructionsRouteImport } from './routes/settings.instructions'
 import { Route as SettingsProfileRouteImport } from './routes/settings.profile'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 
@@ -121,9 +121,9 @@ const SettingsAccountRoute = SettingsAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => SettingsRoute,
 } as any)
-const SettingsAssistantsRoute = SettingsAssistantsRouteImport.update({
-  id: '/assistants',
-  path: '/assistants',
+const SettingsInstructionsRoute = SettingsInstructionsRouteImport.update({
+  id: '/instructions',
+  path: '/instructions',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsProfileRoute = SettingsProfileRouteImport.update({
@@ -154,7 +154,7 @@ export interface FileRoutesByFullPath {
   '/debug/chat': typeof DebugChatRoute
   '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
-  '/settings/assistants': typeof SettingsAssistantsRoute
+  '/settings/instructions': typeof SettingsInstructionsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/admin/': typeof AdminIndexRoute
@@ -175,7 +175,7 @@ export interface FileRoutesByTo {
   '/debug/chat': typeof DebugChatRoute
   '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
-  '/settings/assistants': typeof SettingsAssistantsRoute
+  '/settings/instructions': typeof SettingsInstructionsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/admin': typeof AdminIndexRoute
@@ -199,7 +199,7 @@ export interface FileRoutesById {
   '/debug/chat': typeof DebugChatRoute
   '/debug/tools': typeof DebugToolsRoute
   '/settings/account': typeof SettingsAccountRoute
-  '/settings/assistants': typeof SettingsAssistantsRoute
+  '/settings/instructions': typeof SettingsInstructionsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/admin/': typeof AdminIndexRoute
@@ -224,7 +224,7 @@ export interface FileRouteTypes {
     | '/debug/chat'
     | '/debug/tools'
     | '/settings/account'
-    | '/settings/assistants'
+    | '/settings/instructions'
     | '/settings/profile'
     | '/settings/skills'
     | '/admin/'
@@ -245,7 +245,7 @@ export interface FileRouteTypes {
     | '/debug/chat'
     | '/debug/tools'
     | '/settings/account'
-    | '/settings/assistants'
+    | '/settings/instructions'
     | '/settings/profile'
     | '/settings/skills'
     | '/admin'
@@ -268,7 +268,7 @@ export interface FileRouteTypes {
     | '/debug/chat'
     | '/debug/tools'
     | '/settings/account'
-    | '/settings/assistants'
+    | '/settings/instructions'
     | '/settings/profile'
     | '/settings/skills'
     | '/admin/'
@@ -411,11 +411,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAccountRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/settings/assistants': {
-      id: '/settings/assistants'
-      path: '/assistants'
-      fullPath: '/settings/assistants'
-      preLoaderRoute: typeof SettingsAssistantsRouteImport
+    '/settings/instructions': {
+      id: '/settings/instructions'
+      path: '/instructions'
+      fullPath: '/settings/instructions'
+      preLoaderRoute: typeof SettingsInstructionsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/profile': {
@@ -475,7 +475,7 @@ const DebugRouteWithChildren = DebugRoute._addFileChildren(DebugRouteChildren)
 
 interface SettingsRouteChildren {
   SettingsAccountRoute: typeof SettingsAccountRoute
-  SettingsAssistantsRoute: typeof SettingsAssistantsRoute
+  SettingsInstructionsRoute: typeof SettingsInstructionsRoute
   SettingsProfileRoute: typeof SettingsProfileRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -483,7 +483,7 @@ interface SettingsRouteChildren {
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAccountRoute: SettingsAccountRoute,
-  SettingsAssistantsRoute: SettingsAssistantsRoute,
+  SettingsInstructionsRoute: SettingsInstructionsRoute,
   SettingsProfileRoute: SettingsProfileRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsIndexRoute: SettingsIndexRoute,

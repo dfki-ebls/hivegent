@@ -3,8 +3,8 @@ export const settings = {
   nav: {
     title: "Settings",
     profile: "Profile",
+    instructions: "Instructions",
     skills: "Skills",
-    assistants: "Assistants",
     account: "Account",
   },
   danger: {
@@ -39,43 +39,14 @@ export const settings = {
       description: "The skill and all its files are deleted for everyone who sees it.",
     },
   },
-  assistants: {
-    title: "Assistants",
+  instructions: {
+    title: "Instructions",
     description:
-      "Named instructions you pick in the chat, with the skills they load and the tools, mode, and documents they narrow the assistant to. The organisation's come from the operator, a group's are shared with its members.",
-    empty: "No assistants yet.",
-    create: "New Assistant",
-    edit: "Edit",
-    saved: "Saved the assistant {{name}}",
-    delete: {
-      label: "Delete",
-      title: "Delete the assistant {{name}}?",
-      description: "The assistant is deleted for everyone who sees it.",
-    },
-    form: {
-      createTitle: "New assistant",
-      editTitle: "Edit {{name}}",
-      description: "Everything but the instructions only narrows what a chat with it may do.",
-      name: "Name",
-      nameHint: "Lowercase letters, digits, and hyphens, such as support-team.",
-      summary: "Description",
-      instructions: "Instructions",
-      instructionsHint:
-        "Instructions from a group or your own reach the assistant as quoted content, never as rules that override the operator's.",
-      skills: "Skills to load",
-      disabledTools: "Tools to switch off",
-      maxMode: "Highest mode",
-      includedDocuments: "Documents to focus on",
-      excludedDocuments: "Documents to hide",
-      allowedDocuments: "Only these documents",
-      documentsHint: "Paths such as ~/handbook or @team/faq.md.",
-      allowedDocumentsHint: "Enforced while the assistant is selected, none for no restriction.",
-      directory: "Directory",
-      addPath: "Add path",
-      removePath: "Remove path",
-      save: "Save",
-      cancel: "Cancel",
-    },
+      "What the assistant keeps in mind in all your chats, such as your role, the language and tone you prefer, or how to format answers. Put what only some tasks need into a skill.",
+    label: "Your instructions",
+    hint: "They reach the assistant as your own words, never as rules that override the operator's.",
+    save: "Save",
+    saved: "Saved your instructions",
   },
   account: {
     title: "Account",
@@ -107,10 +78,6 @@ export const settings = {
         skills: {
           label: "Skills",
           description: "The files of your own skills.",
-        },
-        assistants: {
-          label: "Assistants",
-          description: "The definitions of your own assistants.",
         },
         preferences: {
           label: "Preferences",
@@ -146,7 +113,7 @@ export const settings = {
       resetEverything: {
         label: "Reset Everything",
         description:
-          "Permanently delete every server-side trace of your account (conversations, documents, memory, skills, assistants) and clear all local browser data. This action cannot be undone.",
+          "Permanently delete every server-side trace of your account (conversations, documents, memory, skills) and clear all local browser data. This action cannot be undone.",
       },
     },
   },

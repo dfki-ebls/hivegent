@@ -217,161 +217,6 @@
       "title": "AssetListResponse",
       "description": "Response for listing a document's assets."
     },
-    "AssistantInfo": {
-      "properties": {
-        "description": {
-          "type": "string",
-          "maxLength": 1024,
-          "title": "Description",
-          "default": ""
-        },
-        "instructions": {
-          "type": "string",
-          "maxLength": 20000,
-          "minLength": 1,
-          "title": "Instructions"
-        },
-        "skills": {
-          "items": {
-            "$ref": "#/components/schemas/LibraryRef"
-          },
-          "type": "array",
-          "title": "Skills",
-          "description": "The references of the skills it loads when a window starts"
-        },
-        "disabled_tools": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "title": "Disabled Tools",
-          "description": "The tools it withholds"
-        },
-        "included_documents": {
-          "items": {
-            "$ref": "#/components/schemas/FilterEntry"
-          },
-          "type": "array",
-          "title": "Included Documents"
-        },
-        "excluded_documents": {
-          "items": {
-            "$ref": "#/components/schemas/FilterEntry"
-          },
-          "type": "array",
-          "title": "Excluded Documents"
-        },
-        "allowed_documents": {
-          "items": {
-            "$ref": "#/components/schemas/FilterEntry"
-          },
-          "type": "array",
-          "title": "Allowed Documents",
-          "description": "The only paths a run with it reaches, none for no restriction"
-        },
-        "max_mode": {
-          "$ref": "#/components/schemas/Mode",
-          "description": "The mode a run with it may at most take",
-          "default": "write"
-        },
-        "name": {
-          "type": "string",
-          "title": "Name"
-        },
-        "ref": {
-          "type": "string",
-          "title": "Ref",
-          "description": "The reference a chat names it by, such as ~/name"
-        },
-        "scope": {
-          "type": "string",
-          "title": "Scope",
-          "description": "The prefix of the scope owning it: ~, @<group>, or /srv"
-        },
-        "writable": {
-          "type": "boolean",
-          "title": "Writable",
-          "description": "Whether the user may replace or delete it"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "instructions",
-        "name",
-        "ref",
-        "scope",
-        "writable"
-      ],
-      "title": "AssistantInfo",
-      "description": "An assistant a user sees."
-    },
-    "AssistantSpec": {
-      "properties": {
-        "description": {
-          "type": "string",
-          "maxLength": 1024,
-          "title": "Description",
-          "default": ""
-        },
-        "instructions": {
-          "type": "string",
-          "maxLength": 20000,
-          "minLength": 1,
-          "title": "Instructions"
-        },
-        "skills": {
-          "items": {
-            "$ref": "#/components/schemas/LibraryRef"
-          },
-          "type": "array",
-          "title": "Skills",
-          "description": "The references of the skills it loads when a window starts"
-        },
-        "disabled_tools": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "title": "Disabled Tools",
-          "description": "The tools it withholds"
-        },
-        "included_documents": {
-          "items": {
-            "$ref": "#/components/schemas/FilterEntry"
-          },
-          "type": "array",
-          "title": "Included Documents"
-        },
-        "excluded_documents": {
-          "items": {
-            "$ref": "#/components/schemas/FilterEntry"
-          },
-          "type": "array",
-          "title": "Excluded Documents"
-        },
-        "allowed_documents": {
-          "items": {
-            "$ref": "#/components/schemas/FilterEntry"
-          },
-          "type": "array",
-          "title": "Allowed Documents",
-          "description": "The only paths a run with it reaches, none for no restriction"
-        },
-        "max_mode": {
-          "$ref": "#/components/schemas/Mode",
-          "description": "The mode a run with it may at most take",
-          "default": "write"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "instructions"
-      ],
-      "title": "AssistantSpec",
-      "description": "What an assistant is, as its file holds it and a client writes it.\n\nEverything but its instructions only narrows a run: it withholds tools,\ncaps the mode, adds to the document selection, and confines the documents\na run reaches."
-    },
     "AttachmentLimits": {
       "properties": {
         "media_types": {
@@ -2359,7 +2204,6 @@
         "conversations",
         "memory",
         "skills",
-        "assistants",
         "preferences"
       ],
       "title": "ExportPart",
@@ -2473,26 +2317,6 @@
       ],
       "title": "FileUIPart",
       "description": "A file part of a message."
-    },
-    "FilterEntry": {
-      "properties": {
-        "path": {
-          "type": "string",
-          "title": "Path"
-        },
-        "directory": {
-          "type": "boolean",
-          "title": "Directory"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "path",
-        "directory"
-      ],
-      "title": "FilterEntry",
-      "description": "A document or a directory a selection names, by its path.\n\nA request names it by its canonical path, a bare scope root as a directory\nbeing the whole workspace, and a :class:`DocumentFilter` by its local path,\nthe empty one being the whole store."
     },
     "FrontendConfigResponse": {
       "properties": {
@@ -2805,10 +2629,7 @@
         },
         "kind": {
           "type": "string",
-          "enum": [
-            "skills",
-            "assistants"
-          ],
+          "const": "skills",
           "title": "Kind"
         }
       },
@@ -2818,9 +2639,6 @@
       ],
       "title": "LibraryChanged",
       "description": "Marks a change to a library the subscriber sees, whose list a client reads again."
-    },
-    "LibraryRef": {
-      "type": "string"
     },
     "McpIntegration": {
       "properties": {
@@ -3202,16 +3020,12 @@
     },
     "Preferences": {
       "properties": {
-        "assistant": {
-          "anyOf": [
-            {
-              "$ref": "#/components/schemas/LibraryRef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The reference of the assistant runs apply, such as ~/name, which only narrows the rest"
+        "instructions": {
+          "type": "string",
+          "maxLength": 20000,
+          "title": "Instructions",
+          "description": "The user's own instructions, which every run follows at their authority",
+          "default": ""
         },
         "mode": {
           "$ref": "#/components/schemas/Mode",
@@ -4299,36 +4113,6 @@
       ],
       "title": "ToolApprovalRespondedPart",
       "description": "Tool part in approval-responded state (user approved/denied, execution pending)."
-    },
-    "ToolInfo": {
-      "properties": {
-        "name": {
-          "type": "string",
-          "title": "Name"
-        },
-        "description": {
-          "type": "string",
-          "title": "Description"
-        },
-        "group": {
-          "type": "string",
-          "title": "Group"
-        },
-        "switchable": {
-          "type": "boolean",
-          "title": "Switchable",
-          "description": "Whether a list of withheld tools may name it.",
-          "default": true
-        }
-      },
-      "type": "object",
-      "required": [
-        "name",
-        "description",
-        "group"
-      ],
-      "title": "ToolInfo",
-      "description": "Metadata about an available agent tool, or a subagent the model delegates to."
     },
     "ToolInputAvailablePart": {
       "properties": {

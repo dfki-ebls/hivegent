@@ -12,7 +12,6 @@ from .capabilities import (
     check_tool_settings,
     collect_tool_schemas,
     invoke_agent_tool,
-    tool_infos,
 )
 from .common import RunPrefix, UserDeps
 from .debugger import debug_agent, report_agent
@@ -44,7 +43,6 @@ __all__ = [
     "retain_awaited_changes",
     "summary_agent",
     "title_agent",
-    "tool_infos",
     "turn_usage_limits",
     "web_toolset",
     "write_toolset",

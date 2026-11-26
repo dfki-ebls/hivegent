@@ -221,7 +221,5 @@ def conversation_tools(ctx: RunContext[UserDeps]) -> list[ToolFunc]:
     return [list_conversations, get_conversation, search_conversation]
 
 
-conversation_toolset = AgentTools(
-    factory=conversation_tools, people_only=True, derived=True
-)
+conversation_toolset = AgentTools(factory=conversation_tools, people_only=True)
 """The conversation tools, which act on one person's own data."""

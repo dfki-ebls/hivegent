@@ -35,12 +35,6 @@ FILTERS = (
     DocumentFilter(frozenset({doc("a.md")})),
     DocumentFilter(frozenset({doc("a.pdf"), doc("dirx/c.md")})),
     DocumentFilter(frozenset({folder("100%_done")})),
-    DocumentFilter(allowed=frozenset()),
-    DocumentFilter(allowed=frozenset({folder("")})),
-    DocumentFilter(allowed=frozenset({folder("dir"), doc("a.md")})),
-    DocumentFilter(
-        frozenset({doc("dir/b.md")}), frozenset({folder("dir"), folder("100%_done")})
-    ),
 )
 
 

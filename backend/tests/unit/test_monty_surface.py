@@ -174,12 +174,13 @@ class TestHostFunction:
 
 
 class TestGate:
-    def test_a_disabled_tool_is_not_injected(self, deps: UserDeps) -> None:
+    def test_a_disabled_tool_is_not_injected(
+        self, deps: UserDeps, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         assert "query_table" in sandbox_surface(run_context(deps)).functions
 
-        withheld = sandbox_surface(
-            run_context(replace(deps, disabled_tools=frozenset({"query_table"})))
-        )
+        monkeypatch.setattr(settings.tools, "disabled", ["query_table"])
+        withheld = sandbox_surface(run_context(deps))
 
         assert "query_table" not in withheld.functions
         assert "query_table" not in withheld.stubs
@@ -300,14 +301,6 @@ class TestPlacement:
         assert deps.policy(tool_action("query_table", "read")) == "deny"
         assert "query_table" not in sandbox_surface(run_context(deps)).functions
 
-    def test_the_request_withholds_a_tool_from_the_sandbox_too(
-        self, deps: UserDeps
-    ) -> None:
-        withheld = replace(deps, disabled_tools=frozenset({"query_table"}))
-
-        assert "query_table" not in sandbox_surface(run_context(withheld)).functions
-        assert withheld.policy(tool_action("query_table", "read")) == "deny"
-
     def test_a_tool_the_sandbox_cannot_take_fails_the_boot(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -383,7 +376,9 @@ class TestComplete:
     def models(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "llm", catalog())
 
-    def test_is_declared_and_withheld_by_name(self, deps: UserDeps) -> None:
+    def test_is_declared_and_withheld_by_name(
+        self, deps: UserDeps, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         declared = sandbox_instructions(run_context(deps))
 
         assert "async def complete(" in declared
@@ -391,7 +386,8 @@ class TestComplete:
         assert "Use `complete` to classify" in declared
         assert "complete" in sandbox_surface(run_context(deps)).functions
 
-        withheld = run_context(replace(deps, disabled_tools=frozenset({"complete"})))
+        monkeypatch.setattr(settings.tools, "disabled", ["complete"])
+        withheld = run_context(deps)
 
         assert "complete" not in sandbox_surface(withheld).functions
         assert "`complete`" not in sandbox_instructions(withheld)

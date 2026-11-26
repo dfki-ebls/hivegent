@@ -165,7 +165,7 @@ def memory_tools(ctx: RunContext[UserDeps]) -> list[ToolFunc | Hooked]:
     return [read_memory, Hooked(write_memory, args_validator=validate_memory_write)]
 
 
-memory_toolset = AgentTools(factory=memory_tools, people_only=True, derived=True)
+memory_toolset = AgentTools(factory=memory_tools, people_only=True)
 """The memory tools, which act on one person's own data."""
 
 

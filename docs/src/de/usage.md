@@ -98,7 +98,8 @@ Eine Trennlinie markiert, wo die Zusammenfassung beginnt, und zeigt sie beim Öf
 - Denkaufwand: Niedrig, Mittel (Standard) oder Hoch, ein Abwägen von Tiefe gegen Geschwindigkeit und Kosten.
 - Modus: Interaktiv fragt vor jeder Änderung im Arbeitsbereich, Schreiben ändert jeden Arbeitsbereich, den Sie beschreiben dürfen, ohne Rückfrage, und Lesen erlaubt keine Änderungen.
   Änderungen an Skills und am Gedächtnis fragen immer nach, in jedem Modus, da sie spätere Konversationen prägen.
-- Assistent: Gibt es Assistenten, wählen Sie einen im Eingabefeld (siehe unten).
+- Anweisungen: Ihre eigenen dauerhaften Anweisungen für jede Unterhaltung, etwa ein Ton oder eine Hausregel, unter Einstellungen, Anweisungen.
+  Sie erreichen den Assistenten als Ihre eigenen Worte und können seine Regeln nicht außer Kraft setzen.
 
 ## Gedächtnis
 
@@ -113,23 +114,13 @@ Der Assistent sieht Namen und Beschreibung jedes Skills, den Sie nutzen können,
 Beginnen Sie eine Nachricht mit `/<name>`, damit der Assistent diesen Skill zuerst lädt, das Eingabefeld schlägt beim Tippen passende Skills vor.
 Skills verschiedener Bereiche dürfen denselben Namen tragen, ein solcher Skill wird deshalb über seinen Verweis aufgerufen, etwa `/~/<name>`, `/@<gruppe>/<name>` oder `/srv/<name>`, den die Vorschläge einfügen.
 Der Text nach dem Befehl ersetzt jedes `$ARGUMENTS` in den Anweisungen des Skills, sodass `/review src/app.py` einem Skill, der `$ARGUMENTS` prüft, `src/app.py` übergibt.
-Das Frontmatter eines Skills kann `disable-model-invocation: true` enthalten, sodass nur Sie und Assistenten ihn laden, nie der Assistent von sich aus, oder `user-invocable: false`, sodass er nicht als Befehl angeboten wird und der Assistent ihn lädt, wenn eine Aufgabe passt.
+Das Frontmatter eines Skills kann `disable-model-invocation: true` enthalten, sodass nur Sie ihn laden, nie der Assistent von sich aus, oder `user-invocable: false`, sodass er nicht als Befehl angeboten wird und der Assistent ihn lädt, wenn eine Aufgabe passt.
 Jeder Wert im Frontmatter wird so gelesen, wie er dasteht, sodass `version: 1.0` Text bleibt, und ein doppelter Schlüssel macht den Skill ungültig.
 Einstellungen, Skills listet die Skills der Organisation, Ihrer Gruppen und Ihre eigenen, öffnet die `SKILL.md` jedes Skills und zeigt, warum ein Skill nicht nutzbar ist.
 Laden Sie einen Skill-Ordner oder sein ZIP-Archiv zu Ihren eigenen Skills oder zu einer Gruppe hoch, in die Sie schreiben dürfen, wo er einen gleichnamigen Skill ersetzt, und löschen Sie ihn dort.
 Der Assistent kann auf Ihren Wunsch auch selbst einen Skill schreiben und fragt vor jeder Änderung nach, in jedem Modus.
 Skripte eines Skills laufen in der Python-Sandbox, wenn sie eine Funktion `main` definieren, andere bleiben zum Lesen.
 Ein geladener Skill bleibt geladen, wenn eine lange Unterhaltung zusammengefasst wird.
-
-## Assistenten
-
-Ein Assistent ist ein benannter Satz von Anweisungen für eine wiederkehrende Art von Arbeit, etwa Antworten aus dem Personalhandbuch.
-Er kann auch Skills laden, Tools ausschalten, den höchsten Modus senken und Dokumente in den Fokus nehmen oder ausblenden, erlaubt aber nie mehr, als Sie ohne ihn dürften.
-Er kann außerdem die einzigen Dokumente und Ordner nennen, die ein Chat mit ihm erreicht, was anders als Ihre eigene Auswahl im Dateibrowser verbindlich ist.
-Wählen Sie einen im Eingabefeld, das die Auswahl nur zeigt, wenn es Assistenten gibt.
-Einstellungen, Assistenten listet die Assistenten der Organisation, Ihrer Gruppen und Ihre eigenen und legt Ihre eigenen und die von Gruppen, in die Sie schreiben dürfen, an, bearbeitet und löscht sie.
-Die Auswahl nennt jeden Assistenten mit Bereich und Namen, etwa `~/recht` oder `@team/recht`, sodass der einer Gruppe nie an die Stelle Ihres eigenen tritt.
-Die Assistenten der Organisation sprechen mit der Autorität des Betriebs, die Anweisungen Ihrer eigenen oder der einer Gruppe erreichen den Assistenten dagegen als zitierter Inhalt, der seine Regeln nicht außer Kraft setzen kann.
 
 ## Über die Weboberfläche hinaus
 

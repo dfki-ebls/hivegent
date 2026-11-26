@@ -7,7 +7,6 @@ import { errorMessage } from "@/lib/utils";
 /** The first segment of every query and mutation key, so a stray key fails to type-check. */
 type KeyScope =
   | "admin"
-  | "assistants"
   | "case-bases"
   | "conversations"
   | "debug"
