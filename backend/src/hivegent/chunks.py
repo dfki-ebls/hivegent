@@ -129,3 +129,10 @@ async def chunk_and_index_document(
             fingerprint=chunker_fingerprint(pipeline),
         )
         span.set_attribute("chunk_count", len(ingested.chunks))
+
+    logger.info(
+        "Indexed %s/%s into %d chunks",
+        store.store_key,
+        filename,
+        len(ingested.chunks),
+    )

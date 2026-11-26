@@ -116,6 +116,9 @@ let
     # Third-party caches stay in the container, off the backed-up volume.
     XDG_CACHE_HOME = cacheDir;
     PYTHONUNBUFFERED = "1";
+    # Hugging Face downloads and transformers' weight loading draw tqdm bars,
+    # whose carriage returns a log shows as raw redraws.
+    HF_HUB_DISABLE_PROGRESS_BARS = "1";
     HIVEGENT_DATA_DIR = dataDir;
     HIVEGENT_CONFIG_FILE = "${dataDir}/config.toml";
     HIVEGENT_SECURITY__EGRESS_PROXY_URL = egressProxy.url;

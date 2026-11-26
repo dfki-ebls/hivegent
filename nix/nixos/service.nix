@@ -39,6 +39,9 @@ let
     # Third-party caches stay off the backed-up state directory.
     XDG_CACHE_HOME = "/var/cache/hivegent";
     PYTHONUNBUFFERED = "1";
+    # Hugging Face downloads and transformers' weight loading draw tqdm bars,
+    # whose carriage returns journald shows as blob data.
+    HF_HUB_DISABLE_PROGRESS_BARS = "1";
     HIVEGENT_CONFIG_FILE = "${configFile}";
   }
   // lib.optionalAttrs (cfg.allowedAddresses != null) {
