@@ -5215,7 +5215,6 @@
     "message_task",
     "move_documents",
     "query_table",
-    "read_assistant",
     "read_binary_document",
     "read_document",
     "read_memory",

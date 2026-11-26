@@ -6,17 +6,16 @@ import pytest
 from fastapi import HTTPException
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
-    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from hivegent.agents.common import UserDeps
-from hivegent.agents.context import ASSISTANT_INSTRUCTIONS
-from hivegent.agents.tools.assistant import ASSISTANT_NOTE, assistant_toolset
+from hivegent.agents.context import assistant_instructions
 from hivegent.assistants import (
     delete_assistant,
     resolve_assistant,
@@ -80,33 +79,29 @@ def _reply(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(content="ok")])
 
 
-@pytest.mark.parametrize(("prefix", "fenced"), [("~", True), ("/srv", False)])
-async def test_only_the_operators_instructions_are_instructions(
-    operator_assistants: Path, prefix: str, fenced: bool
+@pytest.mark.parametrize(
+    ("ref", "authority"), [("~/mine", "user"), ("/srv/hr", "operator")]
+)
+async def test_an_assistants_instructions_carry_its_authors_authority(
+    operator_assistants: Path, ref: str, authority: str
 ) -> None:
-    """A user's assistant is a tool result, the operator's joins the instructions."""
-    if prefix == "~":
-        await save_assistant(USER, "~", "mine", AssistantSpec(instructions="Rhyme."))
-
-    assistant = await resolve_assistant(USER, "~/mine" if fenced else "/srv/hr")
-    agent = Agent(deps_type=UserDeps, toolsets=[assistant_toolset.toolset()])
-    result = await agent.run(
+    """A user's assistant reaches the model as the user's, the operator's joins the instructions."""
+    await save_assistant(USER, "~", "mine", AssistantSpec(instructions="Rhyme."))
+    assistant = await resolve_assistant(USER, ref)
+    deps = UserDeps(user=USER, mode="interactive", assistant=assistant)
+    result = await Agent(deps_type=UserDeps).run(
         "hi",
         model=FunctionModel(_reply),
-        deps=UserDeps(user=USER, mode="interactive", assistant=assistant),
-        capabilities=[ASSISTANT_NOTE, ASSISTANT_INSTRUCTIONS],
+        deps=deps,
+        capabilities=[assistant_instructions(deps)],
     )
-    reads = [
-        part.content
-        for message in result.all_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    ]
-    instructions = "\n".join(
-        message.instructions or ""
-        for message in result.all_messages()
-        if isinstance(message, ModelRequest)
-    )
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    lowered = [part for part in request.parts if isinstance(part, InstructionDeltaPart)]
 
-    assert (len(reads) == 1 and "Rhyme." in str(reads[0])) == fenced
-    assert ("Answer from the handbook." in instructions) == (not fenced)
+    assert [part.authority for part in lowered] == (
+        [] if authority == "operator" else ["user"]
+    )
+    assert ("Answer from the handbook." in (request.instructions or "")) == (
+        authority == "operator"
+    )

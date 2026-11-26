@@ -5,7 +5,6 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 import pytest
-from exar.pydantic_ai import definition_action
 from pydantic_ai import FunctionToolset
 from pydantic_ai.agent import AgentInstructions
 from pydantic_ai.capabilities import Capability
@@ -250,17 +249,6 @@ async def test_an_excluded_tool_offers_the_user_no_switch(
 
     assert "query_table" in {tool.name for tool in collect_tool_schemas()}
     assert "query_table" not in {tool.name for tool in await list_tools(User(id="u"))}
-
-
-async def test_an_internal_tool_is_listed_but_never_switchable() -> None:
-    """The host reports the assistant through it, so no list may withhold it."""
-    listed = {tool.name: tool for tool in await list_tools(User(id="u"))}
-    assistant = next(feature for feature in FEATURES if feature.id == "assistant")
-    (tool_def,) = assistant.tool_defs
-
-    assert not listed["read_assistant"].switchable
-    assert capabilities.unknown_tool_names(["read_assistant"]) == ["read_assistant"]
-    assert _deps(["read_assistant"]).policy(definition_action(tool_def)) == "allow"
 
 
 def test_a_misspelled_exclusion_is_a_startup_error(

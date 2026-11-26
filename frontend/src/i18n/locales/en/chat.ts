@@ -227,7 +227,6 @@ export const chat = {
       message_task: "Message Task",
       move_documents: "Move Documents",
       query_table: "Query Tables",
-      read_assistant: "Read Assistant",
       read_binary_document: "Read Binary Files",
       read_document: "Read Documents",
       read_memory: "Read Memory",

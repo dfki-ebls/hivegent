@@ -17,6 +17,7 @@ from .shared.l10n import Localized
 from .shared.skills import valid_skill_name
 from .store import (
     AccessDenied,
+    GlobalScope,
     GroupScope,
     Scope,
     User,
@@ -33,6 +34,7 @@ __all__ = [
     "library_ref",
     "library_scopes",
     "resolve_ref",
+    "scope_author",
     "split_library_ref",
     "visible",
     "writable_library",
@@ -77,6 +79,23 @@ def library_ref(item: Scoped) -> str:
     '~/legal'
     """
     return item.scope.render(item.name)
+
+
+def scope_author(scope: Scope) -> Localized[str]:
+    """Who writes the items of *scope*, as the model is told.
+
+    >>> scope_author(GroupScope("team")).en
+    'the group @team'
+    """
+    match scope:
+        case GlobalScope():
+            return Localized(en="the operator", de="der Betrieb")
+
+        case GroupScope(id=group_id):
+            return Localized(en=f"the group @{group_id}", de=f"die Gruppe @{group_id}")
+
+        case UserScope():
+            return Localized(en="the user", de="die Benutzer:in")
 
 
 def split_library_ref(ref: str) -> tuple[str, str]:

@@ -80,23 +80,21 @@ from .app import turn_usage_limits
 from .approval import ApprovalNotes
 from .common import AgentTools, UserDeps, run_context, static_tools
 from .context import (
-    ASSISTANT_INSTRUCTIONS,
     DATE_NOTE,
     DOCUMENT_SCOPE,
     MODE_NOTE,
+    assistant_instructions,
 )
 from .guards import HOST_GATE, SPILL_TOOLS
 from .integrations import is_integration_tool
 from .policy import host_policy, listed
 from .subagents import DELEGATION_TOOLS, SUBAGENTS
 from .tools import (
-    ASSISTANT_NOTE,
     INJECTABLE_TOOL_NAMES,
     MEMORY_NOTE,
     SANDBOX_FUNCTION_NAMES,
     SKILLS_NOTE,
     ask_toolset,
-    assistant_toolset,
     cases_toolset,
     conversation_toolset,
     explore_toolset,
@@ -110,7 +108,6 @@ from .tools import (
 
 __all__ = [
     "FEATURES",
-    "INTERNAL_TOOL_NAMES",
     "KNOWN_TOOL_NAMES",
     "PLUGIN_FEATURE_IDS",
     "SHARED_INSTRUCTIONS",
@@ -139,9 +136,7 @@ class Feature:
     ``tool_defs`` are resolved once from the tools, so the per-request
     offering check needs no build, and ``modes`` from what they declare:
     a mode the host policy denies any of them withholds the feature, so no
-    instruction ever explains a tool the mode took away.  An internal
-    feature (``AgentTools.internal``) serves the host rather than the user:
-    it is offered whatever a tool list withholds, and no list names its tools.
+    instruction ever explains a tool the mode took away.
     """
 
     id: str
@@ -246,7 +241,6 @@ _BUILT_IN: tuple[Feature, ...] = (
         instructions=[SKILLS_INSTRUCTIONS],
         extras=[SKILLS_NOTE],
     ),
-    Feature.build("assistant", assistant_toolset, extras=[ASSISTANT_NOTE]),
     Feature.build("web", web_toolset),
     Feature.build("conversation", conversation_toolset),
     Feature.build("ask", ask_toolset),
@@ -307,14 +301,6 @@ TOOL_NAMES = frozenset(
     )
 )
 """Every agent tool any feature registers, none of them twice."""
-
-INTERNAL_TOOL_NAMES = frozenset(
-    name
-    for feature in FEATURES
-    if feature.tools.internal
-    for name in feature.tool_names
-)
-"""The tools of the internal features, always offered and never listed or switchable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,7 +398,7 @@ def build_capabilities(
     )
     result.extend(extra)
     result.extend(note for feature in features for note in feature.extras)
-    result.extend([DATE_NOTE, MODE_NOTE, ASSISTANT_INSTRUCTIONS])
+    result.extend([DATE_NOTE, MODE_NOTE, assistant_instructions(deps)])
 
     # Cross-cutting run-loop safeguards, applied to every run regardless of mode.
     # The output spill rides on the agents (`agents/app.py`).
@@ -427,10 +413,7 @@ _DELEGATION_NAMES = (
 )
 
 KNOWN_TOOL_NAMES = (
-    (TOOL_NAMES - INTERNAL_TOOL_NAMES)
-    | SANDBOX_FUNCTION_NAMES
-    | _DELEGATION_NAMES
-    | _SUBAGENT_NAMES
+    TOOL_NAMES | SANDBOX_FUNCTION_NAMES | _DELEGATION_NAMES | _SUBAGENT_NAMES
 )
 """Every name a list of withheld tools may hold.
 
@@ -466,7 +449,7 @@ def check_tool_settings() -> None:
     ``disabled`` may also name a function only a program is handed, such as
     ``complete``, which withholds it like any tool.
 
-    The id of an external server, database, or API must prefix no built-in tool, the internal ones,
+    The id of an external server, database, or API must prefix no built-in tool,
     the harness's reader of saved results, and the delegation tools
     included, whether or not subagents are enabled, or one of its tools could take that tool's name.
 
@@ -478,12 +461,7 @@ def check_tool_settings() -> None:
             sandbox can be given, or a server, database, or API id prefixes a built-in tool, or
             an operator's assistant is invalid.
     """
-    taken = (
-        KNOWN_TOOL_NAMES
-        | INTERNAL_TOOL_NAMES
-        | DELEGATION_TOOLS.keys()
-        | SPILL_TOOLS.keys()
-    )
+    taken = KNOWN_TOOL_NAMES | DELEGATION_TOOLS.keys() | SPILL_TOOLS.keys()
 
     if clashes := sorted(name for name in taken if is_integration_tool(name)):
         raise ValueError(

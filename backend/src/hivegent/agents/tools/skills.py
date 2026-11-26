@@ -48,9 +48,9 @@ from ...db.conversations import (
     prompt_items,
     prompt_text,
 )
+from ...libraries import scope_author
 from ...shared.skills import SKILL_FILE
 from ...skills import Skill, catalog, resolve_skill
-from ...store import GlobalScope, GroupScope, Scope, UserScope
 from ...tools.base import ToolFunc
 from ...tools.python import is_python_script
 from ..common import AgentTools, UserDeps
@@ -86,25 +86,13 @@ _ARGUMENTS = re.compile(r"\$ARGUMENTS(?![\[\w])")
 """``$ARGUMENTS`` itself, not an indexed ``$ARGUMENTS[0]`` or a longer name such as ``$ARGUMENTS_LIST``."""
 
 
-def _origin(scope: Scope) -> str:
-    match scope:
-        case GlobalScope():
-            return "the operator"
-
-        case GroupScope(id=group_id):
-            return f"the group @{group_id}"
-
-        case UserScope():
-            return "the user"
-
-
 def render_catalog(skills: Sequence[Skill]) -> str:
     """List *skills* by reference, path, and description, as the model reads the catalog."""
     if not skills:
         return _NO_SKILLS
 
     lines = [
-        f"- {skill.ref} ({skill.path}, by {_origin(skill.scope)}): "
+        f"- {skill.ref} ({skill.path}, by {scope_author(skill.scope).en}): "
         f"{skill.document.manifest.description}"
         for skill in skills
         if skill.document is not None
@@ -171,7 +159,7 @@ async def _render_skill(skill: Skill, arguments: str | None = None) -> str:
     if len(files) > _MAX_FILES:
         lines.append(f"- and {len(files) - _MAX_FILES} more files")
 
-    header = f"Skill {skill.ref} by {_origin(skill.scope)}, in {skill.path}:"
+    header = f"Skill {skill.ref} by {scope_author(skill.scope).en}, in {skill.path}:"
     listing = (
         "\n".join([f"Its files, by their path in {skill.path}:", *lines])
         if lines

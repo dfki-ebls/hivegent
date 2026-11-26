@@ -70,11 +70,13 @@ def compose_instructions(language: Language) -> str:
     )
 
 
-def assistant_note(name: str, instructions: str) -> Localized[str]:
-    """The block naming the operator's assistant *name* the run acts as, with its *instructions*."""
+def assistant_note(
+    name: str, author: Localized[str], instructions: str
+) -> Localized[str]:
+    """The block naming the assistant *name* the run acts as, with the *instructions* its *author* gave it."""
     return Localized(
-        en=f"You act as the assistant {name}, to which the operator gave these instructions:\n\n{instructions}",
-        de=f"Du arbeitest als Assistent {name}, dem der Betrieb diese Anweisungen gegeben hat:\n\n{instructions}",
+        en=f"You act as the assistant {name}, to which {author.en} gave these instructions:\n\n{instructions}",
+        de=f"Du arbeitest als Assistent {name}, dem {author.de} diese Anweisungen gegeben hat:\n\n{instructions}",
     )
 
 

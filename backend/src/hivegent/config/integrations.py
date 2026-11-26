@@ -191,7 +191,8 @@ class McpServerSettings(Section):
     select the tools offered by their names on the server.  ``effects``
     declares what tools may do by these names, else the hints a ``trusted``
     server announces decide it, while every other tool of an untrusted one is
-    treated as ``execute``.  ``timeout_seconds`` bounds connecting and every
+    treated as ``execute``, and its instructions never reach the model.
+    ``timeout_seconds`` bounds connecting and every
     request, and the tool list is asked for again every ``refresh_seconds``.
     """
 

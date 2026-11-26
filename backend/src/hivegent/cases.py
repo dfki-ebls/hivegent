@@ -20,7 +20,7 @@ from exar.pydantic_ai import PydanticAiAgent
 from pydantic_ai import Agent
 
 from .config import settings
-from .llm import model_from_config, thinking_model_settings
+from .llm import MODEL_RETRIES, model_from_config, thinking_model_settings
 from .llm_config import LlmConfig, turn_llm
 from .retrieval import embedding_func
 from .tools.cases import EMBEDDER, LANGUAGE_MODEL, Bindings, CaseBaseCache
@@ -40,7 +40,9 @@ class _CaseModel:
     async def __call__[T](
         self, prompts: Sequence[str], response_type: type[T], /
     ) -> Sequence[T]:
-        case_agent = Agent(name="case-base", output_type=response_type)
+        case_agent = Agent(
+            name="case-base", output_type=response_type, capabilities=[MODEL_RETRIES]
+        )
         model = model_from_config(self.config)
         model_settings = thinking_model_settings(self.config)
         agent = PydanticAiAgent[str, T](

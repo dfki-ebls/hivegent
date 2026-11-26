@@ -532,7 +532,7 @@ The window stays, since only an adapter that honors compaction boundaries drops 
 The instructions and tool schemas precede the whole history, so anything rendered into them that changes during a conversation has the provider reread all of it.
 The date, the mode, and the document scope (`agents/context.py`) are therefore `on_change='append'` instructions, and nothing else of the instructions changes with the day or the request beyond the language: the first value stays in the prefix, and pydantic-ai appends each later change to the history as an `InstructionDeltaPart`, persisted with the turn, so a change only extends the cached prefix.
 The UI adapter leaves these changes out of the messages the frontend receives.
-Instructions carry operator authority, so only state the application controls goes there, a fixed mode note and the paths the user selected.
+Instructions carry operator authority, so only state the application controls goes there, a fixed mode note and the paths the user selected, while the instructions of an assistant the operator did not write are lowered to the user's authority (see Assistants).
 The modes that may write compose the same instructions and tools and differ only in their mode note, while read mode drops the write features and starts a new prefix.
 The chat templates of the self-hosted runtimes reject a `system` message after the first user turn, so the self-hosted profile turns `supports_inline_system_prompts` off and a change goes out as `<system>`-tagged user text.
 Both change only between turns, so that text joins the user's prompt: a user message in the middle of a turn is what Qwen's template takes for a new query, rendering the steps before it without their reasoning, which voids the cache.
@@ -700,10 +700,12 @@ A group's and a user's are `data/assistants/<owner>/<name>.json`, written only b
 `GET /api/v1/assistants` lists them user, groups, global, each with its reference, and a name is unique only within its scope, as a skill's is.
 A user's reset and `hivegent reset {user,group}` remove the owner's assistants, and `hivegent reset factory` all of them.
 
-### Only the operator's instructions are instructions
+### Instructions carry their author's authority
 
-The operator's assistant joins the run's instructions as `ASSISTANT_NOTE`, an appending instruction like the mode note.
-A group's or a user's assistant was written by people the operator did not vet, so its instructions reach the model only as the result of `read_assistant`, fenced and attributed to its author like every result, which `ASSISTANT_NOTE` reports wherever the window shows another selection, appending to the history so the cached prefix stays.
+The assistant's instructions are one capability of the run (`agents.context.assistant_instructions`), an appending instruction like the mode note, which names the assistant's author.
+The operator's carry operator authority and join the run's instructions.
+A group's or a user's was written by people the operator did not vet, but the user chose to run with it, so the capability is lowered to the user's authority (`Assistant.authority`), and pydantic-ai sends its instructions framed in the user's turn, attributed to the user, and never in the system prompt.
+The capability keeps one id whatever the assistant, so switching or dropping it appends a withdrawal of the earlier instructions, and the cached prefix stays.
 
 ## Case bases
 
@@ -884,7 +886,7 @@ A tool is a plain typed async function with the conventions of `exar.tools`: a f
 Generic wording, the descriptions of arguments and the rendering of results, is exar's default and is never repeated here, so the tools that follow migrate the same way.
 It returns a pydantic-ai `ToolReturn[T]` (`exar.tools.batch.tool_return`), whose `return_value` is the compact text the model reads, with any files after it, and whose `metadata` is the typed data a program and the client receive, so the two channels need no envelope of their own and no adapter.
 `T` names that data, which pydantic-ai publishes as the return schema the sandbox declares, and `agents.guards.ConversationSpill` wraps it into the `data-tool-output` chunk stamped with the call's id (`agents.output.with_data_chunk`).
-`agents.common.AgentTools` builds a feature's tools per run from the run's deps and serves them through `exar.pydantic_ai.toolset` with their effects as metadata, which `HOST_GATE` holds to `host_policy`, installing the per-call hooks a tool declares by wrapping it in `Hooked` (an argument validator, a `prepare` hook) and the typed `ToolFlags` of the host (gateway, people-only, derived, internal, seeing) as one metadata entry that `host_policy` and the guards read back with `flags_of`, while `static_tools` lists their definitions once, as a probe principal (`auth.PROBE`) in `write` mode is offered them, so nothing built for listing can be called.
+`agents.common.AgentTools` builds a feature's tools per run from the run's deps and serves them through `exar.pydantic_ai.toolset` with their effects as metadata, which `HOST_GATE` holds to `host_policy`, installing the per-call hooks a tool declares by wrapping it in `Hooked` (an argument validator, a `prepare` hook) and the typed `ToolFlags` of the host (gateway, people-only, derived, seeing) as one metadata entry that `host_policy` and the guards read back with `flags_of`, while `static_tools` lists their definitions once, as a probe principal (`auth.PROBE`) in `write` mode is offered them, so nothing built for listing can be called.
 `AgentTools.build` builds a run's tools for every surface, the agents and their subagents, the sandbox, MCP, and the debug console, and `HOST_GATE` holds them to the run's policy (`UserDeps.policy`).
 The app's MCP endpoint serves the same tools through `mcp.adapter`.
 `tools/__init__.py` re-exports nothing, so importing the layout loads no tool.
@@ -1052,7 +1054,6 @@ Offering is decided by the deps alone, `UserDeps.policy` (the `host_policy` of t
 `HOST_GATE` applies it to every agent's tools, `OFFERED_TOOLS` hides the `sandbox_only` ones from the model, and `listed` does so for MCP, so the main agent, every subagent, the extra toolsets, the sandbox, MCP, and the debug console hold to one rule, and `build_capabilities` drops a feature none of whose tools is offered, with its instruction block.
 The lists also take the delegation tools and the subagent names: withholding `delegate_task` drops `SubAgents`, and a subagent is dropped when its name or every one of its tools is withheld.
 Both lists are held to `capabilities.KNOWN_TOOL_NAMES`, the operator's at startup and a request's with a 422 problem, since a misspelt name withholds nothing.
-An internal toolset (`AgentTools.internal`), such as `assistant`'s, serves the host, so no list withholds it and its tools are listed by `GET /tools` without a switch.
 `GET /tools` lists `capabilities.tool_infos`, the canonical catalog of every name a chat model may call, the feature tools, the delegation tools and subagents in the group `subagents`, and the readers of saved results (`guards.SPILL_TOOLS`), each marked `switchable` when a list takes it.
 It defaults to empty, and `check_tool_settings` refuses an entry that matches nothing at startup.
 `query_hint` keys its pointer to `query_table` on the entry rather than the requested path, since an uploaded table is served as its `<stem>.md`.

@@ -6,13 +6,12 @@ in this file rather than at each call site.
 """
 
 from collections.abc import Sequence
-from typing import Any
 
 from exar.pydantic_ai import DeclaredEffects
 from exar.pydantic_ai.compaction import CompactionWindow
 from exar.pydantic_ai.guards import LenientArguments
 from pydantic_ai import Agent, DeferredToolRequests
-from pydantic_ai.capabilities import AbstractCapability, RetryOnModelErrors
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -23,6 +22,7 @@ from pydantic_ai_harness import (
 )
 
 from ..config import settings
+from ..llm import MODEL_RETRIES
 from .common import UserDeps
 from .guards import (
     HOST_GATE,
@@ -55,10 +55,10 @@ default_model_settings = ModelSettings(
 # Carried by the agents rather than composed per run: a run-level
 # ``capabilities`` argument adds to these rather than replacing them, so every
 # run is guarded, including the subagent and MCP ones that compose their own.
-# `RetryOnModelErrors` retries a transient model error in place of the SDK's
-# own retries, waiting as long as the endpoint asks.
+# `MODEL_RETRIES` retries a transient or empty model reply in place of the
+# SDK's own retries, waiting as long as the endpoint asks.
 guards = [
-    RetryOnModelErrors[Any](),
+    MODEL_RETRIES,
     EnglishToolCalls(),
     INCOMPLETE_TOOL_CALLS,
     PROMPT_IMAGE_LIMIT,

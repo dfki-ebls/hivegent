@@ -472,7 +472,6 @@ class AgentTools:
             service principal is never offered.
         derived: Whether the tools return stored text derived from content
             beyond the workspaces, which a confined run is never offered.
-        internal: Whether the tools serve the host, so no list withholds them.
         seeing: The names of the tools whose result is only of use to a model that sees images.
         timeout: The bound of each call, which pydantic-ai applies only to the
             tools an agent registers itself unless a toolset states it.  A tool
@@ -483,7 +482,6 @@ class AgentTools:
     gateway: bool = False
     people_only: bool = False
     derived: bool = False
-    internal: bool = False
     seeing: frozenset[str] = frozenset()
     timeout: float | None = field(
         default_factory=lambda: settings.llm.tool_timeout_seconds
@@ -518,7 +516,6 @@ class AgentTools:
                 gateway=self.gateway,
                 people_only=self.people_only,
                 derived=self.derived,
-                internal=self.internal,
                 seeing=name in self.seeing,
             )
             tool.metadata = {**(tool.metadata or {}), HOST_FLAGS: asdict(flags)}

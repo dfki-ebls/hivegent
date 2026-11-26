@@ -126,6 +126,10 @@ explicit = true
 [tool.uv.exclude-newer-package]
 cbrkit = false
 exar = false
+pydantic-ai-slim = "12 hours"
+pydantic-ai-harness = "12 hours"
+pydantic-graph = "12 hours"
+pydantic-evals = "12 hours"
 
 [tool.uv.extra-build-dependencies]
 antlr4-python3-runtime = ["setuptools"]

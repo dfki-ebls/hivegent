@@ -93,7 +93,7 @@ flowchart LR
   The host loads a skill the same way for a prompt that starts with `/<reference>`, or `/<name>` while no other skill the user sees has that name, for the run's assistant, and again after a compaction for every skill the window before it had loaded.
 - Assistants belong to a scope too (`assistants.py`): the global ones are `<name>.json` files in the operator's `assistants.dir`, a group's and a user's are `data/assistants/<owner>/<name>.json`, written only over REST, a group's only with its write grant, and out of reach of every agent tool.
   A chat request names one assistant by its reference, resolved exactly, which the server applies by narrowing alone: it withholds tools, caps the mode, adds to the document selection, and may confine the run to an enforced allowlist of paths.
-  Only the operator's instructions join the run's instructions, a group's or a user's reach the model as a fenced `read_assistant` result appended to the history, so the cached prefix stays.
+  Its instructions carry the authority of whoever wrote it: the operator's join the run's instructions, while a group's or a user's reach the model as the user's, framed in their turn and appended to the history, so the cached prefix stays.
 - Changes to a skill or assistant library reach every client following its scope as a `library-changed` feed event, as workspace changes do.
 - Every write, edit, move, delete, upload, and new directory is one changeset that `workspace.changeset` plans and commits all or nothing.
   A workspace root carries rows, indexing, and per-item approval, while a folder (`/tmp`, a skill library) holds plain files within its size cap and asks by its policy.
@@ -160,7 +160,6 @@ While `subagents.enabled`, the main agent also gets the delegation tools of pyda
 | `cases`        | Storing and maintaining cases, landed like a program's changes.         | `retain_cases`, `maintain_case_base`                                                                              |
 | `memory`       | Cross-conversation memory, not in read mode, every write approved.      | `read_memory`, `write_memory`                                                                                     |
 | `skills`       | The skill catalog and a skill's instructions, as tool results.          | `load_skill`                                                                                                      |
-| `assistant`    | Internal, fenced instructions of a group's or a user's assistant.       | `read_assistant`                                                                                                  |
 | `web`          | Search with `search_url`, fetch with `web_urls`.                        | `web_search`, `web_fetch`                                                                                         |
 | `conversation` | Conversation history, disabled by default.                              | `list_conversations`, `get_conversation`, `search_conversation`                                                   |
 | `ask`          | Multiple-choice questions for the user.                                 | `ask_user`                                                                                                        |

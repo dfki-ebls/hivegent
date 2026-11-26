@@ -91,7 +91,12 @@
               "type": "file",
               "mediaType": "image/png",
               "filename": "diagram.png",
-              "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGPkCljAgA0wYRUdtBIAx84BCmLdyc4AAAAASUVORK5CYII="
+              "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGPkCljAgA0wYRUdtBIAx84BCmLdyc4AAAAASUVORK5CYII=",
+              "providerMetadata": {
+                "pydantic_ai": {
+                  "identifier": "diagram.png"
+                }
+              }
             }
           ]
         },

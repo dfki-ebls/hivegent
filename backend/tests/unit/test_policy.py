@@ -27,10 +27,10 @@ def test_read_mode_withholds_every_feature_with_a_write_outside_the_gateway() ->
     assert "read" in modes["python"]
 
 
-def test_a_run_denies_what_it_withholds_unless_the_tool_is_internal() -> None:
+def test_a_run_denies_what_it_withholds() -> None:
     """The one rule of every surface, from the name and the flags of the action."""
     policy = host_policy(
-        "write", withheld=frozenset({"a", "b"}), service=True, confined=True
+        "write", withheld=frozenset({"a"}), service=True, confined=True
     )
 
     def tool(name: str, **flags: bool) -> Action:
@@ -42,7 +42,6 @@ def test_a_run_denies_what_it_withholds_unless_the_tool_is_internal() -> None:
         )
 
     assert policy(tool("a")) == "deny"
-    assert policy(tool("b", internal=True)) == "allow"
     assert policy(tool("c", people_only=True)) == "deny"
     assert policy(tool("c", derived=True)) == "deny"
     assert host_policy("write")(tool("c", people_only=True, derived=True)) == "allow"

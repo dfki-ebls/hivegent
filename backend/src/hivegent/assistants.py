@@ -14,8 +14,8 @@ It belongs to a scope like a skill does:
 A user sees them in the order user, groups, global, and a chat names one by
 its reference (:func:`~hivegent.libraries.library_ref`), its scope's prefix
 and its name, so no scope can stand in for another's.  Only the operator's
-instructions are instructions to the model, everyone else's reach it as a
-fenced tool result (``agents/tools/assistant.py``).
+instructions carry their authority, a group's or a user's carry the
+authority of the user who chose it (``agents/context.py``).
 """
 
 import asyncio
@@ -26,6 +26,7 @@ from pathlib import Path
 from cbrkit.io import atomic_write
 from fastapi import HTTPException
 from pydantic import ValidationError
+from pydantic_ai.messages import Authority
 
 from .config import settings
 from .files import remove_path
@@ -76,9 +77,9 @@ class Assistant:
     spec: AssistantSpec
 
     @property
-    def trusted(self) -> bool:
-        """Whether the operator wrote it, so its instructions carry their authority."""
-        return isinstance(self.scope, GlobalScope)
+    def authority(self) -> Authority:
+        """The operator's for one they wrote, else the user's, who chose it without the operator vetting it."""
+        return "operator" if isinstance(self.scope, GlobalScope) else "user"
 
     @property
     def ref(self) -> str:

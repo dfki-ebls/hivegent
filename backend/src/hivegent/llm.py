@@ -10,7 +10,12 @@ from exar.agents import call
 from exar.pydantic_ai import PydanticAiAgent
 from openai import AsyncOpenAI
 from pydantic_ai import Agent, UserContent
-from pydantic_ai.capabilities import AbstractCapability, RetryOnModelErrors
+from pydantic_ai.capabilities import (
+    TRANSIENT_MODEL_ERRORS,
+    AbstractCapability,
+    RetryOnModelErrors,
+)
+from pydantic_ai.exceptions import ModelEmptyResponseError
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles import (
@@ -46,6 +51,7 @@ from .http_client import get_trusted_http_client
 from .llm_config import LlmConfig, clamp_reasoning
 
 __all__ = [
+    "MODEL_RETRIES",
     "SUMMARY_MAX_TOKENS",
     "StrictJsonSchemaTransformer",
     "complete",
@@ -166,6 +172,14 @@ class StrictJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
 # `OpenAIJsonSchemaTransformer` would drop `strict` from every tool with an
 # optional argument, or close a free-form object such as a query record.
 _VLLM_PROFILE = ModelProfile(json_schema_transformer=StrictJsonSchemaTransformer)
+
+MODEL_RETRIES = RetryOnModelErrors[Any](
+    retry_on=(*TRANSIENT_MODEL_ERRORS, ModelEmptyResponseError)
+)
+"""Retries a request on a transient model error and on a self-hosted runtime's empty reply, which every agent carries.
+
+Not on an unusable reply, which the same request mostly gets again.
+"""
 
 # The `<system>` framing is announced from a conversation's first request, so
 # the cached prompt prefix never changes once a turn first needs it.
@@ -330,7 +344,7 @@ _completion_agent: Agent[None, str] = Agent(
     name="complete",
     retries=settings.llm.retries,
     model_settings=ModelSettings(timeout=settings.llm.request_timeout_seconds),
-    capabilities=[RetryOnModelErrors()],
+    capabilities=[MODEL_RETRIES],
 )
 
 

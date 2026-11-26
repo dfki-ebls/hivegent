@@ -53,14 +53,12 @@ class ToolFlags:
         derived: Whether the tool returns stored text derived from content beyond the workspaces.
             Past conversations and the memory may quote any document, so a run an
             assistant confines to an allowlist is never offered such a tool.
-        internal: Whether the tool serves the host, which no run withholds.
         seeing: Whether the result of the tool is only of use to a model that sees images.
     """
 
     gateway: bool = False
     people_only: bool = False
     derived: bool = False
-    internal: bool = False
     seeing: bool = False
 
 
@@ -134,8 +132,7 @@ def host_policy(
 
     It allows the agent invocations the host makes itself, such as summaries and completions.
     It denies every tool the run *withheld* by name, a people-only tool for a
-    *service* principal, and a derived one for a *confined* run, unless the
-    tool is internal.
+    *service* principal, and a derived one for a *confined* run.
     A mode denies every tool whose effect it does not offer (:func:`offered`).
     A write of a tool flagged :attr:`ToolFlags.gateway` is allowed here
     and asked about per item by the root it lands in (``agents/tools/write.py``),
@@ -161,7 +158,7 @@ def host_policy(
 
         flags = flags_of(action.metadata)
 
-        if not flags.internal and (
+        if (
             action.name in withheld
             or (service and flags.people_only)
             or (confined and flags.derived)

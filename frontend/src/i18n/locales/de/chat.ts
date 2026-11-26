@@ -231,7 +231,6 @@ export const chat = {
       message_task: "Aufgabe anweisen",
       move_documents: "Dokumente verschieben",
       query_table: "Tabellen abfragen",
-      read_assistant: "Assistenten lesen",
       read_binary_document: "Binärdateien lesen",
       read_document: "Dokumente lesen",
       read_memory: "Gedächtnis lesen",

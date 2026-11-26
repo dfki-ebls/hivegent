@@ -7,7 +7,6 @@ from .app import (
     turn_usage_limits,
 )
 from .capabilities import (
-    INTERNAL_TOOL_NAMES,
     TOOL_NAMES,
     build_capabilities,
     check_tool_settings,
@@ -28,7 +27,6 @@ from .tools import (
 )
 
 __all__ = [
-    "INTERNAL_TOOL_NAMES",
     "TOOL_NAMES",
     "RunPrefix",
     "UserDeps",

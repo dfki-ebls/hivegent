@@ -205,7 +205,7 @@ def test_server_ids_name_their_tools_and_never_a_built_in_one(
     monkeypatch.setattr(
         integrations, "INTEGRATIONS", (CatalogServer.build("read", config),)
     )
-    with pytest.raises(ValueError, match="read_assistant.*read_tool_result"):
+    with pytest.raises(ValueError, match="read_binary_document.*read_tool_result"):
         capabilities.check_tool_settings()
 
     # Reserved even while subagents are disabled.
