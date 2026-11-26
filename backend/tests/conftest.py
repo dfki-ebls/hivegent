@@ -18,6 +18,7 @@ for name in [name for name in os.environ if name.startswith("HIVEGENT_")]:
     del os.environ[name]
 
 import pytest
+from exar.memory import mounts
 from pydantic_ai import models
 
 from hivegent import pipelines
@@ -91,6 +92,16 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     return tmp_path
+
+
+@pytest.fixture()
+def folded_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the filesystem holding ``tmp_path`` fold case, as on macOS or Windows.
+
+    Set in the per-device cache that every binding of ``folds_case`` consults,
+    so exar's own path respelling sees it too.
+    """
+    monkeypatch.setitem(mounts._FOLDING, tmp_path.stat().st_dev, True)
 
 
 @pytest.fixture()

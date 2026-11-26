@@ -17,7 +17,6 @@ from hivegent.store import (
     split_scope_path,
 )
 from hivegent.tmp import tmp_dir
-from hivegent.tools import entries
 from hivegent.tools.base import SearchPath, resolve_accessible_file
 from hivegent.tools.changes import Changeset, Delete
 from hivegent.types import DocumentFilter, FilterEntry
@@ -122,11 +121,9 @@ class TestConversationTmp:
 class TestCaseFolding:
     """Paths compare the way the workspace's filesystem compares them."""
 
-    def test_a_filter_is_asked_about_the_name_on_disk(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    @pytest.mark.usefixtures("folded_case")
+    def test_a_filter_is_asked_about_the_name_on_disk(self, tmp_path: Path) -> None:
         """A hidden `secret.md` is not reachable as `SECRET.md` where case folds."""
-        monkeypatch.setattr(entries, "folds_case", lambda _directory: True)
         (tmp_path / "secret.md").write_text("x")
         hidden = DocumentFilter(excluded=frozenset({doc("secret.md")}))
         paths = (SearchPath.of(tmp_path, "~", implied=True, filter_func=hidden),)

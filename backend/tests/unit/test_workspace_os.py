@@ -12,7 +12,6 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from hivegent.tmp import TMP_PREFIX
-from hivegent.tools import entries
 from hivegent.tools.base import Direct, SearchPath
 from hivegent.tools.changes import Changeset, Write
 from hivegent.tools.changeset import stage_changes
@@ -194,10 +193,8 @@ def test_a_rename_carries_the_file_rather_than_its_bytes(workspace: Path) -> Non
         mount.path_rename(_virtual("archive"), _virtual("images"))
 
 
-def test_a_case_insensitive_workspace_keeps_one_key_per_file(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(entries, "folds_case", lambda _directory: True)
+@pytest.mark.usefixtures("folded_case")
+def test_a_case_insensitive_workspace_keeps_one_key_per_file(workspace: Path) -> None:
     mount = _mount(workspace, writable=True)
 
     _ = mount.path_write_text(_virtual("NOTES.md"), "rewritten\n")

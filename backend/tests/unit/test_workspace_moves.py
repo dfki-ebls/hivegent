@@ -58,7 +58,6 @@ from hivegent.tools.entries import (
 from hivegent.tools.workspace_os import WORKSPACE_MOUNT, WorkspaceOS
 from hivegent.workspace import Location, Root
 from hivegent.workspace.changeset import apply as changeset_apply
-from hivegent.workspace.changeset import plan as changeset_plan
 from tests.helpers import LIMITS
 
 _USER = User(id="testuser")
@@ -682,15 +681,10 @@ class TestChangesets:
         assert "a.md" not in {path.name for path in layout.iterdir()}
         assert repo.moved() == [("move_document", "a", "A")]
 
+    @pytest.mark.usefixtures("folded_case")
     async def test_a_case_insensitive_filesystem_sees_one_destination(
-        self,
-        user_store: Workspace,
-        layout: Path,
-        repo: FakeRepository,
-        monkeypatch: pytest.MonkeyPatch,
+        self, user_store: Workspace, layout: Path, repo: FakeRepository
     ) -> None:
-        monkeypatch.setattr(changeset_plan, "folds_case", lambda _directory: True)
-
         with pytest.raises(ChangeRefused, match="more than one change"):
             await workspace.plan_changeset(
                 Changeset(

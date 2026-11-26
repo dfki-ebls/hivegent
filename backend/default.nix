@@ -124,7 +124,7 @@ let
     );
     # `license-files` in `pyproject.toml` reaches the repo-level license
     # and additional terms through symlinks, and the tests read the shared
-    # RAGold schema and the turn fixtures the frontend replays, so the build
+    # RAGold schema and the fixtures shared with the frontend, so the build
     # source must span the repo root.
     hivegent-backend = prev.hivegent-backend.overrideAttrs (
       finalAttrs: old: {
@@ -135,7 +135,7 @@ let
             ../LICENSE
             ../TERMS
             ../schemas/ragold.json
-            ../frontend/src/test/fixtures/turns
+            ../frontend/src/test/fixtures
           ];
         };
         sourceRoot = "${finalAttrs.src.name}/backend";
