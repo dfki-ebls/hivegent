@@ -6,8 +6,11 @@ from uuid import UUID
 from zipfile import ZipFile
 
 import pytest
+from exar.typing import Changes, Update
+from fastapi import HTTPException
 
 from hivegent import conversation_files
+from hivegent.db import memory
 from hivegent.db.conversations import OwnedConversation
 from hivegent.delegations import TASKS_FOLDER
 from hivegent.server import export
@@ -17,7 +20,7 @@ from hivegent.server.routes.conversations import history
 from hivegent.skills import library
 from hivegent.store import User, UserScope
 from hivegent.tmp import tmp_dir
-from hivegent.types import ConversationArchive
+from hivegent.types import ConversationArchive, MemoryPage
 from tests.helpers import label_id, owned
 
 
@@ -157,3 +160,43 @@ async def test_the_export_holds_the_parts_asked_for(
         "preferences.json",
     ]
     assert await names(frozenset({ExportPart.MEMORY})) == ["memory.md"]
+
+
+async def test_the_user_edits_their_memory_and_an_empty_page_clears_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user writes their memory page whole, and shortens one over a lowered limit."""
+    user = User(id="owner")
+    stored = "An oversized page."
+    written: list[Changes[str, str]] = []
+    cleared: list[User] = []
+
+    class Page:
+        async def write(self, changes: Changes[str, str]) -> Changes[str, str]:
+            written.append(changes)
+            return changes
+
+    async def clear(owner: User) -> bool:
+        cleared.append(owner)
+        return True
+
+    async def load(_owner: User) -> str:
+        return stored
+
+    monkeypatch.setattr(memory, "user_memory", lambda _owner: Page())
+    monkeypatch.setattr(memory, "clear_memory", clear)
+    monkeypatch.setattr(account, "load_memory", load)
+    monkeypatch.setattr(account.settings.limits, "max_memory_chars", 5)
+
+    assert (await account.get_memory(user)).content == stored
+    page = MemoryPage(content="Prefers metric.")
+    assert await account.put_memory(page, user) == page
+    assert [item.value for item in written[0].items if isinstance(item, Update)] == [
+        "Prefers metric."
+    ]
+
+    with pytest.raises(HTTPException):
+        _ = await account.put_memory(MemoryPage(content=stored + "!"), user)
+
+    _ = await account.put_memory(MemoryPage(content="  "), user)
+    assert cleared == [user]

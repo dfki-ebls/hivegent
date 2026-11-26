@@ -63,6 +63,14 @@ export const settings = {
     hint: "They reach the assistant as your own words, never as rules that override the operator's.",
     save: "Save",
     saved: "Saved your instructions",
+    memory: {
+      title: "Memory",
+      description:
+        "What the assistant noted about you in earlier chats, each note saved only after you approved it. It reads the memory as notes, never as instructions, so put rules into your instructions above.",
+      label: "Remembered notes",
+      save: "Save",
+      saved: "Saved the memory",
+    },
   },
   account: {
     title: "Account",

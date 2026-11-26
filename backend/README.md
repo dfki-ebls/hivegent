@@ -554,6 +554,7 @@ It materializes the person's `users` row before a write, refuses a service princ
 The storage replaces a row by deleting and inserting it, so `created_at` and `updated_at` both read the time of the last write, which nothing reads.
 The tool body runs only once `guards.HOST_GATE` let the call through, which for a write outside the changeset gateway means once the user approved it, so it writes the page directly.
 A write names the page it edited as expected and is checked under a row lock, so a conversation saving in between makes the edit retry rather than be overwritten.
+The person reads and replaces the whole page with `GET` and `PUT /api/v1/memory` (`db.memory.save_memory`), an empty page clearing it, and it stays a tool result whoever wrote it, so text a person pastes there carries no more authority than the model's.
 Every write asks the user in every mode, `write` included, since an instruction planted in a page or document and saved there would reach every later conversation, and the edit is tried on the current memory first, so the user only approves a change that lands.
 `limits.max_memory_chars` bounds the memory, which keeps the note at the start of every conversation small, and an edit that shrinks an oversized memory is still accepted.
 

@@ -105,7 +105,7 @@ A divider marks where the summary starts, and opens to show it.
 
 The assistant can remember facts across conversations.
 It asks before every change to its memory, in every mode, since whatever it saves there reaches all later conversations.
-Clear all memory at any time under Settings, Account.
+Read and edit what it remembers under Settings, Instructions, and clear all memory at any time under Settings, Account.
 
 ## Skills
 

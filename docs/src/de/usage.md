@@ -105,7 +105,7 @@ Eine Trennlinie markiert, wo die Zusammenfassung beginnt, und zeigt sie beim Öf
 
 Der Assistent kann sich Fakten über Unterhaltungen hinweg merken.
 Vor jeder Änderung seines Gedächtnisses fragt er nach, in jedem Modus, da alles dort Gespeicherte jede spätere Unterhaltung erreicht.
-Unter Einstellungen, Account können Sie das gesamte Gedächtnis jederzeit löschen.
+Unter Einstellungen, Anweisungen können Sie lesen und bearbeiten, was er sich gemerkt hat, und unter Einstellungen, Account das gesamte Gedächtnis jederzeit löschen.
 
 ## Skills
 

@@ -14,16 +14,21 @@ from cbrkit.indexable import SQLAlchemy
 from cbrkit.retrieve import Retriever
 from cbrkit.sim.strings import WordCoverage
 from exar.cbrkit import StorageMemory
-from exar.typing import Changes
+from exar.typing import Changes, Update
 
 from ..store import User
 from .engine import get_engine, session
 from .models import Memory
 from .users import ensure_user
 
-__all__ = ["clear_memory", "load_memory", "user_memory"]
+__all__ = ["clear_memory", "load_memory", "memory_fits", "save_memory", "user_memory"]
 
 _PAGES = Memory.metadata.tables[Memory.__tablename__]
+
+
+def memory_fits(content: str, previous: str, max_chars: int) -> bool:
+    """Whether *content* may replace *previous*, which an oversized page may while it shrinks."""
+    return len(content) <= max_chars or len(content) < len(previous)
 
 
 def _page(user: User) -> SQLAlchemy[str, str]:
@@ -79,6 +84,16 @@ def user_memory(user: User) -> StorageMemory[str, str]:
 async def clear_memory(user: User) -> bool:
     """Delete the user's memory.  Returns ``True`` if a row was removed."""
     return bool(await _page(user).delete_where(sa.true()))
+
+
+async def save_memory(user: User, content: str) -> None:
+    """Replace the user's memory page with *content*, an empty one clearing it."""
+    if not content.strip():
+        _ = await clear_memory(user)
+        return
+
+    change = Update(key=user.id, value=content, reason="The user edited their memory")
+    _ = await user_memory(user).write(Changes(items=[change]))
 
 
 async def load_memory(user: User) -> str | None:

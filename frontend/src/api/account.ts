@@ -1,11 +1,41 @@
+import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { requestBlob, requestJson, requestVoid } from "@/api/client";
+import { jsonRequest, requestBlob, requestJson, requestVoid } from "@/api/client";
 import { downloadBlob } from "@/lib/download";
 import { apiUrl } from "@/lib/health";
 
 const TmpClearedResponseSchema = z.object({ files_removed: z.number() });
 type TmpClearedResponse = z.infer<typeof TmpClearedResponseSchema>;
+
+/** The user's memory page, which the assistant writes with their approval (see backend `MemoryPage`). */
+const MemoryPageSchema = z.object({ content: z.string() });
+
+const memoryKey = ["memory"] as const;
+
+export const memoryQueries = {
+  get: () =>
+    queryOptions({
+      queryKey: memoryKey,
+      queryFn: () => requestJson(apiUrl("/memory"), "fetchMemory", MemoryPageSchema),
+    }),
+};
+
+export const memoryMutations = {
+  /** Replace the memory page, an empty one clearing it. */
+  save: () =>
+    mutationOptions({
+      mutationKey: [...memoryKey, "save"],
+      mutationFn: (content: string) =>
+        requestJson(
+          apiUrl("/memory"),
+          "saveMemory",
+          MemoryPageSchema,
+          jsonRequest("PUT", { content }),
+        ),
+      meta: { invalidates: [memoryKey] },
+    }),
+};
 
 /** Clear the user's persistent memory. */
 export function clearMemory(): Promise<void> {

@@ -46,6 +46,7 @@ __all__ = [
     "DocumentSelection",
     "GenerateTitleResponse",
     "InstructionsSnapshot",
+    "MemoryPage",
     "ModelId",
     "Preferences",
     "ServerConversation",
@@ -257,6 +258,12 @@ class Preferences(BaseModel):
         }
 
         return cls.model_validate(known, context=_STORED)
+
+
+class MemoryPage(BaseModel):
+    """The user's memory page, which the model writes with their approval and they edit themselves."""
+
+    content: str
 
 
 DOCUMENTS_KEY = "documents"

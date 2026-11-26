@@ -139,6 +139,8 @@ export const app = {
       deleteConversations: "Konversationen konnten nicht gelöscht werden",
       deleteDocuments: "Dokumente konnten nicht gelöscht werden",
       clearMemory: "Gedächtnis konnte nicht geleert werden",
+      fetchMemory: "Das Gedächtnis konnte nicht geladen werden",
+      saveMemory: "Das Gedächtnis konnte nicht gespeichert werden",
       clearTmp: "Temporäre Dateien konnten nicht gelöscht werden",
       exportUserData: "Benutzerdaten konnten nicht exportiert werden",
       deleteUserData: "Benutzerdaten konnten nicht gelöscht werden",

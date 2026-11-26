@@ -11,6 +11,7 @@ type KeyScope =
   | "conversations"
   | "debug"
   | "jobs"
+  | "memory"
   | "preferences"
   | "pipelines"
   | "settings"

@@ -136,6 +136,8 @@ export const app = {
       deleteConversations: "Failed to delete conversations",
       deleteDocuments: "Failed to delete documents",
       clearMemory: "Failed to clear memory",
+      fetchMemory: "Failed to load the memory",
+      saveMemory: "Failed to save the memory",
       clearTmp: "Failed to clear temporary files",
       exportUserData: "Failed to export user data",
       deleteUserData: "Failed to delete user data",

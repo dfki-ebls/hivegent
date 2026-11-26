@@ -29,7 +29,7 @@ from pydantic_ai.messages import ModelMessage
 
 from ...config import settings
 from ...db.conversations import HIDDEN_KEY
-from ...db.memory import user_memory
+from ...db.memory import memory_fits, user_memory
 from ...store import User
 from ...tools.base import ToolFunc
 from ..common import AgentTools, Hooked, UserDeps
@@ -102,7 +102,7 @@ def edit_memory(memory: str, content: str, old_text: str | None, max_chars: int)
 
         updated = replaced.strip()
 
-    if len(updated) > max_chars and len(updated) >= len(memory):
+    if not memory_fits(updated, memory, max_chars):
         raise Retry(
             f"The memory would hold {len(updated)} characters, but at most "
             f"{max_chars} fit. Condense it by replacing passages with shorter ones."

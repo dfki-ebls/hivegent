@@ -2,15 +2,17 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from starlette.responses import StreamingResponse
 
 from ...auth import CurrentUser
+from ...config import settings
 from ...db.conversations import owned_conversations
-from ...db.memory import clear_memory
+from ...db.memory import clear_memory, load_memory, memory_fits, save_memory
 from ...db.users import update_preferences
+from ...shared.l10n import Localized
 from ...tmp import clear_tmp
-from ...types import Preferences, TmpClearedResponse
+from ...types import MemoryPage, Preferences, TmpClearedResponse
 from ..common import delete_user_data, user_preferences
 from ..export import ExportPart, build_export, export_filename
 from ..operations import zip_response
@@ -48,6 +50,32 @@ async def export_user_data(
     an HTTP error, never a truncated archive.
     """
     return zip_response(await build_export(user, part), export_filename(part))
+
+
+@router.get("/memory")
+async def get_memory(user: CurrentUser) -> MemoryPage:
+    """The authenticated user's memory page, empty while they keep none."""
+    return MemoryPage(content=await load_memory(user) or "")
+
+
+@router.put("/memory")
+async def put_memory(page: MemoryPage, user: CurrentUser) -> MemoryPage:
+    """Replace the authenticated user's memory page, an empty one clearing it.
+
+    An oversized page may only shrink, so a lowered limit never locks it.
+    """
+    limit = settings.limits.max_memory_chars
+
+    if not memory_fits(page.content, await load_memory(user) or "", limit):
+        detail = Localized(
+            en=f"The memory holds at most {limit} characters",
+            de=f"Das Gedächtnis fasst höchstens {limit} Zeichen",
+        )
+        raise HTTPException(status_code=422, detail=detail.current)
+
+    await save_memory(user, page.content)
+
+    return page
 
 
 @router.delete("/memory", status_code=status.HTTP_204_NO_CONTENT)

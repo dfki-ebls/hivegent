@@ -65,6 +65,14 @@ export const settings = {
     hint: "Sie erreichen den Assistenten als deine eigenen Worte, nie als Regeln, die die des Betriebs außer Kraft setzen.",
     save: "Speichern",
     saved: "Deine Anweisungen sind gespeichert",
+    memory: {
+      title: "Gedächtnis",
+      description:
+        "Was sich der Assistent in früheren Chats über dich notiert hat, jede Notiz erst nach deiner Zustimmung gespeichert. Er liest das Gedächtnis als Notizen, nie als Anweisungen, Regeln gehören also in deine Anweisungen oben.",
+      label: "Gemerkte Notizen",
+      save: "Speichern",
+      saved: "Das Gedächtnis ist gespeichert",
+    },
   },
   account: {
     title: "Account",

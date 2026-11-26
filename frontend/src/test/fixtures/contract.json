@@ -2682,6 +2682,20 @@
       "title": "McpIntegration",
       "description": "A configured external MCP server as the admin listing shows it, without secrets.\n\n``tools`` maps each tool the server offers, by its name there, to its\neffect, and is empty while the server is not ``connected``."
     },
+    "MemoryPage": {
+      "properties": {
+        "content": {
+          "type": "string",
+          "title": "Content"
+        }
+      },
+      "type": "object",
+      "required": [
+        "content"
+      ],
+      "title": "MemoryPage",
+      "description": "The user's memory page, which the model writes with their approval and they edit themselves."
+    },
     "Mode": {
       "type": "string",
       "enum": [
