@@ -256,7 +256,7 @@ A service principal (`User.kind == "service"`, the Teams bridge, built from a to
 Its one identity holds every Teams user's conversations, which is why nothing that lists or reads them by id is reachable for it.
 Deleting conversations stops their turns first (`conversation_files`), so no caller can forget it.
 A `Workspace` carries its grant and a request derives it from its `User` alone, and an `OwnedConversation` has no public constructor either.
-A skill library is changed under a `libraries.LibraryGrant`, the write grant of its scope's workspace, which wiping a scope's data takes too (`server.common.delete_scope_data`).
+A skill library is changed under a `skills.LibraryGrant`, the write grant of its scope's workspace, which wiping a scope's data takes too (`server.common.delete_scope_data`).
 `tests/unit/test_access_scope.py` keeps the builders of a `User`, a `HostGrant`, and a `Reach` the only ones.
 Disk reads resolve through `Workspace.locate`, which folds `..` and refuses any path through a symlink (`exar.memory.mounts.canonical`), so nothing escapes a workspace and no alias is followed, `query_table` runs on a DuckDB database without file access, and `jq` refuses module directives and runs without the server's environment.
 
@@ -676,30 +676,33 @@ Agent Skills (agentskills.io) are folders with a `SKILL.md`, which `shared/skill
 The frontmatter is read without YAML's implicit types, so `version: 1.0` or `on: yes` stay text, and a repeated key is refused rather than one value silently winning.
 Of Claude Code's keys it reads `disable-model-invocation` and `user-invocable`, flags spelled only `true` or `false`.
 A skill is not a document, so it never lives in a workspace, where it would be indexed, cited, and converted file by file, but in a root beside `/tmp` (`skills.py`).
-A user's and a group's library are `data/skills/<owner>/`, a `workspace.operations.Root` without store addressed `/skills/~` and `/skills/@<group>`, whose policy is `Reviewed`, so every agent write asks in every mode, the approval shows the diff, and a group library is writable only with the group's write grant, exactly where its workspace is.
-The global skills, `/skills/srv/<name>`, are read in place from `skills.dir` and the plugins' skill directories, each skill a read-only root of its own, never copied into `data/` and never among the writable roots, so the agent cannot author one by construction.
-`UserDeps.search_paths` adds every skill root, so the read tools and the sandbox mount reach skill files with no code of their own, and reconcile, indexing, and retrieval never see them.
+A user's and a group's library are `data/skills/<owner>/`, a `workspace.operations.Root` without store addressed `/skills/~` and `/skills/@<group>` under the library quota, which only people change over REST, and a group library only with the group's write grant, exactly where its workspace is.
+The global skills, `/skills/srv/<name>`, are read in place from `skills.dir` and the plugins' skill directories, each skill a read-only root of its own, never copied into `data/`.
+No skill root is among `UserDeps.writable_roots`, so no agent tool writes a skill by construction, and a skill is not a document either: `UserDeps.search_paths` holds the workspaces and `/tmp` alone, so no document tool reaches `/skills`, and reconcile, indexing, and retrieval never see it.
+`UserDeps.program_paths` adds the skill roots to the search paths for `run_python` alone, mounting them read-only so a skill's script reads the files beside it, while `load_skill` and `read_skill_file` resolve a skill by its reference and a file inside its folder only (`Skill.file`).
 
 ### Names resolve by scope
 
 `skills.visible_skills` lists the skills of `User.scopes` in their order, user, groups, global, and a name is unique only within its scope.
-A skill is named by its reference (`libraries.library_ref`), its scope's prefix and its name as a document path spells them, `/srv/<name>`, `@<group>/<name>`, or `~/<name>`, which the catalog lists, `load_skill` takes, and a prompt invokes by `/<reference>`, a global one's leading slash dropped.
+A skill is named by its reference (`Skill.ref`), its scope's prefix and its name as a document path spells them, `/srv/<name>`, `@<group>/<name>`, or `~/<name>`, which the catalog lists, `load_skill` takes, and a prompt invokes by `/<reference>`, a global one's leading slash dropped.
 A bare name names the skill of the narrowest scope that has it, the user's own before a group's before a global one, and none while two groups have it (`skills.resolve_skill`), so no saver can make a skill of a wider audience stand in for the user's own.
-`PUT /api/v1/skills/{~|@<group>}` installs one ZIP archive, the skill folder or its content, validated whole (paths sanitized, OS junk dropped, `skills.max_files` and `skills.max_bytes` checked against the sizes the archive declares before anything is inflated) and swapped in with one rename under the library's lock, replacing a skill of its name, within the library's `skills.library_max_bytes` as an agent write is.
+`PUT /api/v1/skills/{~|@<group>}` installs one ZIP archive, the skill folder or its content, validated whole (paths sanitized, OS junk dropped, `skills.max_files` and `skills.max_bytes` checked against the sizes the archive declares before anything is inflated) and swapped in with one rename under the library's lock, replacing a skill of its name, within the library's `skills.library_max_bytes`.
+`PUT /api/v1/skills/{~|@<group>}/{name}` saves the JSON `{content}` as that skill's `SKILL.md`, creating the skill or keeping its other files, and refuses with a 422 a `SKILL.md` that breaks the format or names another skill, with a 413 a skill over `skills.max_bytes`, and a library over its quota.
 Its scripts are checked in the sandbox pool, as every listing checks them, by at most half its workers at once (`check_skill_script`), so neither an upload nor a load starves `run_python`.
-`GET /api/v1/skills` lists every skill the user sees with its reference, problem, warnings, whether the model may load it and a prompt invoke it, and whether the user may change it, `DELETE /api/v1/skills/{scope}/{name}` deletes one, and `GET /api/v1/documents/{path}` reads any file of a skill the user sees.
+`GET /api/v1/skills` lists every skill the user sees with its reference, problem, warnings, whether the model may load it and a prompt invoke it, and whether the user may change it, `DELETE /api/v1/skills/{scope}/{name}` deletes one, and `GET /api/v1/skills/{ref}` reads the `SKILL.md` of a skill the user sees by its reference, such as `~/name` or `srv/name`, which `GET /api/v1/documents/{path}` never serves.
 A user's reset and `hivegent reset {user,group}` remove the owner's library, and `hivegent reset factory` every library.
 
 ### The catalog is a tool result
 
 Most skills are written by users, so no skill reaches the model as an instruction, the operator's included, which keeps one channel.
 `SKILLS_NOTE` (`agents/tools/skills.py`) renders the catalog before each model request and reports it as a synthetic `load_skill` call without a name, as `MEMORY_NOTE` reports the memory, wherever the window shows another catalog or none, so a change appends and the cached prefix stays.
-`load_skill(name)` returns the body and a capped listing of the skill's files, each script marked runnable with its `main` signature or reference-only with the first diagnostic, fenced like every result.
+`load_skill(name)` returns the body and a capped listing of the skill's files, each script marked runnable with its `main` signature or reference-only with the first diagnostic, fenced like every result, and `read_skill_file(name, file)` reads one text file of the skill by its path inside the skill folder, resolved like a path tool's so no path escapes it, since no document tool reaches a skill.
 
 The host loads a skill the model did not ask for by the same synthetic call, hidden from the transcript, wherever the window has not loaded it yet: every skill the window before the latest compaction loaded, so a summary never drops the instructions the conversation works by.
 A skill the latest prompt invokes by starting with `/<reference> <text>` or `/<name> <text>` is loaded with every `$ARGUMENTS` of its body replaced by the text, and again whenever that changes its result, since the note skips a result the window already shows.
 `disable-model-invocation: true` leaves a skill out of the catalog and has `load_skill` refuse it, while a prompt still loads it, and `user-invocable: false` keeps a prompt from invoking it and the composer from suggesting it, while the model still loads it.
-A library change, an install, a delete, or an approved agent write through the folder's `on_commit` hook, is announced as a `library-changed` feed event to every client following the library's scope.
+An install, a save, or a delete is announced as a `skills-changed` feed event (`jobs.SkillsChanged`, `workspace_events.announce_skills_changed`) to every client following the library's scope.
+The prompts say so: a skill is no document of the user, its files are read with `read_skill_file`, and only the user adds or changes skills in the settings.
 
 ## Preferences and instructions
 

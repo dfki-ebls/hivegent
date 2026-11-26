@@ -8,7 +8,7 @@ broadcasts every state change to subscribers (the SSE feed consumes
 these).
 
 The feed also carries :class:`~hivegent.tools.changes.WorkspaceChanged`,
-:class:`ConversationsChanged`, :class:`LibraryChanged`, and :class:`SourceChanged`, so a client
+:class:`ConversationsChanged`, :class:`SkillsChanged`, and :class:`SourceChanged`, so a client
 learns that its state changed through the one channel it already watches
 instead of a second push mechanism invented per feature.  :meth:`JobManager.publish` reaches every subscription
 of one owner, :meth:`JobManager.broadcast` every subscription, and a
@@ -55,8 +55,8 @@ __all__ = [
     "JobStatus",
     "JobView",
     "JobWork",
-    "LibraryChanged",
     "Reservation",
+    "SkillsChanged",
     "SourceChanged",
     "manager",
 ]
@@ -157,11 +157,10 @@ class ConversationActivity(BaseModel):
     kind: Literal["turn", "tasks"]
 
 
-class LibraryChanged(BaseModel):
-    """Marks a change to a library the subscriber sees, whose list a client reads again."""
+class SkillsChanged(BaseModel):
+    """Marks a change to a skill library the subscriber sees, whose list a client reads again."""
 
-    type: Literal["library-changed"] = "library-changed"
-    kind: Literal["skills"]
+    type: Literal["skills-changed"] = "skills-changed"
 
 
 class SourceChanged(BaseModel):
@@ -176,7 +175,7 @@ type FeedEvent = (
     | WorkspaceChanged
     | ConversationsChanged
     | ConversationActivity
-    | LibraryChanged
+    | SkillsChanged
     | SourceChanged
 )
 

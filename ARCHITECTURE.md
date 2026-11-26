@@ -90,17 +90,18 @@ flowchart LR
   The same housekeeping, started in the background of the boot, removes the stale partial files of interrupted writes anywhere in the data directory, while the boot empties `<data_dir>/.transient`, the temporary directory of the server and its workers, below which every temporary file lies.
 - Agent Skills (agentskills.io) belong to a scope like a workspace but live in roots of their own beside `/tmp`, never indexed or retrieved (`skills.py`).
   `/skills/srv/<name>` are the global skills, read in place from `skills.dir` and the plugins' skill directories and never copied or changed, `/skills/@<group>/<name>` and `/skills/~/<name>` live in `data/skills/<owner>/<name>/`.
-  A library is `Reviewed`, so the agent writes a skill only with approval in every mode, and a group's only with the group's write grant, while users install whole skills as ZIP archives over REST.
+  Skills are no documents: the document tools never reach `/skills`, only `load_skill`, `read_skill_file`, and `run_python` (which mounts the roots read-only so a script reads the files beside it, `UserDeps.program_paths`) do, and no agent tool writes a skill.
+  Only people change them over REST, a group's only with the group's write grant, as a ZIP archive or as one `SKILL.md`.
   A skill's instructions are cut to `llm.tool_output_max_chars` however they are loaded, pointing at the rest in `SKILL.md`.
   The catalog lists skills the user's first, then groups, then global, each by its reference, its scope's prefix and its name (`~/<name>`, `@<group>/<name>`, `/srv/<name>`), since a name is unique only within its scope, and reaches the model only as `load_skill` results, never as instructions, appended whenever it changed.
   The host loads a skill the same way for a prompt that starts with `/<reference>`, or `/<name>` while no other skill the user sees has that name, and again after a compaction for every skill the window before it had loaded.
 - Personal instructions are a preference of the user (`Preferences.instructions`), rendered every run as a run note at the user's authority, so they reach the model framed in the user's turn and appended to the history, never in the system prompt, and the cached prefix stays.
   The operator's `llm.instructions` join the system prompt at operator authority for every user alike.
-- Changes to a skill library reach every client following its scope as a `library-changed` feed event, as workspace changes do.
+- Changes to the skill libraries reach every client following their scope as a `skills-changed` feed event, as workspace changes do.
 - Every write, edit, move, delete, upload, and new directory is one changeset that `workspace.changeset` plans and commits all or nothing.
-  A workspace root carries rows, indexing, and per-item approval, while a folder (`/tmp`, a skill library) holds plain files within its size cap and asks by its policy.
+  A workspace root carries rows, indexing, and per-item approval, while a folder (`/tmp`) holds plain files within its size cap and asks by its policy.
 - Approval follows the audience of what a call changes (`agents/policy.py`), derived from each tool's declared effect (`read`, `write`, `execute`) and each root's `CommitPolicy`, and expressed as an exar `Policy` (`host_policy`) that denies what a mode does not offer and asks before writes outside the gateway and every `execute` tool.
-  `/tmp` is `Direct` and never asks, every workspace the user may write, their own, a group's, or the global one, is `ModeGated` and asks in interactive mode only, and skill libraries and memory are `Reviewed` and ask in every mode, since what they hold shapes later conversations.
+  `/tmp` is `Direct` and never asks, every workspace the user may write, their own, a group's, or the global one, is `ModeGated` and asks in interactive mode only, and memory is `Reviewed` and asks in every mode, since what it holds shapes later conversations.
   An `execute` effect, an action outside Hivegent, always asks, and read mode offers only reads plus the gateway's writes, narrowed to `/tmp`.
 - Each commit is announced once on the job feed as `workspace-changed` to every client whose user may read a workspace it changed, which the SPA follows to refresh its views.
 - The MCP server at `/mcp` is `exar.mcp.server` over the agent's `explore` and `write` toolsets, built per request for the caller its token names (`mcp/adapter.py`).

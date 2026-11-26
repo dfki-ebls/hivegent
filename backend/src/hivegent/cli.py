@@ -164,9 +164,8 @@ async def _reset_owner(target: ResetTarget, owner: str) -> None:
     """
     from .db.groups import list_group_ids
     from .db.users import user_exists
-    from .libraries import LibraryGrant
     from .server.common import delete_scope_data, delete_user_data
-    from .skills import library
+    from .skills import LibraryGrant, library
     from .store import GroupScope, HostGrant, User
 
     if target is ResetTarget.GROUP:

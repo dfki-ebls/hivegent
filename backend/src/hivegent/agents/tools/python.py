@@ -219,8 +219,8 @@ def sandbox_instructions(ctx: RunContext[UserDeps]) -> str:
 
 
 # The worker pool comes from the lifespan, so the tool takes its getter.
-# `paths` mounts the same roots the read tools span, filters applied, so a
-# program reaches what the read tools reach and no more, while `writable` is the
+# `paths` mounts the roots the read tools span, filters applied, and the
+# skills, so a skill's script reads the files beside it, while `writable` is the
 # narrower span its changes may touch, only `/tmp` in a mode that may not write,
 # and `commit` lands them once it succeeded.
 def _run_python(ctx: RunContext[UserDeps]) -> ToolFunc:
@@ -230,7 +230,7 @@ def _run_python(ctx: RunContext[UserDeps]) -> ToolFunc:
     return run_python(
         pool=get_monty_pool,
         limits=_limits,
-        paths=deps.search_paths(),
+        paths=deps.program_paths(),
         writable=writes.paths,
         commit=writes.commit,
         changeset_limits=_changeset_limits,

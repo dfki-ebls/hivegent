@@ -149,6 +149,8 @@ export const app = {
       fetchSkills: "Failed to fetch skills",
       installSkill: "Failed to install the skill",
       deleteSkill: "Failed to delete the skill",
+      fetchSkillDocument: "Failed to load the skill",
+      saveSkillDocument: "Failed to save the skill",
       listPlugins: "Failed to list the plugins",
       fetchPreferences: "Failed to fetch your preferences",
       updatePreferences: "Failed to save your preferences",

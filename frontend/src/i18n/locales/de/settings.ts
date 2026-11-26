@@ -28,8 +28,24 @@ export const settings = {
   skills: {
     title: "Skills",
     description:
-      "Anweisungen und Skripte, die der Assistent für passende Aufgaben lädt oder wenn eine Nachricht mit /name beginnt. Lade einen Skill-Ordner oder sein ZIP-Archiv zu deinen eigenen Skills oder denen einer Gruppe hoch, die der Organisation stellt der Betrieb bereit.",
+      "Anweisungen und Skripte, die der Assistent für passende Aufgaben lädt oder wenn eine Nachricht mit /name beginnt. Schreibe einen Skill oder lade einen Skill-Ordner oder sein ZIP-Archiv zu deinen eigenen Skills oder denen einer Gruppe hoch, die der Organisation stellt der Betrieb bereit.",
     empty: "Noch keine Skills.",
+    create: "Neuer Skill",
+    saved: "Skill {{name}} gespeichert",
+    form: {
+      createTitle: "Neuer Skill",
+      editTitle: "{{name}} bearbeiten",
+      description:
+        "Eine SKILL.md beginnt mit einem Frontmatter, das den Skill benennt und beschreibt, wann er passt, gefolgt von seinen Anweisungen. Lade einen Ordner hoch, um Skripte oder andere Dateien hinzuzufügen.",
+      name: "Name",
+      nameHint: "Kleinbuchstaben, Ziffern und Bindestriche, etwa csv-check. Er muss dem Namen im Frontmatter entsprechen.",
+      content: "SKILL.md",
+      templateDescription: "Was der Skill tut und wann er passt.",
+      templateBody: "Die Anweisungen, denen zu folgen ist.",
+      save: "Speichern",
+      cancel: "Abbrechen",
+      close: "Schließen",
+    },
     uploadArchive: "ZIP hochladen",
     uploadFolder: "Ordner hochladen",
     installed: "Skill {{name}} installiert",

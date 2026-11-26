@@ -6,7 +6,6 @@ import {
   TERMINAL_JOB_STATUSES,
   type ConversationActivity,
   type JobView,
-  type LibraryKind,
   type WorkspaceChanged,
 } from "@/api/jobs";
 
@@ -62,7 +61,7 @@ const jobStarted = channel<[JobView]>();
 const workspaceChanged = channel<[WorkspaceChanged]>();
 const conversationsChanged = channel<[]>();
 const conversationActivity = channel<[ConversationActivity]>();
-const libraryChanged = channel<[LibraryKind]>();
+const skillsChanged = channel<[]>();
 const sourcesChanged = channel<[]>();
 /** Fired after the feed has replayed state on each connect. */
 const feedReady = channel<[]>();
@@ -149,25 +148,14 @@ export function onSourcesStale(listener: () => void) {
 }
 
 /**
- * Refetch the library of *kind* in *client* whenever it may have changed:
- * an install, edit, or removal by anyone in its scope, or a feed handshake
- * that may have missed some, then call *onRefetched*. Unobserved queries
- * refetch too, so the callback reads the fresh library. Returns the unsubscribe.
+ * Refetch the skills in *client* whenever they may have changed: an install,
+ * edit, or removal by anyone in their scope, or a feed handshake that may have
+ * missed some. Returns the unsubscribe.
  */
-export function syncLibraryQueries(
-  client: QueryClient,
-  kind: LibraryKind,
-  onRefetched?: () => void,
-): () => void {
-  const refetch = () =>
-    void client.invalidateQueries({ queryKey: [kind], refetchType: "all" }).then(onRefetched);
+export function syncSkillQueries(client: QueryClient): () => void {
+  const refetch = () => void client.invalidateQueries({ queryKey: ["skills"] });
 
-  return unsubscribeAll(
-    libraryChanged.on((changed) => {
-      if (changed === kind) refetch();
-    }),
-    feedReady.on(refetch),
-  );
+  return unsubscribeAll(skillsChanged.on(refetch), feedReady.on(refetch));
 }
 
 /**
@@ -259,7 +247,7 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
           onWorkspaceChanged: publishWorkspaceChanged,
           onConversationsChanged: conversationsChanged.emit,
           onConversationActivity: conversationActivity.emit,
-          onLibraryChanged: libraryChanged.emit,
+          onSkillsChanged: skillsChanged.emit,
           onSourcesChanged: sourcesChanged.emit,
         });
       } catch {

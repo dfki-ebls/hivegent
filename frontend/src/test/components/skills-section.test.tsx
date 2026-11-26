@@ -5,7 +5,10 @@ import type { SkillInfo } from "@/api/skills";
 import { SkillsSection } from "@/components/skills-section";
 import { renderWithQueries } from "@/test/render";
 
-const { requestVoid, skill } = vi.hoisted(() => ({
+const { requestJson, requestVoid, skill } = vi.hoisted(() => ({
+  requestJson: vi.fn<
+    (url: string, label: string, schema: unknown, init?: RequestInit) => Promise<unknown>
+  >(() => Promise.resolve({ name: "csv-check" })),
   requestVoid: vi.fn<(url: string) => Promise<void>>(() => Promise.resolve()),
   skill: (name: string, scope: string, extra: Partial<SkillInfo> = {}): SkillInfo => ({
     name,
@@ -24,6 +27,7 @@ const { requestVoid, skill } = vi.hoisted(() => ({
 
 vi.mock("@/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/client")>()),
+  requestJson,
   requestVoid,
 }));
 
@@ -66,4 +70,23 @@ it("lists skills by scope, uploads only to a library, and deletes behind a confi
       { method: "DELETE" },
     ),
   );
+});
+
+it("writes a new skill whose SKILL.md follows its name", async () => {
+  renderWithQueries(<SkillsSection />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "New Skill" }));
+  fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "csv-check" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() =>
+    expect(requestJson).toHaveBeenCalledWith(
+      expect.stringMatching(/\/skills\/~\/csv-check$/),
+      "saveSkillDocument",
+      expect.anything(),
+      expect.objectContaining({ method: "POST" }),
+    ),
+  );
+  const body = requestJson.mock.calls.find(([, label]) => label === "saveSkillDocument")?.[3]?.body;
+  expect(JSON.parse(typeof body === "string" ? body : "{}").content).toContain("name: csv-check\n");
 });

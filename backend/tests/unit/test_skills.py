@@ -3,14 +3,12 @@
 import io
 import zipfile
 from collections.abc import AsyncIterator
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from exar.tools import Retry
 from fastapi import HTTPException, UploadFile
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -25,11 +23,20 @@ from pydantic_monty import AsyncMonty
 import hivegent.agents.tools.python as python_tools
 import hivegent.skills as skills_module
 from hivegent.agents.common import UserDeps
-from hivegent.agents.tools.skills import SKILLS_NOTE, load_skill, skills_toolset
+from hivegent.agents.tools.skills import (
+    SKILLS_NOTE,
+    load_skill,
+    read_skill_file,
+    skills_toolset,
+)
 from hivegent.agents.tools.write import validate_document_write
 from hivegent.config import settings
-from hivegent.server.routes.documents import get_document_content
-from hivegent.server.routes.skills import put_skill
+from hivegent.server.routes.skills import (
+    create_skill_document,
+    get_skill_document,
+    put_skill,
+    put_skill_document,
+)
 from hivegent.shared.skills import InvalidSkill, parse_skill
 from hivegent.skills import (
     catalog,
@@ -41,6 +48,7 @@ from hivegent.skills import (
 )
 from hivegent.store import GroupScope, Scope, User, UserScope
 from hivegent.tools.changes import ChangeRefused
+from hivegent.types import SkillDocumentRequest
 from tests.helpers import owned, run_context
 
 USER = User("u", read_groups=frozenset({"archive"}), write_groups=frozenset({"team"}))
@@ -114,12 +122,8 @@ def test_the_frontmatter_reads_values_as_written_and_refuses_a_repeated_key() ->
 async def test_install_lists_and_deletes_by_scope(
     operator_skills: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    announced: list[tuple[str, Scope]] = []
-    monkeypatch.setattr(
-        skills_module,
-        "announce_library_changed",
-        lambda kind, scope: announced.append((kind, scope)),
-    )
+    announced: list[Scope] = []
+    monkeypatch.setattr(skills_module, "announce_skills_changed", announced.append)
     archive = _zip({"count/SKILL.md": _skill("count"), "count/scripts/run.py": SCRIPT})
     installed = await install_skill(USER, "~", read_archive(archive))
 
@@ -129,7 +133,7 @@ async def test_install_lists_and_deletes_by_scope(
     group = await install_skill(USER, "@team", {"SKILL.md": _skill("count").encode()})
     assert group.skill.path == "/skills/@team/count"
 
-    listed = [(e.item.ref, e.writable) for e in visible_skills(USER)]
+    listed = [(e.skill.ref, e.writable) for e in visible_skills(USER)]
     assert listed == [("~/count", True), ("@team/count", True), ("/srv/pdf", False)]
 
     # A bare name names the narrowest scope's skill, so a group never stands in for the user.
@@ -141,11 +145,7 @@ async def test_install_lists_and_deletes_by_scope(
 
     await delete_skill(USER, "@team", "count")
     assert [skill.ref for skill in catalog(USER)] == ["~/count", "/srv/pdf"]
-    assert announced == [
-        ("skills", UserScope("u")),
-        ("skills", GroupScope("team")),
-        ("skills", GroupScope("team")),
-    ]
+    assert announced == [UserScope("u"), GroupScope("team"), GroupScope("team")]
 
 
 @pytest.mark.parametrize(
@@ -249,6 +249,46 @@ async def test_invocation_flags_gate_the_model_and_the_user_and_fill_arguments(
     assert len(loaded) == 1 and "Review src/app.py now." in loaded[0]
 
 
+async def test_a_manual_skill_exposes_its_files_once_the_user_invoked_it(data_dir: Path) -> None:
+    manual = _skill("manual").replace("---\nCount", "disable-model-invocation: true\n---\nCount")
+    _ = await install_skill(USER, "~", {"SKILL.md": manual.encode(), "guide.md": b"Guide."})
+    deps = UserDeps(user=USER, mode="interactive")
+    read = ToolCallPart("read_skill_file", {"name": "~/manual", "file": "guide.md"})
+
+    with pytest.raises(ModelRetry):
+        _ = await read_skill_file(run_context(deps), "~/manual", "guide.md")
+
+    def returned(messages: list[ModelMessage]) -> list[object]:
+        return [
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == read.tool_name
+        ]
+
+    def model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart("done")] if returned(messages) else [read])
+
+    agent = Agent(deps_type=UserDeps, toolsets=[skills_toolset.toolset()])
+    result = await agent.run("/manual", model=FunctionModel(model), deps=deps, capabilities=[SKILLS_NOTE])
+
+    assert returned(result.all_messages()) == ["Guide."]
+
+
+async def test_creating_a_shared_skill_rejects_an_existing_name(data_dir: Path) -> None:
+    original = SkillDocumentRequest(content=_skill("count"))
+    _ = await create_skill_document("@team", "count", original, USER)
+
+    with pytest.raises(HTTPException) as exc:
+        _ = await create_skill_document(
+            "@team", "count", SkillDocumentRequest(content=_skill("count", "Replacement")), USER
+        )
+
+    assert exc.value.status_code == 409
+    response = await get_skill_document("@team/count", USER)
+    assert bytes(response.body).decode() == original.content
+
+
 async def test_a_long_skill_loads_cut_short_pointing_at_its_file(
     operator_skills: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -262,19 +302,25 @@ async def test_a_long_skill_loads_cut_short_pointing_at_its_file(
     assert "read the rest from /skills/srv/pdf/SKILL.md" in loaded
 
 
-async def test_the_agent_writes_a_skill_only_when_asked(data_dir: Path) -> None:
-    """A library is reviewed in every mode, and the approval shows the file."""
+async def test_a_skill_is_no_document(data_dir: Path) -> None:
+    """No document tool reaches a skill, which only load_skill reads, file by file."""
+    _ = await install_skill(
+        USER,
+        "~",
+        {"SKILL.md": _skill("count").encode(), "scripts/run.py": SCRIPT.encode()},
+    )
     deps = UserDeps(user=USER, mode="write", conversation=owned("c1", USER))
-    context = replace(run_context(deps), tool_call_approved=False)
+    context = run_context(deps)
 
-    with pytest.raises(ApprovalRequired) as exc:
+    with pytest.raises(Retry, match="not accessible"):
         await validate_document_write(
             context, "/skills/~/count/SKILL.md", _skill("count")
         )
 
-    metadata = exc.value.metadata
-    assert isinstance(metadata, dict)
-    assert "/skills/~/count/SKILL.md" in str(metadata)
+    assert await read_skill_file(context, "count", "scripts/run.py") == SCRIPT
+
+    with pytest.raises(ModelRetry, match="holds no file"):
+        _ = await read_skill_file(context, "count", "../../other/SKILL.md")
 
 
 @pytest.fixture()
@@ -340,8 +386,26 @@ async def test_the_routes_install_a_skill_and_read_its_files(
         ("scripts/run.py", None)
     ]
 
-    response = await get_document_content("/skills/~/count/SKILL.md", USER)
+    response = await get_skill_document("~/count", USER)
     assert bytes(response.body).decode() == _skill("count")
+
+    # Editing the SKILL.md alone keeps the other files, and it names its folder.
+    edited = _skill("count", "Counts rows.")
+    info = await put_skill_document(
+        "~", "count", SkillDocumentRequest(content=edited), USER
+    )
+    assert info.description == "Counts rows."
+    response = await get_skill_document("count", USER)
+    assert "Counts rows." in bytes(response.body).decode()
+    assert (
+        skills_module.library(UserScope("u")).path / "count/scripts/run.py"
+    ).is_file()
+
+    with pytest.raises(HTTPException) as exc:
+        _ = await put_skill_document(
+            "~", "count", SkillDocumentRequest(content=_skill("other")), USER
+        )
+    assert exc.value.status_code == 422
 
 
 def test_a_failed_replacement_keeps_the_installed_skill(

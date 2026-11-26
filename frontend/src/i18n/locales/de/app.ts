@@ -152,6 +152,8 @@ export const app = {
       fetchSkills: "Skills konnten nicht geladen werden",
       installSkill: "Der Skill konnte nicht installiert werden",
       deleteSkill: "Der Skill konnte nicht gelöscht werden",
+      fetchSkillDocument: "Der Skill konnte nicht geladen werden",
+      saveSkillDocument: "Der Skill konnte nicht gespeichert werden",
       listPlugins: "Plugins konnten nicht geladen werden",
       fetchPreferences: "Ihre Einstellungen konnten nicht geladen werden",
       updatePreferences: "Ihre Einstellungen konnten nicht gespeichert werden",

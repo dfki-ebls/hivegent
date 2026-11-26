@@ -1,20 +1,21 @@
 import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
-import { FileArchiveIcon, FolderUpIcon } from "lucide-react";
-import { type ChangeEvent, useRef, useState } from "react";
+import { FileArchiveIcon, FolderUpIcon, PlusIcon } from "lucide-react";
+import { type ChangeEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { keyPrefix } from "@/i18n";
-import { skillFile, skillMutations, skillQueries } from "@/api/skills";
+import { skillMutations, skillQueries } from "@/api/skills";
 import { buildCollectionZipFromDirectoryInput, directoryInputName } from "@/lib/collection-upload";
-import { DocumentDialog } from "@/components/document-dialog";
 import { LibrarySections } from "@/components/settings/library-sections";
+import { SkillDialog, type SkillTarget } from "@/components/settings/skill-dialog";
+import { useDialogTarget } from "@/hooks/use-dialog-target";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 
 const SKILLS_T = keyPrefix(($) => $.settings.skills);
 
-/** Upload a skill to the library of *scope*, as a ZIP archive or a folder zipped here. */
-function SkillUpload({ scope }: { scope: string }) {
+/** Write a new skill into the library of *scope*, or upload one as a ZIP archive or a folder zipped here. */
+function SkillLibraryActions({ scope, onCreate }: { scope: string; onCreate: () => void }) {
   const { t } = useTranslation(undefined, SKILLS_T);
   const archiveRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -45,7 +46,11 @@ function SkillUpload({ scope }: { scope: string }) {
   }
 
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-2">
+      <Button variant="outline" size="sm" onClick={onCreate}>
+        <PlusIcon data-icon="inline-start" />
+        {t(($) => $.create)}
+      </Button>
       <input
         ref={archiveRef}
         type="file"
@@ -86,13 +91,14 @@ function SkillUpload({ scope }: { scope: string }) {
 }
 
 /**
- * The skills of every scope the user sees, one card each, uploads into the
- * libraries they may change, or with *global* only the operator's.
+ * The skills of every scope the user sees, one card each, each opened in a
+ * dialog that edits its `SKILL.md` where the user may, new ones written or
+ * uploaded into the libraries they may change, or with *global* only the operator's.
  */
 export function SkillsSection({ global = false }: { global?: boolean }) {
   const { t } = useTranslation(undefined, SKILLS_T);
   const { data: skills } = useSuspenseQuery(skillQueries.list());
-  const [opened, setOpened] = useState<string | null>(null);
+  const dialog = useDialogTarget<SkillTarget | null>(null);
 
   return (
     <>
@@ -112,7 +118,8 @@ export function SkillsSection({ global = false }: { global?: boolean }) {
             <Button
               variant="link"
               className="h-auto p-0 font-mono"
-              onClick={() => setOpened(skillFile(skill))}
+              disabled={skill.problem !== null && !skill.writable}
+              onClick={() => dialog.show({ skill })}
             >
               {skill.name}
             </Button>
@@ -130,11 +137,11 @@ export function SkillsSection({ global = false }: { global?: boolean }) {
             ))}
           </>
         )}
-        renderLibrary={(scope) => <SkillUpload scope={scope} />}
+        renderLibrary={(scope) => (
+          <SkillLibraryActions scope={scope} onCreate={() => dialog.show({ scope })} />
+        )}
       />
-      {opened !== null && (
-        <DocumentDialog open onOpenChange={(open) => !open && setOpened(null)} filename={opened} />
-      )}
+      <SkillDialog target={dialog.target} open={dialog.open} onOpenChange={dialog.setOpen} />
     </>
   );
 }

@@ -14,7 +14,7 @@ import { syncSourceQueries } from "@/api/admin";
 import { syncConversationQueries } from "@/api/conversations";
 import { syncWorkspaceQueries } from "@/api/documents";
 import { OidcInitializationGate } from "@/oidc";
-import { syncLibraryQueries } from "@/stores/jobs-store";
+import { syncSkillQueries } from "@/stores/jobs-store";
 import { routeTree } from "@/routeTree.gen";
 
 import "@/styles.css";
@@ -33,7 +33,7 @@ const queryClient = createQueryClient();
 syncWorkspaceQueries(queryClient);
 syncConversationQueries(queryClient);
 syncSourceQueries(queryClient);
-syncLibraryQueries(queryClient, "skills");
+syncSkillQueries(queryClient);
 
 const router = createRouter({
   routeTree,

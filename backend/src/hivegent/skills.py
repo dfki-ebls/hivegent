@@ -1,8 +1,11 @@
 """Agent Skills by scope: where each lives, who sees it, and how one is installed.
 
 A skill (:mod:`hivegent.shared.skills`) belongs to a scope, like a workspace,
-and is addressed under its own root beside ``/tmp``, never inside a
-workspace, so it is never indexed, searched, or cited:
+but is no document: it lies under its own root, never inside a workspace, so
+it is never indexed, searched, cited, or reached by a document tool.  The
+agent reads one only through ``load_skill`` and runs its scripts with
+``run_python``, and a person installs, edits, and deletes one only through the
+REST API, so no agent tool changes a skill.  Its paths are
 
 * ``/skills/srv/<name>``, the global skills, which the operator's
   ``skills.dir`` and the enabled plugins hold in place and nobody changes
@@ -10,24 +13,22 @@ workspace, so it is never indexed, searched, or cited:
 * ``/skills/@<group>/<name>``, a group's, which its writers change, and
 * ``/skills/~/<name>``, the user's own,
 
-the last two kept in ``<data_dir>/skills/<owner>/<name>/``.  A user's or a
-group's library is a :class:`~hivegent.workspace.operations.Root` whose
-policy is :class:`~hivegent.tools.base.Reviewed`, so the agent writes a skill
-only with the user's approval, in every mode, while the user installs one
-whole through the REST API.
+the last two kept in ``<data_dir>/skills/<owner>/<name>/``, a user's or a
+group's library a :class:`~hivegent.workspace.operations.Root` under its quota.
 
 The catalog lists the skills a user sees in the order user, groups, global,
-each by its reference (:func:`~hivegent.libraries.library_ref`), its scope's
-prefix and its name, which is how the model loads one, so no scope can stand
-in for another's.
+each by its reference, its scope's prefix and its name as a document path
+spells them, ``/srv/<name>``, ``@<group>/<name>``, or ``~/<name>``, which is
+how the model loads one.  A name is unique only within its scope, so no scope
+can stand in for another's, whoever can see both.
 """
 
 import asyncio
 import io
 import threading
 import zipfile
-from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
@@ -38,27 +39,29 @@ from fastapi import HTTPException
 
 from .config import sanitize_document_path, settings
 from .files import disk_size, remove_path, transient
-from .libraries import (
-    LibraryScope,
-    Listed,
-    library_ref,
-    library_scopes,
-    visible,
-    writable_library,
-)
 from .plugins.loader import LoadedPlugin, merge
 from .shared.l10n import Localized, format_bytes
 from .shared.skills import SKILL_FILE, InvalidSkill, SkillDocument, parse_skill
-from .store import GlobalScope, GroupScope, Scope, User, UserScope
-from .tools.base import Reviewed, SearchPath
+from .store import (
+    AccessDenied,
+    GlobalScope,
+    GroupScope,
+    Scope,
+    User,
+    UserScope,
+    Workspace,
+)
+from .tools.base import SearchPath, resolve_accessible_file
 from .tools.entries import ContentStat, is_ignorable_path
 from .workspace.locks import root_lock
 from .workspace.operations import Quota, Root
-from .workspace_events import announce_library_changed
+from .workspace_events import announce_skills_changed
 
 __all__ = [
     "SKILLS_PREFIX",
     "Installed",
+    "LibraryGrant",
+    "ListedSkill",
     "Skill",
     "catalog",
     "delete_skill",
@@ -67,17 +70,16 @@ __all__ = [
     "read_archive",
     "remove_skills_root",
     "resolve_skill",
+    "save_skill_document",
+    "scope_author",
     "skill_dir",
     "skill_prefix",
     "skill_search_paths",
     "visible_skills",
-    "writable_libraries",
 ]
 
 SKILLS_PREFIX = "/skills"
-"""What every skill path leads with, beside ``/tmp``."""
-
-_REVIEWED = Reviewed()
+"""What every skill path leads with."""
 
 
 def _invalid(reason: str) -> Localized[str]:
@@ -87,6 +89,13 @@ def _invalid(reason: str) -> Localized[str]:
 def _not_found(name: str) -> Localized[str]:
     return Localized(
         en=f"No skill named {name!r} here", de=f"Hier gibt es keinen Skill „{name}“"
+    )
+
+
+def _already_exists(name: str) -> Localized[str]:
+    return Localized(
+        en=f"A skill named {name!r} already exists here",
+        de=f"Hier gibt es bereits einen Skill namens „{name}“",
     )
 
 
@@ -106,6 +115,79 @@ def _too_large(files: int, size: int) -> Localized[str]:
             f"sind {most_files} Dateien mit {most_bytes}"
         ),
     )
+
+
+type LibraryScope = GroupScope | UserScope
+"""A scope whose skill library Hivegent keeps, every one but the global."""
+
+_GLOBAL_ONLY = Localized(
+    en="The global library comes from the operator and cannot be changed here",
+    de="Die globale Bibliothek stellt der Betrieb bereit, sie lässt sich hier nicht ändern",
+)
+
+
+def scope_author(scope: Scope) -> Localized[str]:
+    """Who writes the skills of *scope*, as the model is told.
+
+    >>> scope_author(GroupScope("team")).en
+    'the group @team'
+    """
+    match scope:
+        case GlobalScope():
+            return Localized(en="the operator", de="der Betrieb")
+
+        case GroupScope(id=group_id):
+            return Localized(en=f"the group @{group_id}", de=f"die Gruppe @{group_id}")
+
+        case UserScope():
+            return Localized(en="the user", de="die Benutzer:in")
+
+
+def _library_scopes(user: User, *, writable: bool) -> list[LibraryScope]:
+    """The library scopes *user* reads, or writes when *writable* is true."""
+    return [
+        store.scope
+        for store in user.workspaces(writable=writable)
+        if isinstance(store.scope, GroupScope | UserScope)
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryGrant:
+    """The skill library of a scope, with the write grant of its workspace it is changed under.
+
+    Attributes:
+        store: The scope's workspace, granted for writing.
+        scope: Its scope, one Hivegent keeps a library for.
+
+    Raises:
+        AccessDenied: When *store* is not granted for writing, or is the
+            global workspace or a source's.
+    """
+
+    store: Workspace
+    scope: LibraryScope = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.store.require_writable()
+
+        match self.store.scope:
+            case GroupScope() | UserScope() as scope:
+                object.__setattr__(self, "scope", scope)
+            case _:
+                raise AccessDenied(_GLOBAL_ONLY.current)
+
+
+def _writable_scope(user: User, prefix: str) -> LibraryScope:
+    """The scope at *prefix*, ``~`` or ``@<group>``, whose library *user* changes.
+
+    Raises:
+        HTTPException: ``403`` for the global scope or one the user may not write.
+    """
+    try:
+        return LibraryGrant(user.workspace(prefix, writable=True)).scope
+    except AccessDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 def skill_prefix(scope: Scope) -> str:
@@ -142,13 +224,10 @@ def _library_quota() -> Quota:
 
 
 def library(scope: LibraryScope) -> Root:
-    """The root holding the skills of *scope*, every change to it reviewed and announced."""
+    """The root holding the skills of *scope*, under the quota of a library."""
     return Root(
-        SearchPath.of(
-            _skills_root() / scope.key, skill_prefix(scope), policy=_REVIEWED
-        ),
+        SearchPath.of(_skills_root() / scope.key, skill_prefix(scope)),
         _library_quota(),
-        on_commit=lambda: announce_library_changed("skills", scope),
     )
 
 
@@ -181,7 +260,19 @@ class Skill:
     @property
     def ref(self) -> str:
         """The reference it is loaded by, such as ``~/csv-check``."""
-        return library_ref(self)
+        return self.scope.render(self.name)
+
+    def file(self, relative: str) -> Path | None:
+        """The file at *relative* in its folder, resolved as a path tool resolves it, ``None`` for none.
+
+        No path escapes the folder, a symlink or ``..`` included.  Blocking.
+        """
+        resolved = resolve_accessible_file(
+            (SearchPath.of(self.folder, self.path),),
+            f"{self.path}/{relative.lstrip('/')}",
+        )
+
+        return None if resolved is None or not resolved[2].is_file() else resolved[2]
 
     @property
     def model_invocable(self) -> bool:
@@ -305,17 +396,26 @@ def _skills_of(scope: Scope) -> list[Skill]:
     return [_read(scope, folder) for folder in _skill_folders(scope)]
 
 
-def writable_libraries(user: User) -> tuple[Root, ...]:
-    """The libraries *user* may change: their own, and every group's they write."""
-    return tuple(library(scope) for scope in library_scopes(user, writable=True))
+@dataclass(frozen=True, slots=True)
+class ListedSkill:
+    """A skill as its user sees it, and whether they may replace or delete it."""
+
+    skill: Skill
+    writable: bool
 
 
-def visible_skills(user: User) -> list[Listed[Skill]]:
+def visible_skills(user: User) -> list[ListedSkill]:
     """Every skill *user* sees, their own first, then each group's, then global.
 
     Blocking, it reads every ``SKILL.md``.
     """
-    return visible(user, _skills_of)
+    writes = set(_library_scopes(user, writable=True))
+
+    return [
+        ListedSkill(skill, scope in writes)
+        for scope in user.scopes()
+        for skill in _skills_of(scope)
+    ]
 
 
 def catalog(user: User) -> list[Skill]:
@@ -324,7 +424,9 @@ def catalog(user: User) -> list[Skill]:
     Blocking, see :func:`visible_skills`.
     """
     return [
-        entry.item for entry in visible_skills(user) if entry.item.document is not None
+        entry.skill
+        for entry in visible_skills(user)
+        if entry.skill.document is not None
     ]
 
 
@@ -378,15 +480,11 @@ def skill_search_paths(user: User) -> tuple[SearchPath, ...]:
     """
     prefix = skill_prefix(GlobalScope())
     global_skills = (
-        SearchPath.of(
-            path=folder,
-            target=render(prefix, folder.name),
-            policy=_REVIEWED,
-        )
+        SearchPath.of(path=folder, target=render(prefix, folder.name))
         for folder in _skill_folders(GlobalScope())
     )
     libraries = (
-        library(scope).search_path for scope in library_scopes(user, writable=False)
+        library(scope).search_path for scope in _library_scopes(user, writable=False)
     )
 
     return (*libraries, *global_skills)
@@ -540,6 +638,32 @@ def _write(files: Mapping[str, bytes], target: Path) -> None:
         remove_path(staged)
 
 
+async def _change[T](
+    user: User, prefix: str, change: Callable[[Root], T]
+) -> tuple[LibraryScope, T]:
+    """Run *change* on the library of the scope at *prefix* under its lock, off the event loop, then announce it.
+
+    Raises:
+        HTTPException: ``403`` for a library the user may not change.
+    """
+    scope = _writable_scope(user, prefix)
+    root = library(scope)
+
+    async with root_lock(root):
+        result = await asyncio.to_thread(change, root)
+
+    announce_skills_changed(scope)
+
+    return scope, result
+
+
+def _admit(root: Root, target: Path, size: int) -> None:
+    """Refuse a write of *size* bytes in place of *target* that would grow *root* over its quota."""
+    _library_quota().admit(
+        root.path, root.mount.target, size - disk_size(target), frozenset(), evict=False
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Installed:
     """A skill just installed, with its scripts for the caller to check."""
@@ -558,25 +682,54 @@ async def install_skill(
             or too large skill.
         ChangeRefused: When the library would grow over its quota.
     """
-    scope = writable_library(user, prefix).scope
-    root = library(scope)
     bundle = _bundle(files)
-    name = bundle.document.manifest.name
-    target = root.path / name
 
-    def write() -> None:
-        growth = sum(map(len, bundle.files.values())) - disk_size(target)
-        _library_quota().admit(
-            root.path, root.mount.target, growth, frozenset(), evict=False
-        )
+    def write(root: Root) -> Path:
+        target = root.path / bundle.document.manifest.name
+        _admit(root, target, sum(map(len, bundle.files.values())))
         _write(bundle.files, target)
 
-    async with root_lock(root):
-        await asyncio.to_thread(write)
+        return target
 
-    announce_library_changed("skills", scope)
+    scope, target = await _change(user, prefix, write)
 
     return Installed(Skill(scope, target, bundle.document), bundle.scripts)
+
+
+async def save_skill_document(
+    user: User, prefix: str, name: str, content: str, *, create: bool = False
+) -> Skill:
+    """Save *content* as the ``SKILL.md`` of the skill *name* in the library at *prefix*, keeping its other files.
+
+    To *create* it refuses a name the library holds, so it never replaces a skill.
+
+    Raises:
+        HTTPException: For a library the user may not change, ``422`` for a
+            ``SKILL.md`` that breaks the format or names another skill, ``409``
+            for a skill to create whose name is taken.
+        ChangeRefused: When the library would grow over its quota.
+    """
+    try:
+        document = parse_skill(content, name)
+    except InvalidSkill as exc:
+        raise HTTPException(status_code=422, detail=_invalid(str(exc)).current) from exc
+
+    data = content.encode()
+
+    def write(root: Root) -> Path:
+        folder = root.path / name
+
+        if create and folder.exists(follow_symlinks=False):
+            raise HTTPException(status_code=409, detail=_already_exists(name).current)
+
+        _admit(root, folder / SKILL_FILE, len(data))
+        atomic_write(folder / SKILL_FILE, data)
+
+        return folder
+
+    scope, folder = await _change(user, prefix, write)
+
+    return Skill(scope, folder, document)
 
 
 async def delete_skill(user: User, prefix: str, name: str) -> None:
@@ -585,10 +738,8 @@ async def delete_skill(user: User, prefix: str, name: str) -> None:
     Raises:
         HTTPException: For a library the user may not change, or no such skill.
     """
-    scope = writable_library(user, prefix).scope
-    root = library(scope)
 
-    def remove() -> None:
+    def remove(root: Root) -> None:
         if name not in {path.name for path in _folders(root.path)}:
             raise HTTPException(status_code=404, detail=_not_found(name).current)
 
@@ -596,10 +747,7 @@ async def delete_skill(user: User, prefix: str, name: str) -> None:
         (root.path / name).rename(staged / name)
         remove_path(staged)
 
-    async with root_lock(root):
-        await asyncio.to_thread(remove)
-
-    announce_library_changed("skills", scope)
+    _ = await _change(user, prefix, remove)
 
 
 async def remove_skills_root() -> None:

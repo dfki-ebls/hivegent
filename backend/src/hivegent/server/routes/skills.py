@@ -1,29 +1,41 @@
-"""Routes for the skills a user sees, installs, and deletes.
+"""Routes for the skills a user sees, installs, edits, and deletes.
 
 A user's and a group's library take a whole skill as one ZIP archive, which
-replaces a skill of its name, and every path inside a skill is read through
-``GET /documents/{path}`` like a document's.  The global skills come from the
-operator, so no route changes them.
+replaces a skill of its name, or the ``SKILL.md`` of one alone, which keeps
+its other files.  A skill is no document, so its ``SKILL.md`` is read here by
+the skill's reference, never through ``GET /documents``.  The global skills
+come from the operator, so no route changes them.
 """
 
 import asyncio
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile, status
+from fastapi.responses import Response
 
 from ...agents.tools.python import check_skill_script
 from ...auth import CurrentUser
 from ...config import settings
-from ...libraries import Listed
 from ...shared.l10n import Localized, format_bytes
+from ...shared.skills import SKILL_FILE
 from ...skills import (
+    ListedSkill,
     Skill,
     delete_skill,
     install_skill,
     read_archive,
+    resolve_skill,
+    save_skill_document,
     visible_skills,
 )
-from ...types import SkillInfo, SkillInstalledResponse, SkillScriptInfo
-from ..operations import upload_body_limit
+from ...store import User
+from ...types import (
+    SkillDocumentRequest,
+    SkillInfo,
+    SkillInstalledResponse,
+    SkillScriptInfo,
+)
+from ..operations import get_file_response, upload_body_limit
 from ..rate_limit import UPLOAD_LIMIT
 
 __all__ = ["router"]
@@ -55,14 +67,43 @@ def _info(skill: Skill, *, writable: bool = True) -> SkillInfo:
     )
 
 
-def _listed(entry: Listed[Skill]) -> SkillInfo:
-    return _info(entry.item, writable=entry.writable)
+def _listed(entry: ListedSkill) -> SkillInfo:
+    return _info(entry.skill, writable=entry.writable)
 
 
 @router.get("/skills")
 async def list_skills(user: CurrentUser) -> list[SkillInfo]:
     """Every skill the user sees: the global ones, each group's, and their own, in that order."""
     return [_listed(entry) for entry in await asyncio.to_thread(visible_skills, user)]
+
+
+def _skill_document(user: User, ref: str) -> Path | None:
+    """The ``SKILL.md`` of the skill *ref* names among those *user* sees, ``None`` for none."""
+    skill = resolve_skill((entry.skill for entry in visible_skills(user)), ref)
+
+    return None if skill is None else skill.file(SKILL_FILE)
+
+
+@router.get("/skills/{ref:path}")
+async def get_skill_document(ref: str, user: CurrentUser) -> Response:
+    """Get the ``SKILL.md`` of a skill the user sees, by its reference such as ``~/name`` or ``srv/name``."""
+    return await get_file_response(lambda: _skill_document(user, ref), ref)
+
+
+@router.post("/skills/{scope}/{name}", status_code=status.HTTP_201_CREATED)
+async def create_skill_document(
+    scope: str, name: str, request: SkillDocumentRequest, user: CurrentUser
+) -> SkillInfo:
+    """Create a skill in the library of *scope*."""
+    return _info(await save_skill_document(user, scope, name, request.content, create=True))
+
+
+@router.put("/skills/{scope}/{name}")
+async def put_skill_document(
+    scope: str, name: str, request: SkillDocumentRequest, user: CurrentUser
+) -> SkillInfo:
+    """Save the ``SKILL.md`` of the skill *name* in the library of *scope*, keeping its other files."""
+    return _info(await save_skill_document(user, scope, name, request.content))
 
 
 @router.put(

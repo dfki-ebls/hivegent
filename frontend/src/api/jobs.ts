@@ -75,14 +75,8 @@ const ConversationActivitySchema = z.object({
 });
 export type ConversationActivity = z.infer<typeof ConversationActivitySchema>;
 
-/** The libraries the feed announces changes of, each named like the root of its query keys. */
-export type LibraryKind = "skills";
-
-/** Marks a change to a skill library the user sees (see backend `LibraryChanged`). */
-const LibraryChangedSchema = z.object({
-  type: z.literal("library-changed"),
-  kind: z.enum(["skills"]),
-});
+/** Marks a change to a skill library the user sees (see backend `SkillsChanged`). */
+const SkillsChangedSchema = z.object({ type: z.literal("skills-changed") });
 
 /** Marks a change to the sync state of a source, which only admins' feeds carry (see backend `SourceChanged`). */
 const SourceChangedSchema = z.object({ type: z.literal("source-changed") });
@@ -94,7 +88,7 @@ export const FeedEventSchema = z.union([
   WorkspaceChangedSchema,
   ConversationsChangedSchema,
   ConversationActivitySchema,
-  LibraryChangedSchema,
+  SkillsChangedSchema,
   SourceChangedSchema,
 ]);
 
@@ -105,7 +99,7 @@ export interface FeedHandlers {
   onWorkspaceChanged: (changed: WorkspaceChanged) => void;
   onConversationsChanged: () => void;
   onConversationActivity: (activity: ConversationActivity) => void;
-  onLibraryChanged: (kind: LibraryKind) => void;
+  onSkillsChanged: () => void;
   onSourcesChanged: () => void;
 }
 
@@ -177,7 +171,7 @@ async function readSseEvents<T>(
  * `onWorkspaceChanged` for every change to a workspace the user may read,
  * `onConversationsChanged` for every change to the user's conversations,
  * `onConversationActivity` for every turn starting or tasks changing in one of them, and
- * `onLibraryChanged` for every change to a library the user sees,
+ * `onSkillsChanged` for every change to a skill library the user sees,
  * `onSourcesChanged` for every change to the sync state of a source (admins only),
  * whoever made them, until the connection ends or `signal` aborts. The feed
  * seeds the current jobs on connect, so a reconnect re-converges on live state
@@ -190,7 +184,7 @@ export async function subscribeJobs(
     onWorkspaceChanged,
     onConversationsChanged,
     onConversationActivity,
-    onLibraryChanged,
+    onSkillsChanged,
     onSourcesChanged,
   }: FeedHandlers,
   signal?: AbortSignal,
@@ -204,7 +198,7 @@ export async function subscribeJobs(
     else if (event.type === "ready") onReady();
     else if (event.type === "conversations-changed") onConversationsChanged();
     else if (event.type === "conversation-activity") onConversationActivity(event);
-    else if (event.type === "library-changed") onLibraryChanged(event.kind);
+    else if (event.type === "skills-changed") onSkillsChanged();
     else if (event.type === "source-changed") onSourcesChanged();
     else onWorkspaceChanged(event);
   });

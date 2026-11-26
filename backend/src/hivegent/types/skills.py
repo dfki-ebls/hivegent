@@ -2,11 +2,20 @@
 
 from pydantic import BaseModel, Field
 
+from ..config import settings
+
 __all__ = [
+    "SkillDocumentRequest",
     "SkillInfo",
     "SkillInstalledResponse",
     "SkillScriptInfo",
 ]
+
+
+class SkillDocumentRequest(BaseModel):
+    """The ``SKILL.md`` of a skill, its frontmatter and its instructions."""
+
+    content: str = Field(min_length=1, max_length=settings.skills.max_bytes)
 
 
 class SkillInfo(BaseModel):

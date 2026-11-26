@@ -59,6 +59,7 @@ export const TOOL_ICONS: Record<ToolName, LucideIcon> = {
   read_binary_document: FileImageIcon,
   read_document: FileTextIcon,
   read_memory: BookmarkIcon,
+  read_skill_file: GraduationCapIcon,
   retain_cases: DatabaseIcon,
   run_python: SquareTerminalIcon,
   search: SearchIcon,

@@ -110,8 +110,9 @@ An unknown name stops the server at startup with an error listing the valid ones
 
 Skills are folders of instructions and scripts following the [Agent Skills](https://agentskills.io) format, which the assistant loads for matching tasks.
 `skills.dir` names a directory of global skills, one folder with a `SKILL.md` each, which every user sees under `/skills/srv` and nobody changes through Hivegent, so it may lie in the Nix store.
-Users install their own and their groups' skills in the settings as ZIP archives, kept in `<data_dir>/skills/`, each at most `skills.max_files` files (default 512) in `skills.max_bytes` (default 16 MiB).
+Users install or write their own and their groups' skills in the settings, as ZIP archives or a `SKILL.md`, kept in `<data_dir>/skills/`, each at most `skills.max_files` files (default 512) in `skills.max_bytes` (default 16 MiB).
 Skill scripts run in the Python sandbox, so only scripts written for it, defining a `main` function, run, while the others stay readable.
+A skill is no document, so the document tools never reach it, the assistant reads its files only by loading the skill, and it never writes one, only people change skills.
 
 A skill of a group runs with the grants of whoever uses it, never with those of its author.
 So it reaches nothing its reader could not reach alone, but a writer of a group's library steers what the runs of its readers do within their grants, for example which documents they read or which changes they propose.

@@ -13,7 +13,7 @@ a conversation's ``/tmp`` or a skill library.
 """
 
 import os
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -154,14 +154,11 @@ class Root:
         store: The workspace whose rows, index, in-flight claims, and
             announcements its changes carry, ``None`` for a root of plain
             files written directly.
-        on_commit: What runs once a changeset that changed it committed,
-            such as announcing a skill library to the clients that list it.
     """
 
     search_path: SearchPath
     quota: Quota | None = None
     store: Workspace | None = None
-    on_commit: Callable[[], None] | None = field(default=None, compare=False)
 
     @classmethod
     def of(cls, store: Workspace, filter_func: PathFilter | None = None) -> Self:

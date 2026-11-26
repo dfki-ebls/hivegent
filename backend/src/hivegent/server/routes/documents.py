@@ -33,7 +33,6 @@ from ...db.conversations import OwnedConversation, owned_conversation
 from ...db.documents import get_document, get_line_counts
 from ...jobs import JobContext, JobView, JobWork, manager
 from ...shared.l10n import Localized, format_bytes
-from ...skills import SKILLS_PREFIX, skill_search_paths
 from ...store import User, Workspace
 from ...tmp import TMP_PREFIX, tmp_dir, tmp_root
 from ...tools.base import resolve_accessible_file
@@ -632,27 +631,17 @@ def _tmp_file(conversation: OwnedConversation, filepath: str) -> Path | None:
     return None if resolved is None else resolved[2]
 
 
-def _skill_file(user: User, filepath: str) -> Path | None:
-    """The file *filepath* names among the skills *user* sees, as the agent's tools resolve it."""
-    resolved = resolve_accessible_file(skill_search_paths(user), filepath)
-
-    return None if resolved is None else resolved[2]
-
-
 @router.get("/documents/{filepath:path}")
 async def get_document_content(
     filepath: str,
     user: CurrentUser,
     conversation_id: UUID | None = None,
 ) -> Response:
-    """Get the content of a document, an asset, or a file of a skill.
+    """Get the content of a document or an asset.
 
     A ``/tmp`` path is read from the folder of *conversation_id*, which the
-    user must own, and a ``/skills`` path from the skills the user sees.
+    user must own.
     """
-    if strip(SKILLS_PREFIX, filepath) is not None:
-        return await get_file_response(lambda: _skill_file(user, filepath), filepath)
-
     if conversation_id is None or strip(TMP_PREFIX, filepath) is None:
         store, safe = resolve_workspace_path(user, filepath)
 

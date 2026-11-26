@@ -192,7 +192,7 @@ async def test_unknown_root_is_refused_with_the_roots_named(
 
     with pytest.raises(
         Retry,
-        match=r"addresses ~, @team, /skills/~, /skills/@team, /tmp; give the full path",
+        match=r"addresses ~, @team, /tmp; give the full path",
     ):
         await tool("@nope/a.md", "hi")
 
@@ -228,9 +228,11 @@ def test_run_python_paths_end_with_the_conversation_s_tmp(
     paths = filtered.search_paths()
 
     assert all(not path.path.exists() for path in paths)
-    *workspaces, own, archive, team, tmp = paths
+    *workspaces, tmp = paths
     assert len(workspaces) == 4
-    assert [own.mount.render(""), archive.mount.render(""), team.mount.render("")] == [
+    # A skill is no document, so only `load_skill` and `run_python` reach one.
+    skills = filtered.program_paths()[len(paths) :]
+    assert [path.mount.render("") for path in skills] == [
         "/skills/~",
         "/skills/@archive",
         "/skills/@team",
@@ -244,8 +246,8 @@ def test_run_python_paths_end_with_the_conversation_s_tmp(
     assert tmp.mount.render("") == "/tmp"
     assert tmp.policy == Direct(reserved=".tool-results")
     assert python_tools._environ(filtered)["TMPDIR"] == "/tmp"
-    # The writable workspaces and skill libraries, and `/tmp`.
-    assert len(program_writes(filtered).paths) == 5
+    # The writable workspaces and `/tmp`, never a skill library.
+    assert len(program_writes(filtered).paths) == 3
 
     # Read mode, or a withheld apply_changes, changes no workspace and keeps `/tmp`.
     assert program_writes(replace(filtered, mode="read")).paths == (tmp,)

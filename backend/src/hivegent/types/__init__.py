@@ -78,6 +78,7 @@ from .meta import (
     WorkspaceInfo,
 )
 from .skills import (
+    SkillDocumentRequest,
     SkillInfo,
     SkillInstalledResponse,
     SkillScriptInfo,
@@ -133,6 +134,7 @@ __all__ = [
     "ProgressReporter",
     "ServerConversation",
     "SettingsResponse",
+    "SkillDocumentRequest",
     "SkillInfo",
     "SkillInstalledResponse",
     "SkillScriptInfo",

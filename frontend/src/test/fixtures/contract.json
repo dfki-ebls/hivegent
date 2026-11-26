@@ -2227,7 +2227,7 @@
           "$ref": "#/components/schemas/ConversationActivity"
         },
         {
-          "$ref": "#/components/schemas/LibraryChanged"
+          "$ref": "#/components/schemas/SkillsChanged"
         },
         {
           "$ref": "#/components/schemas/SourceChanged"
@@ -2618,27 +2618,6 @@
         "must",
         "nice"
       ]
-    },
-    "LibraryChanged": {
-      "properties": {
-        "type": {
-          "type": "string",
-          "const": "library-changed",
-          "title": "Type",
-          "default": "library-changed"
-        },
-        "kind": {
-          "type": "string",
-          "const": "skills",
-          "title": "Kind"
-        }
-      },
-      "type": "object",
-      "required": [
-        "kind"
-      ],
-      "title": "LibraryChanged",
-      "description": "Marks a change to a library the subscriber sees, whose list a client reads again."
     },
     "McpIntegration": {
       "properties": {
@@ -3441,6 +3420,22 @@
       "title": "SettingsResponse",
       "description": "What the server offers the user, with their own context."
     },
+    "SkillDocumentRequest": {
+      "properties": {
+        "content": {
+          "type": "string",
+          "maxLength": 16777216,
+          "minLength": 1,
+          "title": "Content"
+        }
+      },
+      "type": "object",
+      "required": [
+        "content"
+      ],
+      "title": "SkillDocumentRequest",
+      "description": "The ``SKILL.md`` of a skill, its frontmatter and its instructions."
+    },
     "SkillInfo": {
       "properties": {
         "name": {
@@ -3588,6 +3583,19 @@
       ],
       "title": "SkillScriptInfo",
       "description": "Whether a script of a skill runs by the main convention."
+    },
+    "SkillsChanged": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "skills-changed",
+          "title": "Type",
+          "default": "skills-changed"
+        }
+      },
+      "type": "object",
+      "title": "SkillsChanged",
+      "description": "Marks a change to a skill library the subscriber sees, whose list a client reads again."
     },
     "SourceChanged": {
       "properties": {
@@ -5077,6 +5085,7 @@
     "read_binary_document",
     "read_document",
     "read_memory",
+    "read_skill_file",
     "retain_cases",
     "run_python",
     "search",

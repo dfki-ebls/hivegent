@@ -677,12 +677,6 @@ async def _commit(
     announce_workspace_changed(
         {store for root in roots if (store := root.store) is not None}, changed
     )
-    hooks = {
-        root.store_key: hook for root in roots if (hook := root.on_commit) is not None
-    }
-
-    for hook in hooks.values():
-        hook()
 
     if failure is not None:
         raise IndexingFailed(applied) from failure

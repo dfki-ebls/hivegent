@@ -219,6 +219,7 @@ export const chat = {
       read_binary_document: "Read Binary Files",
       read_document: "Read Documents",
       read_memory: "Read Memory",
+      read_skill_file: "Read Skill File",
       retain_cases: "Retain Cases",
       run_python: "Run Python",
       search: "Semantic Search",

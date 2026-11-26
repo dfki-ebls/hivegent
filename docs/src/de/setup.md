@@ -110,8 +110,9 @@ Ein unbekannter Name verhindert den Serverstart mit einem Fehler, der die gülti
 
 Skills sind Ordner mit Anweisungen und Skripten im Format [Agent Skills](https://agentskills.io), die der Assistent für passende Aufgaben lädt.
 `skills.dir` nennt ein Verzeichnis globaler Skills, je ein Ordner mit einer `SKILL.md`, die alle Benutzer:innen unter `/skills/srv` sehen und niemand über Hivegent ändert, es darf also im Nix-Store liegen.
-Benutzer:innen installieren ihre eigenen Skills und die ihrer Gruppen in den Einstellungen als ZIP-Archive, abgelegt in `<data_dir>/skills/`, je höchstens `skills.max_files` Dateien (Standard 512) mit `skills.max_bytes` (Standard 16 MiB).
+Benutzer:innen installieren oder schreiben ihre eigenen Skills und die ihrer Gruppen in den Einstellungen, als ZIP-Archive oder eine `SKILL.md`, abgelegt in `<data_dir>/skills/`, je höchstens `skills.max_files` Dateien (Standard 512) mit `skills.max_bytes` (Standard 16 MiB).
 Skill-Skripte laufen in der Python-Sandbox, daher laufen nur dafür geschriebene Skripte mit einer Funktion `main`, die übrigen bleiben lesbar.
+Ein Skill ist kein Dokument, die Dokument-Tools erreichen ihn daher nie, der Assistent liest seine Dateien nur, indem er den Skill lädt, und er schreibt nie einen, nur Menschen ändern Skills.
 
 Ein Skill einer Gruppe läuft mit den Rechten derer, die ihn nutzen, nie mit denen seiner Autor:innen.
 Er erreicht also nichts, was seine Nutzer:innen nicht auch allein erreichen, doch wer die Bibliothek einer Gruppe schreibt, lenkt, was die Läufe ihrer Leser:innen innerhalb deren Rechte tun, etwa welche Dokumente sie lesen oder welche Änderungen sie vorschlagen.

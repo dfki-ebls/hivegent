@@ -97,7 +97,7 @@ Eine Trennlinie markiert, wo die Zusammenfassung beginnt, und zeigt sie beim Öf
   Bildanhänge und der Denkaufwand erscheinen nur für ein Modell, das sie unterstützt.
 - Denkaufwand: Niedrig, Mittel (Standard) oder Hoch, ein Abwägen von Tiefe gegen Geschwindigkeit und Kosten.
 - Modus: Interaktiv fragt vor jeder Änderung im Arbeitsbereich, Schreiben ändert jeden Arbeitsbereich, den Sie beschreiben dürfen, ohne Rückfrage, und Lesen erlaubt keine Änderungen.
-  Änderungen an Skills und am Gedächtnis fragen immer nach, in jedem Modus, da sie spätere Konversationen prägen.
+  Änderungen am Gedächtnis fragen immer nach, in jedem Modus, da sie spätere Konversationen prägen.
 - Anweisungen: Ihre eigenen dauerhaften Anweisungen für jede Unterhaltung, etwa ein Ton oder eine Hausregel, unter Einstellungen, Anweisungen.
   Sie erreichen den Assistenten als Ihre eigenen Worte und können seine Regeln nicht außer Kraft setzen.
 
@@ -117,8 +117,9 @@ Der Text nach dem Befehl ersetzt jedes `$ARGUMENTS` in den Anweisungen des Skill
 Das Frontmatter eines Skills kann `disable-model-invocation: true` enthalten, sodass nur Sie ihn laden, nie der Assistent von sich aus, oder `user-invocable: false`, sodass er nicht als Befehl angeboten wird und der Assistent ihn lädt, wenn eine Aufgabe passt.
 Jeder Wert im Frontmatter wird so gelesen, wie er dasteht, sodass `version: 1.0` Text bleibt, und ein doppelter Schlüssel macht den Skill ungültig.
 Einstellungen, Skills listet die Skills der Organisation, Ihrer Gruppen und Ihre eigenen, öffnet die `SKILL.md` jedes Skills und zeigt, warum ein Skill nicht nutzbar ist.
-Laden Sie einen Skill-Ordner oder sein ZIP-Archiv zu Ihren eigenen Skills oder zu einer Gruppe hoch, in die Sie schreiben dürfen, wo er einen gleichnamigen Skill ersetzt, und löschen Sie ihn dort.
-Der Assistent kann auf Ihren Wunsch auch selbst einen Skill schreiben und fragt vor jeder Änderung nach, in jedem Modus.
+Mit Neuer Skill schreiben Sie einen in Ihren eigenen Skills oder in einer Gruppe, in die Sie schreiben dürfen, oder bearbeiten dort seine `SKILL.md`, die der Organisation und Gruppen ohne Schreibrecht öffnen sich schreibgeschützt.
+Laden Sie einen Skill-Ordner oder sein ZIP-Archiv an dieselben Orte hoch, wo er einen gleichnamigen Skill ersetzt, und löschen Sie ihn dort.
+Skills sind keine Dokumente, der Assistent lädt und führt sie daher nur aus, er durchsucht oder ändert sie nie, und nur Sie fügen Skills in den Einstellungen hinzu oder ändern sie.
 Skripte eines Skills laufen in der Python-Sandbox, wenn sie eine Funktion `main` definieren, andere bleiben zum Lesen.
 Ein geladener Skill bleibt geladen, wenn eine lange Unterhaltung zusammengefasst wird.
 

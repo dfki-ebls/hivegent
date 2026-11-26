@@ -10,13 +10,12 @@ skill library reaches the same clients its workspace does.
 
 from collections.abc import Collection, Mapping
 from dataclasses import replace
-from typing import Literal
 
-from .jobs import LibraryChanged, manager
+from .jobs import SkillsChanged, manager
 from .store import Scope, User, Workspace, split_scope_path
 from .tools.changes import WorkspaceChanged
 
-__all__ = ["announce_library_changed", "announce_workspace_changed", "follows"]
+__all__ = ["announce_skills_changed", "announce_workspace_changed", "follows"]
 
 
 def follows(user: User) -> Mapping[str, str]:
@@ -41,9 +40,9 @@ def announce_workspace_changed(
     manager.notify(lambda followed: _visible(announced, keys, followed))
 
 
-def announce_library_changed(kind: Literal["skills"], scope: Scope) -> None:
-    """Tell every client following the workspace of *scope* that its library of *kind* changed."""
-    event = LibraryChanged(kind=kind)
+def announce_skills_changed(scope: Scope) -> None:
+    """Tell every client following the workspace of *scope* that its skill library changed."""
+    event = SkillsChanged()
     manager.notify(lambda followed: event if scope.key in followed else None)
 
 

@@ -17,13 +17,12 @@ from ..db.conversations import OwnedConversation
 from ..db.users import delete_user, load_preferences
 from ..files import remove_path
 from ..jobs import manager
-from ..libraries import LibraryGrant
 from ..llm import model_from_config
 from ..llm_config import LlmConfig, ReasoningEffort, chat_llm
 from ..prompts import compose_instructions
 from ..shared.l10n import Localized, current_language
 from ..shared.text import normalize_unicode
-from ..skills import library
+from ..skills import LibraryGrant, library
 from ..store import (
     AccessDenied,
     User,

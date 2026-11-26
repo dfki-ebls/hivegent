@@ -195,13 +195,14 @@ The host configuration declares the external MCP servers, so `/admin/integration
 The host configuration declares the external sources, so `/admin/sources` lists them (`GET /admin/sources`) with their last sync, file count, and error, and its one action starts a sync (`POST /admin/sources/{id}/sync`), which the job tray follows like any job, since admins follow the jobs of every admin.
 A source's mirror arrives as a workspace of kind `source` named by its id, so the tree, previews, and citations need nothing of their own, and `splitScopePath` takes `/mnt/<id>` whole as its scope.
 
-## Skills are listed, never edited here
+## Skills are listed and edited in a dialog
 
 `/settings/skills` lists the skills of every scope the user sees (`GET /skills`), uploads a folder, zipped in the browser with the collection upload's helper, or a ZIP archive into the user's own library or a group's they write, and deletes one behind a confirmation.
-A skill's `SKILL.md` opens in the document viewer like a `/tmp` file, through `GET /documents/{path}`, since a skill is no workspace entry and has no chunks.
-The global skills come from the operator, so they get no upload or delete, and `/admin/skills` lists only them.
+Each writable library has a "New Skill" button, which opens a skill's `SKILL.md` template in a dialog that follows the typed name until the user edits it, and creates it with `POST /skills/{scope}/{name}`, which refuses a taken name, while editing saves with `PUT`.
+A skill's `SKILL.md` opens in that dialog too, read through `GET /skills/{ref}` since a skill is no document and `GET /documents` never serves it, editable where the user may write the library and read-only otherwise.
+The global skills come from the operator, so they get no upload, edit, or delete, and `/admin/skills` lists only them.
 A draft that is a slash and one word suggests the skills it may invoke, and the server loads the skill named by the first word after a message's leading slash, so the client sends the text as typed.
-A `library-changed` feed event refetches the skills wherever someone changed them.
+A `skills-changed` feed event refetches the skills wherever someone changed them (`syncSkillQueries`).
 
 ## Instructions are a preference
 

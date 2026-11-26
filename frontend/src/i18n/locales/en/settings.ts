@@ -26,8 +26,24 @@ export const settings = {
   skills: {
     title: "Skills",
     description:
-      "Instructions and scripts the assistant loads for matching tasks, or when a message starts with /name. Upload a skill folder or its ZIP archive to your own skills or a group's, the organisation's come from the operator.",
+      "Instructions and scripts the assistant loads for matching tasks, or when a message starts with /name. Write a skill or upload a skill folder or its ZIP archive to your own skills or a group's, the organisation's come from the operator.",
     empty: "No skills yet.",
+    create: "New Skill",
+    saved: "Saved the skill {{name}}",
+    form: {
+      createTitle: "New skill",
+      editTitle: "Edit {{name}}",
+      description:
+        "A SKILL.md opens with frontmatter that names the skill and describes when to use it, followed by its instructions. Upload a folder to add scripts or other files.",
+      name: "Name",
+      nameHint: "Lowercase letters, digits, and hyphens, such as csv-check. It must match the name in the frontmatter.",
+      content: "SKILL.md",
+      templateDescription: "What the skill does and when to use it.",
+      templateBody: "The instructions to follow.",
+      save: "Save",
+      cancel: "Cancel",
+      close: "Close",
+    },
     uploadArchive: "Upload ZIP",
     uploadFolder: "Upload Folder",
     installed: "Installed the skill {{name}}",

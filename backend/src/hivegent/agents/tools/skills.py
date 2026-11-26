@@ -7,7 +7,8 @@ a name, as :data:`~.memory.MEMORY_NOTE` reports the memory, when a
 conversation starts, after a compaction, and whenever it changed since, which
 appends to the history and never rewrites the cached prefix.  A skill's
 instructions are the result of ``load_skill`` with its name, fenced as data
-like every result, and its other files are read by path with the read tools.
+like every result, and one of its other files that of ``read_skill_file``,
+since a skill is no document and no document tool reaches it.
 
 A skill is named by its reference, its scope's prefix and its name such as
 ``~/csv-check``, or by its bare name while no other skill the user sees has
@@ -47,9 +48,9 @@ from ...db.conversations import (
     prompt_items,
     prompt_text,
 )
-from ...libraries import scope_author
 from ...shared.skills import SKILL_FILE
-from ...skills import Skill, catalog, resolve_skill
+from ...skills import Skill, catalog, resolve_skill, scope_author
+from ...store import User
 from ...tools.base import ToolFunc
 from ...tools.python import is_python_script
 from ..common import AgentTools, UserDeps
@@ -60,6 +61,7 @@ __all__ = [
     "Invocation",
     "invoked_skill",
     "load_skill",
+    "read_skill_file",
     "render_catalog",
     "skills_toolset",
 ]
@@ -70,6 +72,21 @@ SkillNameArg = Annotated[
         description=(
             "The reference of the skill to load, such as ~/csv-check, as the "
             "catalog lists it. Omit it to list the skills you can load."
+        )
+    ),
+]
+
+SkillRefArg = Annotated[
+    str,
+    Field(description="The reference of the skill, such as ~/csv-check."),
+]
+
+SkillFileArg = Annotated[
+    str,
+    Field(
+        description=(
+            "The file by its path in the skill folder as load_skill lists it, "
+            "such as references/guide.md."
         )
     ),
 ]
@@ -160,7 +177,12 @@ async def _render_skill(skill: Skill, arguments: str | None = None) -> str:
 
     header = f"Skill {skill.ref} by {scope_author(skill.scope).en}, in {skill.path}:"
     listing = (
-        "\n".join([f"Its files, by their path in {skill.path}:", *lines])
+        "\n".join(
+            [
+                f"Its files, which read_skill_file reads by their path in {skill.path}:",
+                *lines,
+            ]
+        )
         if lines
         else "It holds no other files."
     )
@@ -175,32 +197,64 @@ async def _render_skill(skill: Skill, arguments: str | None = None) -> str:
     return f"{header}\n\n{body}\n\n{listing}"
 
 
+def _loadable(user: User) -> list[Skill]:
+    """The skills the model may load.  Blocking, see :func:`~hivegent.skills.catalog`."""
+    return [skill for skill in catalog(user) if skill.model_invocable]
+
+
+def _named(skills: Sequence[Skill], name: str) -> Skill:
+    """The skill of *skills* that *name* names.
+
+    Raises:
+        ModelRetry: For none, listing the skills.
+    """
+    skill = resolve_skill(skills, name)
+
+    if skill is None:
+        raise ModelRetry(f"No one skill is named {name!r}. {render_catalog(skills)}")
+
+    return skill
+
+
 @effect("read")
 async def load_skill(ctx: RunContext[UserDeps], name: SkillNameArg = None) -> str:
     """Load a skill's instructions with the list of its files, or list the skills.
 
     Load a skill whose description matches the task before working on it.
     """
-    skills = [
-        skill
-        for skill in await asyncio.to_thread(catalog, ctx.deps.user)
-        if skill.model_invocable
-    ]
+    skills = await asyncio.to_thread(_loadable, ctx.deps.user)
 
     if name is None:
         return render_catalog(skills)
 
-    skill = resolve_skill(skills, name)
+    return await _render_skill(_named(skills, name))
 
-    if skill is None:
-        raise ModelRetry(f"No one skill is named {name!r}. {render_catalog(skills)}")
 
-    return await _render_skill(skill)
+@effect("read")
+async def read_skill_file(
+    ctx: RunContext[UserDeps], name: SkillRefArg, file: SkillFileArg
+) -> str:
+    """Read a text file of a skill, one its instructions refer to."""
+    # The files of a skill only the user may invoke are open once it loaded.
+    skills = await asyncio.to_thread(catalog, ctx.deps.user)
+    loaded = _resolved(skills, _loaded(post_compaction_window(ctx.messages)))
+    skill = _named([s for s in skills if s.model_invocable or s.ref in loaded], name)
+    path = await asyncio.to_thread(skill.file, file)
+
+    if path is None:
+        raise ModelRetry(
+            f"The skill {skill.ref} holds no file {file!r}. Load it to list its files."
+        )
+
+    try:
+        return await asyncio.to_thread(path.read_text, "utf-8")
+    except UnicodeDecodeError:
+        raise ModelRetry(f"{skill.path}/{file} is no text file.") from None
 
 
 def skills_tools(ctx: RunContext[UserDeps]) -> list[ToolFunc]:
-    """The tool that loads skills, the same for every run."""
-    return [load_skill]
+    """The tools that load skills and read their files, the same for every run."""
+    return [load_skill, read_skill_file]
 
 
 skills_toolset = AgentTools(factory=skills_tools)
@@ -221,7 +275,11 @@ def _loaded(messages: Iterable[ModelMessage]) -> list[str]:
             ):
                 calls[part.tool_call_id] = name
 
-            elif isinstance(part, ToolReturnPart) and part.tool_call_id in calls:
+            elif (
+                isinstance(part, ToolReturnPart)
+                and part.outcome == "success"
+                and part.tool_call_id in calls
+            ):
                 loaded.append(calls[part.tool_call_id])
 
     return loaded

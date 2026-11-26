@@ -97,7 +97,7 @@ A divider marks where the summary starts, and opens to show it.
   Image attachments and the reasoning effort appear only for a model that supports them.
 - Reasoning effort: Low, Medium (the default), or High, trading depth against speed and cost.
 - Mode: Interactive asks before each workspace change, Write applies changes to every workspace you may write without asking, and Read allows no changes.
-  Changes to skills and memory always ask, in every mode, since they shape later conversations.
+  Changes to memory always ask, in every mode, since they shape later conversations.
 - Instructions: your own standing instructions for every conversation, such as a tone or a house rule, under Settings, Instructions.
   They reach the assistant as your own words and cannot override its rules.
 
@@ -117,8 +117,9 @@ The text after the command fills every `$ARGUMENTS` in the skill's instructions,
 A skill's frontmatter may hold `disable-model-invocation: true`, so only you load it, never the assistant on its own, or `user-invocable: false`, so it is not offered as a command and the assistant loads it when a task matches.
 Every frontmatter value is read as written, so `version: 1.0` stays text, and a key given twice makes the skill invalid.
 Settings, Skills lists the organisation's skills, your groups', and your own, opens each one's `SKILL.md`, and shows why a skill cannot be used.
-Upload a skill folder or its ZIP archive to your own skills or to a group you may write, where it replaces a skill of the same name, and delete it there.
-The assistant may also write a skill when you ask, and asks before every change, in every mode.
+Use New Skill to write one in your own skills or in a group you may write, or edit its `SKILL.md` there, the organisation's and groups you cannot write open read-only.
+Upload a skill folder or its ZIP archive to the same places, where it replaces a skill of the same name, and delete it there.
+Skills are no documents, so the assistant only loads and runs them, it never searches or changes them, and only you add or change skills in the settings.
 Scripts in a skill run in the Python sandbox when they define a `main` function, others stay for reading.
 A skill the assistant loaded stays loaded when a long conversation is summarized.
 

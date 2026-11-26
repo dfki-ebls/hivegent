@@ -31,7 +31,7 @@ from ..llm_config import LlmConfig
 from ..prompts import format_document_scope
 from ..reach import Reach
 from ..shared.l10n import DEFAULT_LANGUAGE, Language
-from ..skills import skill_search_paths, writable_libraries
+from ..skills import skill_search_paths
 from ..store import User, WorkspaceScope
 from ..tmp import tmp_dir, tmp_root
 from ..tools.base import (
@@ -192,9 +192,11 @@ class UserDeps:
     # and the pages it downloaded this turn, which it reads on from, shared
     # with subagents.
     web: WebSession = field(default_factory=WebSession)
-    # The roots of :meth:`search_paths` once :meth:`with_roots` resolved them
-    # for the run, which listing the skill folders would otherwise repeat.
+    # The roots of :meth:`search_paths` and the skills of :meth:`program_paths` once
+    # :meth:`with_roots` resolved them for the run, which listing the folders
+    # would otherwise repeat.
     roots: tuple[SearchPath, ...] | None = None
+    skill_roots: tuple[SearchPath, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.conversation is not None and self.conversation.owner != self.user.id:
@@ -252,19 +254,31 @@ class UserDeps:
         return RunConfig(policy=self.policy)
 
     async def with_roots(self) -> Self:
-        """These deps with :meth:`search_paths` resolved, off the event loop since it lists directories."""
-        return replace(self, roots=await asyncio.to_thread(self._resolve_roots))
+        """These deps with the roots of :meth:`search_paths` and :meth:`program_paths` resolved, off the event loop since it lists directories."""
+        roots, skill_roots = await asyncio.gather(
+            asyncio.to_thread(self._resolve_roots),
+            asyncio.to_thread(skill_search_paths, self.user),
+        )
+
+        return replace(self, roots=roots, skill_roots=skill_roots)
 
     def search_paths(self) -> tuple[SearchPath, ...]:
-        """Every root a path tool reads, filters applied: the workspaces, the skills, and ``/tmp``."""
+        """Every root a document tool reads, filters applied: the workspaces and ``/tmp``, never a skill."""
         return self.roots if self.roots is not None else self._resolve_roots()
 
-    def _resolve_roots(self) -> tuple[SearchPath, ...]:
-        tmp = self.tmp
-        roots = (
-            *self.reach.search_paths(),
-            *skill_search_paths(self.user),
+    def program_paths(self) -> tuple[SearchPath, ...]:
+        """What a ``run_python`` program mounts: :meth:`search_paths` and every skill root, so a skill's script reads the files beside it."""
+        skills = (
+            self.skill_roots
+            if self.skill_roots is not None
+            else skill_search_paths(self.user)
         )
+
+        return (*self.search_paths(), *skills)
+
+    def _resolve_roots(self) -> tuple[SearchPath, ...]:
+        roots = self.reach.search_paths()
+        tmp = self.tmp
 
         return roots if tmp is None else (*roots, tmp.search_path)
 
@@ -275,10 +289,9 @@ class UserDeps:
     def writable_roots(self, *, workspace: bool = True) -> tuple[Root, ...]:
         """Every root a mutation may change, each committing by its own policy.
 
-        The writable workspaces and skill libraries in a mode that may write
-        them, unless *workspace* leaves them out, and ``/tmp``, which every
-        mode may write since it is the conversation's own.  No global skill
-        is ever among them.
+        The writable workspaces in a mode that may write them, unless
+        *workspace* leaves them out, and ``/tmp``, which every mode may write
+        since it is the conversation's own.  No skill is ever among them.
         """
         stores = [
             store
@@ -286,11 +299,6 @@ class UserDeps:
             if workspace and writable(store.policy, self.mode)
         ]
         roots = [Root.of(store, self.reach.filter(store)) for store in stores]
-        roots.extend(
-            lib
-            for lib in writable_libraries(self.user)
-            if workspace and writable(lib.policy, self.mode)
-        )
 
         if (tmp := self.tmp) is not None:
             roots.append(tmp)
