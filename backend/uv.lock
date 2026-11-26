@@ -3,10 +3,10 @@ revision = 5
 requires-python = ">=3.14, <4"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'linux'",
-    "python_full_version < '3.15' and sys_platform == 'linux'",
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version < '3.15' and sys_platform == 'linux'",
     "python_full_version < '3.15' and sys_platform == 'win32'",
     "python_full_version < '3.15' and sys_platform == 'emscripten'",
     "python_full_version < '3.15' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'",
@@ -817,7 +817,7 @@ wheels = [
 [[package]]
 name = "exar"
 version = "1.0.0"
-source = { git = "https://github.com/wi2trier/exar?branch=dev#df58ed97a97dca3de84e094ed27b9b5bdf5a2fe8" }
+source = { git = "https://github.com/wi2trier/exar?branch=dev#5245051226e35e8cc0da476170e50508c207a178" }
 dependencies = [
     { name = "griffelib" },
     { name = "opentelemetry-sdk" },

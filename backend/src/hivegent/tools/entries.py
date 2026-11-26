@@ -463,7 +463,7 @@ def asset_ref_for(assets_dir: str, relpath: str) -> str:
     Assets are referenced relative to the description's sibling ``.assets``
     directory as ``<assets-dir-basename>/<relpath>``, the form that round-trips
     with the reference rewriting in
-    :func:`workspace.prepare._replace_image_references`.
+    :func:`workspace.prepare._relink_assets`.
 
     >>> asset_ref_for("docs/report.assets", "img/fig1.png")
     'report.assets/img/fig1.png'

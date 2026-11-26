@@ -7,7 +7,6 @@ gateway (:func:`~hivegent.workspace.changeset.apply_changeset`) then lands.
 """
 
 import logging
-import re
 import tempfile
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -21,15 +20,17 @@ from exar.ingest import (
     Asset,
     AsyncParser,
     Parsed,
+    drop_assets,
     informative,
     perceptual_key,
+    relink,
 )
 from exar.ingest import contexts as occurrences
 from exar.text import decode
 from pydantic import ValidationError
 
 from ..config import sanitize_document_path, settings
-from ..config.compute import AssetProcessingMode
+from ..llm_config import background_llm
 from ..media import guess_image_media_type
 from ..metadata import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
 from ..pipelines import (
@@ -64,9 +65,6 @@ _STAGE_VIDEO = Localized(
 _STAGE_PROCESSING = Localized(en="Processing document", de="Dokument wird verarbeitet")
 _STAGE_DESCRIBING = Localized(en="Describing images", de="Bilder werden beschrieben")
 
-
-_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-"""A Markdown image reference, its alternative text and its path."""
 
 # URL schemes whose references resolve to a fetchable resource, any other
 # (`file:`, a Windows drive letter like `T:`, ...) points off the workspace.
@@ -202,25 +200,21 @@ async def _prepare_image_entry(
     )
 
 
-def _replace_image_references(markdown: str, mapping: dict[str, str | None]) -> str:
-    """Rewrite or strip ``![alt](path)`` references in *markdown*.
+def _relink_assets(markdown: str, mapping: Mapping[str, str | None]) -> str:
+    """Point the image references of *markdown* at the stored assets *mapping* names, dropping those it maps to ``None``.
 
-    Bounded to real markdown image syntax so prose that mentions an
-    asset's filename (code blocks, file listings) is left untouched.
-    Mapping values: a string replaces the URL; ``None`` deletes the
-    image node entirely. References left unmapped are dropped when they
-    point outside the workspace (absolute, ``file:``, or Windows paths a
-    converter could not localize) and kept otherwise.
+    References left unmapped are dropped when they point outside the
+    workspace (absolute, ``file:``, or Windows paths a converter could not
+    localize) and kept otherwise.
     """
 
-    def _replace(match: re.Match[str]) -> str:
-        path = match.group(2)
+    def link(path: str) -> str | None:
         if path in mapping:
-            target = mapping[path]
-            return "" if target is None else f"![{match.group(1)}]({target})"
-        return "" if _is_external_ref(path) else match.group(0)
+            return mapping[path]
 
-    return _IMAGE.sub(_replace, markdown)
+        return None if _is_external_ref(path) else path
+
+    return relink(markdown, link)
 
 
 def _prepare_markdown(
@@ -347,13 +341,14 @@ async def _prepare_conversion_assets(
     assets_dir: str,
     images: Mapping[str, Asset],
     contexts_by_ref: dict[str, list[str]],
-    mode: AssetProcessingMode,
+    *,
+    describe: bool,
 ) -> tuple[dict[str, str | None], list[_PreparedAsset], list[_PreparedEntry]]:
     """Triage, deduplicate, and caption a conversion's extracted images.
 
     Lock-free: returns the markdown reference remapping plus the asset files
     and caption entries to apply at commit time, without touching disk or SQL.
-    Store-only assets (decorative, or ``STORE`` mode) keep their own reference;
+    Undescribed assets (decorative, or all without *describe*) keep their own reference;
     described assets are grouped by :func:`perceptual_key` so an image is
     captioned once and every occurrence's reference is rewritten to the single
     stored representative, never once per occurrence.
@@ -373,8 +368,7 @@ async def _prepare_conversion_assets(
     groups: dict[int | str, list[str]] = {}
 
     for relpath, extracted in sorted(images.items()):
-        describe_image = mode is AssetProcessingMode.DESCRIBE and informative(extracted)
-        if not describe_image:
+        if not (describe and informative(extracted)):
             ref_mapping[relpath] = asset_ref_for(assets_dir, relpath)
             assets.append(_PreparedAsset(child_path(relpath), extracted.data))
             continue
@@ -414,14 +408,13 @@ async def _prepare_conversion_assets(
     return ref_mapping, assets, asset_entries
 
 
-def _build_converter(pipeline: str, basename: str) -> AsyncParser:
+def _build_converter(pipeline: str, basename: str, *, describe: bool) -> AsyncParser:
     """Instantiate the converter for a resolved pipeline, mapping its errors to HTTP."""
     try:
         return get_converter(
             pipeline,
             filename=basename,
-            detect_asset_roles=settings.conversion.assets
-            is AssetProcessingMode.DESCRIBE,
+            classify_assets=describe,
         )
     except ValidationError:
         # Operator options the converter refuses fail loudly, never as a fallback.
@@ -474,7 +467,9 @@ async def _prepare_convertible(
         # to the same projection (or a stub) for anything it cannot decode.
         return _prepare_plain_text_or_stub(filepath, content, origin=origin)
 
-    converter = _build_converter(conversion_pipeline, basename)
+    # Describing the extracted assets is background work, which `llm.aux` opts into.
+    describe = background_llm() is not None
+    converter = _build_converter(conversion_pipeline, basename, describe=describe)
 
     try:
         result = await _convert_source(
@@ -513,22 +508,24 @@ async def _prepare_convertible(
     assets_dir = Part(stem_path_from_reference(filepath), "assets").path
     markdown = result.markdown
 
-    mode = settings.conversion.assets
     assets: tuple[_PreparedAsset, ...] = ()
     asset_entries: tuple[_PreparedEntry, ...] = ()
-    if mode is AssetProcessingMode.IGNORE:
-        markdown = _replace_image_references(markdown, dict.fromkeys(result.assets))
+
+    # A converter without exar's `extract_assets` fact may still extract or reference them.
+    if not settings.conversion.extract_assets:
+        markdown = drop_assets(result).markdown
         has_assets = False
     else:
-        if ctx is not None and mode is AssetProcessingMode.DESCRIBE and result.assets:
+        if ctx is not None and describe and result.assets:
             ctx.set_stage(_STAGE_DESCRIBING.current)
+
         ref_mapping, asset_list, entry_list = await _prepare_conversion_assets(
             assets_dir,
             result.assets,
             occurrences(markdown),
-            mode,
+            describe=describe,
         )
-        markdown = _replace_image_references(markdown, ref_mapping)
+        markdown = _relink_assets(markdown, ref_mapping)
         has_assets = bool(result.assets)
         assets = tuple(asset_list)
         asset_entries = tuple(entry_list)

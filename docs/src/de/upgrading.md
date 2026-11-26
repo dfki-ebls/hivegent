@@ -12,6 +12,7 @@ Jeder Schlüssel der `config.toml` und jede Variable `HIVEGENT_*` muss eine Eins
 | `llm.max_tokens`                                                                                                                            | `llm.models.<id>.max_tokens`                                                                                         |
 | `llm.aux_model`                                                                                                                             | `llm.aux`, die ID eines Modells des Katalogs                                                                         |
 | `llm.stt_model`                                                                                                                             | `llm.stt`, die ID eines Modells des Katalogs                                                                         |
+| `conversion.assets`                                                                                                                         | `conversion.extract_assets`, `false` für `ignore`, Bilder werden beschrieben, sobald `llm.aux` gesetzt ist           |
 | `llm.subagent_timeout_seconds`                                                                                                              | `subagents.timeout_seconds`                                                                                          |
 | `embedding.base_url`, `embedding.api_key`                                                                                                   | `embedding.endpoint`, die ID eines Eintrags von `llm.providers`                                                      |
 | `rerank.base_url`, `rerank.api_key`                                                                                                         | `rerank.endpoint`, die ID eines Eintrags von `llm.providers`                                                         |
@@ -201,7 +202,7 @@ Eine Nachricht der Person nennt die Dokumente, um die es geht, in ihren Metadate
 Benutzer:innen können keine Persönlichkeit mehr wählen, keine eigene Systemnachricht schreiben, keine eigenen MCP-Server hinzufügen und kein eigenes Modell mit Endpunkt und Schlüssel mitbringen, ihre gespeicherten Server entfallen daher.
 Eine eigene Systemnachricht, die ein Browser gespeichert hat, macht die App zum persönlichen Assistenten `custom`, sobald sich die Person dort anmeldet, und wählt ihn, sofern sie noch keinen gewählt hat.
 An ihre Stelle treten der Modellkatalog, der MCP-Katalog und die Assistenten des Betreibers.
-Auch die Feature-Flags des Frontends sind entfallen und mit ihnen die verborgene Auswahl der Konvertierungs- und Chunking-Pipelines und des Asset-Modus, sodass jeder Upload die Pipelines des Betreibers nutzt, und `conversion.assets` (`ignore`, `store` als Standard oder `describe`) legt fest, wie jede Konvertierung die extrahierten Bilder behandelt.
+Auch die Feature-Flags des Frontends sind entfallen und mit ihnen die verborgene Auswahl der Konvertierungs- und Chunking-Pipelines und des Asset-Modus, sodass jeder Upload die Pipelines des Betreibers nutzt, und `conversion.extract_assets` legt fest, ob jede Konvertierung die Bilder eines Dokuments extrahiert.
 Tools lassen sich nicht mehr selbst abschalten, ein Assistent oder `tools.disabled` hält sie zurück.
 
 ## Präferenzen liegen auf dem Server

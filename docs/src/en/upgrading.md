@@ -12,6 +12,7 @@ Every key of `config.toml` and every `HIVEGENT_*` variable must name a setting, 
 | `llm.max_tokens`                                                                                                                            | `llm.models.<id>.max_tokens`                                                                            |
 | `llm.aux_model`                                                                                                                             | `llm.aux`, the id of a model of the catalog                                                             |
 | `llm.stt_model`                                                                                                                             | `llm.stt`, the id of a model of the catalog                                                             |
+| `conversion.assets`                                                                                                                         | `conversion.extract_assets`, `false` for `ignore`, with images described whenever `llm.aux` is set      |
 | `llm.subagent_timeout_seconds`                                                                                                              | `subagents.timeout_seconds`                                                                             |
 | `embedding.base_url`, `embedding.api_key`                                                                                                   | `embedding.endpoint`, the id of an `llm.providers` entry                                                |
 | `rerank.base_url`, `rerank.api_key`                                                                                                         | `rerank.endpoint`, the id of an `llm.providers` entry                                                   |
@@ -200,7 +201,7 @@ A user message names the documents it is about in its metadata, `{"documents": {
 Users can no longer choose a personality, write a custom system message, add their own MCP servers, or bring their own model, endpoint, and key, so their saved servers are dropped.
 The app turns a custom system message that a browser kept into the personal assistant `custom` once that user signs in there, and chooses it unless they already chose one.
 The operator's model catalog, MCP catalog, and assistants take their place.
-The frontend feature flags are gone too, and with them the hidden pickers of the conversion and chunking pipelines and the asset mode, so every upload runs the operator's pipelines, and `conversion.assets` (`ignore`, `store`, the default, or `describe`) sets how every conversion handles the images it extracts.
+The frontend feature flags are gone too, and with them the hidden pickers of the conversion and chunking pipelines and the asset mode, so every upload runs the operator's pipelines, and `conversion.extract_assets` sets whether every conversion extracts the images of a document.
 Users can no longer switch off tools themselves, an assistant or `tools.disabled` withholds them.
 
 ## Preferences are kept on the server

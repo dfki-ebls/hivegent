@@ -169,6 +169,7 @@ HOST = Host(
     max_image_pixels=settings.limits.max_image_pixels,
     ocr_languages=tuple(settings.conversion.ocr.languages),
     skip_ocr_with_text=settings.conversion.ocr.skip_native_text,
+    extract_assets=settings.conversion.extract_assets,
     device=settings.compute.device,
 )
 """What the server tells every pipeline it builds."""
@@ -571,21 +572,21 @@ def _recovering(converter: AsyncParser, filename: str) -> AsyncParser:
 
 
 def get_converter(
-    pipeline: str, filename: str = "", detect_asset_roles: bool = False
+    pipeline: str, filename: str = "", classify_assets: bool = False
 ) -> AsyncParser:
     """Build the converter *pipeline* names, resolving AUTO by *filename*.
 
     Args:
         pipeline: The conversion pipeline id, or AUTO.
         filename: The document filename, which AUTO routes by.
-        detect_asset_roles: Whether to classify the extracted images for their role,
+        classify_assets: Whether to classify the extracted assets for their role,
             which converters may skip otherwise.
 
     Raises:
         ValidationError: If the operator's options are invalid for the pipeline.
         ValueError: If the pipeline is unavailable or does not read the file.
     """
-    host = replace(HOST, classify_pictures=detect_asset_roles)
+    host = replace(HOST, classify_assets=classify_assets)
     name = resolve_auto_pipeline(filename) if pipeline == AUTO else pipeline
     registration = CONVERTERS[name]
 

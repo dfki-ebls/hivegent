@@ -182,7 +182,8 @@ exar's `Limits.max_cost` counts the same way.
 
 A request picks a converter or chunker by its registered id and nothing else, since `ConversionSpec` and `ChunkingSpec` refuse any other field and any id the registry lacks.
 Their options come from `conversion.pipelines` and `chunking.pipelines`, keyed by pipeline id, the fields of the pipeline's `exar.ingest` parser or chunker such as `{"recursive": {"size": 1024}}`, and validated at boot (`pipelines.check_pipelines` from the lifespan, as `config` cannot import the pipelines that import it), unknown fields refused, so a typo stops the server and no browser reaches the model paths of a backend.
-`conversion.assets` is how every conversion handles the assets it extracts, uploads and sources alike: `ignore` drops them with their references, `store` (the default) keeps them beside the document, and `describe` also describes the meaningful ones.
+`conversion.extract_assets` (on by default) has every conversion, uploads and sources alike, extract the assets of a document and keep them beside it, describing the meaningful ones once `llm.aux` is set.
+It is exar's `extract_assets` host fact (`pipelines.HOST`), so off the converters skip the images and their references, and exar's `drop_assets` then removes every image reference a converter without the fact leaves, extracted or not.
 
 ### Pipelines register by id
 

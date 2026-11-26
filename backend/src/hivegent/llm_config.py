@@ -29,6 +29,7 @@ __all__ = [
     "LlmConfig",
     "ReasoningEffort",
     "aux_llm",
+    "background_llm",
     "chat_llm",
     "clamp_reasoning",
     "model_max_images",
@@ -127,6 +128,16 @@ def aux_llm() -> LlmConfig | None:
         if model_id is None
         else _resolve(model_id, max_tokens=settings.llm.aux_max_tokens)
     )
+
+
+def background_llm() -> LlmConfig | None:
+    """The aux model for the work nobody asked for, none while ``llm.aux`` is unset.
+
+    Setting ``llm.aux`` opts into that work, such as titling a new conversation
+    and describing the images a conversion extracts, which would otherwise
+    spend the chat model.
+    """
+    return None if settings.llm.aux is None else aux_llm()
 
 
 def stt_llm() -> LlmConfig | None:

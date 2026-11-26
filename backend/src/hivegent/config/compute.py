@@ -1,6 +1,5 @@
 """Settings of the worker pools and of the document processing pipelines."""
 
-from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import Field, PositiveFloat, PositiveInt
@@ -8,7 +7,6 @@ from pydantic import Field, PositiveFloat, PositiveInt
 from .common import Section
 
 __all__ = [
-    "AssetProcessingMode",
     "ChunkingSettings",
     "ComputeSettings",
     "ConversionSettings",
@@ -83,19 +81,6 @@ class OcrSettings(Section):
     skip_native_text: bool = True
 
 
-class AssetProcessingMode(StrEnum):
-    """How the assets a conversion extracts, such as images, are handled.
-
-    ``ignore`` drops them and strips their markdown references, ``store``
-    keeps their bytes beside the document without describing them, and
-    ``describe`` also describes the ones the asset triage deems meaningful.
-    """
-
-    IGNORE = "ignore"
-    STORE = "store"
-    DESCRIBE = "describe"
-
-
 class ConversionSettings(Section):
     """Framework-agnostic document conversion tunables.
 
@@ -106,13 +91,18 @@ class ConversionSettings(Section):
 
     ``pipelines`` maps a converter's name to its options, the fields of its
     `exar.ingest` parser such as ``{"docling": {"ocr": false}}``.  The boot
-    validates them against each converter's fields.  ``assets`` is how every
-    conversion handles the assets it extracts, uploads and sources alike.
+    validates them against each converter's fields.
+
+    ``extract_assets`` has every conversion, uploads and sources alike,
+    extract the assets of a document, such as images, and keep them beside
+    it, describing the ones the asset triage deems meaningful while
+    ``llm.aux`` opts into background work.  Off, the converters skip them,
+    and every image reference a converter leaves regardless is dropped.
     """
 
     ocr: OcrSettings = OcrSettings()
     pipelines: dict[str, dict[str, Any]] = {}
-    assets: AssetProcessingMode = AssetProcessingMode.STORE
+    extract_assets: bool = True
 
 
 class ChunkingSettings(Section):
