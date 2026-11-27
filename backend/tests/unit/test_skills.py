@@ -249,9 +249,15 @@ async def test_invocation_flags_gate_the_model_and_the_user_and_fill_arguments(
     assert len(loaded) == 1 and "Review src/app.py now." in loaded[0]
 
 
-async def test_a_manual_skill_exposes_its_files_once_the_user_invoked_it(data_dir: Path) -> None:
-    manual = _skill("manual").replace("---\nCount", "disable-model-invocation: true\n---\nCount")
-    _ = await install_skill(USER, "~", {"SKILL.md": manual.encode(), "guide.md": b"Guide."})
+async def test_a_manual_skill_exposes_its_files_once_the_user_invoked_it(
+    data_dir: Path,
+) -> None:
+    manual = _skill("manual").replace(
+        "---\nCount", "disable-model-invocation: true\n---\nCount"
+    )
+    _ = await install_skill(
+        USER, "~", {"SKILL.md": manual.encode(), "guide.md": b"Guide."}
+    )
     deps = UserDeps(user=USER, mode="interactive")
     read = ToolCallPart("read_skill_file", {"name": "~/manual", "file": "guide.md"})
 
@@ -270,7 +276,9 @@ async def test_a_manual_skill_exposes_its_files_once_the_user_invoked_it(data_di
         return ModelResponse(parts=[TextPart("done")] if returned(messages) else [read])
 
     agent = Agent(deps_type=UserDeps, toolsets=[skills_toolset.toolset()])
-    result = await agent.run("/manual", model=FunctionModel(model), deps=deps, capabilities=[SKILLS_NOTE])
+    result = await agent.run(
+        "/manual", model=FunctionModel(model), deps=deps, capabilities=[SKILLS_NOTE]
+    )
 
     assert returned(result.all_messages()) == ["Guide."]
 
@@ -281,7 +289,10 @@ async def test_creating_a_shared_skill_rejects_an_existing_name(data_dir: Path) 
 
     with pytest.raises(HTTPException) as exc:
         _ = await create_skill_document(
-            "@team", "count", SkillDocumentRequest(content=_skill("count", "Replacement")), USER
+            "@team",
+            "count",
+            SkillDocumentRequest(content=_skill("count", "Replacement")),
+            USER,
         )
 
     assert exc.value.status_code == 409

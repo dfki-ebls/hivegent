@@ -32,9 +32,7 @@ it.each<[UIMessageChunk, boolean]>([
   [{ type: "message-metadata", messageMetadata: { chatError: "failed" } }, true],
   [{ type: "message-metadata", messageMetadata: { chatError: 42 } }, false],
 ])("validates streamed %j", async (chunk, valid) => {
-  chatFetch.mockResolvedValueOnce(
-    new Response(sse(chunk, "[DONE]"), { headers: eventHeaders }),
-  );
+  chatFetch.mockResolvedValueOnce(new Response(sse(chunk, "[DONE]"), { headers: eventHeaders }));
   const { result } = renderHook(() => useHivegentChat(conversationId, []), {
     wrapper: createQueryWrapper(),
   });

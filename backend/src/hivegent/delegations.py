@@ -179,7 +179,9 @@ class Delegations:
         entry = self._entries.get(conversation)
         scopes = {None, conversation.owner, conversation}
 
-        return entry is not None and entry.reported and not scopes & self._suspended.keys()
+        return (
+            entry is not None and entry.reported and not scopes & self._suspended.keys()
+        )
 
     @contextmanager
     def suspend_wakeups(

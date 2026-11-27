@@ -95,7 +95,9 @@ async def create_skill_document(
     scope: str, name: str, request: SkillDocumentRequest, user: CurrentUser
 ) -> SkillInfo:
     """Create a skill in the library of *scope*."""
-    return _info(await save_skill_document(user, scope, name, request.content, create=True))
+    return _info(
+        await save_skill_document(user, scope, name, request.content, create=True)
+    )
 
 
 @router.put("/skills/{scope}/{name}")

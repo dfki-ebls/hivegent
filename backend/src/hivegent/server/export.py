@@ -156,7 +156,9 @@ async def _conversations(user: User) -> dict[str, Path | str]:
         folder = conversation.folder(settings.data_dir)
 
         for name in (TMP_FOLDER, TASKS_FOLDER):
-            members |= await asyncio.to_thread(_files, folder / name, f"{prefix}/{name}")
+            members |= await asyncio.to_thread(
+                _files, folder / name, f"{prefix}/{name}"
+            )
 
     return members
 

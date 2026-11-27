@@ -135,7 +135,11 @@ class PreparedUpload:
     @property
     def entries(self) -> tuple[_PreparedEntry, ...]:
         """Every projection to write, the assets before the entry that references them."""
-        return self.asset_entries if self.main is None else (*self.asset_entries, self.main)
+        return (
+            self.asset_entries
+            if self.main is None
+            else (*self.asset_entries, self.main)
+        )
 
 
 def _derived_entry(

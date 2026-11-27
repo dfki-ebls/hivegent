@@ -314,7 +314,13 @@ async def test_teams_receives_an_auto_backgrounded_report_before_finish(
 
     def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if _responses(messages) == 0:
-            return _call("delegate_task", "d1", agent_name="waiter", task="look", background=False)
+            return _call(
+                "delegate_task",
+                "d1",
+                agent_name="waiter",
+                task="look",
+                background=False,
+            )
 
         released.set()
 
@@ -346,12 +352,19 @@ async def test_deleting_wakes_no_turn_for_a_report_its_cancelled_turn_left(
 
         return _echo(messages)
 
-    await _turn(monkeypatch, run_prefix, {"question": chat, "look": _wait_then_echo}, quiet=False)
+    await _turn(
+        monkeypatch,
+        run_prefix,
+        {"question": chat, "look": _wait_then_echo},
+        quiet=False,
+    )
     opened = asyncio.Event()
 
     async def stream() -> AsyncIterator[BaseChunk]:
         # The cancelled turn ends only once the report waits, which would wake the conversation.
-        async with delegations.turn(_CONVERSATION, User("u"), lambda *_: woke.set()) as owner:
+        async with delegations.turn(
+            _CONVERSATION, User("u"), lambda *_: woke.set()
+        ) as owner:
             try:
                 opened.set()
                 await asyncio.Future[None]()
@@ -389,13 +402,20 @@ async def test_usage_spent_while_a_turn_is_stored_goes_to_the_next() -> None:
     assert total == late == RunUsage(requests=1, details={"cached": 1})
 
 
-async def test_tasks_show_interrupted_records_before_the_next_turn(data_dir: Path) -> None:
+async def test_tasks_show_interrupted_records_before_the_next_turn(
+    data_dir: Path,
+) -> None:
     folder = _CONVERSATION.folder(data_dir) / TASKS_FOLDER
     folder.mkdir(parents=True)
     task = DelegationTask(
-        id=uuid4().hex, agent_name="explore", prompt="look", conversation_id=_CONVERSATION.key
+        id=uuid4().hex,
+        agent_name="explore",
+        prompt="look",
+        conversation_id=_CONVERSATION.key,
     )
-    (folder / f"{task.id}.json").write_bytes(TypeAdapter(DelegationTask).dump_json(task))
+    (folder / f"{task.id}.json").write_bytes(
+        TypeAdapter(DelegationTask).dump_json(task)
+    )
 
     [shown] = await tasks.list_conversation_tasks(_CONVERSATION)
 
