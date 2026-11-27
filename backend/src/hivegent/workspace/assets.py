@@ -16,6 +16,7 @@ from exar.ingest import contexts as occurrences
 from exar.text import decode
 
 from ..config import sanitize_document_path
+from ..llm_config import aux_llm
 from ..media import guess_image_media_type
 from ..shared.formats import DOCUMENT_EXTENSION, media_type
 from ..shared.l10n import Localized
@@ -38,6 +39,14 @@ _ASSET_ESCAPES = Localized(
     de="Der Asset-Pfad verlässt den Asset-Ordner",
 )
 _ASSET_NOT_FOUND = Localized(en="Asset file not found", de="Asset-Datei nicht gefunden")
+_NO_VISION_MODEL = Localized(
+    en="No model is configured to describe assets",
+    de="Es ist kein Modell zum Beschreiben von Assets konfiguriert",
+)
+_NOT_DESCRIBED = Localized(
+    en="The vision model could not describe the asset",
+    de="Das Vision-Modell konnte das Asset nicht beschreiben",
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -154,7 +163,11 @@ async def generate_asset_description(
     during ingestion.  The write is planned first, so the model never
     describes an asset the gateway refuses, and runs before the write takes
     the lock, which refuses the description should the asset vanish meanwhile.
+    Without a description from the model, nothing is written and the call fails.
     """
+    if aux_llm() is None:
+        raise ChangeRefused(status_code=503, detail=_NO_VISION_MODEL.current)
+
     asset = _resolve_asset(store, safe, asset_name)
     location = Location(Root.of(store), asset.description_path)
     await plan_changeset(Changeset((Write(location, ""),)), host=True)
@@ -163,6 +176,10 @@ async def generate_asset_description(
     description = await _build_image_description(
         asset.name, content, media_type, contexts
     )
+
+    if description is None:
+        raise ChangeRefused(status_code=502, detail=_NOT_DESCRIBED.current)
+
     await _commit_as_host(Write(location, description))
 
     return asset.entry(description, asset.description_path)

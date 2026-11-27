@@ -1211,5 +1211,6 @@ Each call is kept as a bounded `HostCall` in `PythonResult.calls`, and a failed 
 
 Vision chat models over the OpenAI Chat Completions protocol accept no video, so animated media is represented as at most `exar.ingest.MAX_FRAMES` evenly sampled, downscaled, timestamped still frames.
 Videos are sampled with OpenCV (`exar.ingest.sample_video`, isolated by `media.ISOLATED`), whose wheel bundles an LGPL FFmpeg so no ffmpeg binary ships, and animated GIF, WebP, and APNG with Pillow (`exar.ingest.sample_animation`, isolated the same way, and only for those formats), then captioned by `exar.ingest.caption` with the aux model (`pipelines.vision.Vision`) into the `<stem>.md` description.
+Without a model, or when it fails or answers nothing, no description is written at all, so an image or video lands as its original alone and an extracted asset stays undescribed, since a sidecar repeating the file name would only add noise to the index.
 `read_binary_document` attaches the same frames (tagged `<path>#t=<ts>s`) instead of the container bytes, while still images are downscaled to `exar.ingest.MAX_DIMENSION` (`exar.ingest.downscale`).
 Once pydantic-ai can send native video, the swap is local to the video and animation readers of `exar.tools.media`, `workspace.describe`, and `media.py`.

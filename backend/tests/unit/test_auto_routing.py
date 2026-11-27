@@ -166,22 +166,23 @@ async def test_auto_plain_text_uses_plain_text_pipeline(
         ctx=None,
     )
 
+    assert prepared.main is not None
     assert prepared.main.entry_metadata.entry_kind == "convertible"
     assert "plain text" in prepared.main.markdown
 
 
 def test_auto_fallback_decodes_legacy_text() -> None:
-    prepared = prepare._prepare_plain_text_or_stub(
+    entry = prepare._prepare_plain_text_or_stub(
         "settings.ini", "Benutzer = Jörg\n".encode("cp1252"), origin="upload"
     )
 
-    assert prepared.main.entry_metadata.entry_kind == "convertible"
-    assert "Jörg" in prepared.main.markdown
+    assert entry.entry_metadata.entry_kind == "convertible"
+    assert "Jörg" in entry.markdown
 
 
 def test_auto_fallback_stubs_real_binaries() -> None:
-    prepared = prepare._prepare_plain_text_or_stub(
+    entry = prepare._prepare_plain_text_or_stub(
         "logo.bin", b"\x89PNG\r\n\x1a\n", origin="upload"
     )
 
-    assert prepared.main.entry_metadata.entry_kind == "binary_stub"
+    assert entry.entry_metadata.entry_kind == "binary_stub"

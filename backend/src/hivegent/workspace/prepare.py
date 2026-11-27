@@ -7,11 +7,9 @@ gateway (:func:`~hivegent.workspace.changeset.apply_changeset`) then lands.
 """
 
 import logging
-import tempfile
-from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
 import logfire
@@ -31,7 +29,7 @@ from pydantic import ValidationError
 
 from ..config import sanitize_document_path, settings
 from ..llm_config import background_llm
-from ..media import guess_image_media_type
+from ..media import guess_image_media_type, source_on_disk
 from ..metadata import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
 from ..pipelines import (
     AUTO,
@@ -126,25 +124,18 @@ class PreparedUpload:
     workspace lock and indexed without it by the changeset gateway.  Holding
     the lock only for the file writes, not the whole pipeline, is what keeps
     the rest of the workspace usable while a long upload runs.
+    *main* is ``None`` for an image or video the vision model could not
+    describe, which then lands as its original alone.
     """
 
-    main: _PreparedEntry
+    main: _PreparedEntry | None
     assets: tuple[_PreparedAsset, ...] = ()
     asset_entries: tuple[_PreparedEntry, ...] = ()
 
-
-@contextmanager
-def _source_on_disk(filepath: str, content: bytes) -> Generator[Path]:
-    """Materialise upload bytes at a temp path for converters that read a file.
-
-    Keeps the original basename so format detection by suffix still works, and
-    lives outside the workspace, so a lock-free conversion never touches the live
-    entry.  The commit is the only step that writes into the workspace.
-    """
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / PurePosixPath(filepath).name
-        path.write_bytes(content)
-        yield path
+    @property
+    def entries(self) -> tuple[_PreparedEntry, ...]:
+        """Every projection to write, the assets before the entry that references them."""
+        return self.asset_entries if self.main is None else (*self.asset_entries, self.main)
 
 
 def _derived_entry(
@@ -187,14 +178,18 @@ async def _prepare_image_entry(
     contexts: Sequence[str],
     *,
     origin: EntryOrigin,
-) -> _PreparedEntry:
-    """Build the caption entry for an image without touching disk or SQL.
+) -> _PreparedEntry | None:
+    """Build the caption entry for an image without touching disk or SQL, ``None`` without a caption.
 
     Shared by standalone image uploads and the described assets extracted from
     a converted document; *contexts* carries every occurrence's surrounding
     text so the caption is the single source of truth for that image.
     """
     markdown = await _build_image_description(filepath, content, media_type, contexts)
+
+    if markdown is None:
+        return None
+
     return _derived_entry(
         filepath, markdown, entry_kind="image", generated_by="vision", origin=origin
     )
@@ -259,7 +254,7 @@ async def _prepare_image(
     origin: EntryOrigin,
     ctx: ProgressReporter | None,
 ) -> PreparedUpload:
-    """Prepare a standalone image and its generated description for commit."""
+    """Prepare a standalone image and its generated description, if any, for commit."""
     if ctx is not None:
         ctx.set_stage(_STAGE_IMAGE.current)
 
@@ -281,31 +276,32 @@ async def _prepare_video(
     origin: EntryOrigin,
     ctx: ProgressReporter | None,
 ) -> PreparedUpload:
-    """Prepare a video and its frame-based description for commit.
+    """Prepare a video and its frame-based description, if any, for commit.
 
     The original is the entry's payload and the vision-generated markdown is
     its searchable projection.  Frames are sampled with OpenCV from a temp copy
-    of the source (see :func:`~hivegent.media.sample_video`), so the
+    of the source (see :func:`~exar.ingest.sample_video`), so the
     lock-free prepare never touches the live workspace entry.
     """
     if ctx is not None:
         ctx.set_stage(_STAGE_VIDEO.current)
 
-    with _source_on_disk(filepath, content) as full_path:
-        markdown = await _build_video_description(
-            filepath,
-            full_path,
-            [f"File name: {PurePosixPath(filepath).name}"],
+    markdown = await _build_video_description(
+        filepath, content, [f"File name: {PurePosixPath(filepath).name}"]
+    )
+    main = (
+        None
+        if markdown is None
+        else _derived_entry(
+            filepath, markdown, entry_kind="video", generated_by="vision", origin=origin
         )
-    main = _derived_entry(
-        filepath, markdown, entry_kind="video", generated_by="vision", origin=origin
     )
     return PreparedUpload(main=main)
 
 
 def _prepare_plain_text_or_stub(
     filepath: str, content: bytes, *, origin: EntryOrigin
-) -> PreparedUpload:
+) -> _PreparedEntry:
     """Prepare AUTO input as plain text or a metadata-only binary stub.
 
     Supported Unicode and Western text is prepared as a searchable plain-text
@@ -327,14 +323,13 @@ def _prepare_plain_text_or_stub(
             f"MIME type: {mime}.\nSize: {len(content)} bytes.\n"
         )
 
-    main = _derived_entry(
+    return _derived_entry(
         filepath,
         markdown,
         entry_kind=entry_kind,
         generated_by=generated_by,
         origin=origin,
     )
-    return PreparedUpload(main=main)
 
 
 async def _prepare_conversion_assets(
@@ -348,7 +343,8 @@ async def _prepare_conversion_assets(
 
     Lock-free: returns the markdown reference remapping plus the asset files
     and caption entries to apply at commit time, without touching disk or SQL.
-    Undescribed assets (decorative, or all without *describe*) keep their own reference;
+    Undescribed assets (decorative, all without *describe*, or those the model
+    fails on) get no caption entry, and those not grouped keep their own reference;
     described assets are grouped by :func:`perceptual_key` so an image is
     captioned once and every occurrence's reference is rewritten to the single
     stored representative, never once per occurrence.
@@ -381,7 +377,7 @@ async def _prepare_conversion_assets(
         for member in members:
             ref_mapping[member] = rep_ref
 
-    async def _caption_group(members: list[str]) -> _PreparedEntry:
+    async def _caption_group(members: list[str]) -> _PreparedEntry | None:
         representative = members[0]
         rep_path = child_path(representative)
         media_type = guess_image_media_type(representative) or ""
@@ -405,7 +401,7 @@ async def _prepare_conversion_assets(
     asset_entries = await bounded_gather(
         groups.values(), _caption_group, limit=settings.llm.caption_concurrency
     )
-    return ref_mapping, assets, asset_entries
+    return ref_mapping, assets, [entry for entry in asset_entries if entry is not None]
 
 
 def _build_converter(pipeline: str, basename: str, *, describe: bool) -> AsyncParser:
@@ -430,7 +426,7 @@ async def _convert_source(
     """Convert a temp copy of the source, raising the converter's exception."""
     with (
         logfire.span("convert_document", filepath=filepath, pipeline=pipeline) as span,
-        _source_on_disk(filepath, content) as source_path,
+        source_on_disk(filepath, content) as source_path,
     ):
         result = await converter(source_path)
         span.set_attribute("markdown_length", len(result.markdown))
@@ -465,7 +461,9 @@ async def _prepare_convertible(
     if is_auto and resolve_auto_pipeline(basename) == PLAIN_TEXT:
         # Skip the converter's temp-file round trip: AUTO already falls back
         # to the same projection (or a stub) for anything it cannot decode.
-        return _prepare_plain_text_or_stub(filepath, content, origin=origin)
+        return PreparedUpload(
+            main=_prepare_plain_text_or_stub(filepath, content, origin=origin)
+        )
 
     # Describing the extracted assets is background work, which `llm.aux` opts into.
     describe = background_llm() is not None
@@ -481,14 +479,14 @@ async def _prepare_convertible(
                 status_code=500, detail=_conversion_failed(str(exc)).current
             ) from exc
 
-        prepared = _prepare_plain_text_or_stub(filepath, content, origin=origin)
+        main = _prepare_plain_text_or_stub(filepath, content, origin=origin)
 
         # Text the converter refused is still indexed, so only a stub is worth
         # a warning.
         # exc_info captures the chained cause: docling re-raises pipeline
         # errors as a bare "Pipeline ... failed" with the root cause only
         # attached via `from`.
-        if prepared.main.entry_metadata.entry_kind == "binary_stub":
+        if main.entry_metadata.entry_kind == "binary_stub":
             logger.warning(
                 "AUTO conversion failed for %s, indexing as stub: %s",
                 filepath,
@@ -503,7 +501,7 @@ async def _prepare_convertible(
                 exc,
             )
 
-        return prepared
+        return PreparedUpload(main=main)
 
     assets_dir = Part(stem_path_from_reference(filepath), "assets").path
     markdown = result.markdown

@@ -62,7 +62,13 @@ from ...metadata import EntryMetadata
 from ...shared.tree import tree
 from ...store import Workspace
 from ...tools.changes import ChangeRefused, Edit, WorkspaceChanged, Write
-from ...tools.entries import ContentStat, EntryPaths, Part, repoint_asset_refs
+from ...tools.entries import (
+    ContentStat,
+    EntryPaths,
+    Part,
+    repoint_asset_refs,
+    stem_path_from_reference,
+)
 from ...workspace_events import announce_workspace_changed
 from ..documents import _decode_existing
 from ..indexing import chunk_and_index_document
@@ -141,6 +147,11 @@ class _Converted:
     """Whether it replaces an entry, whose stale asset rows then go."""
     modified_at: datetime | None = None
     """When the content last changed, now when unknown."""
+
+    @property
+    def stem_path(self) -> str:
+        """The stem of the entry it lands."""
+        return stem_path_from_reference(self.effect.target.path)
 
 
 @dataclass(slots=True, frozen=True)
@@ -230,18 +241,23 @@ def _stage_converted(staging: Path, converted: _Converted) -> list[_WorkspaceCha
     """Write a converted entry's files under *staging*, returning the swap to make.
 
     Nothing live is touched: the returned changes name each workspace path the
-    entry replaces, its ``.assets`` directory always among them, by the new
-    one or by nothing, so a reconversion never keeps a stale asset.
+    entry replaces, its description and ``.assets`` directory always among them,
+    by the new one or by nothing, so a reconversion never keeps a stale asset
+    and an original the model could not describe keeps no stale description.
     """
-    prepared = converted.prepared
+    prepared, stem = converted.prepared, converted.stem_path
     main = prepared.main
-    assets_dir = Part(main.entry_metadata.stem_path, "assets").path
-    changes = [_WorkspaceChange(main.description_path, staging / main.description_path)]
+    assets_dir = Part(stem, "assets").path
+    changes = [
+        _WorkspaceChange(Part(stem, "description").path, None)
+        if main is None
+        else _WorkspaceChange(main.description_path, staging / main.description_path)
+    ]
 
     for asset in prepared.assets:
         _write_workspace_file(staging, asset.path, asset.data, sync_folder=False)
 
-    for entry in (*prepared.asset_entries, main):
+    for entry in prepared.entries:
         _write_markdown_file(
             staging, entry.description_path, entry.markdown, sync_folder=False
         )
@@ -298,7 +314,7 @@ def _install_converted(
             ContentStat.from_path(workspace / entry.description_path),
             entry.entry_metadata,
         )
-        for entry in (*prepared.asset_entries, prepared.main)
+        for entry in prepared.entries
     ]
 
 
@@ -325,12 +341,21 @@ def _install_text(
 
 
 def _converted_rows(converted: _Converted) -> list[RowChange]:
-    """Drop the asset rows of a replaced entry, whose new projection supersedes them."""
+    """Drop the asset rows of a replaced entry, whose new projection supersedes them.
+
+    Its own row goes too when the new original has no description to keep it.
+    """
     if not converted.replacing:
         return []
 
-    store = converted.store
-    assets = Part(converted.prepared.main.entry_metadata.stem_path, "assets").path
+    store, stem = converted.store, converted.stem_path
+
+    if converted.prepared.main is None:
+        entry = EntryPaths(stem, frozenset({"description", "assets"}))
+
+        return [lambda s: _remove_entry_rows(s, store, entry)]
+
+    assets = Part(stem, "assets").path
 
     return [lambda s: db_documents.delete_subtree(store, assets, s=s)]
 

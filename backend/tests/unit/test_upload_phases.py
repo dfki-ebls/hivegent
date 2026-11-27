@@ -89,6 +89,21 @@ async def test_image_upload_reports_stage_and_stores_sidecar(
     assert (workspace_dir / "photo.md").read_text() == "caption\n"
 
 
+async def test_undescribed_image_replaces_entry_without_sidecar(
+    user_store: Workspace, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def undescribed(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    await workspace.upload(user_store, "photo.png", png_bytes())
+    monkeypatch.setattr(prepare, "_build_image_description", undescribed)
+    raw = _png_with_metadata()
+    await workspace.upload(user_store, "photo.png", raw, overwrite=True)
+
+    assert (workspace_dir / "photo.png").read_bytes() == raw
+    assert not (workspace_dir / "photo.md").exists()
+
+
 async def test_failed_index_leaves_files_for_reconcile(
     user_store: Workspace, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

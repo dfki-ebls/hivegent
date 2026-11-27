@@ -1,16 +1,15 @@
 """Vision description envelope for images and videos.
 
 Each entry that carries a visual original gets a markdown projection from
-the aux vision model (`exar.ingest.caption`), with a single shared fallback: resolve the aux config,
-short-circuit to the file stem when no model is configured, and turn any
-failure into the stem so the entry still gets a searchable projection.
+the aux vision model (`exar.ingest.caption`).
+Without a model, or when it fails or answers nothing, there is no description,
+so the caller writes no sidecar rather than one that only repeats the file name.
 """
 
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
-from pathlib import Path, PurePosixPath
 
 from exar.ingest import (
     ANIMATED_MEDIA_TYPES,
@@ -24,7 +23,7 @@ from exar.ingest import (
 )
 
 from ..llm_config import aux_llm
-from ..media import ISOLATED
+from ..media import ISOLATED, source_on_disk
 from ..pipelines.vision import Vision
 
 __all__: list[str] = []
@@ -40,31 +39,26 @@ def _frame_budget(vision: Vision) -> int:
 
 
 async def _isolated[R](call: Callable[[], R]) -> R:
-    """Run the decoder *call* in an isolated worker, whose failure the caller falls back on."""
+    """Run the decoder *call* in an isolated worker, whose failure leaves the media undescribed."""
     return await asyncio.get_running_loop().run_in_executor(ISOLATED, call)
 
 
-async def _describe_with_fallback(
+async def _describe(
     filepath: str,
     media_kind: str,
     describe: Callable[[Vision], Awaitable[str]],
-) -> str:
-    """Run *describe* with the aux model, falling back to the file stem.
+) -> str | None:
+    """Run *describe* with the aux model, ``None`` without a model, on failure, or on empty output.
 
-    Centralizes the description envelope shared by every vision entry:
-    resolve the aux config, short-circuit to the stem when no model is
-    configured, and turn any failure (or empty output) into the stem so
-    the entry still gets a searchable projection.  *media_kind* only
-    labels the warning log.
+    *media_kind* only labels the warning log.
     """
     aux = aux_llm()
-    fallback = PurePosixPath(filepath).stem
 
     if aux is None:
-        return f"{fallback}\n"
+        return None
 
     try:
-        description = await describe(Vision(config=aux))
+        description = (await describe(Vision(config=aux))).strip()
     except Exception:
         logger.warning(
             "%s description generation failed for %s",
@@ -72,9 +66,10 @@ async def _describe_with_fallback(
             filepath,
             exc_info=True,
         )
-        description = fallback
 
-    return f"{description.strip() or fallback}\n"
+        return None
+
+    return f"{description}\n" if description else None
 
 
 async def _build_image_description(
@@ -82,8 +77,8 @@ async def _build_image_description(
     content: bytes,
     media_type: str,
     contexts: Sequence[str],
-) -> str:
-    """Generate markdown describing an image, grounded in *contexts*, with fallback.
+) -> str | None:
+    """Generate markdown describing an image, grounded in *contexts*, ``None`` without one.
 
     Animated images (multi-frame GIF/WebP) are captioned from frames
     sampled across their timeline rather than from the container bytes,
@@ -114,26 +109,30 @@ async def _build_image_description(
             contexts,
         )
 
-    return await _describe_with_fallback(filepath, "Image", describe)
+    return await _describe(filepath, "Image", describe)
 
 
 async def _build_video_description(
     filepath: str,
-    full_path: Path,
+    content: bytes,
     contexts: Sequence[str],
-) -> str:
-    """Generate markdown describing a video from sampled frames, with fallback."""
+) -> str | None:
+    """Generate markdown describing a video from sampled frames, ``None`` without one.
+
+    The decoder reads a temp copy, written only once a model is there to see its frames.
+    """
 
     async def describe(vision: Vision) -> str:
-        sample = await _isolated(
-            partial(
-                sample_video,
-                full_path,
-                max_frames=_frame_budget(vision),
-                max_dimension=MAX_DIMENSION,
+        with source_on_disk(filepath, content) as full_path:
+            sample = await _isolated(
+                partial(
+                    sample_video,
+                    full_path,
+                    max_frames=_frame_budget(vision),
+                    max_dimension=MAX_DIMENSION,
+                )
             )
-        )
 
         return await caption(vision, sample, contexts)
 
-    return await _describe_with_fallback(filepath, "Video", describe)
+    return await _describe(filepath, "Video", describe)
