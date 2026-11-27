@@ -117,8 +117,8 @@ class Completions(AbstractCapability[None]):
         """
         if self.calls >= self.max_calls:
             raise CompletionRefused(
-                f"complete may be called {self.max_calls} times per turn and "
-                "this turn has used them all. Finish without it."
+                f"complete, judge, and decide may be called {self.max_calls} times per turn "
+                "together and this turn has used them all. Finish without them."
             )
 
         self.calls += 1

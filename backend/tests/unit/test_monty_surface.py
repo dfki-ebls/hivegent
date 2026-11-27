@@ -282,8 +282,12 @@ results
 def test_the_injectable_set_is_taken_from_the_tools_the_model_holds() -> None:
     """A program is handed the explore tools it needs, built from the list that registers them."""
     assert INJECTABLE_TOOL_NAMES <= {td.name for td in static_tools(explore_toolset)}
-    # Only a program is handed `complete`, so `sandbox_only` cannot name it.
-    assert SANDBOX_FUNCTION_NAMES - INJECTABLE_TOOL_NAMES == {"complete"}
+    # Only a program is handed `complete`, `judge`, and `decide`, so `sandbox_only` cannot name them.
+    assert SANDBOX_FUNCTION_NAMES - INJECTABLE_TOOL_NAMES == {
+        "complete",
+        "judge",
+        "decide",
+    }
     # The mount already is the read tools, so they are not handed over again.
     assert not INJECTABLE_TOOL_NAMES & {"grep", "read_document", "list_documents"}
     # A program looping over fetched links would carry data out by its URLs.
@@ -375,6 +379,66 @@ class Chosen:
     model: Model = field(default_factory=TestModel)
 
 
+class TestDecisions:
+    """The questions a program asks the decision model, offered only once one is set."""
+
+    async def test_is_offered_with_the_decision_model_alone(
+        self,
+        deps: UserDeps,
+        python: PythonFactory,
+        configure: Configure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        configure(llm=catalog())
+
+        assert not {"judge", "decide"} & set(
+            sandbox_surface(run_context(deps)).functions
+        )
+
+        configure(llm=catalog().model_copy(update={"decision": "big"}))
+        monkeypatch.setattr(
+            llm, "model_from_config", lambda _config: TestModel(custom_output_args=0.75)
+        )
+        context = run_context(deps)
+        result = await python(surface=sandbox_surface(context))(
+            "await judge(question='Is it sunny?', text='The sun is out.')"
+        )
+
+        assert "Use `judge` to answer" in sandbox_instructions(context)
+        assert result.metadata.result == "0.75"
+        assert deps.completions.calls == 1
+
+    async def test_decide_picks_one_of_the_options(
+        self,
+        deps: UserDeps,
+        python: PythonFactory,
+        configure: Configure,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        configure(llm=catalog().model_copy(update={"decision": "big"}))
+        monkeypatch.setattr(
+            llm,
+            "model_from_config",
+            lambda _config: TestModel(custom_output_args="bug"),
+        )
+        context = run_context(deps)
+        program = """
+picked = await decide(question='Which label fits?', text='Checkout fails.', options=['billing', 'bug'])
+try:
+    await decide(question='Which?', text='x', options=['a', 'a'])
+except ValueError as exc:
+    refused = str(exc)
+[picked, refused]
+"""
+        result = await python(surface=sandbox_surface(context))(program)
+
+        assert "Use `decide` to label" in sandbox_instructions(context)
+        assert (
+            result.metadata.result
+            == "['bug', 'options must be distinct, pass each option once.']"
+        )
+
+
 class TestComplete:
     """The plain model call a program is handed and no tool list carries."""
 
@@ -420,8 +484,8 @@ except ValueError as exc:
         result = await python(surface=sandbox_surface(context))(program)
 
         assert result.metadata.result == (
-            "['sunny', 'complete may be called 1 times per turn and this turn "
-            "has used them all. Finish without it.']"
+            "['sunny', 'complete, judge, and decide may be called 1 times per turn "
+            "together and this turn has used them all. Finish without them.']"
         )
         assert context.usage.requests == 1
 

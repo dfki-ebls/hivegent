@@ -12,21 +12,25 @@ lists.
 
 import asyncio
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import replace
+from enum import Enum
 from functools import cache
 
 from cachetools import LRUCache
+from exar.agents import call
 from exar.helpers import get_name
 from exar.memory import digest
 from exar.tools import Retry, effect_of, tool_action
+from exar.typing import Decide, Question
 from pydantic_ai import RunContext
 from pydantic_ai.models import Model
 from pydantic_monty import ResourceLimits
 
 from ... import llm
 from ...config import settings
-from ...llm_config import turn_llm
+from ...llm_config import decision_llm, turn_llm
 from ...prompts import SANDBOX_TYPE_CHECK_INSTRUCTIONS, sandbox_api_instructions
 from ...sandbox import get_monty_pool
 from ...shared.l10n import Localized
@@ -34,6 +38,7 @@ from ...skills import skill_dir
 from ...store import USER_PREFIX
 from ...tools.base import ToolFunc
 from ...tools.complete import COMPLETE_INSTRUCTIONS, CompletionReasoning, complete
+from ...tools.decision import DECIDE_INSTRUCTIONS, JUDGE_INSTRUCTIONS, decide, judge
 from ...tools.monty import MontySurface, monty_surface
 from ...tools.python import (
     CodeArg,
@@ -49,6 +54,7 @@ from ..common import (
     SELF_BOUNDED,
     AgentTools,
     CompletionRefused,
+    Completions,
     Hooked,
     UserDeps,
     probe_context,
@@ -80,6 +86,17 @@ _changeset_limits = ChangesetLimits(
 )
 
 
+@asynccontextmanager
+async def _counted(completions: Completions) -> AsyncGenerator[None]:
+    """A call counted against the turn's *completions*, whose refusal a program meets as an error it can catch."""
+    try:
+        async with completions.slot():
+            yield
+
+    except CompletionRefused as exc:
+        raise Retry(str(exc)) from exc
+
+
 # Handed the run rather than the deps, since each call counts on its usage.
 # The model is built on a program's first call and reused by the rest, and the
 # turn's completions on the deps bound the calls of all its programs.
@@ -97,38 +114,79 @@ def _complete(ctx: RunContext[UserDeps]) -> ToolFunc:
         if config is None:
             raise Retry("complete is unavailable: no model is configured")
 
-        try:
-            async with completions.slot():
-                # The program never picks a model, only how hard it thinks.
-                return await llm.complete(
-                    [prompt],
-                    replace(config, thinking=reasoning or False),
-                    output_type=str,
-                    timeout=settings.sandbox.completion_timeout_seconds,
-                    answer_tokens=settings.sandbox.completion_max_tokens,
-                    model=model(),
-                    usage=ctx.usage,
-                    usage_limits=ctx.usage_limits,
-                    conversation_id=ctx.conversation_id,
-                    capabilities=capabilities,
-                )
-
-        except CompletionRefused as exc:
-            raise Retry(str(exc)) from exc
+        async with _counted(completions):
+            # The program never picks a model, only how hard it thinks.
+            return await llm.complete(
+                [prompt],
+                replace(config, thinking=reasoning or False),
+                output_type=str,
+                timeout=settings.sandbox.completion_timeout_seconds,
+                answer_tokens=settings.sandbox.completion_max_tokens,
+                model=model(),
+                usage=ctx.usage,
+                usage_limits=ctx.usage_limits,
+                conversation_id=ctx.conversation_id,
+                capabilities=capabilities,
+            )
 
     return complete(completion=completion)
 
 
-_GUIDANCE: Mapping[str, Localized[str]] = {"complete": COMPLETE_INSTRUCTIONS}
+def _decisions(ctx: RunContext[UserDeps]) -> list[ToolFunc]:
+    """The ``judge`` and ``decide`` functions on the ``llm.decision`` model, none while it is unset.
+
+    Their calls count against the turn's completions, like those of ``complete``,
+    and each agent is built on its first call and reused by the rest.
+    """
+    config = decision_llm()
+
+    if config is None:
+        return []
+
+    completions = ctx.deps.completions
+    judgement_agent = cache(lambda: llm.judge_from_config(config))
+
+    @cache
+    def choice_agent(options: tuple[str, ...]) -> Decide[Enum]:
+        # An enum of the options, which a decision model picks one of and a language model fills as structured output.
+        names: dict[str, str] = {
+            f"o{index}": option for index, option in enumerate(options)
+        }
+
+        return llm.decide_from_config(config, Enum("Option", names))
+
+    async def ask[T](agent: Decide[T], question: str, text: str) -> T:
+        async with (
+            _counted(completions),
+            asyncio.timeout(settings.sandbox.completion_timeout_seconds),
+        ):
+            return await call(agent, Question(instructions=question, text=text))
+
+    async def judgement(question: str, text: str) -> float:
+        return await ask(judgement_agent(), question, text)
+
+    async def choice(question: str, text: str, options: Sequence[str]) -> str:
+        return str((await ask(choice_agent(tuple(options)), question, text)).value)
+
+    return [judge(judgement=judgement), decide(choice=choice)]
+
+
+_GUIDANCE: Mapping[str, Localized[str]] = {
+    "complete": COMPLETE_INSTRUCTIONS,
+    "judge": JUDGE_INSTRUCTIONS,
+    "decide": DECIDE_INSTRUCTIONS,
+}
 """Guidance a run's prompt carries while a program may call the function of its name."""
 
 
 def _sandbox_functions(ctx: RunContext[UserDeps]) -> list[ToolFunc]:
-    """Every function this deployment can hand a program of the run *ctx*."""
-    return [*injected_tools(ctx), _complete(ctx)]
+    """Every function this deployment can hand a program of the run *ctx*, ``judge`` and ``decide`` once ``llm.decision`` is set."""
+    return [*injected_tools(ctx), _complete(ctx), *_decisions(ctx)]
 
 
-SANDBOX_FUNCTION_NAMES: frozenset[str] = frozenset({*INJECTED, "complete"})
+SANDBOX_FUNCTION_NAMES: frozenset[str] = frozenset(
+    {*INJECTED, "complete", "judge", "decide"}
+)
 """Every name a program may be handed, which ``settings.tools.disabled`` may withhold."""
 
 INJECTABLE_TOOL_NAMES: frozenset[str] = frozenset(INJECTED)
