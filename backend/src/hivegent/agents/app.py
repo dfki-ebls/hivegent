@@ -84,11 +84,13 @@ _spill = [
 ]
 
 
-# A run that repeats itself, across calls or within one streamed response, is
-# told to change its approach, and the web is never asked the same twice in a
-# run, while the operator's budgets cap the tools they name.
+# A run that repeats itself across its responses is told to change its
+# approach, and the web is never asked the same twice in a run, while the
+# operator's budgets cap the tools they name.  Loops within one response are
+# not checked, since acting on one rejects a response that already streamed,
+# which nothing in the stream retracts.
 _repetition = [
-    DetectLoops[UserDeps](),
+    DetectLoops[UserDeps](stream_detector=None, repeated_parallel_call_threshold=None),
     ToolBudgets[UserDeps](per_tool=settings.tools.budgets, refuse_repeats=WEB_TOOLS),
 ]
 

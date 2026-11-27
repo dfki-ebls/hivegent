@@ -45,7 +45,7 @@ flowchart LR
 - Pydantic AI binds models, user-scoped dependencies, and toolsets into one agent, and each chat turn is one native run of it, streamed by pydantic-ai's Vercel adapter, as the root of an exar run whose trace holds the spans of pydantic-ai, instrumented into exar's tracer provider, which Logfire only adds exporters to.
   The main agent delegates through Pydantic AI Harness (`agents/subagents.py`).
   Browser tasks can outlive the turn, and a later turn can steer, cancel, or resume them.
-  A report reaches an active turn at its next model request or starts a continuation that gives way to the user's next message.
+  A report reaches an active turn at its next model request or starts a turn answering it in a reply of its own, which gives way to the user's next message.
   Teams gathers reports in the original reply stream.
   Delegated work counts toward its originating turn's budget, including work that runs after the reply.
   A subagent never asks the user: a call that would ask is denied, so the main agent makes that change itself.

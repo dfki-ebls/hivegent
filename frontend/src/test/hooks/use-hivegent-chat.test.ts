@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import type { UIMessageChunk } from "ai";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 
 import { useHivegentChat } from "@/hooks/chat/use-hivegent-chat";
 import type { ChatMessage } from "@/lib/chat/message";
@@ -21,6 +21,10 @@ vi.mock("@/stores/jobs-store", async (importOriginal) => ({
   onConversationActivity: vi.fn<typeof onConversationActivity>(() => () => {}),
 }));
 
+beforeEach(() => {
+  chatFetch.mockReset();
+});
+
 const conversationId = "00000000-0000-4000-8000-0000000000c1";
 const sse = (...chunks: (UIMessageChunk | "[DONE]")[]) =>
   chunks.map((chunk) => `data: ${chunk === "[DONE]" ? chunk : JSON.stringify(chunk)}\n\n`).join("");
@@ -32,7 +36,10 @@ it.each<[UIMessageChunk, boolean]>([
   [{ type: "message-metadata", messageMetadata: { chatError: "failed" } }, true],
   [{ type: "message-metadata", messageMetadata: { chatError: 42 } }, false],
 ])("validates streamed %j", async (chunk, valid) => {
-  chatFetch.mockResolvedValueOnce(new Response(sse(chunk, "[DONE]"), { headers: eventHeaders }));
+  // A stream without the stored turn is followed again, which finds no turn running.
+  chatFetch
+    .mockResolvedValueOnce(new Response(sse(chunk, "[DONE]"), { headers: eventHeaders }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
   const { result } = renderHook(() => useHivegentChat(conversationId, []), {
     wrapper: createQueryWrapper(),
   });
@@ -82,4 +89,44 @@ it("follows a turn the feed announces while the chat streams once it settled", a
 
   expect(result.current.messages.at(-1)?.parts).toEqual([{ type: "text", text: "Reported" }]);
   expect(chatFetch.mock.lastCall?.[0]).toMatch(/\/stream$/);
+});
+
+it("rebuilds the reply from the replay of a turn whose stream dropped", async () => {
+  const replay: UIMessageChunk[] = [
+    { type: "start", messageId: "a1" },
+    { type: "start-step" },
+    { type: "tool-input-start", toolCallId: "c1", toolName: "list_documents" },
+    { type: "tool-input-delta", toolCallId: "c1", inputTextDelta: '{"path":' },
+    { type: "tool-input-start", toolCallId: "c2", toolName: "list_documents" },
+  ];
+  const encoded = new TextEncoder().encode(sse(...replay));
+  let drop = () => {};
+  const dropped = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoded);
+      drop = () => controller.error(new TypeError("network error"));
+    },
+  });
+  const following = new ReadableStream<Uint8Array>({
+    start: (controller) => controller.enqueue(encoded),
+  });
+  chatFetch
+    .mockResolvedValueOnce(new Response(dropped, { headers: eventHeaders }))
+    .mockResolvedValueOnce(new Response(following, { headers: eventHeaders }));
+  const { result } = renderHook(() => useHivegentChat(conversationId, []), {
+    wrapper: createQueryWrapper(),
+  });
+
+  act(() => void result.current.sendMessage({ text: "Hi" }));
+  await settle();
+  act(() => vi.mocked(onConversationActivity).mock.lastCall?.[2]());
+  act(() => drop());
+  await settle();
+
+  expect(chatFetch.mock.lastCall?.[0]).toMatch(/\/stream$/);
+  expect(result.current.messages.at(-1)?.parts.map((part) => part.type)).toEqual([
+    "step-start",
+    "tool-list_documents",
+    "tool-list_documents",
+  ]);
 });

@@ -565,12 +565,13 @@ async def test_a_report_is_no_prompt_of_the_user(
     stored = await _stored()
     shown = await history.active_messages(_CONVERSATION)
 
-    # The report reaches the main agent, bounded like a tool return, but neither as a user turn nor on screen.
+    # The report reaches the main agent, bounded like a tool return, but neither as a user turn nor on screen,
+    # and the turn it woke answers it in a reply of its own.
     assert "found it" in str(stored[-2].parts)
     assert "Cut short of its" in str(stored[-2].parts)
     assert "x" * 300 not in str(stored[-2].parts)
     assert [is_user_request(message) for message in stored].count(True) == 1
-    assert [message.role for message in shown] == ["user", "assistant"]
+    assert [message.role for message in shown] == ["user", "assistant", "assistant"]
 
 
 async def test_a_subagent_refuses_what_would_ask(

@@ -160,7 +160,7 @@ A `.env` file is no longer read, so move its values into the environment, creden
 
 - Subagents run in the background by default and outlive the turn that started them, so you can keep chatting while they work.
   The assistant may wait for a short task whose result it needs, which moves to the background if it still runs after 30 seconds.
-  Their reports reach the assistant at its next step, or, when no answer is running, the conversation continues the last reply on its own to read them.
+  Their reports reach the assistant at its next step, or, when no answer is running, the conversation answers them on its own in a new reply.
 - A message you send while such a reply runs stops it, and your turn reads the reports instead.
 - The new Tasks tab beside the chat lists the delegated tasks with everything their subagents did, and stops a running one.
 - Tasks are saved in a `tasks` folder below each conversation's folder in the data directory and deleted with the conversation.

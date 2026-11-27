@@ -174,8 +174,12 @@ def _resolve_history(
     pending: DeferredToolRequests | None,
     config: ChatRequest,
     prompt: UIMessage | None,
+    *,
+    woken: bool,
 ) -> tuple[list[ModelMessage], DeferredToolRequests | None, str]:
     """The history *stored* gives the turn, the calls it awaits from *pending*, and the id of the reply.
+
+    A turn *woken* for its tasks' reports answers them in a reply of its own.
 
     Raises:
         HTTPException: 409 when the prompt's id is taken in the history.
@@ -187,6 +191,7 @@ def _resolve_history(
     continues = (
         prompt is None
         and not regenerate
+        and not woken
         and bool(history)
         and not is_user_request(history[-1])
     )
@@ -289,9 +294,9 @@ def _wake(conversation: OwnedConversation, user: User) -> None:
 async def _wake_up(conversation: OwnedConversation, user: User) -> None:
     """Wait for the conversation's slot, then read the reports no turn took in a turn of its own.
 
-    The turn continues the last reply, as a post-approval continuation does,
-    and its stream is followed like any (``GET .../stream``), which the
-    clients of the conversation learn of on their feed.  It gives way to a
+    The turn answers them in a reply of its own, and its stream is followed
+    like any (``GET .../stream``), which the clients of the conversation learn
+    of on their feed.  It gives way to a
     request of the user, whose turn then reads the reports it did not.
     """
     while (run := runs.get(conversation)) is not None:
@@ -399,10 +404,10 @@ async def _prepare_turn(
         raise HTTPException(status_code=400, detail=NOTHING_TO_COMPACT.current)
 
     kept, pending, reply_id = (
-        _resolve_history((), None, config, prompt)
+        _resolve_history((), None, config, prompt, woken=woken)
         if loaded is None
         else _resolve_history(
-            loaded.messages, loaded.deferred_tool_requests, config, prompt
+            loaded.messages, loaded.deferred_tool_requests, config, prompt, woken=woken
         )
     )
     # The documents of the question the turn answers, the new one's or the one a
@@ -427,7 +432,7 @@ async def _prepare_turn(
         claimed = extract_title(adapter.messages)
         loaded = await _claimed(conversation, claimed)
         kept, pending, reply_id = _resolve_history(
-            loaded.messages, loaded.deferred_tool_requests, config, prompt
+            loaded.messages, loaded.deferred_tool_requests, config, prompt, woken=woken
         )
 
         if (aux := background_llm()) is not None:

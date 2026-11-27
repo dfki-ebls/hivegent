@@ -35,6 +35,7 @@ A turn's stream ends on a transient `data-turn` part carrying that stored turn, 
 A turn runs on at the server, so leaving the chat, reloading, or closing the tab only stops following it, and nothing asks before leaving.
 Only messages queued to steer a running turn live in the tab alone, so while any wait, leaving the conversation or the page asks first (`useSteeringQueue`).
 A reload follows the running turn again, and the history lists a conversation whose first turn still runs, so opening it there follows the turn too.
+The server replays a followed turn from its first chunk, which the SDK takes as a replay, its default, so it rebuilds the reply rather than adding to what the chat held.
 
 ## AI Elements are composed, not vendored
 

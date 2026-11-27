@@ -161,7 +161,7 @@ Eine `.env`-Datei wird nicht mehr gelesen, ihre Werte gehören in die Umgebung, 
 
 - Unteragenten laufen standardmäßig im Hintergrund und überdauern den Zug, der sie gestartet hat, sodass du weiterchatten kannst, während sie arbeiten.
   Der Assistent kann auf eine kurze Aufgabe warten, deren Ergebnis er braucht, die in den Hintergrund wechselt, wenn sie nach 30 Sekunden noch läuft.
-  Ihre Berichte erreichen den Assistenten bei seinem nächsten Schritt, oder, wenn gerade keine Antwort läuft, setzt die Konversation die letzte Antwort von sich aus fort, um sie zu lesen.
+  Ihre Berichte erreichen den Assistenten bei seinem nächsten Schritt, oder, wenn gerade keine Antwort läuft, beantwortet die Konversation sie von sich aus in einer neuen Antwort.
 - Eine Nachricht, die du sendest, während eine solche Antwort läuft, hält sie an, und dein Zug liest die Berichte stattdessen.
 - Der neue Tab Aufgaben neben dem Chat listet die delegierten Aufgaben mit allem, was ihre Unteragenten getan haben, und hält eine laufende an.
 - Aufgaben werden in einem Ordner `tasks` unter dem Ordner jeder Konversation im Datenverzeichnis gespeichert und mit der Konversation gelöscht.

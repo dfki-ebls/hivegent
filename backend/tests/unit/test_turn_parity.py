@@ -254,6 +254,13 @@ async def _failing(_messages: Sequence[ModelMessage]) -> Stream:
     yield _call("boom", {}, "b1")
 
 
+async def _cut_off(_messages: Sequence[ModelMessage]) -> Stream:
+    """A model failing once a call's input streamed, before the call ran."""
+    yield {0: DeltaToolCall("lookup", None, tool_call_id="x1")}
+    yield {0: DeltaToolCall(None, json.dumps({"term": "a"}))}
+    raise RuntimeError("simulated model failure")
+
+
 def _refused(messages: Sequence[ModelMessage]) -> bool:
     """Whether the window refuses *messages*, a history with no compaction to shrink it."""
     return len(messages) > 2 and not any(
@@ -354,7 +361,13 @@ def _record(
 
 @pytest.mark.parametrize(
     ("name", "script"),
-    [("text", _text), ("tools", _tools), ("question", _question), ("error", _failing)],
+    [
+        ("text", _text),
+        ("tools", _tools),
+        ("question", _question),
+        ("error", _failing),
+        ("cut-off", _cut_off),
+    ],
 )
 async def test_a_turn_ends_as_it_reloads(
     tree: _Tree, name: str, script: Script

@@ -54,7 +54,12 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     ToolOutputErrorPart,
     UIMessage,
 )
-from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, ErrorChunk
+from pydantic_ai.ui.vercel_ai.response_types import (
+    BaseChunk,
+    ErrorChunk,
+    ToolInputAvailableChunk,
+    ToolOutputErrorChunk,
+)
 
 from ...agents.approval import APPROVAL_NOTE, APPROVED_CHANGES, changes_digest
 from ...agents.common import ASK_USER_TOOL
@@ -222,15 +227,24 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
 
     @override
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
-        """Log the run error and stream a generic one, keeping internals server-side."""
+        """Log the run error and stream a generic one, keeping internals server-side.
+
+        A call whose input streamed but that never ran is closed as failed,
+        as the stored turn closes it (:data:`RUN_ERROR_CLOSED`).
+        """
         logger.error("Chat run failed", exc_info=error)
 
         async for chunk in super().on_error(error):
-            yield (
-                ErrorChunk(error_text=_RUN_FAILED.current)
-                if isinstance(chunk, ErrorChunk)
-                else chunk
-            )
+            if isinstance(chunk, ErrorChunk):
+                yield ErrorChunk(error_text=_RUN_FAILED.current)
+                continue
+
+            yield chunk
+
+            if isinstance(chunk, ToolInputAvailableChunk):
+                yield ToolOutputErrorChunk(
+                    tool_call_id=chunk.tool_call_id, error_text=RUN_ERROR_CLOSED
+                )
 
     @override
     async def handle_capability_event(
@@ -623,7 +637,7 @@ def run_and_persist[DepsT, OutputT](
     On a run error (streamed in-band as an ``ErrorChunk``), the turn is
     normalized before persisting so reload mirrors what streamed:
     :func:`close_orphan_tool_calls` closes the call the error aborted, as the
-    stream closed it, and
+    stream closed it (:meth:`ChatEventStream.on_error`), and
     :func:`record_turn_error` stores the error text for the reloaded banner.  A
     clean finish is persisted untouched, so a genuine approval-pending call stays
     dangling and reloads as an approval request rather than an error.

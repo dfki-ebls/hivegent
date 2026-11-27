@@ -20,17 +20,15 @@ import { onConversationActivity } from "@/stores/jobs-store";
  * which addresses no message since it compacts the active path.
  *
  * A turn runs on at the server when the client stops reading, so a reload
- * follows it again at its own route, from its first chunk. The replay
- * continues the message the stored history ends with, which the server ends
- * with what the turn answers or continues, so it is no replay of a whole message.
- * A turn that ended since the history was read is not followed, so
+ * follows it again at its own route, from its first chunk. The SDK takes the
+ * replay as one, so it rebuilds the reply from scratch rather than adding it to
+ * whatever the client held. A turn that ended since is not followed, so
  * *onNoTurn* reads the history again.
  */
 function transportOf(conversationId: string, onNoTurn: () => void) {
   const transport = new DefaultChatTransport<ChatMessage>({
     api: chatUrl(conversationId),
     fetch: chatFetch,
-    resumeStreamIsReplay: false,
     prepareReconnectToStreamRequest: () => ({ api: turnUrl(conversationId) }),
     prepareSendMessagesRequest: ({ id, messages, body, trigger, messageId }) => {
       const compact = body?.compact === true;
@@ -105,15 +103,9 @@ function createChat(id: string, messages: ChatMessage[]): Chat<ChatMessage> {
       stored = undefined;
 
       // The server ends a stream without the turn when its token expires, so
-      // it is followed again as a reload would, with a fresh token.
+      // it is followed again, with a fresh token.
       if (turn === undefined) {
-        if (!isAbort && !isError) {
-          void getConversationMessages(id).then((loaded) => {
-            chat.messages = loaded;
-
-            return chat.resumeStream();
-          });
-        }
+        if (!isAbort && !isError) void chat.resumeStream();
 
         return;
       }

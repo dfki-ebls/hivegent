@@ -439,7 +439,9 @@ The registry keys a turn by its `OwnedConversation`, the owner and the id togeth
 The request that started it follows it, and a client that leaves only stops following, so a closed tab or a sleeping phone loses no answer.
 `GET /conversations/{id}/stream` follows the running turn again from its first chunk, the AI SDK's resumable stream, and answers 204 while none runs, so a client reloading after the turn ended reads it from `.../messages`.
 While a turn runs, `.../messages` shows the history the turn runs on with the client message the turn answers or continues, its new user message or the assistant message carrying a continuation's decisions, since the turn is stored only once it ends.
-A reload so shows the prompt the followed answer belongs to, and the client replays a continuation into the message it continues (`resumeStreamIsReplay: false`) rather than into a second one.
+A reload so shows the prompt the followed answer belongs to.
+The client takes every resumed stream as the replay it is, the AI SDK's default, so it rebuilds the reply from the first chunk rather than adding the replay to what it held, which a dropped connection or an expired token would otherwise duplicate.
+A follower of a turn that continues a reply, after an approval or the compact button, so shows only what the turn streamed in it until the turn ends and its stored version is swapped in.
 A client that finds no turn to follow reads the history again, since the turn may have ended after the history was read.
 A new conversation's record is claimed before its first turn runs and titled by its prompt, then by the aux model with `llm.aux` set (`titles.title_first_turn`), which reads the stored prompt and answer, since the answer grounds a terse prompt, and leaves a title the user set meanwhile.
 It is the turn's `Prepared.after`, which `runs` starts once a turn ended unstopped, so it holds neither the conversation's slot nor its followers, and `runs.aclose` stops it too.
@@ -589,7 +591,7 @@ The Tasks panel shows interrupted tasks as cancelled after a restart, and deleti
 Teams uses the harness's run-scoped owner, which waits for its tasks and delivers their reports in the original stream.
 
 A report reaches a running turn at its next model request (`DelegationReports(priority="asap")`), the harness's queued-message seam.
-When the slot is free, `turn._wake` continues the last reply with the waiting reports as its first model request, without using the user's request quota.
+When the slot is free, `turn._wake` starts a turn with the waiting reports as its first model request, without using the user's request quota, which answers them in a reply of its own.
 Pending approvals and answers defer the continuation, and the user's next message preempts it (`Runs.preempt`).
 The owner's feed announces turn starts and identifies changed tasks through `conversation-activity` events.
 Deletion and replacement suspend wake-ups before stopping the turn and draining its tasks.
@@ -618,7 +620,7 @@ Every agent toolset is built by `AgentTools.build`, whose `timeout` defaults to 
 Each purpose runs its own named agent (`chat`, every subagent by its name, `summarize`, `title`, `complete`, `debug`, `report`), since the name is what Logfire attributes spend to.
 Every one retries a transient model error, a rate limit, an overloaded or failing endpoint, or a dropped connection, with `RetryOnModelErrors`, which waits as long as the endpoint asks and replaces the OpenAI SDK's own retries.
 Every agent over the user's deps also tells its model when earlier turns came from another one (`LabelCrossModelHistory`), since a turn may pick another model of the catalog than the turns before it.
-Every one also tells its model to change its approach when it repeats itself, across calls or within one streamed response, its thinking included (`DetectLoops`), refuses a web search or fetch it already made in the run, and caps the tools `tools.budgets` names (`ToolBudgets`), each refusal a tool result the model reads rather than the end of the run.
+Every one also tells its model to change its approach when it repeats itself across its responses (`DetectLoops`), but not within one response, since acting on that rejects a response that already streamed, which nothing in the stream retracts, refuses a web search or fetch it already made in the run, and caps the tools `tools.budgets` names (`ToolBudgets`), each refusal a tool result the model reads rather than the end of the run.
 
 ### Runs are exar runs
 
