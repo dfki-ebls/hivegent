@@ -157,7 +157,10 @@ def test_self_hosted_models_resolve_their_configured_family_profile() -> None:
     assert issubclass(transformer, OpenAIJsonSchemaTransformer)
 
 
-@pytest.mark.parametrize("runtime", InferenceProvider)
+@pytest.mark.parametrize(
+    "runtime",
+    [runtime for runtime in InferenceProvider if runtime.writes_text],
+)
 def test_self_hosted_runtimes_are_never_named_openai(
     runtime: InferenceProvider,
 ) -> None:

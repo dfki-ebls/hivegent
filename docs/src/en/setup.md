@@ -58,7 +58,7 @@ audience = ["hivegent-spa", "hivegent-bot"]
 service_client_id = "hivegent-bot"
 ```
 
-- `llm.providers.<id>`: an endpoint, its `base_url` and `inference_provider`, which is `llama.cpp`, `vllm`, `sglang`, `ollama`, `openai` (default) for OpenAI's own API, or `openai-compatible` for any other server.
+- `llm.providers.<id>`: an endpoint, its `base_url` and `inference_provider`, which is `llama.cpp`, `vllm`, `sglang`, `ollama`, `openai` (default) for OpenAI's own API, `openai-compatible` for any other server, or `system-one` for a server of decision models over the System One API, such as vLLM serving D3.
   Match your server to enable reasoning control and chat-template fixes, and to keep a local model from being priced or tokenized as an OpenAI one.
   llama.cpp and vLLM cap reasoning at `llm.thinking_budget_tokens`, SGLang and Ollama only switch it on and off.
   Its API key, if it needs one, is the secret `hivegent.LLM__PROVIDERS__<ID>__API_KEY`.
@@ -77,6 +77,9 @@ service_client_id = "hivegent-bot"
   Everything that answers the user, including subagents, compaction, case bases, and the sandbox's `complete`, runs on the chat model with the chosen reasoning effort.
   Defaults to `llm.default`.
 - `llm.stt`: a transcription model such as `whisper-1` for browsers without speech recognition, off when unset.
+- `llm.decision`: the model that answers yes/no questions with a probability, off when unset.
+  Setting it offers the `markdown-coref` chunker, which joins chunks that refer back to the one before them.
+  Any model of the catalog judges, a fast chat model as well as a decision model of a `system-one` provider, which answers faster and with calibrated probabilities but fills no other role, so it needs `chat = false`.
 - `subagents.max_cost`: the most a chat turn may spend in US dollars, its subagents included, also those still running after it, unbounded when unset.
   It counts only models pydantic-ai can price, so a self-hosted one is bounded by `llm.request_limit` and the token limits alone.
 - `subagents.max_steps`: how many model requests a subagent makes before it is told to report what it found, 30 by default.

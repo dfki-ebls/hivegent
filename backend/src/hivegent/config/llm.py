@@ -41,10 +41,14 @@ OPENAI_BASE_URL = OperatorUrl("https://api.openai.com/v1")
 
 
 class InferenceProvider(StrEnum):
-    """Inference server providing the OpenAI-compatible LLM endpoint.
+    """Inference server providing the LLM endpoint.
 
     ``openai`` is OpenAI's own API, ``openai-compatible`` any other server
     that keeps to its contract, and the others name a self-hosted runtime.
+    ``system-one`` is a server of decision models over the System One API
+    instead, such as vLLM serving D3, which answer questions with
+    probabilities rather than write text, so its models fill only the
+    ``decision`` role.
     """
 
     LLAMA_CPP = "llama.cpp"
@@ -53,6 +57,12 @@ class InferenceProvider(StrEnum):
     OLLAMA = "ollama"
     OPENAI = "openai"
     OPENAI_COMPATIBLE = "openai-compatible"
+    SYSTEM_ONE = "system-one"
+
+    @property
+    def writes_text(self) -> bool:
+        """Whether it serves the OpenAI API of language models, rather than decision models that write no text."""
+        return self is not InferenceProvider.SYSTEM_ONE
 
 
 FAMILY_PROVIDERS = frozenset(
@@ -178,6 +188,12 @@ class LlmSettings(Section):
     model (e.g. ``whisper-1``), which backs the speech input fallback for
     browsers without a working Web Speech API, disabled while it is unset.
 
+    ``decision`` names the model that answers yes/no questions with a
+    probability, such as whether a chunk depends on the one before it.  Any
+    model of the catalog fills it, a fast chat model as well as a decision
+    model of a ``system-one`` provider, which answers faster and calibrated.
+    Setting it opts into the work that needs it, such as the
+    ``markdown-coref`` chunker, and it falls back to no other role.
     ``aux_max_tokens`` bounds the one-shot aux workloads below the aux
     model's own ``max_tokens``: their outputs are short and the aux model is
     usually small-context, so an unbounded completion can fill the window
@@ -240,6 +256,7 @@ class LlmSettings(Section):
     default: str | None = None
     aux: str | None = None
     stt: str | None = None
+    decision: str | None = None
     aux_max_tokens: int | None = 8192
     thinking_budget_tokens: ThinkingBudgets = {
         "low": 4096,
@@ -260,21 +277,37 @@ class LlmSettings(Section):
     @model_validator(mode="after")
     def _check_catalog(self) -> Self:
         """Refuse a catalog whose references dangle, so a typo stops the boot."""
+        decision_models: set[str] = set()
+
         for model_id, model in self.models.items():
             if model.provider not in self.providers:
                 raise unknown_reference("Model", model_id, "provider")
 
             runtime = self.providers[model.provider].inference_provider
 
+            if not runtime.writes_text:
+                decision_models.add(model_id)
+
+                if model.chat:
+                    raise ValueError(
+                        f"Model {model_id!r} is a decision model, which writes no text, so it must set chat = false"
+                    )
+
             if model.family is not None and runtime not in FAMILY_PROVIDERS:
                 raise ValueError(
                     f"Model {model_id!r} names a family, which its {runtime} provider ignores"
                 )
 
-        for role in ("default", "aux", "stt"):
+        for role in ("default", "aux", "stt", "decision"):
             model_id = getattr(self, role)
+
             if model_id is not None and model_id not in self.models:
                 raise unknown_reference("Role", role, "model")
+
+            if role != "decision" and model_id in decision_models:
+                raise ValueError(
+                    f"llm.{role} names a decision model, which writes no text"
+                )
 
         if self.models and self.default is None:
             raise ValueError("llm.default must name a model of the catalog")

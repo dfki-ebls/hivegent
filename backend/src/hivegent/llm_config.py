@@ -32,6 +32,7 @@ __all__ = [
     "background_llm",
     "chat_llm",
     "clamp_reasoning",
+    "decision_llm",
     "model_max_images",
     "run_max_images",
     "stt_llm",
@@ -138,6 +139,17 @@ def background_llm() -> LlmConfig | None:
     spend the chat model.
     """
     return None if settings.llm.aux is None else aux_llm()
+
+
+def decision_llm() -> LlmConfig | None:
+    """The model answering yes/no questions with a probability, none while ``llm.decision`` is unset.
+
+    Setting ``llm.decision`` opts into the work that needs it, such as the
+    ``markdown-coref`` chunker, on a chat model or a decision model alike.
+    """
+    model_id = settings.llm.decision
+
+    return None if model_id is None else _resolve(model_id)
 
 
 def stt_llm() -> LlmConfig | None:

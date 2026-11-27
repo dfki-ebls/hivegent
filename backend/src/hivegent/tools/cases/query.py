@@ -18,7 +18,15 @@ from exar.tools.common import read_bytes_or_retry
 from pydantic import JsonValue, ValidationError
 
 from ..base import SearchPath, resolve_file_or_retry
-from .casebase import EMBEDDER, LANGUAGE_MODEL, Bindings, CaseBase, Key, Limits
+from .casebase import (
+    DECISION_MODEL,
+    EMBEDDER,
+    LANGUAGE_MODEL,
+    Bindings,
+    CaseBase,
+    Key,
+    Limits,
+)
 
 __all__ = [
     "Query",
@@ -170,8 +178,9 @@ def parse_query(
 def _unbound(path: str, exc: Unbound) -> str:
     return (
         f"The similarity configuration of '{path}' cannot be used: {exc}. Hivegent "
-        f"binds the embedder '{EMBEDDER}' and, with a chat model configured, the "
-        f"language model '{LANGUAGE_MODEL}'."
+        f"binds the embedder '{EMBEDDER}', with a chat model configured the "
+        f"language model '{LANGUAGE_MODEL}', and with a decision model configured "
+        f"the model '{DECISION_MODEL}', which fills decisions such as the measure 'fit'."
     )
 
 

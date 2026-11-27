@@ -198,11 +198,16 @@ class Settings(BaseSettings):
         for section in type(self).model_fields:
             config = getattr(self, section)
 
-            if (
-                isinstance(config, ProviderEndpoint)
-                and config.endpoint not in self.llm.providers
-            ):
+            if not isinstance(config, ProviderEndpoint):
+                continue
+
+            if config.endpoint not in self.llm.providers:
                 raise unknown_reference("Section", section, "provider")
+
+            if not self.llm.providers[config.endpoint].inference_provider.writes_text:
+                raise ValueError(
+                    f"Section {section!r} names a decision model provider, which serves no OpenAI API"
+                )
 
         return self
 

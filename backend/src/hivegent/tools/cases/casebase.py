@@ -11,7 +11,8 @@ cbrkit's specifications still evolves.
 
 The host binds its models by name (:class:`Bindings`): its embedding model as
 the embedder :data:`EMBEDDER`, which an inferred configuration compares long
-texts with, and the chat model of the turn as the language model :data:`LANGUAGE_MODEL`.
+texts with, the chat model of the turn as the language model :data:`LANGUAGE_MODEL`,
+and the ``llm.decision`` model, if set, as :data:`DECISION_MODEL`, which fills decisions such as ``cbrkit.sim.llm.Fit``.
 A configuration naming anything else is refused when it is used.
 """
 
@@ -47,6 +48,7 @@ from ..changes import Delete, Operation, Write
 from ..entries import ContentStat
 
 __all__ = [
+    "DECISION_MODEL",
     "EMBEDDER",
     "LANGUAGE_MODEL",
     "Bind",
@@ -63,6 +65,9 @@ EMBEDDER = "hivegent"
 
 LANGUAGE_MODEL = "hivegent"
 """The name a configuration refers to the host's chat model by."""
+
+DECISION_MODEL = "hivegent-decision"
+"""The name a configuration refers to the host's ``llm.decision`` model by, such as for ``cbrkit.sim.llm.Fit``."""
 
 
 type Key = int | str

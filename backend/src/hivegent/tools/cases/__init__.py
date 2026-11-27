@@ -16,6 +16,7 @@ rank them by example (:mod:`~hivegent.tools.cases.query`), render the hits
 """
 
 from .casebase import (
+    DECISION_MODEL,
     EMBEDDER,
     LANGUAGE_MODEL,
     Bind,
@@ -31,6 +32,7 @@ from .render import CaseMatch, SimilarCasesResult, match
 from .search import similar_cases
 
 __all__ = [
+    "DECISION_MODEL",
     "EMBEDDER",
     "LANGUAGE_MODEL",
     "Bind",

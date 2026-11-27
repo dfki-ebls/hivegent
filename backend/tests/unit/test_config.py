@@ -177,6 +177,38 @@ def test_a_family_needs_a_runtime_that_takes_it(runtime: str, accepted: bool) ->
 
 
 @pytest.mark.parametrize(
+    ("judge", "roles", "error"),
+    [
+        ({"chat": False}, {"decision": "judge"}, None),
+        ({"chat": True}, {"decision": "judge"}, "writes no text"),
+        ({"chat": False}, {"aux": "judge"}, "llm.aux names a decision model"),
+    ],
+    ids=["decision", "chat", "aux"],
+)
+def test_decision_models_fill_only_the_decision_role(
+    judge: dict[str, bool], roles: dict[str, str], error: str | None
+) -> None:
+    """A decision model writes no text, while any chat model may judge too."""
+    catalog = {
+        "providers": {
+            "local": {"base_url": LOCAL},
+            "d3": {"base_url": LOCAL, "inference_provider": "system-one"},
+        },
+        "models": {
+            "chat": {"provider": "local", "model": "m"},
+            "judge": {"provider": "d3", "model": "vllm-sr/d3-lite"} | judge,
+        },
+        "default": "chat",
+    } | roles
+
+    if error is None:
+        _ = LlmSettings.model_validate(catalog)
+    else:
+        with pytest.raises(ValueError, match=error):
+            _ = LlmSettings.model_validate(catalog)
+
+
+@pytest.mark.parametrize(
     ("toml", "env", "error"),
     [
         ('[llm]\nmodel = "gpt"\n', {}, r"llm\.model"),

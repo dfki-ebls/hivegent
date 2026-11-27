@@ -58,7 +58,7 @@ audience = ["hivegent-spa", "hivegent-bot"]
 service_client_id = "hivegent-bot"
 ```
 
-- `llm.providers.<id>`: ein Endpunkt, seine `base_url` und sein `inference_provider`, also `llama.cpp`, `vllm`, `sglang`, `ollama`, `openai` (Standard) für OpenAIs eigene API oder `openai-compatible` für jeden anderen Server.
+- `llm.providers.<id>`: ein Endpunkt, seine `base_url` und sein `inference_provider`, also `llama.cpp`, `vllm`, `sglang`, `ollama`, `openai` (Standard) für OpenAIs eigene API, `openai-compatible` für jeden anderen Server oder `system-one` für einen Server von Entscheidungsmodellen über die System-One-API, etwa vLLM mit D3.
   Passend zum Server gesetzt, aktiviert er die Steuerung des Reasonings und Korrekturen für Chat-Templates und verhindert, dass ein lokales Modell wie ein OpenAI-Modell bepreist oder tokenisiert wird.
   llama.cpp und vLLM begrenzen das Reasoning auf `llm.thinking_budget_tokens`, SGLang und Ollama schalten es nur ein und aus.
   Sein API-Schlüssel, falls er einen braucht, ist das Geheimnis `hivegent.LLM__PROVIDERS__<ID>__API_KEY`.
@@ -77,6 +77,9 @@ service_client_id = "hivegent-bot"
   Alles, was dem Nutzer antwortet, darunter Unteragenten, Kompaktierung, Fallbasen und das `complete` der Sandbox, läuft auf dem Chat-Modell mit dem gewählten Denkaufwand.
   Standard ist `llm.default`.
 - `llm.stt`: ein Transkriptionsmodell wie `whisper-1` für Browser ohne Spracherkennung, aus, solange es nicht gesetzt ist.
+- `llm.decision`: das Modell, das Ja/Nein-Fragen mit einer Wahrscheinlichkeit beantwortet, aus, solange es nicht gesetzt ist.
+  Ist es gesetzt, steht der Chunker `markdown-coref` bereit, der Chunks mit dem vorherigen verbindet, wenn sie sich auf ihn beziehen.
+  Jedes Modell des Katalogs kann urteilen, ein schnelles Chat-Modell ebenso wie ein Entscheidungsmodell eines `system-one`-Anbieters, das schneller und mit kalibrierten Wahrscheinlichkeiten antwortet, aber keine andere Rolle übernimmt und daher `chat = false` braucht.
 - `subagents.max_cost`: höchstens so viele US-Dollar darf ein Chat-Zug samt seiner Unteragenten ausgeben, auch jener, die nach ihm noch laufen, unbegrenzt, solange es nicht gesetzt ist.
   Es zählt nur Modelle, die pydantic-ai bepreisen kann, daher begrenzen ein selbst betriebenes allein `llm.request_limit` und die Token-Grenzen.
 - `subagents.max_steps`: so viele Modellanfragen stellt ein Unteragent, bevor er aufgefordert wird, seine Ergebnisse zu berichten, standardmäßig 30.

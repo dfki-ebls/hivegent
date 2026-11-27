@@ -8,7 +8,8 @@ from typing import Any
 
 import httpx2
 from exar.agents import call
-from exar.pydantic_ai import PydanticAiAgent
+from exar.pydantic_ai import PydanticAiAgent, decide, judge
+from exar.typing import Decide, Judge
 from openai import AsyncOpenAI
 from pydantic_ai import Agent, UserContent
 from pydantic_ai.capabilities import (
@@ -19,6 +20,8 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.exceptions import ModelEmptyResponseError
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.output import OutputSpec
 from pydantic_ai.profiles import (
     InlineDefsJsonSchemaTransformer,
     ModelProfile,
@@ -37,6 +40,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.providers.vllm import VLLMProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -59,6 +63,9 @@ __all__ = [
     "create_openai_chat_model",
     "create_openai_client",
     "create_openai_provider",
+    "decide_from_config",
+    "decision_model",
+    "judge_from_config",
     "model_from_config",
     "summary_model_settings",
     "thinking_model_settings",
@@ -105,6 +112,11 @@ def create_openai_provider(
             | InferenceProvider.OPENAI_COMPATIBLE
         ):
             return OpenAICompatibleProvider(runtime.value, openai_client=client)
+
+        case InferenceProvider.SYSTEM_ONE:
+            raise ValueError(
+                f"{provider.base_url} serves decision models, not the OpenAI API"
+            )
 
 
 # The profile of each configured model family, the same functions pydantic-ai
@@ -263,6 +275,44 @@ def create_openai_chat_model(
         provider=create_openai_provider(provider, http_client),
         profile=profile or None,
         settings=_MODEL_SETTINGS,
+    )
+
+
+def decision_model(config: LlmConfig) -> tuple[Model, ModelSettings]:
+    """The model of the ``decision`` role and its settings, a decision model of a ``system-one`` provider or a chat model reasoning off.
+
+    Either fills decisions, such as a probability or a pick, within
+    ``llm.request_timeout_seconds``, the decision model calibrated and faster.
+    """
+    timeout = ModelSettings(timeout=settings.llm.request_timeout_seconds)
+
+    if config.provider.inference_provider.writes_text:
+        return model_from_config(config), (
+            thinking_model_settings(replace(config, thinking=False)) | timeout
+        )
+
+    provider = SystemOneProvider(
+        base_url=config.provider.base_url,
+        api_key=reveal(config.provider.api_key),
+        http_client=get_trusted_http_client(config.provider.base_url),
+    )
+
+    return SystemOneModel(config.model, provider=provider), timeout
+
+
+def judge_from_config(config: LlmConfig) -> Judge:
+    """The judge of the ``decision`` model, answering with its probability of yes, see :func:`decision_model`."""
+    model, model_settings = decision_model(config)
+
+    return judge(model, settings=model_settings, capabilities=[MODEL_RETRIES])
+
+
+def decide_from_config[T](config: LlmConfig, output_type: OutputSpec[T]) -> Decide[T]:
+    """The ``decision`` model deciding *output_type*, such as one of named options, see :func:`decision_model`."""
+    model, model_settings = decision_model(config)
+
+    return decide(
+        model, output_type, settings=model_settings, capabilities=[MODEL_RETRIES]
     )
 
 
