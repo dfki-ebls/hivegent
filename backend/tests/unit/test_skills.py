@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from cbrkit.io import durable_rename
 from exar.tools import Retry
 from fastapi import HTTPException, UploadFile
 from pydantic_ai import Agent, ModelRetry
@@ -30,7 +31,6 @@ from hivegent.agents.tools.skills import (
     skills_toolset,
 )
 from hivegent.agents.tools.write import validate_document_write
-from hivegent.config import settings
 from hivegent.server.routes.skills import (
     create_skill_document,
     get_skill_document,
@@ -49,6 +49,7 @@ from hivegent.skills import (
 from hivegent.store import GroupScope, Scope, User, UserScope
 from hivegent.tools.changes import ChangeRefused
 from hivegent.types import SkillDocumentRequest
+from tests.conftest import Configure
 from tests.helpers import owned, run_context
 
 USER = User("u", read_groups=frozenset({"archive"}), write_groups=frozenset({"team"}))
@@ -76,17 +77,17 @@ def _zip(files: dict[str, str]) -> bytes:
 
 
 @pytest.fixture()
-def operator_skills(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def operator_skills(data_dir: Path, configure: Configure) -> Path:
     """An operator directory holding the global skill ``pdf``."""
     directory = data_dir / "operator"
     (directory / "pdf").mkdir(parents=True)
     (directory / "pdf" / "SKILL.md").write_text(_skill("pdf"))
-    monkeypatch.setattr(settings.skills, "dir", directory)
+    configure(skills={"dir": directory})
 
     return directory
 
 
-def test_a_skill_keeps_to_the_format() -> None:
+def test_a_skill_keeps_to_the_format_and_reads_values_as_written() -> None:
     document = parse_skill(
         _skill("count").replace("---\nCount", "x-other: 1\n---\nCount")
     )
@@ -94,11 +95,6 @@ def test_a_skill_keeps_to_the_format() -> None:
         "The frontmatter key 'x-other' is no field of the specification and is ignored.",
     )
 
-    with pytest.raises(InvalidSkill, match="but its folder 'other'"):
-        _ = parse_skill(_skill("count"), "other")
-
-
-def test_the_frontmatter_reads_values_as_written_and_refuses_a_repeated_key() -> None:
     manifest = parse_skill(
         _skill("count").replace(
             "---\nCount",
@@ -108,15 +104,16 @@ def test_the_frontmatter_reads_values_as_written_and_refuses_a_repeated_key() ->
     assert manifest.metadata == {"version": "1.0", "on": "yes"}
     assert not manifest.user_invocable and not manifest.disable_model_invocation
 
-    with pytest.raises(InvalidSkill, match="repeats the key 'name'"):
-        _ = parse_skill(
-            _skill("count").replace("---\nCount", "name: other\n---\nCount")
-        )
-
-    with pytest.raises(InvalidSkill, match="user-invocable: .* must be true or false"):
-        _ = parse_skill(
-            _skill("count").replace("---\nCount", "user-invocable: no\n---\nCount")
-        )
+    for frontmatter, folder, error in (
+        ("", "other", "but its folder 'other'"),
+        ("name: other\n", None, "repeats the key 'name'"),
+        ("user-invocable: no\n", None, "user-invocable: .* must be true or false"),
+    ):
+        with pytest.raises(InvalidSkill, match=error):
+            _ = parse_skill(
+                _skill("count").replace("---\nCount", f"{frontmatter}---\nCount"),
+                folder,
+            )
 
 
 async def test_install_lists_and_deletes_by_scope(
@@ -169,9 +166,9 @@ async def test_install_refuses_what_the_user_may_not_place(
 
 
 async def test_install_keeps_to_the_library_quota(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    data_dir: Path, configure: Configure
 ) -> None:
-    monkeypatch.setattr(settings.skills, "library_max_bytes", 100)
+    configure(skills={"library_max_bytes": 100})
 
     with pytest.raises(ChangeRefused) as exc:
         _ = await install_skill(USER, "~", {"SKILL.md": _skill("x" * 64).encode()})
@@ -301,10 +298,10 @@ async def test_creating_a_shared_skill_rejects_an_existing_name(data_dir: Path) 
 
 
 async def test_a_long_skill_loads_cut_short_pointing_at_its_file(
-    operator_skills: Path, monkeypatch: pytest.MonkeyPatch
+    operator_skills: Path, configure: Configure
 ) -> None:
     """The host's loads share the bound of ``load_skill``, which they bypass the spill of."""
-    monkeypatch.setattr(settings.llm, "tool_output_max_chars", 500)
+    configure(llm={"tool_output_max_chars": 500})
     (operator_skills / "pdf" / "SKILL.md").write_text(_skill("pdf") + "x" * 10_000)
 
     loaded = await load_skill(run_context(UserDeps(user=USER, mode="read")), "pdf")
@@ -341,7 +338,7 @@ async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncMonty]:
         yield pool
 
 
-async def test_a_skill_loads_with_its_scripts_checked(
+async def test_a_skill_loads_with_its_scripts_checked_and_runs_them_in_its_folder(
     operator_skills: Path, pool: AsyncMonty
 ) -> None:
     files = {
@@ -350,7 +347,8 @@ async def test_a_skill_loads_with_its_scripts_checked(
         "scripts/broken.py": b"x = 1\n",
     }
     _ = await install_skill(USER, "~", files)
-    context = run_context(UserDeps(user=USER, mode="read"))
+    deps = UserDeps(user=USER, mode="read", conversation=owned("c1", USER))
+    context = run_context(deps)
 
     listing = await load_skill(context)
     assert "- ~/count (/skills/~/count, by the user): Counts things." in listing
@@ -364,17 +362,7 @@ async def test_a_skill_loads_with_its_scripts_checked(
         "main(rows: list[str], label: str='rows') -> str. Count the rows of a table."
     ) in loaded
 
-
-async def test_run_python_calls_main_with_args_in_its_skill(
-    data_dir: Path, pool: AsyncMonty
-) -> None:
-    _ = await install_skill(
-        USER,
-        "~",
-        {"SKILL.md": _skill("count").encode(), "scripts/run.py": SCRIPT.encode()},
-    )
-    deps = UserDeps(user=USER, mode="read", conversation=owned("c1", USER))
-    tool = python_tools._run_python(run_context(deps))
+    tool = python_tools._run_python(context)
     script = "/skills/~/count/scripts/run.py"
 
     result = await tool(script_path=script, args={"rows": ["a", "b"]})
@@ -419,22 +407,17 @@ async def test_the_routes_install_a_skill_and_read_its_files(
     assert exc.value.status_code == 422
 
 
-def test_a_failed_replacement_keeps_the_installed_skill(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_failed_replacement_keeps_the_installed_skill(data_dir: Path) -> None:
     target = data_dir / "skills" / "count"
     skills_module._write({"SKILL.md": b"old"}, target)
-    rename = skills_module.durable_rename
 
     def fail_install(source: Path, destination: Path) -> None:
         if source.name == "skill":
             raise OSError("disk full")
 
-        rename(source, destination)
-
-    monkeypatch.setattr(skills_module, "durable_rename", fail_install)
+        durable_rename(source, destination)
 
     with pytest.raises(OSError, match="disk full"):
-        skills_module._write({"SKILL.md": b"new"}, target)
+        skills_module._write({"SKILL.md": b"new"}, target, fail_install)
 
     assert (target / "SKILL.md").read_bytes() == b"old"

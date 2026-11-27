@@ -7,7 +7,7 @@ the whole deployment's, is no HTTP route at all, it runs on the host through
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Literal
 
 from exar.helpers import get_name
@@ -41,7 +41,7 @@ from ...types import (
 )
 from ..maintenance import is_enabled, set_enabled
 
-__all__ = ["router"]
+__all__ = ["overview", "router"]
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
@@ -63,13 +63,10 @@ def _reindexed(stores: int, synced: int) -> Localized[str]:
 # ─── Overview ─────────────────────────────────────────────────────────
 
 
-@router.get("/overview")
-async def get_overview() -> AdminOverviewResponse:
-    """List the users and groups that stored something, with what they hold."""
-    users, groups = await asyncio.gather(
-        list_users_with_counts(), list_groups_with_counts()
-    )
-
+def overview(
+    users: Iterable[tuple[str, int, int]], groups: Iterable[tuple[str, int]]
+) -> AdminOverviewResponse:
+    """The overview of *users* and *groups*, each with its id and the counts of what it holds."""
     return AdminOverviewResponse(
         users=[
             AdminUserInfo(id=user_id, document_count=docs, conversation_count=convs)
@@ -79,6 +76,14 @@ async def get_overview() -> AdminOverviewResponse:
             AdminGroupInfo(id=group_id, document_count=docs)
             for group_id, docs in groups
         ],
+    )
+
+
+@router.get("/overview")
+async def get_overview() -> AdminOverviewResponse:
+    """List the users and groups that stored something, with what they hold."""
+    return overview(
+        *await asyncio.gather(list_users_with_counts(), list_groups_with_counts())
     )
 
 

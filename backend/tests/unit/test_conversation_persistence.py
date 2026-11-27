@@ -1,17 +1,16 @@
-"""Tests for the stateless surface of chat persistence.
+"""Chat persistence without a database.
 
-A turn loads its conversation from the store, runs on its history, and saves
-the turn's messages after it.  These exercise the parts that need no
-database: ``run_and_persist`` (what the persist callback receives on clean,
-errored, and interrupted finishes, and the hard-fail error chunk),
-``kept_before`` (what an edit or a regenerate runs on), and
-``dump_transcript`` (one ``UIMessage`` per UI message id the stored messages carry).
+``run_and_persist`` hands the persist callback the turn however it ended,
+``Replay`` and ``kept_before`` say what a resume, an edit, or a regenerate runs
+on, and ``dump_transcript`` projects the stored messages to one ``UIMessage``
+per UI message id.
 """
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
-from types import SimpleNamespace
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from time import monotonic
+from typing import TypedDict, Unpack
 
 import pytest
 from exar.agents import RunConfig
@@ -21,8 +20,6 @@ from exar.pydantic_ai.compaction import Compacted, is_compaction
 from fastapi import HTTPException
 from pydantic import ValidationError
 from pydantic_ai import Agent, BinaryContent, DeferredToolRequests, RunContext
-from pydantic_ai.conversation import Conversation as RunConversation
-from pydantic_ai.conversation_store import ConversationRecord
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     CompactionPart,
@@ -63,8 +60,8 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     UIMessage,
 )
 from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
+from starlette.responses import StreamingResponse
 
-import hivegent.server.vercel.adapter as vercel_module
 from hivegent.agents.approval import (
     APPROVED_CHANGES,
     ApprovalNotes,
@@ -77,8 +74,8 @@ from hivegent.db.conversations import (
     CHAT_ERROR_KEY,
     import_conversation,
     is_user_request,
-    store,
 )
+from hivegent.db.conversations.postgres import _still_pending
 from hivegent.server.export import instruction_snapshots
 from hivegent.server.routes.conversations.attachments import accept_imported
 from hivegent.server.turns import (
@@ -122,17 +119,19 @@ def _texts(messages: Sequence[ModelMessage]) -> list[str]:
     ]
 
 
+def _parts[T](messages: Sequence[ModelMessage], kind: type[T]) -> list[T]:
+    """Every part of *kind* across *messages*, in order."""
+    return [
+        part for message in messages for part in message.parts if isinstance(part, kind)
+    ]
+
+
 def pending_requests(messages: Sequence[ModelMessage]) -> DeferredToolRequests | None:
     """The calls the last response of *messages* awaits, as a paused run's record keeps them.
 
     A question awaits an answer, any other call an approval.
     """
-    answered = {
-        part.tool_call_id
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    }
+    answered = {part.tool_call_id for part in _parts(messages, ToolReturnPart)}
     response = next(
         (m for m in reversed(messages) if isinstance(m, ModelResponse)), None
     )
@@ -156,72 +155,78 @@ def _ui_messages(messages: Sequence[ModelMessage]) -> list[UIMessage]:
     return dump_transcript(messages, pending_requests(messages))
 
 
-def _parts[T](messages: Sequence[ModelMessage], kind: type[T]) -> list[T]:
-    """Every part of *kind* across *messages*, in order."""
+def _tool_cards(messages: Sequence[ModelMessage]) -> list[object]:
+    """The tool cards a message list reloads as."""
     return [
-        part for message in messages for part in message.parts if isinstance(part, kind)
-    ]
-
-
-def _tool_states(messages: Sequence[ModelMessage]) -> list[str | None]:
-    """Reload states of the tool cards a message list projects to."""
-    return [
-        getattr(part, "state", None)
+        part
         for message in _ui_messages(messages)
         for part in message.parts
         if str(getattr(part, "type", "")).startswith("tool-")
     ]
+
+
+def _tool_states(messages: Sequence[ModelMessage]) -> list[str | None]:
+    """Reload states of the tool cards."""
+    return [getattr(card, "state", None) for card in _tool_cards(messages)]
 
 
 def _tool_approvals(
     messages: Sequence[ModelMessage],
 ) -> list[tuple[bool | None, str | None]]:
-    """Approval decisions and notes the tool cards a message list projects to carry."""
+    """Approval decisions and notes the tool cards carry."""
+    approvals = [getattr(card, "approval", None) for card in _tool_cards(messages)]
+
     return [
         (getattr(approval, "approved", None), getattr(approval, "reason", None))
-        for message in _ui_messages(messages)
-        for part in message.parts
-        if str(getattr(part, "type", "")).startswith("tool-")
-        for approval in [getattr(part, "approval", None)]
+        for approval in approvals
     ]
 
 
+def _prompt(text: str = "q1") -> list[UIMessage]:
+    return [UIMessage(id="m1", role="user", parts=[TextUIPart(text=text)])]
+
+
+class _Options(TypedDict, total=False):
+    model: Model
+    tool_raises: bool
+    tool_needs_approval: bool
+    tool_runs: bool
+    asks_user: bool
+    regenerate: bool
+    clock: Callable[[], float]
+
+
 def _adapter(
-    ui_messages: list[UIMessage],
-    *,
-    model: Model | None = None,
-    tool_raises: bool = False,
-    tool_needs_approval: bool = False,
-    tool_runs: bool = False,
-    asks_user: bool = False,
-    regenerate: bool = False,
+    ui_messages: list[UIMessage], **options: Unpack[_Options]
 ) -> ChatAdapter[None, str | DeferredToolRequests]:
     output_type: OutputSpec[str | DeferredToolRequests] = (
-        [str, DeferredToolRequests] if tool_needs_approval or asks_user else str
+        [str, DeferredToolRequests]
+        if options.get("tool_needs_approval") or options.get("asks_user")
+        else str
     )
     agent = Agent[None, str | DeferredToolRequests](
-        model=model or TestModel(custom_output_text="ANSWER"),
+        model=options.get("model") or TestModel(custom_output_text="ANSWER"),
         output_type=output_type,
         deps_type=type(None),
         capabilities=[ApprovalNotes()],
     )
 
-    if asks_user:
+    if options.get("asks_user"):
         agent.tool_plain(ask_user)
 
-    if tool_raises:
+    if options.get("tool_raises"):
 
         @agent.tool_plain
         def boom() -> str:
             raise RuntimeError("simulated tool failure mid-run")
 
-    if tool_runs:
+    if options.get("tool_runs"):
 
         @agent.tool_plain
         def lookup() -> str:
             return "found"
 
-    if tool_needs_approval:
+    if options.get("tool_needs_approval"):
 
         @agent.tool
         def write(ctx: RunContext[None], value: str) -> str:
@@ -235,67 +240,69 @@ def _adapter(
         run_input=RegenerateMessage(
             id="c1", messages=ui_messages, trigger="regenerate-message", message_id=None
         )
-        if regenerate
+        if options.get("regenerate")
         else SubmitMessage(id="c1", messages=ui_messages, trigger="submit-message"),
         sdk_version=SDK_VERSION,
+        clock=options.get("clock", monotonic),
     )
+
+
+def _stream(
+    adapter: ChatAdapter[None, str | DeferredToolRequests],
+    persist: PersistTurn,
+    history: Sequence[ModelMessage] = (),
+) -> StreamingResponse:
+    """The turn of *adapter* on *history*, as the route streams it."""
+    events = adapter.agent.run_stream_events(
+        adapter.prompt,
+        message_history=list(history),
+        deferred_tool_results=adapter.resume(pending_requests(history), history),
+    )
+    chunks = adapter.transform_stream(
+        traced_events(
+            agent_events(events), "q", RunConfig(policy=allow_all), name="chat"
+        )
+    )
+
+    return stream_response(run_and_persist(adapter, chunks, persist=persist))
 
 
 async def _run_turn(
     ui_messages: list[UIMessage],
     *,
-    model: Model | None = None,
-    message_history: Sequence[ModelMessage] | None = None,
-    tool_raises: bool = False,
-    tool_needs_approval: bool = False,
-    tool_runs: bool = False,
-    asks_user: bool = False,
-    regenerate: bool = False,
+    message_history: Sequence[ModelMessage] = (),
     persist: PersistTurn | None = None,
+    **options: Unpack[_Options],
 ) -> tuple[list[list[ModelMessage]], str]:
-    """Run one turn through ``run_and_persist``; return recorded turns + body."""
-    adapter = _adapter(
-        ui_messages,
-        model=model,
-        tool_raises=tool_raises,
-        tool_needs_approval=tool_needs_approval,
-        tool_runs=tool_runs,
-        asks_user=asks_user,
-        regenerate=regenerate,
-    )
-    history = list(message_history or [])
+    """Run one turn through ``run_and_persist``, returning the messages it persisted and its body."""
     recorded: list[list[ModelMessage]] = []
 
-    async def _record(messages: Sequence[ModelMessage]) -> None:
+    async def record(messages: Sequence[ModelMessage]) -> None:
         recorded.append(list(messages))
 
-    response = stream_response(
-        run_and_persist(
-            adapter,
-            adapter.transform_stream(
-                traced_events(
-                    agent_events(
-                        adapter.agent.run_stream_events(
-                            adapter.prompt,
-                            message_history=history,
-                            deferred_tool_results=adapter.resume(
-                                pending_requests(history), history
-                            ),
-                        )
-                    ),
-                    "q",
-                    RunConfig(policy=allow_all),
-                    name="chat",
-                )
-            ),
-            persist=persist or _record,
-        ),
+    response = _stream(
+        _adapter(ui_messages, **options), persist or record, message_history
     )
-    chunks = [chunk async for chunk in response.body_iterator]
     body = "".join(
-        chunk.decode() if isinstance(chunk, bytes) else str(chunk) for chunk in chunks
+        [
+            chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+            async for chunk in response.body_iterator
+        ]
     )
+
     return recorded, body
+
+
+def _replying(seen: list[ModelMessage]) -> FunctionModel:
+    """Answer, recording the messages it was sent."""
+
+    async def respond(
+        messages: Sequence[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[str]:
+        seen.extend(messages)
+        yield "ANSWER"
+
+    return FunctionModel(stream_function=respond)
 
 
 async def test_closing_a_turn_closes_its_events_in_the_same_task() -> None:
@@ -313,37 +320,19 @@ async def test_closing_a_turn_closes_its_events_in_the_same_task() -> None:
     async def persist(_messages: Sequence[ModelMessage]) -> None:
         log.append("persisted")
 
-    adapter = _adapter([UIMessage(id="m1", role="user", parts=[TextUIPart(text="q")])])
+    adapter = _adapter(_prompt())
     chunks = run_and_persist(
         adapter, adapter.transform_stream(events()), persist=persist
     )
     assert isinstance(chunks, AsyncGenerator)
 
-    while not log:
-        _ = await anext(chunks)
+    async for _ in chunks:
+        if log:
+            break
 
     await chunks.aclose()
 
     assert log == ["started", "closed", "persisted"]
-
-
-async def test_clean_turn_persists_only_the_new_tail() -> None:
-    """A turn appends only its new messages past the replayed history prefix."""
-    prefix: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content="q1")]),
-        ModelResponse(parts=[TextPart(content="a1")]),
-    ]
-    recorded, _ = await _run_turn(
-        [UIMessage(id="m2", role="user", parts=[TextUIPart(text="q2")])],
-        message_history=prefix,
-    )
-
-    assert len(recorded) == 1
-    delta = recorded[0][len(prefix) :]
-    texts = _texts(delta)
-    assert "q2" in texts
-    assert "ANSWER" in texts
-    assert "q1" not in texts  # the prefix is replayed, not re-persisted
 
 
 _ANSWERED = [
@@ -359,6 +348,7 @@ _CLOSED = ModelRequest(
 @pytest.mark.parametrize(
     "prefix",
     [
+        _ANSWERED,
         [*_ANSWERED, _COMPACTION],
         [*_ANSWERED, _COMPACTION, *_ANSWERED],
         [
@@ -369,20 +359,18 @@ _CLOSED = ModelRequest(
         _ANSWERED[:1],
     ],
     ids=[
+        "after-answer",
         "after-compaction",
         "past-compaction",
         "after-closed-call",
         "after-failed-prompt",
     ],
 )
-async def test_a_prompt_merged_into_the_replay_is_its_own_node(
+async def test_a_turn_stores_only_its_own_messages_past_the_replay(
     prefix: list[ModelMessage],
 ) -> None:
     """The run merges consecutive requests, so the prompt can sit in a replayed one."""
-    recorded, _ = await _run_turn(
-        [UIMessage(id="m2", role="user", parts=[TextUIPart(text="q2")])],
-        message_history=prefix,
-    )
+    recorded, _ = await _run_turn(_prompt("q2"), message_history=prefix)
     turn = Replay.of(prefix).turn(recorded[0])
 
     assert turn.above is None
@@ -392,95 +380,36 @@ async def test_a_prompt_merged_into_the_replay_is_its_own_node(
 
 
 async def test_regenerate_reruns_from_history_without_a_new_message() -> None:
-    """Regenerate runs on a prefix ending in a user request with no client message.
-
-    The frontend sends ``messages: []`` for a regenerate; the agent must still
-    produce a response from the replayed history, and the delta is just that
-    response.
-    """
+    """The frontend sends no message for a regenerate, which answers the replayed prompt."""
     prefix: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="q1")])]
     recorded, _ = await _run_turn([], message_history=prefix, regenerate=True)
 
-    delta = recorded[0][len(prefix) :]
-    assert any(isinstance(msg, ModelResponse) for msg in delta)
-    assert "ANSWER" in _texts(delta)
+    assert _texts(recorded[0][len(prefix) :]) == ["ANSWER"]
 
 
 async def test_errored_turn_closes_its_dangling_tool_call() -> None:
-    """A turn whose tool raises persists a failed return closing the orphan call.
-
-    The raised tool aborts the run, leaving a ``ToolCallPart`` with no return in
-    ``capture_run_messages``.  Persisting that verbatim would make the reload
-    projection read it as an approval request and the history invalid to replay,
-    so ``run_and_persist`` closes it with the failed return the stream closed
-    it with, so the tool card reloads as failed, as it streamed, not as an
-    approval prompt.
-    """
-    recorded, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_raises=True,
-    )
+    """A raised tool leaves a call without a return, which reloads as failed, not as an approval prompt."""
+    recorded, _ = await _run_turn(_prompt(), tool_raises=True)
     messages = recorded[0]
-
-    assert "q1" in _texts(messages)
     call = _parts(messages, ToolCallPart)[0]
-    ret = next(
-        part
-        for part in _parts(messages, ToolReturnPart)
-        if part.tool_call_id == call.tool_call_id
-    )
+    (ret,) = _parts(messages, ToolReturnPart)
+
+    assert ret.tool_call_id == call.tool_call_id
     assert ret.outcome == "failed"
     assert "simulated tool failure" not in str(ret.content)
     assert _tool_states(messages) == ["output-error"]
 
 
-async def test_approval_pending_turn_keeps_its_dangling_call() -> None:
-    """A clean finish awaiting approval leaves its call open, not error-closed.
+async def _pending_approval() -> list[ModelMessage]:
+    recorded, _ = await _run_turn(_prompt(), tool_needs_approval=True)
 
-    An approval-required tool ends the run cleanly with ``DeferredToolRequests``,
-    leaving a ``ToolCallPart`` with no return, the same shape as an error
-    orphan.  Since no error streamed, the turn is persisted untouched so it
-    reloads as an approval request, not a failed tool.
-    """
-    recorded, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    messages = recorded[0]
-
-    assert not _parts(messages, ToolReturnPart)
-    assert _tool_states(messages) == ["approval-requested"]
-
-
-async def test_approval_metadata_reaches_the_stream_and_the_reload() -> None:
-    """What an ``ApprovalRequired`` carried is shown live and after a reload alike."""
-    recorded, body = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    call = _parts(recorded[0], ToolCallPart)[0]
-    expected = {call.tool_call_id: {"value": call.args_as_dict()["value"]}}
-
-    streamed = [
-        chunk["messageMetadata"]
-        for chunk in sse_chunks(body)
-        if chunk["type"] == "message-metadata"
-    ]
-    reloaded = _ui_messages(recorded[0])[-1].metadata
-
-    assert streamed[-1][APPROVAL_METADATA_KEY] == expected
-    assert isinstance(reloaded, dict)
-    assert reloaded[APPROVAL_METADATA_KEY] == expected
+    return recorded[0]
 
 
 def _answer_approval(
     pending: Sequence[ModelMessage], *, approved: bool, note: str | None = None
 ) -> UIMessage:
-    """Echo the assistant message holding the pending call, approval answered.
-
-    Exactly what the AI SDK re-sends when it auto-continues: the last message,
-    with its tool part flipped to ``approval-responded``.
-    """
+    """Echo the assistant message holding the pending call, approval answered, as the AI SDK re-sends it."""
     message = _ui_messages(pending)[-1]
     message.parts = [
         ToolApprovalRespondedPart(
@@ -488,173 +417,174 @@ def _answer_approval(
             tool_call_id=part.tool_call_id,
             input=part.input,
             approval=ToolApprovalResponded(
-                id=part.tool_call_id,
-                approved=approved,
-                reason=note,
+                id=part.tool_call_id, approved=approved, reason=note
             ),
         )
         for part in message.parts
         if isinstance(part, ToolApprovalRequestedPart)
     ]
+
     return message
 
 
+async def test_a_turn_awaiting_approval_keeps_its_call_open_and_shows_what_was_asked() -> (
+    None
+):
+    """No error streamed, so the call reloads as an approval request carrying its metadata, as streamed."""
+    recorded, body = await _run_turn(_prompt(), tool_needs_approval=True)
+    call = _parts(recorded[0], ToolCallPart)[0]
+    expected = {call.tool_call_id: {"value": call.args_as_dict()["value"]}}
+    streamed = [
+        chunk["messageMetadata"]
+        for chunk in sse_chunks(body)
+        if chunk["type"] == "message-metadata"
+    ]
+    reloaded = _ui_messages(recorded[0])[-1].metadata
+
+    assert not _parts(recorded[0], ToolReturnPart)
+    assert _tool_states(recorded[0]) == ["approval-requested"]
+    assert streamed[-1][APPROVAL_METADATA_KEY] == expected
+    assert isinstance(reloaded, dict)
+    assert reloaded[APPROVAL_METADATA_KEY] == expected
+
+
+@pytest.mark.parametrize("note", [None, "Keep a copy of the old version."])
 @pytest.mark.parametrize("approved", [True, False])
-async def test_answered_approval_resolves_the_stored_call_once(
-    approved: bool,
+async def test_an_answered_approval_resolves_the_stored_call_once(
+    approved: bool, note: str | None
 ) -> None:
-    """The continuation resolves the stored call instead of replaying it.
-
-    Replaying the client echo on top of the server-side prefix would duplicate
-    the ``tool_call_id`` and loop the run (see ``backend/README.md``).
-    """
-    pending, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    recorded, _ = await _run_turn(
-        [_answer_approval(pending[0], approved=approved)],
-        message_history=pending[0],
-        tool_needs_approval=True,
-    )
-    messages = recorded[0]
-
-    calls = _parts(messages, ToolCallPart)
-    returns = _parts(messages, ToolReturnPart)
-
-    assert len(calls) == 1
-    assert len(returns) == 1
-    assert returns[0].tool_call_id == calls[0].tool_call_id
-    assert str(returns[0].content) == ("written" if approved else denial_message(None))
-
-
-@pytest.mark.parametrize("approved", [True, False])
-async def test_a_decision_note_reaches_the_model_and_the_reload(approved: bool) -> None:
-    """The user's note on either decision is in the tool result the model reads.
-
-    A denial carries it in the refusal, an approval appends it to the result of
-    the call it released.  The reloaded card shows the note as typed, not the
-    model-facing text around it.
-    """
-    note = "Keep a copy of the old version."
+    """The model reads the decision and its note, the reload shows them as typed, and the stored call is not replayed from the echo."""
+    pending = await _pending_approval()
     seen: list[ModelMessage] = []
-
-    async def respond(
-        messages: Sequence[ModelMessage], _info: AgentInfo
-    ) -> AsyncIterator[str]:
-        seen.extend(messages)
-        yield "ANSWER"
-
-    pending, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
     recorded, _ = await _run_turn(
-        [_answer_approval(pending[0], approved=approved, note=note)],
-        model=FunctionModel(stream_function=respond),
-        message_history=pending[0],
+        [_answer_approval(pending, approved=approved, note=note)],
+        model=_replying(seen),
+        message_history=pending,
         tool_needs_approval=True,
     )
+    (call,) = _parts(recorded[0], ToolCallPart)
+    (ret,) = _parts(recorded[0], ToolReturnPart)
 
-    expected = (
-        ["written", approval_note_text(note)] if approved else denial_message(note)
-    )
+    if not approved:
+        expected = denial_message(note)
+    else:
+        expected = "written" if note is None else ["written", approval_note_text(note)]
+
+    assert ret.tool_call_id == call.tool_call_id
     assert [part.content for part in _parts(seen, ToolReturnPart)] == [expected]
-    assert _tool_approvals(recorded[0]) == [(approved, note)]
-
-
-@pytest.mark.parametrize("approved", [True, False])
-async def test_a_settled_approval_reloads_with_its_decision(approved: bool) -> None:
-    """Both decisions survive a reload, not just the denial.
-
-    A denial is self-describing: its return carries ``outcome='denied'`` and the
-    reason, so it projects straight back.  An approved call runs and stores an
-    ordinary successful return, so nothing in the message list says it was ever
-    gated and the decision has to be recorded at persist time for the
-    projection to put it back.
-    """
-    pending, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    recorded, _ = await _run_turn(
-        [_answer_approval(pending[0], approved=approved)],
-        message_history=pending[0],
-        tool_needs_approval=True,
-    )
-
     assert _tool_states(recorded[0]) == [
         "output-available" if approved else "output-denied"
     ]
-    assert _tool_approvals(recorded[0]) == [(approved, None)]
+    assert _tool_approvals(recorded[0]) == [(approved, note)]
 
 
 async def test_abandoned_approval_is_declined_for_the_next_turn() -> None:
-    """A prompt sent instead of an answer closes the pending call as a denial.
-
-    Left dangling, the call is repaired into a generic "interrupted" result on
-    the way to the provider on every later turn, and the model reads that as a
-    transient failure and reissues the identical call each time.
-    """
-    pending, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    declined = abandon_pending_calls(pending_requests(pending[0]))
+    """A prompt sent instead of an answer denies the pending call, which a generic "interrupted" repair would have the model reissue."""
+    pending = await _pending_approval()
+    declined = abandon_pending_calls(pending_requests(pending))
     assert declined is not None
 
-    returns = _parts([declined], ToolReturnPart)
-    assert [r.outcome for r in returns] == ["denied"]
-    assert returns[0].tool_call_id == _parts(pending[0], ToolCallPart)[0].tool_call_id
-    # The card reloads as a refusal rather than asking for approval all over
-    # again, with no note, since nobody typed one.
-    assert _tool_states([*pending[0], declined]) == ["output-denied"]
-    assert _tool_approvals([*pending[0], declined]) == [(False, None)]
+    (ret,) = _parts([declined], ToolReturnPart)
 
-
-async def test_a_settled_turn_has_no_approval_to_decline() -> None:
-    """Only a turn left awaiting approval is declined, never a finished one."""
-    settled, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])]
-    )
-
-    assert abandon_pending_calls(pending_requests(settled[0])) is None
-    assert abandon_pending_calls(pending_requests([])) is None
+    assert ret.outcome == "denied"
+    assert ret.tool_call_id == _parts(pending, ToolCallPart)[0].tool_call_id
+    assert _tool_states([*pending, declined]) == ["output-denied"]
+    assert _tool_approvals([*pending, declined]) == [(False, None)]
+    assert abandon_pending_calls(None) is None
 
 
 @pytest.mark.parametrize("stopped", [False, True])
-async def test_a_call_a_stop_closed_is_no_longer_pending(
-    monkeypatch: pytest.MonkeyPatch, stopped: bool
-) -> None:
+async def test_a_call_a_stop_closed_is_no_longer_pending(stopped: bool) -> None:
     """A stop after a run paused closes its call, so no later request resolves it again."""
-    pending, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    requests = pending_requests(pending[0])
-    messages = list(pending[0])
-    written: list[ConversationRecord] = []
-
-    async def read_record(_id: str) -> None:
-        return None
-
-    async def write_record(record: ConversationRecord, **_kwargs: object) -> None:
-        written.append(record)
-
-    monkeypatch.setattr(store, "read_record", read_record)
-    monkeypatch.setattr(store, "write_record", write_record)
+    pending = await _pending_approval()
+    requests = pending_requests(pending)
 
     if stopped:
-        messages = close_orphan_tool_calls(
-            messages, INTERRUPTED_TOOL_ERROR, "interrupted"
+        pending = close_orphan_tool_calls(
+            pending, INTERRUPTED_TOOL_ERROR, "interrupted"
         )
 
-    await store.save(
-        RunConversation(messages=messages, deferred_tool_requests=requests), scope="u"
+    assert requests is not None
+    assert _still_pending(requests, pending) == (None if stopped else requests)
+
+
+async def test_a_call_run_beside_an_approval_leaves_it_to_abandon() -> None:
+    """The turn ends on the result of the call that ran, the gated one still pending."""
+
+    async def respond(
+        _messages: Sequence[ModelMessage], _info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name="lookup", json_args="{}"),
+            1: DeltaToolCall(name="write", json_args=json.dumps({"value": "v"})),
+        }
+
+    recorded, _ = await _run_turn(
+        _prompt(),
+        model=FunctionModel(stream_function=respond),
+        tool_needs_approval=True,
+        tool_runs=True,
+    )
+    declined = abandon_pending_calls(pending_requests(recorded[0]))
+
+    assert isinstance(recorded[0][-1], ModelRequest)
+    assert declined is not None
+    assert [(r.tool_name, r.outcome) for r in _parts([declined], ToolReturnPart)] == [
+        ("write", "denied")
+    ]
+
+
+async def test_a_decision_for_a_call_no_longer_pending_is_refused() -> None:
+    """A client behind the store is told so, rather than its decision being dropped."""
+    pending = await _pending_approval()
+    adapter = _adapter(
+        [_answer_approval(pending, approved=True)], tool_needs_approval=True
     )
 
+    with pytest.raises(StaleAnswers):
+        adapter.resume(None, pending)
+
+
+async def test_an_approval_is_bound_to_the_changes_it_was_asked_with() -> None:
+    """The gate replans an approved write and refuses it once the changes differ."""
+    pending = await _pending_approval()
+    requests = pending_requests(pending)
     assert requests is not None
-    assert written[0].deferred_tool_requests == (None if stopped else requests)
+    call_id = requests.approvals[0].tool_call_id
+    asked = pending[-1]
+    assert isinstance(asked, ModelResponse)
+    asked.metadata = {
+        APPROVAL_METADATA_KEY: {call_id: {"items": [{"path": "~/a.md"}], "added": 1}}
+    }
+    adapter = _adapter(
+        [_answer_approval(pending, approved=True)], tool_needs_approval=True
+    )
+    results = adapter.resume(requests, pending)
+
+    assert results is not None
+    assert results.metadata[call_id][APPROVED_CHANGES] == changes_digest(
+        {"added": 1, "items": [{"path": "~/a.md"}]}
+    )
+
+
+async def test_an_approval_answered_like_a_question_is_rejected() -> None:
+    """Each pending call takes only the kind of result it was deferred for."""
+    pending = await _pending_approval()
+    message = _ui_messages(pending)[-1]
+    message.parts = [
+        ToolOutputAvailablePart(
+            type="tool-ask_user",
+            tool_call_id=part.tool_call_id,
+            input=part.input,
+            output=[{"selected": ["All"]}],
+        )
+        for part in message.parts
+        if isinstance(part, ToolApprovalRequestedPart)
+    ]
+    adapter = _adapter([message], tool_needs_approval=True, asks_user=True)
+
+    with pytest.raises(ValueError, match="DeferredToolRequests.calls"):
+        adapter.resume(pending_requests(pending), pending)
 
 
 _QUESTIONS = {
@@ -685,11 +615,8 @@ def _asking_model(seen: list[ModelMessage]) -> FunctionModel:
 
 
 async def _pending_question() -> list[ModelMessage]:
-    recorded, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        model=_asking_model([]),
-        asks_user=True,
-    )
+    recorded, _ = await _run_turn(_prompt(), model=_asking_model([]), asks_user=True)
+
     return recorded[0]
 
 
@@ -713,15 +640,8 @@ def _reply(pending: Sequence[ModelMessage], output: object | None) -> UIMessage:
         for part in message.parts
         if isinstance(part, ToolInputAvailablePart)
     ]
+
     return message
-
-
-async def test_a_pending_question_reloads_awaiting_its_answer() -> None:
-    """A deferred question stays open and reloads as a question, not an approval."""
-    pending = await _pending_question()
-
-    assert not _parts(pending, ToolReturnPart)
-    assert _tool_states(pending) == ["input-available"]
 
 
 @pytest.mark.parametrize(
@@ -734,6 +654,7 @@ async def test_a_pending_question_reloads_awaiting_its_answer() -> None:
         ),
         (None, "output-error", DISMISSED_QUESTIONS),
     ],
+    ids=["answered", "dismissed"],
 )
 async def test_a_reply_to_a_question_resumes_the_run(
     output: object | None, state: str, content: object
@@ -753,6 +674,23 @@ async def test_a_reply_to_a_question_resumes_the_run(
     assert _tool_states(recorded[0]) == [state]
 
 
+async def test_a_pending_question_reloads_open_and_a_prompt_instead_dismisses_it() -> (
+    None
+):
+    """A deferred question reloads as a question, not an approval, and is dismissed, not denied."""
+    pending = await _pending_question()
+    closed = abandon_pending_calls(pending_requests(pending))
+    assert closed is not None
+
+    assert not _parts(pending, ToolReturnPart)
+    assert _tool_states(pending) == ["input-available"]
+    assert [part.content for part in _parts([closed], ToolReturnPart)] == [
+        DISMISSED_QUESTIONS
+    ]
+    assert _tool_states([*pending, closed]) == ["output-error"]
+    assert _tool_approvals([*pending, closed]) == [(None, None)]
+
+
 async def test_an_invalid_answer_is_rejected() -> None:
     """The client writes the answer, so one that answers nothing never reaches the model."""
     pending = await _pending_question()
@@ -762,128 +700,18 @@ async def test_an_invalid_answer_is_rejected() -> None:
         adapter.resume(pending_requests(pending), pending)
 
 
-async def test_a_decision_for_a_call_no_longer_pending_is_refused() -> None:
-    """A client behind the store is told so, rather than its decision being dropped."""
-    pending, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    adapter = _adapter(
-        [_answer_approval(pending[0], approved=True)], tool_needs_approval=True
-    )
-
-    with pytest.raises(StaleAnswers):
-        adapter.resume(None, pending[0])
-
-
-async def test_an_approval_is_bound_to_the_changes_it_was_asked_with() -> None:
-    """The gate replans an approved write and refuses it once the changes differ."""
-    pending, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    requests = pending_requests(pending[0])
-    assert requests is not None
-    call_id = requests.approvals[0].tool_call_id
-    *_, asked = pending[0]
-    assert isinstance(asked, ModelResponse)
-    asked.metadata = {
-        APPROVAL_METADATA_KEY: {call_id: {"items": [{"path": "~/a.md"}], "added": 1}}
-    }
-    adapter = _adapter(
-        [_answer_approval(pending[0], approved=True)], tool_needs_approval=True
-    )
-    results = adapter.resume(requests, pending[0])
-
-    assert results is not None
-    assert results.metadata[call_id][APPROVED_CHANGES] == changes_digest(
-        {"added": 1, "items": [{"path": "~/a.md"}]}
-    )
-
-
-async def test_an_approval_answered_like_a_question_is_rejected() -> None:
-    """Each pending call takes only the kind of result it was deferred for."""
-    pending, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        tool_needs_approval=True,
-    )
-    message = _ui_messages(pending[0])[-1]
-    message.parts = [
-        ToolOutputAvailablePart(
-            type="tool-ask_user",
-            tool_call_id=part.tool_call_id,
-            input=part.input,
-            output=[{"selected": ["All"]}],
-        )
-        for part in message.parts
-        if isinstance(part, ToolApprovalRequestedPart)
-    ]
-    adapter = _adapter([message], tool_needs_approval=True, asks_user=True)
-
-    with pytest.raises(ValueError, match="DeferredToolRequests.calls"):
-        adapter.resume(pending_requests(pending[0]), pending[0])
-
-
-async def test_a_call_run_beside_an_approval_leaves_it_to_abandon() -> None:
-    """The turn ends on the result of the call that ran, the gated one still pending."""
-
-    async def respond(
-        _messages: Sequence[ModelMessage], _info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls]:
-        yield {
-            0: DeltaToolCall(name="lookup", json_args="{}"),
-            1: DeltaToolCall(name="write", json_args=json.dumps({"value": "v"})),
-        }
-
-    recorded, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        model=FunctionModel(stream_function=respond),
-        tool_needs_approval=True,
-        tool_runs=True,
-    )
-    declined = abandon_pending_calls(pending_requests(recorded[0]))
-
-    assert isinstance(recorded[0][-1], ModelRequest)
-    assert declined is not None
-    assert [(r.tool_name, r.outcome) for r in _parts([declined], ToolReturnPart)] == [
-        ("write", "denied")
-    ]
-
-
-async def test_an_abandoned_question_is_dismissed() -> None:
-    """A prompt sent instead of answers closes the question as dismissed, not denied."""
-    pending = await _pending_question()
-    closed = abandon_pending_calls(pending_requests(pending))
-    assert closed is not None
-
-    assert [part.content for part in _parts([closed], ToolReturnPart)] == [
-        DISMISSED_QUESTIONS
-    ]
-    assert _tool_states([*pending, closed]) == ["output-error"]
-    assert _tool_approvals([*pending, closed]) == [(None, None)]
-
-
 async def test_generic_run_error_is_recorded_for_reload() -> None:
-    """A run that fails before responding records the error on the user turn.
-
-    The stream error is transient, so without this the banner is lost on reload.
-    With no assistant response to attach to, the error rides on the last
-    projecting message, the user prompt, under ``CHAT_ERROR_KEY``.
-    """
+    """A run failing before it responds records the error on its last projecting message, which a reload would otherwise lose."""
 
     async def fail_immediately(
         messages: Sequence[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str]:
         raise RuntimeError("provider exploded")
-        yield ""  # unreachable; marks this a stream function
+        yield ""  # unreachable, marks this a stream function
 
     recorded, body = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        model=FunctionModel(stream_function=fail_immediately),
+        _prompt(), model=FunctionModel(stream_function=fail_immediately)
     )
-    # The failed run still appends its own empty, interrupted ModelResponse, so
-    # the error rides on the last message that *projects* to a UIMessage rather
-    # than on the last message outright.
     target = next(
         message
         for message in reversed(recorded[0])
@@ -898,12 +726,7 @@ async def test_generic_run_error_is_recorded_for_reload() -> None:
 
 
 async def test_interrupted_stream_persists_the_partial_answer() -> None:
-    """An interrupted turn persists its prompt and the in-flight partial.
-
-    pydantic-ai v2 captures a partial response into ``capture_run_messages``
-    before the error propagates, so this path persists the partial answer the
-    user already saw rather than dropping it.
-    """
+    """The partial answer the user already saw is persisted with the prompt."""
 
     async def stream_partial(
         messages: Sequence[ModelMessage], info: AgentInfo
@@ -913,57 +736,42 @@ async def test_interrupted_stream_persists_the_partial_answer() -> None:
         raise RuntimeError("connection dropped mid-stream")
 
     recorded, _ = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        model=FunctionModel(stream_function=stream_partial),
+        _prompt(), model=FunctionModel(stream_function=stream_partial)
     )
 
-    assert "q1" in _texts(recorded[0])
-    assert "The answer is 42" in _texts(recorded[0])
+    assert _texts(recorded[0]) == ["q1", "The answer is 42"]
 
 
 async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
     """A cancel stops provider streaming and ends only once the partial output is saved."""
     started = asyncio.Event()
-    cancelled = asyncio.Event()
     never = asyncio.Event()
     writing = asyncio.Event()
     release = asyncio.Event()
+    cancelled = asyncio.Event()
 
     async def stream_until_cancelled(
         messages: Sequence[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str]:
         yield "partial"
         started.set()
+
         try:
             await never.wait()
         finally:
             cancelled.set()
 
-    adapter = _adapter(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        model=FunctionModel(stream_function=stream_until_cancelled),
-    )
     recorded: list[list[ModelMessage]] = []
 
     async def persist(messages: Sequence[ModelMessage]) -> None:
         writing.set()
-        _ = await release.wait()
+        await release.wait()
         recorded.append(list(messages))
 
-    response = stream_response(
-        run_and_persist(
-            adapter,
-            adapter.transform_stream(
-                traced_events(
-                    agent_events(adapter.agent.run_stream_events(adapter.prompt)),
-                    "q1",
-                    RunConfig(policy=allow_all),
-                    name="chat",
-                )
-            ),
-            persist=persist,
-        ),
+    adapter = _adapter(
+        _prompt(), model=FunctionModel(stream_function=stream_until_cancelled)
     )
+    response = _stream(adapter, persist)
 
     async def consume() -> None:
         async for _ in response.body_iterator:
@@ -972,31 +780,19 @@ async def test_cancelled_response_stops_the_model_stream_and_persists() -> None:
     consumer = asyncio.create_task(consume())
     await started.wait()
     consumer.cancel()
-    _ = await writing.wait()
-    # A second cancel, as a stop during the write sends, still waits for it.
-    consumer.cancel()
-    await asyncio.sleep(0)
-    assert not consumer.done()
+    await writing.wait()
     release.set()
 
     with pytest.raises(asyncio.CancelledError):
         await consumer
 
     assert cancelled.is_set()
-    assert recorded
-    assert "partial" in _texts(recorded[0])
+    assert _texts(recorded[0]) == ["q1", "partial"]
 
 
-async def test_reasoning_duration_is_persisted_as_message_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_reasoning_duration_is_persisted_as_message_metadata() -> None:
     """Reasoning timing stays UI metadata, not provider metadata."""
-    ticks = iter([10.0, 12.4])
-    monkeypatch.setattr(
-        vercel_module,
-        "time",
-        SimpleNamespace(monotonic=lambda: next(ticks)),
-    )
+    clock = iter([10.0, 12.4])
 
     async def stream_reasoning(
         messages: Sequence[ModelMessage], info: AgentInfo
@@ -1005,22 +801,19 @@ async def test_reasoning_duration_is_persisted_as_message_metadata(
         yield "answer"
 
     recorded, body = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
+        _prompt(),
         model=FunctionModel(stream_function=stream_reasoning),
+        clock=lambda: next(clock),
     )
-
-    response = next(msg for msg in recorded[0] if isinstance(msg, ModelResponse))
-
+    (response,) = (msg for msg in recorded[0] if isinstance(msg, ModelResponse))
     durations = {response.run_id: [2400]}
+    (reloaded,) = dump_transcript([response], None)
 
     assert response.metadata == {REASONING_DURATIONS_KEY: durations}
     assert "reasoningDurationsMs" in body
-
-    ui = dump_transcript([response], None)
-
-    assert isinstance(ui[0].metadata, dict)
-    assert ui[0].metadata[REASONING_DURATIONS_KEY] == durations
-    assert "pydantic_ai" in ui[0].metadata
+    assert isinstance(reloaded.metadata, dict)
+    assert reloaded.metadata[REASONING_DURATIONS_KEY] == durations
+    assert "pydantic_ai" in reloaded.metadata
 
 
 async def test_persist_failure_hard_fails_with_an_error_chunk() -> None:
@@ -1029,10 +822,7 @@ async def test_persist_failure_hard_fails_with_an_error_chunk() -> None:
     async def failing(messages: Sequence[ModelMessage]) -> None:
         raise RuntimeError("db down")
 
-    _, body = await _run_turn(
-        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q1")])],
-        persist=failing,
-    )
+    _, body = await _run_turn(_prompt(), persist=failing)
 
     assert "Failed to save the conversation" in body
 
@@ -1046,9 +836,8 @@ def test_an_export_imports_as_the_messages_it_stores() -> None:
         ModelRequest(parts=[UserPromptPart(content="q2")]),
         ModelResponse(parts=[call], model_name="m"),
     ]
-    shown = dump_transcript(stored, pending_requests(stored))
 
-    loaded = load_archived(shown)
+    loaded = load_archived(dump_transcript(stored, pending_requests(stored)))
 
     assert [type(message) for message in loaded] == [
         ModelRequest,
@@ -1064,136 +853,114 @@ def test_an_export_imports_as_the_messages_it_stores() -> None:
 
 
 async def test_import_conversation_rejects_empty_export() -> None:
-    """Importing a message-less export fails before any database write.
-
-    The guard runs ahead of persistence, so it is exercised here without a
-    live database; the happy path is DB-backed and covered by smoke tests.
-    """
+    """The guard runs ahead of any database write."""
     with pytest.raises(ValueError, match="no messages"):
         await import_conversation(owned("conversation"), [])
 
 
-class TestInstructionSnapshots:
-    """The system prompts an export reads back out of the stored history."""
+@pytest.mark.parametrize(
+    ("instructions", "expected"),
+    [
+        (["SYS", "SYS", "SYS"], [("SYS", ["n0", "n1", "n2"])]),
+        (
+            ["SYS", "SYS scoped", "SYS"],
+            [("SYS", ["n0"]), ("SYS scoped", ["n1"]), ("SYS", ["n2"])],
+        ),
+        ([None], []),
+    ],
+    ids=["unchanged-collapses", "changed-starts-new", "none-skipped"],
+)
+def test_an_export_reads_its_system_prompts_from_the_history(
+    instructions: list[str | None], expected: list[tuple[str, list[str]]]
+) -> None:
+    """A prompt that never changed is one snapshot, and a turn without one, or a response, adds none."""
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content="a")])]
 
-    def _pairs(self, *instructions: str | None) -> list[ModelMessage]:
-        messages: list[ModelMessage] = []
-        for i, text in enumerate(instructions):
-            request = ModelRequest(
-                parts=[UserPromptPart(content=f"q{i}")], instructions=text
-            )
-            stamp([request], f"n{i}")
-            messages.append(request)
-        return messages
-
-    def test_consecutive_identical_prompts_collapse(self) -> None:
-        """A prompt that never changed is one snapshot, not one per turn."""
-        snapshots = instruction_snapshots(self._pairs("SYS", "SYS", "SYS"))
-
-        assert len(snapshots) == 1
-        assert snapshots[0].message_ids == ["n0", "n1", "n2"]
-
-    def test_a_changed_prompt_starts_a_new_snapshot(self) -> None:
-        """Narrowing the document scope mid-conversation stays visible."""
-        snapshots = instruction_snapshots(self._pairs("SYS", "SYS scoped", "SYS"))
-
-        assert [s.text for s in snapshots] == ["SYS", "SYS scoped", "SYS"]
-        assert [s.message_ids for s in snapshots] == [["n0"], ["n1"], ["n2"]]
-
-    def test_messages_carrying_no_prompt_are_skipped(self) -> None:
-        """Responses hold none, and an imported turn may have lost its own."""
-        messages: list[ModelMessage] = [
-            ModelResponse(parts=[TextPart(content="a")]),
-            *self._pairs(None),
-        ]
-        assert instruction_snapshots(messages) == []
-
-
-class TestConversationArchive:
-    """Which half of an exported archive an import restores."""
-
-    def _server(self, text: str | None) -> ServerConversation:
-        messages = (
-            [UIMessage(id="m1", role="user", parts=[TextUIPart(text=text)])]
-            if text is not None
-            else []
+    for i, text in enumerate(instructions):
+        request = ModelRequest(
+            parts=[UserPromptPart(content=f"q{i}")], instructions=text
         )
-        return ServerConversation(id="c1", title="persisted", messages=messages)
+        stamp([request], f"n{i}")
+        messages.append(request)
 
-    def _client(self, text: str) -> ClientConversation:
-        return ClientConversation(
-            id="c1",
-            title="in memory",
-            messages=[UIMessage(id="m1", role="user", parts=[TextUIPart(text=text)])],
+    snapshots = instruction_snapshots(messages)
+
+    assert [(s.text, s.message_ids) for s in snapshots] == expected
+
+
+def _server(text: str | None) -> ServerConversation:
+    messages = [] if text is None else _prompt(text)
+
+    return ServerConversation(id="c1", title="persisted", messages=messages)
+
+
+def _client(text: str) -> ClientConversation:
+    return ClientConversation(id="c1", title="in memory", messages=_prompt(text))
+
+
+@pytest.mark.parametrize(
+    ("backend", "restored", "title"),
+    [
+        (_server("persisted"), "persisted", "persisted"),
+        (None, "live", "in memory"),
+        (_server(None), "live", "in memory"),
+    ],
+    ids=["persisted-wins", "draft", "never-persisted"],
+)
+def test_an_archive_restores_the_persisted_half_else_the_client_one(
+    backend: ServerConversation | None, restored: str, title: str
+) -> None:
+    """The server copy is authoritative whenever it has messages, a draft or an errored turn has only the client's."""
+    archive = ConversationArchive(backend=backend, frontend=_client("live"))
+    messages, name = archive.active_path()
+
+    assert _texts(ChatAdapter.load_messages(messages)) == [restored]
+    assert name == title
+
+
+def test_an_archive_names_itself_by_the_other_half_and_may_be_empty() -> None:
+    nameless = ServerConversation(messages=_prompt("q"))
+
+    assert (
+        ConversationArchive(backend=nameless, frontend=_client("x")).active_path()[1]
+        == "in memory"
+    )
+    assert ConversationArchive().active_path() == ([], None)
+
+
+async def test_an_attached_url_is_rejected() -> None:
+    """An import admits inline images alone, so no URL is ever fetched for it."""
+    part = FileUIPart(
+        url="http://127.0.0.1:5432/secret.pdf",
+        media_type="application/pdf",
+        provider_metadata={"pydantic_ai": {"force_download": "allow-local"}},
+    )
+    messages = load_archived(
+        [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q"), part])]
+    )
+
+    with pytest.raises(HTTPException):
+        await accept_imported(messages)
+
+
+async def test_an_import_is_held_to_the_caps_of_a_run(
+    configure: Callable[..., None],
+) -> None:
+    """A tool result is cut as a run cuts one, and no message carries more images than the gateway takes."""
+    configure(multimodal={"max_images": 1})
+    cap = settings.llm.tool_output_max_chars
+    returned = ToolReturnPart("grep", "x" * (cap + 400), "c1")
+    image = BinaryContent(b"png", media_type="image/png")
+
+    await accept_imported([ModelRequest(parts=[returned])])
+
+    assert isinstance(returned.content, str) and len(returned.content) == cap
+    assert returned.content.endswith("characters.]")
+
+    with pytest.raises(HTTPException):
+        await accept_imported(
+            [ModelRequest(parts=[UserPromptPart(["q", image, image])])]
         )
-
-    def test_persisted_half_wins(self) -> None:
-        """The server copy is authoritative whenever it has messages."""
-        archive = ConversationArchive(
-            backend=self._server("persisted"), frontend=self._client("in memory")
-        )
-        messages, title = archive.active_path()
-
-        assert _texts(ChatAdapter.load_messages(messages)) == ["persisted"]
-        assert title == "persisted"
-
-    def test_client_half_covers_a_turn_that_never_persisted(self) -> None:
-        """A draft, or a turn that errored before the write, has only this half."""
-        for backend in (None, self._server(None)):
-            archive = ConversationArchive(
-                backend=backend, frontend=self._client("live")
-            )
-            messages, title = archive.active_path()
-
-            assert _texts(ChatAdapter.load_messages(messages)) == ["live"]
-            assert title == "in memory"
-
-    def test_title_falls_back_to_the_other_half(self) -> None:
-        """A server copy titled by neither side still imports under a name."""
-        archive = ConversationArchive(
-            backend=ServerConversation(
-                messages=[UIMessage(id="m1", role="user", parts=[TextUIPart(text="q")])]
-            ),
-            frontend=self._client("live"),
-        )
-        assert archive.active_path()[1] == "in memory"
-
-    def test_an_empty_archive_restores_nothing(self) -> None:
-        """Neither half present is rejected by the import guard, not persisted."""
-        assert ConversationArchive().active_path() == ([], None)
-
-    async def test_an_attached_url_is_rejected(self) -> None:
-        """An import admits inline images alone, so no URL is ever fetched for it."""
-        part = FileUIPart(
-            url="http://127.0.0.1:5432/secret.pdf",
-            media_type="application/pdf",
-            provider_metadata={"pydantic_ai": {"force_download": "allow-local"}},
-        )
-        messages = load_archived(
-            [UIMessage(id="m1", role="user", parts=[TextUIPart(text="q"), part])]
-        )
-
-        with pytest.raises(HTTPException):
-            await accept_imported(messages)
-
-    async def test_an_import_is_held_to_the_caps_of_a_run(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A tool result is cut as a run cuts one, and no message carries more images than the gateway takes."""
-        monkeypatch.setattr(settings.llm, "tool_output_max_chars", 100)
-        monkeypatch.setattr(settings.multimodal, "max_images", 1)
-        returned = ToolReturnPart("grep", "x" * 500, "c1")
-        image = BinaryContent(b"png", media_type="image/png")
-
-        await accept_imported([ModelRequest(parts=[returned])])
-
-        assert isinstance(returned.content, str) and len(returned.content) == 100
-        assert returned.content.endswith("[Cut short of its 500 characters.]")
-
-        with pytest.raises(HTTPException):
-            await accept_imported(
-                [ModelRequest(parts=[UserPromptPart(["q", image, image])])]
-            )
 
 
 def _stamped(*turns: tuple[str, ModelMessage]) -> list[ModelMessage]:
@@ -1214,44 +981,58 @@ def _history() -> list[ModelMessage]:
     )
 
 
-def test_an_edit_keeps_what_shows_before_the_edited_message() -> None:
-    kept = kept_before(_history(), "q2", regenerate=False, reply_id="new")
+@pytest.mark.parametrize(
+    ("target", "regenerate", "kept"),
+    [
+        ("q2", False, ["q1", "a1"]),
+        ("a2", True, ["q1", "a1", "q2"]),
+        ("q2", True, ["q1", "a1", "q2"]),
+        ("local-42", True, ["q1", "a1", "q2"]),
+        (None, True, ["q1", "a1", "q2"]),
+        ("a2", False, None),
+        ("local-42", False, None),
+    ],
+)
+def test_an_edit_or_a_regenerate_keeps_what_shows_before_the_replaced_message(
+    target: str | None, regenerate: bool, kept: list[str] | None
+) -> None:
+    """A regenerate targets the reply, its prompt, or the last prompt for a reply the history lacks, and a message sent after a reply is no edit."""
+    result = kept_before(_history(), target, regenerate=regenerate, reply_id="new")
 
-    assert kept is not None and _texts(kept) == ["q1", "a1"]
+    assert (None if result is None else _texts(result)) == kept
 
 
-def test_a_regenerate_keeps_the_prompt_of_the_reply() -> None:
-    """The reply or its prompt is the target, or the last prompt for a reply the history lacks."""
-    for target in ["a2", "q2", "local-42", None]:
-        kept = kept_before(_history(), target, regenerate=True, reply_id="new")
-
-        assert kept is not None and _texts(kept) == ["q1", "a1", "q2"]
-
-
-def test_a_message_sent_after_a_reply_is_no_edit() -> None:
-    for target in ["a2", "local-42"]:
-        assert kept_before(_history(), target, regenerate=False, reply_id="new") is None
-
-
-def test_a_reply_a_compaction_opens_shows_it_after_its_prompt() -> None:
-    """A compaction stored ahead of its prompt shows in the reply, and stays for the reply that replaces it."""
-    history = _stamped(
+def _compacted(owner: str) -> list[ModelMessage]:
+    """A two-turn history whose compaction is stored under the UI message *owner*."""
+    return _stamped(
         ("q1", ModelRequest(parts=[UserPromptPart(content="q1")])),
         ("a1", ModelResponse(parts=[TextPart(content="a1")])),
-        ("a2", ModelResponse(parts=[CompactionPart(content="the gist")])),
+        (owner, ModelResponse(parts=[CompactionPart(content="the gist")])),
         ("q2", ModelRequest(parts=[UserPromptPart(content="q2")])),
         ("a2", ModelResponse(parts=[TextPart(content="a2")])),
     )
 
-    *_, prompt, reply = dump_transcript(history, None)
 
-    assert (prompt.id, reply.id) == ("q2", "a2")
-    assert [part.type for part in reply.parts] == [
-        "data-compaction",
-        "step-start",
-        "text",
-    ]
+@pytest.mark.parametrize(
+    ("owner", "shown_in", "types"),
+    [
+        ("a2", 3, ["data-compaction", "step-start", "text"]),
+        ("a1", 1, ["step-start", "text", "data-compaction"]),
+    ],
+    ids=["opens-its-reply", "of-a-finished-reply"],
+)
+def test_a_compaction_shows_in_the_reply_it_belongs_to(
+    owner: str, shown_in: int, types: list[str]
+) -> None:
+    """A compaction a reply opens shows after its prompt, one the compact button made stays in the reply it compacted."""
+    transcript = dump_transcript(_compacted(owner), None)
 
+    assert [m.id for m in transcript] == ["q1", "a1", "q2", "a2"]
+    assert [part.type for part in transcript[shown_in].parts] == types
+
+
+def test_a_compaction_a_reply_opens_stays_for_the_reply_replacing_it() -> None:
+    history = _compacted("a2")
     kept = kept_before(history, "a2", regenerate=True, reply_id="new")
 
     assert kept is not None and _texts(kept) == ["q1", "a1", "q2"]
@@ -1259,40 +1040,11 @@ def test_a_reply_a_compaction_opens_shows_it_after_its_prompt() -> None:
     assert ui_id(history[2]) == "a2"
 
 
-def test_a_compaction_of_a_finished_reply_stays_in_it() -> None:
-    """The compact button's summary belongs to the reply it compacted, whatever prompt follows."""
-    history = _stamped(
-        ("q1", ModelRequest(parts=[UserPromptPart(content="q1")])),
-        ("a1", ModelResponse(parts=[TextPart(content="a1")])),
-        ("a1", ModelResponse(parts=[CompactionPart(content="the gist")])),
-        ("q2", ModelRequest(parts=[UserPromptPart(content="q2")])),
-        ("a2", ModelResponse(parts=[TextPart(content="a2")])),
-    )
-
-    transcript = dump_transcript(history, None)
-
-    assert [m.id for m in transcript] == ["q1", "a1", "q2", "a2"]
-    assert [part.type for part in transcript[1].parts] == [
-        "step-start",
-        "text",
-        "data-compaction",
-    ]
-
-
 def test_a_turn_is_one_message_under_its_ui_id() -> None:
     """Every response of a reply folds into one message, each opening a step, its metadata merged."""
+    delta = ModelSettingsDeltaPart(settings={"thinking": "medium"}, top_level=True)
     history = _stamped(
-        (
-            "q",
-            ModelRequest(
-                parts=[
-                    ModelSettingsDeltaPart(
-                        settings={"thinking": "medium"}, top_level=True
-                    ),
-                    UserPromptPart(content="q"),
-                ]
-            ),
-        ),
+        ("q", ModelRequest(parts=[delta, UserPromptPart(content="q")])),
         (
             "r",
             ModelResponse(
@@ -1310,9 +1062,7 @@ def test_a_turn_is_one_message_under_its_ui_id() -> None:
                         tool_call_id="c1",
                         metadata=DataChunk(type="data-undeclared", data={}),
                     ),
-                    ModelSettingsDeltaPart(
-                        settings={"thinking": "medium"}, top_level=True
-                    ),
+                    delta,
                     RetryFeedbackPart("Answer.", retry=RetryInfo(cause="no_output")),
                 ]
             ),
@@ -1330,32 +1080,30 @@ def test_a_turn_is_one_message_under_its_ui_id() -> None:
 
     assert [msg.id for msg in ui] == ["q", "r"]
     assert [part.type for part in ui[0].parts] == ["text"]
-
-    answer = ui[1]
-    assert [part.type for part in answer.parts] == [
+    assert [part.type for part in ui[1].parts] == [
         "step-start",
         "tool-t",
         "step-start",
         "text",
     ]
     # Metadata merges as the client merges a continuation's.
-    assert isinstance(answer.metadata, dict)
-    assert answer.metadata[REASONING_DURATIONS_KEY] == {"r1": [1000], "r2": [2400]}
+    assert isinstance(ui[1].metadata, dict)
+    assert ui[1].metadata[REASONING_DURATIONS_KEY] == {"r1": [1000], "r2": [2400]}
 
 
 async def test_a_compaction_streams_as_the_part_a_reload_shows() -> None:
     """A run's compaction reaches the client as it reloads."""
-    adapter = _adapter([])
     part = CompactionPart(content="the gist")
     reloaded = dump_transcript([ModelResponse(parts=[part])], None)
     shown = reloaded[0].parts[-1].model_dump(mode="json", by_alias=True)
 
     live = [
         chunk.model_dump(mode="json", by_alias=True, exclude_none=True)
-        async for chunk in adapter.build_event_stream().handle_capability_event(
-            Compacted(part=part)
-        )
+        async for chunk in _adapter([])
+        .build_event_stream()
+        .handle_capability_event(Compacted(part=part))
     ]
+
     assert shown == {"type": "data-compaction", "data": {"content": "the gist"}}
     assert live == [shown]
 

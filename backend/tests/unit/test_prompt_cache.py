@@ -5,7 +5,8 @@ must extend the previous one and add no user message mid-turn.
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from datetime import date
 from itertools import pairwise
 from typing import Any
 
@@ -16,8 +17,6 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.usage import UsageLimits
 
-import hivegent.llm as llm_module
-from hivegent.agents import context
 from hivegent.agents.app import chat_agent, turn_usage_limits
 from hivegent.agents.capabilities import build_capabilities
 from hivegent.agents.common import UserDeps
@@ -26,7 +25,6 @@ from hivegent.db.conversations.postgres import _stored_entries
 from hivegent.llm import create_openai_chat_model
 from hivegent.prompts import FENCE_TAG, compose_instructions
 from hivegent.security import OperatorUrl
-from hivegent.shared.l10n import Localized
 from hivegent.store import User
 from hivegent.types import Mode
 from tests.helpers import chain, in_run, owned
@@ -52,17 +50,11 @@ def _completion(message: Payload) -> Payload:
 
 
 def _call_broken(index: int) -> Payload:
+    call = {"name": "broken", "arguments": "{}"}
+    tool_call = {"id": f"call-{index}", "type": "function", "function": call}
+
     return _completion(
-        {
-            "reasoning_content": f"Try the tool, attempt {index}.",
-            "tool_calls": [
-                {
-                    "id": f"call-{index}",
-                    "type": "function",
-                    "function": {"name": "broken", "arguments": "{}"},
-                }
-            ],
-        }
+        {"reasoning_content": f"Try {index}.", "tool_calls": [tool_call]}
     )
 
 
@@ -89,11 +81,14 @@ def _users(request: Payload) -> int:
     return sum(message["role"] == "user" for message in request["messages"])
 
 
-async def test_each_request_extends_the_previous_one(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
+@pytest.fixture(autouse=True)
+def _model_requests() -> Iterator[None]:
+    """Let the endpoint of a mock transport answer, which the model of no other test may."""
+    with models.override_allow_model_requests(True):
+        yield
 
+
+async def test_each_request_extends_the_previous_one() -> None:
     requests: list[Payload] = []
     replies: list[Payload] = []
 
@@ -103,22 +98,18 @@ async def test_each_request_extends_the_previous_one(
         return httpx2.Response(200, json=replies.pop(0))
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    monkeypatch.setattr(llm_module, "get_trusted_http_client", lambda *_: client)
     model = create_openai_chat_model(
         "qwen3.8-27b",
         LlmProviderSettings(
             base_url=OperatorUrl("http://llm/v1"),
             inference_provider=InferenceProvider.VLLM,
         ),
+        http_client=client,
     )
 
     broken = FunctionToolset[UserDeps]()
 
-    @broken.tool_plain(
-        name="broken",
-        retries=4,
-        metadata={"effect": "read"},
-    )
+    @broken.tool_plain(name="broken", retries=4, metadata={"effect": "read"})
     def _broken() -> str:
         raise ModelRetry("still broken")
 
@@ -131,6 +122,7 @@ async def test_each_request_extends_the_previous_one(
         relevant: frozenset[str],
         script: list[Payload],
         limits: UsageLimits = turn_usage_limits,
+        today: date = date(2026, 1, 1),
     ) -> list[ModelMessage]:
         turns.append(len(requests))
         replies.extend(script)
@@ -139,6 +131,7 @@ async def test_each_request_extends_the_previous_one(
             mode=mode,
             conversation=owned("c1"),
             relevant_documents=relevant,
+            today=lambda: today,
         )
         result = await in_run(
             deps,
@@ -156,27 +149,23 @@ async def test_each_request_extends_the_previous_one(
         )
         assert not replies
 
-        # Every turn starts from the stored conversation, as a chat turn does,
-        # where a request stores only instructions that changed.
+        # A chat turn starts from the stored conversation, which keeps only instructions that changed.
         written = _stored_entries(chain(*result.all_messages()), {})
         stored[:] = [message.changes for message in written]
 
         return [message.entry().message for message in written]
 
-    # The memory is reported, and a tool call follows within the turn.
     history = await turn(
         (), "interactive", frozenset({"~/a.md"}), [_call_broken(-1), _ANSWER]
     )
     # The day, the selection, and the mode change, and a tool fails until its
     # retry note fires mid-turn.
-    monkeypatch.setattr(
-        context, "date_note", lambda _today: Localized(en="Today is tomorrow.", de="")
-    )
     history = await turn(
         history,
         "write",
         frozenset({"~/b.md"}),
         [_call_broken(i) for i in range(4)] + [_ANSWER],
+        today=date(2026, 1, 2),
     )
     # The request budget runs low mid-turn.
     await turn(
@@ -185,11 +174,12 @@ async def test_each_request_extends_the_previous_one(
         frozenset({"~/b.md"}),
         [_call_broken(i) for i in range(4, 7)] + [_ANSWER],
         UsageLimits(request_limit=4),
+        date(2026, 1, 2),
     )
 
     # Each change did reach the model, or the checks below would hold vacuously.
     sent = json.dumps(requests[-1]["messages"])
-    assert "~/b.md" in sent and "Write mode" in sent and "Today is tomorrow." in sent
+    assert "~/b.md" in sent and "Write mode" in sent and "Today is 2026-01-02." in sent
     assert "failed 3 times in a row" in sent
     assert "most of its 4 model requests" in sent
     assert f"<{FENCE_TAG}>" in sent

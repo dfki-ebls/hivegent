@@ -6,10 +6,9 @@ No test connects to a live database or any other stateful service.
 """
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from itertools import count
 from pathlib import Path
 
 # Settings resolve once on import, so the variables of a developer's shell,
@@ -23,6 +22,7 @@ from pydantic_ai import models
 
 from hivegent import pipelines
 from hivegent.agents import RunPrefix
+from tests.helpers import ConversationRows, FakeIndex
 
 # No test reaches a live model, so a request that would is an error, and a test
 # serving one from a mock transport allows it explicitly.
@@ -63,23 +63,57 @@ def _memory(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def committed_transactions(monkeypatch: pytest.MonkeyPatch) -> set[str]:
-    """Stand for PostgreSQL's transaction ids, each fresh, and committed when a test says so."""
+def transaction_status(monkeypatch: pytest.MonkeyPatch) -> dict[str, bool]:
+    """Stand for ``pg_xact_status``, whether each transaction committed by its id.
+
+    A test records the fate of a transaction, and one it leaves out is forgotten by PostgreSQL.
+    """
     from hivegent.db import changes
 
-    ids = count()
-    committed: set[str] = set()
+    status: dict[str, bool] = {}
 
-    async def transaction_id(_s: object) -> str:
-        return str(next(ids))
+    async def committed(xid: str) -> bool | None:
+        return status.get(xid)
 
-    async def is_committed(xid: str) -> bool:
-        return xid in committed
+    monkeypatch.setattr(changes, "committed", committed)
 
-    monkeypatch.setattr(changes, "transaction_id", transaction_id)
-    monkeypatch.setattr(changes, "committed", is_committed)
+    return status
 
-    return committed
+
+@pytest.fixture()
+def index(
+    monkeypatch: pytest.MonkeyPatch, transaction_status: dict[str, bool]
+) -> FakeIndex:
+    """Replace the document tables, the chunk index, and the transactions of PostgreSQL by one in-memory fake.
+
+    Indexing, moving, and deleting run for real and leave their rows in it.
+    """
+    from hivegent import retrieval
+    from hivegent.db import changes, engine
+    from hivegent.db import documents as db_documents
+
+    fake = FakeIndex(transaction_status)
+
+    for name in (
+        "get_entry_metadata",
+        "get_entries_metadata",
+        "get_entry_state",
+        "get_entry_states",
+        "update_entry",
+        "upsert_document",
+        "set_content_state",
+        "delete_document",
+        "delete_subtree",
+        "move_document",
+        "move_subtree",
+    ):
+        monkeypatch.setattr(db_documents, name, getattr(fake, name))
+
+    monkeypatch.setattr(retrieval, "index_document", fake.index_document)
+    monkeypatch.setattr(engine, "session", fake.session)
+    monkeypatch.setattr(changes, "transaction_id", fake.transaction_id)
+
+    return fake
 
 
 @pytest.fixture(autouse=True)
@@ -166,3 +200,95 @@ def run_prefix() -> RunPrefix:
         llm=LlmConfig(model="test"),
         model=FunctionModel(lambda messages, info: ModelResponse(parts=[])),
     )
+
+
+type Configure = Callable[..., None]
+
+
+@pytest.fixture()
+def configure(monkeypatch: pytest.MonkeyPatch) -> Configure:
+    """Change the global settings by name, a section given as a dict of the fields to change.
+
+    ``configure(tools={"disabled": ["grep"]}, accept_terms=True)`` replaces
+    ``settings.tools`` by a copy with its ``disabled`` field changed, so every
+    change is undone with the test.
+    """
+    from pydantic import BaseModel
+
+    from hivegent.config import settings
+
+    def apply(**changes: object) -> None:
+        for name, change in changes.items():
+            current = getattr(settings, name)
+
+            if isinstance(current, BaseModel) and isinstance(change, dict):
+                change = current.model_copy(update=change)
+
+            monkeypatch.setattr(settings, name, change)
+
+    return apply
+
+
+type UsePrefix = Callable[[RunPrefix], None]
+
+
+@pytest.fixture()
+def use_prefix(monkeypatch: pytest.MonkeyPatch) -> UsePrefix:
+    """Make the chat turns that follow run on a given prefix, instead of one resolved from the preferences and the settings."""
+    from hivegent.server.routes.conversations import turn
+
+    def use(prefix: RunPrefix) -> None:
+        async def build_run_prefix(*_args: object) -> RunPrefix:
+            return prefix
+
+        monkeypatch.setattr(turn, "build_run_prefix", build_run_prefix)
+
+    return use
+
+
+@pytest.fixture()
+def conversation_rows(
+    monkeypatch: pytest.MonkeyPatch, data_dir: Path
+) -> ConversationRows:
+    """Keep the rows of the conversations file cleanup removes or imports out of the database."""
+    from datetime import UTC, datetime
+
+    from hivegent import conversation_files
+    from hivegent.db.conversations import ConversationSummary, OwnedConversation
+    from hivegent.store import User
+
+    rows = ConversationRows(data_dir)
+
+    async def remove_conversation(conversation: OwnedConversation) -> bool:
+        rows.removed.append(
+            (str(conversation.id), conversation.folder(data_dir).exists())
+        )
+
+        return True
+
+    async def remove_owned_conversations(user: User) -> None:
+        rows.removed.append(
+            (user.id, OwnedConversation.user_root(data_dir, user.id).exists())
+        )
+
+    async def import_conversation(
+        conversation: OwnedConversation, *_args: object, **_kwargs: object
+    ) -> ConversationSummary:
+        rows.imported.append(conversation.folder(data_dir).exists())
+
+        if rows.import_error is not None:
+            raise rows.import_error
+
+        moment = datetime(2026, 1, 1, tzinfo=UTC)
+
+        return ConversationSummary(
+            id=conversation.id, title="", created_at=moment, updated_at=moment
+        )
+
+    monkeypatch.setattr(conversation_files, "remove_conversation", remove_conversation)
+    monkeypatch.setattr(
+        conversation_files, "remove_owned_conversations", remove_owned_conversations
+    )
+    monkeypatch.setattr(conversation_files, "import_conversation", import_conversation)
+
+    return rows

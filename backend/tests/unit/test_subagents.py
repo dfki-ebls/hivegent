@@ -2,11 +2,11 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+import time
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from exar.tools import effect
@@ -38,12 +38,8 @@ from hivegent import conversation_files
 from hivegent.agents import RunPrefix
 from hivegent.agents import subagents as subagents_module
 from hivegent.agents.common import AgentTools
-from hivegent.agents.subagents import Subagent, delegation
-from hivegent.db.conversations import (
-    OwnedConversation,
-    is_user_request,
-    load_conversation,
-)
+from hivegent.agents.subagents import SUBAGENTS, Subagent, delegation
+from hivegent.db.conversations import is_user_request, load_conversation
 from hivegent.delegations import TASKS_FOLDER, delegations
 from hivegent.runs import Prepared, runs
 from hivegent.server.routes.conversations import history, tasks, turn
@@ -55,7 +51,12 @@ from tests.helpers import label_id, owned, sse_chunks
 type Script = Callable[[list[ModelMessage], AgentInfo], ModelResponse]
 """Answers an agent."""
 
+type UsePrefix = Callable[[RunPrefix], None]
+type Configure = Callable[..., None]
+
 _CONVERSATION = owned("subagents")
+
+_TASK_ID = "a" * 32
 
 
 def _first_prompt(messages: list[ModelMessage]) -> str:
@@ -106,6 +107,33 @@ def _echo(messages: list[ModelMessage]) -> ModelResponse:
     return _text(str(last.content))
 
 
+def _delegating(agent: str, **args: object) -> Script:
+    """A main agent delegating once to *agent* with the prompt ``look``, then echoing what it got back."""
+
+    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if _responses(messages) == 0:
+            return _call("delegate_task", "d1", agent_name=agent, task="look", **args)
+
+        return _echo(messages)
+
+    return chat
+
+
+def _answering(text: str) -> Script:
+    def answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return _text(text)
+
+    return answer
+
+
+def _wait_then_echo(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    """A subagent calling ``wait`` once, then reporting what it returned."""
+    if _responses(messages) == 0:
+        return _call("wait", "w1")
+
+    return _echo(messages)
+
+
 def _model(scripts: dict[str, Script]) -> FunctionModel:
     """Answers each agent by the script of its first prompt, streamed as a turn needs."""
 
@@ -139,10 +167,11 @@ async def _store(
 
 
 async def _turn(
-    monkeypatch: pytest.MonkeyPatch,
+    use_prefix: UsePrefix,
     run_prefix: RunPrefix,
     scripts: dict[str, Script],
     *,
+    subagents: Mapping[str, Subagent] = SUBAGENTS,
     mode: Mode = "interactive",
     prompt: str = "question",
     quiet: bool = True,
@@ -156,12 +185,10 @@ async def _turn(
     user = user or User("u")
     deps = replace(run_prefix.deps, mode=mode, conversation=_CONVERSATION, user=user)
     prefix = replace(run_prefix, deps=deps, model=_model(scripts))
-    prefix = replace(prefix, capabilities=[*prefix.capabilities, *delegation(prefix)])
-
-    async def build_run_prefix(*_args: object) -> RunPrefix:
-        return prefix
-
-    monkeypatch.setattr(turn, "build_run_prefix", build_run_prefix)
+    prefix = replace(
+        prefix, capabilities=[*prefix.capabilities, *delegation(prefix, subagents)]
+    )
+    use_prefix(prefix)
     message = {
         "id": str(label_id(prompt)),
         "role": "user",
@@ -192,17 +219,11 @@ async def _turn(
 
 
 async def _quiet() -> None:
-    """Wait until the conversation's tasks ended and no turn runs, the turns they woke included."""
-    async with asyncio.timeout(5):
-        while (
-            runs.get(_CONVERSATION) is not None
-            or delegations.pending(_CONVERSATION)
-            or any(
-                task.status == "running"
-                for task in await delegations.tasks(_CONVERSATION)
-            )
-        ):
-            await asyncio.sleep(0.01)
+    """Return once the conversation's task owner closed, which it does once no turn, task, or report remains."""
+    await delegations.idle(_CONVERSATION)
+
+    if (run := runs.get(_CONVERSATION)) is not None:
+        await run.wait()
 
 
 async def _stored() -> list[ModelMessage]:
@@ -212,13 +233,24 @@ async def _stored() -> list[ModelMessage]:
     return list(loaded.messages)
 
 
-def _register(monkeypatch: pytest.MonkeyPatch, name: str, tool: ToolFunc) -> None:
-    """Offer the subagent *name*, whose one tool is *tool*."""
-    monkeypatch.setitem(
-        subagents_module.SUBAGENTS,  # pyright: ignore[reportArgumentType]
-        name,
-        Subagent(description=name, tools=(AgentTools(factory=lambda _: [tool]),)),
-    )
+def _offering(
+    name: str, tool: ToolFunc, clock: Callable[[], float] = time.monotonic
+) -> Mapping[str, Subagent]:
+    """The subagents with the one *name*, whose one tool is *tool*, its report deadline counted on *clock*."""
+    return {
+        **SUBAGENTS,
+        name: Subagent(
+            description=name,
+            tools=(AgentTools(factory=lambda _: [tool]),),
+            clock=clock,
+        ),
+    }
+
+
+@pytest.fixture()
+def instant_background(configure: Configure) -> None:
+    """Move a task the main agent waits for to the background as soon as it waits."""
+    configure(subagents={"auto_background_seconds": 0})
 
 
 def _waiting(released: asyncio.Event, result: str = "found it") -> ToolFunc:
@@ -233,40 +265,17 @@ def _waiting(released: asyncio.Event, result: str = "found it") -> ToolFunc:
     return wait
 
 
-def _sleeping(seconds: float) -> ToolFunc:
-    """A tool that returns after *seconds*."""
-
-    @effect("read")
-    async def wait() -> str:
-        """Waits."""
-        await asyncio.sleep(seconds)
-        return "waited"
-
-    return wait
-
-
-async def _release_after_turn(released: asyncio.Event) -> None:
-    """Release *released* once the turn running now ended, which its task outlives."""
-    while (run := runs.get(_CONVERSATION)) is None:
-        await asyncio.sleep(0.01)
-
-    await run.wait()
-    released.set()
-
-
-def _wait_then_echo(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-    """A subagent calling ``wait`` once, then reporting what it returned."""
-    if _responses(messages) == 0:
-        return _call("wait", "w1")
-
-    return _echo(messages)
-
-
+@pytest.mark.parametrize(
+    "args", [{}, {"background": False}], ids=["in-the-background", "waited-for"]
+)
+@pytest.mark.usefixtures("instant_background")
 async def test_a_task_outlives_its_turn_and_wakes_the_conversation(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    use_prefix: UsePrefix, run_prefix: RunPrefix, args: dict[str, bool]
 ) -> None:
+    """A task the main agent waits for moves to the background, and the turn ends without it."""
     released = asyncio.Event()
-    _register(monkeypatch, "waiter", _waiting(released))
+    subagents = _offering("waiter", _waiting(released))
+    delegate = _delegating("waiter", **args)
 
     def chat(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tools = {tool.name: tool for tool in info.function_tools}
@@ -274,16 +283,17 @@ async def test_a_task_outlives_its_turn_and_wakes_the_conversation(
         # A task runs in the background unless the main agent waits for it.
         assert properties["background"]["default"] is True
 
-        if _responses(messages) == 0:
-            return _call("delegate_task", "d1", agent_name="waiter", task="look")
+        return delegate(messages, info)
 
-        return _echo(messages)
-
-    releasing = asyncio.create_task(_release_after_turn(released))
     chunks = await _turn(
-        monkeypatch, run_prefix, {"question": chat, "look": _wait_then_echo}
+        use_prefix,
+        run_prefix,
+        {"question": chat, "look": _wait_then_echo},
+        subagents=subagents,
+        quiet=False,
     )
-    await releasing
+    released.set()
+    await _quiet()
     loaded = await load_conversation(_CONVERSATION)
     assert loaded is not None
     *_, reply = loaded.messages
@@ -305,31 +315,25 @@ async def test_a_task_outlives_its_turn_and_wakes_the_conversation(
         assert not finished.user_stopped
 
 
+@pytest.mark.usefixtures("instant_background")
 async def test_teams_receives_an_auto_backgrounded_report_before_finish(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    use_prefix: UsePrefix, run_prefix: RunPrefix
 ) -> None:
     released = asyncio.Event()
-    monkeypatch.setattr(subagents_module, "_AUTO_BACKGROUND_SECONDS", 0.01)
-    _register(monkeypatch, "waiter", _waiting(released))
+    subagents = _offering("waiter", _waiting(released))
+    delegate = _delegating("waiter", background=False)
 
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if _responses(messages) == 0:
-            return _call(
-                "delegate_task",
-                "d1",
-                agent_name="waiter",
-                task="look",
-                background=False,
-            )
+    def chat(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if _responses(messages) > 0:
+            released.set()
 
-        released.set()
-
-        return _echo(messages)
+        return delegate(messages, info)
 
     chunks = await _turn(
-        monkeypatch,
+        use_prefix,
         run_prefix,
         {"question": chat, "look": _wait_then_echo},
+        subagents=subagents,
         mode="read",
         user=User("u", kind="service"),
     )
@@ -339,29 +343,24 @@ async def test_teams_receives_an_auto_backgrounded_report_before_finish(
     assert await tasks.list_conversation_tasks(_CONVERSATION) == []
 
 
+@pytest.mark.usefixtures("conversation_rows")
 async def test_deleting_wakes_no_turn_for_a_report_its_cancelled_turn_left(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    use_prefix: UsePrefix, run_prefix: RunPrefix
 ) -> None:
     released = asyncio.Event()
     woke = asyncio.Event()
-    _register(monkeypatch, "waiter", _waiting(released))
-
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if _responses(messages) == 0:
-            return _call("delegate_task", "d1", agent_name="waiter", task="look")
-
-        return _echo(messages)
+    opened = asyncio.Event()
+    subagents = _offering("waiter", _waiting(released))
 
     await _turn(
-        monkeypatch,
+        use_prefix,
         run_prefix,
-        {"question": chat, "look": _wait_then_echo},
+        {"question": _delegating("waiter"), "look": _wait_then_echo},
+        subagents=subagents,
         quiet=False,
     )
-    opened = asyncio.Event()
 
     async def stream() -> AsyncIterator[BaseChunk]:
-        # The cancelled turn ends only once the report waits, which would wake the conversation.
         async with delegations.turn(
             _CONVERSATION, User("u"), lambda *_: woke.set()
         ) as owner:
@@ -369,20 +368,15 @@ async def test_deleting_wakes_no_turn_for_a_report_its_cancelled_turn_left(
                 opened.set()
                 await asyncio.Future[None]()
             finally:
+                # The cancelled turn ends only once the report waits, which would wake the conversation.
                 released.set()
-
-                while not owner.reports(conversation_id=_CONVERSATION.key):
-                    await asyncio.sleep(0)
+                await owner.wait_children(None)
 
         yield FinishChunk()
 
     async def prepare() -> Prepared:
         return Prepared(stream(), [])
 
-    async def remove(_conversation: OwnedConversation) -> bool:
-        return True
-
-    monkeypatch.setattr(conversation_files, "remove_conversation", remove)
     _ = runs.start(_CONVERSATION, User("u"), None, prepare())
     await opened.wait()
 
@@ -408,12 +402,12 @@ async def test_tasks_show_interrupted_records_before_the_next_turn(
     folder = _CONVERSATION.folder(data_dir) / TASKS_FOLDER
     folder.mkdir(parents=True)
     task = DelegationTask(
-        id=uuid4().hex,
+        id=_TASK_ID,
         agent_name="explore",
         prompt="look",
         conversation_id=_CONVERSATION.key,
     )
-    (folder / f"{task.id}.json").write_bytes(
+    (folder / f"{_TASK_ID}.json").write_bytes(
         TypeAdapter(DelegationTask).dump_json(task)
     )
 
@@ -423,24 +417,15 @@ async def test_tasks_show_interrupted_records_before_the_next_turn(
 
 
 async def test_a_waited_task_reports_in_the_same_turn(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    use_prefix: UsePrefix, run_prefix: RunPrefix
 ) -> None:
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if _responses(messages) == 0:
-            return _call(
-                "delegate_task",
-                "d1",
-                agent_name="explore",
-                task="look",
-                background=False,
-            )
-
-        return _echo(messages)
-
     chunks = await _turn(
-        monkeypatch,
+        use_prefix,
         run_prefix,
-        {"question": chat, "look": lambda _messages, _info: _text("found it")},
+        {
+            "question": _delegating("explore", background=False),
+            "look": _answering("found it"),
+        },
     )
     stored = await _stored()
 
@@ -456,156 +441,126 @@ async def test_a_waited_task_reports_in_the_same_turn(
     )
 
 
-async def test_a_waited_task_moves_to_the_background_in_time(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+async def test_a_later_turn_steers_a_running_task(
+    use_prefix: UsePrefix, run_prefix: RunPrefix
 ) -> None:
     released = asyncio.Event()
-    monkeypatch.setattr(subagents_module, "_AUTO_BACKGROUND_SECONDS", 0.1)
-    _register(monkeypatch, "waiter", _waiting(released))
-
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if _responses(messages) == 0:
-            return _call(
-                "delegate_task",
-                "d1",
-                agent_name="waiter",
-                task="look",
-                background=False,
-            )
-
-        return _echo(messages)
-
-    releasing = asyncio.create_task(_release_after_turn(released))
-    chunks = await _turn(
-        monkeypatch, run_prefix, {"question": chat, "look": _wait_then_echo}
-    )
-    await releasing
-    *_, reply = await _stored()
-
-    # The turn stops waiting and ends, and the report wakes the conversation.
-    assert "found it" not in json.dumps(chunks)
-    assert isinstance(reply, ModelResponse) and "found it" in (reply.text or "")
-
-
-async def test_a_later_turn_steers_a_running_task(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
     task_ids: list[str] = []
-    _register(monkeypatch, "looper", _sleeping(0.02))
+    subagents = _offering("looper", _waiting(released))
+    delegate = _delegating("looper")
 
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def chat(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         match _unanswered_prompt(messages):
             case "question":
-                return _call("delegate_task", "d1", agent_name="looper", task="loop")
+                return delegate(messages, info)
             case "steer":
                 return _call(
                     "message_task", "m1", task_id=task_ids[0], message="stop now"
                 )
             case _:
+                # The task reads the message once its call returns.
+                if "stop now" in str(messages):
+                    released.set()
+
                 return _echo(messages)
 
     def looper(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if "stop now" in str(messages):
             return _text("stopped as told")
 
-        return _call("wait", f"w{_responses(messages)}")
+        return _call("wait", "w1")
 
-    scripts: dict[str, Script] = {"question": chat, "loop": looper}
-    await _turn(monkeypatch, run_prefix, scripts, quiet=False)
+    scripts: dict[str, Script] = {"question": chat, "look": looper}
+    await _turn(use_prefix, run_prefix, scripts, subagents=subagents, quiet=False)
     task_ids.extend(
         task.id for task in await tasks.list_conversation_tasks(_CONVERSATION)
     )
-    await _turn(monkeypatch, run_prefix, scripts, prompt="steer")
+    await _turn(use_prefix, run_prefix, scripts, subagents=subagents, prompt="steer")
     [task] = await tasks.list_conversation_tasks(_CONVERSATION)
 
     # The turn after the one that delegated steers the task it did not start.
     assert (task.outcome, task.output) == ("ok", "stopped as told")
 
 
-async def test_a_subagent_reports_after_its_steps(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
-    monkeypatch.setattr(subagents_module.settings.subagents, "max_steps", 2)
-
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if _responses(messages) == 0:
-            return _call("delegate_task", "d1", agent_name="explore", task="look")
-
-        return _echo(messages)
-
-    def explore(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if "Report your findings now" in str(messages[-1]):
-            return _text("what I found so far")
-
-        return _call("list_documents", f"l{_responses(messages)}")
-
-    await _turn(monkeypatch, run_prefix, {"question": chat, "look": explore})
-    [task] = await tasks.list_conversation_tasks(_CONVERSATION)
-
-    assert (task.outcome, task.output) == ("ok", "what I found so far")
-
-
 @pytest.mark.parametrize(
-    ("timeout", "answer"),
-    [(1.0, "partial findings"), (0.2, "exceeded")],
+    ("max_steps", "advance"), [(2, 0.0), (50, 100.0)], ids=["steps", "time"]
 )
-async def test_a_subagent_out_of_time_reports(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_a_subagent_reports_once_its_budget_is_used_up(
+    use_prefix: UsePrefix,
     run_prefix: RunPrefix,
-    timeout: float,
-    answer: str,
+    configure: Configure,
+    max_steps: int,
+    advance: float,
 ) -> None:
-    """Past the soft deadline its calls are refused and it reports, past the timeout it is cut off.
+    """Its calls are refused and it reports, under the same tools and instructions it worked with."""
+    now = [0.0]
+    configure(subagents={"max_steps": max_steps, "timeout_seconds": 100})
 
-    The deadline changes neither its tools nor its instructions, so every request it sends has the same prefix.
-    """
+    @effect("read")
+    async def work() -> str:
+        """Works, for as long as the test says on its clock."""
+        now[0] += advance
 
-    monkeypatch.setattr(subagents_module.settings.subagents, "timeout_seconds", timeout)
-    _register(monkeypatch, "sleeper", _sleeping(0.85))
+        return "worked"
 
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if _responses(messages) == 0:
-            return _call("delegate_task", "d1", agent_name="sleeper", task="nap")
-
-        return _echo(messages)
-
+    subagents = _offering("worker", work, lambda: now[0])
     prefixes: list[tuple[str | None, list[ToolDefinition]]] = []
 
-    def sleeper(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def worker(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         prefixes.append((info.instructions, info.function_tools))
 
         if "Report your findings now" in str(messages[-1]):
             return _text("partial findings")
 
-        return _call("wait", f"w{len(prefixes)}")
+        return _call("work", f"w{len(prefixes)}")
 
-    await _turn(monkeypatch, run_prefix, {"question": chat, "nap": sleeper})
-    *_, reply = await _stored()
+    await _turn(
+        use_prefix,
+        run_prefix,
+        {"question": _delegating("worker"), "look": worker},
+        subagents=subagents,
+    )
+    [task] = await tasks.list_conversation_tasks(_CONVERSATION)
 
-    assert isinstance(reply, ModelResponse) and answer in (reply.text or "")
+    assert (task.outcome, task.output) == ("ok", "partial findings")
+    assert len(prefixes) == 3
     assert all(prefix == prefixes[0] for prefix in prefixes)
 
 
-async def test_a_report_is_no_prompt_of_the_user(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+async def test_a_subagent_past_its_timeout_is_cut_off(
+    use_prefix: UsePrefix, run_prefix: RunPrefix, configure: Configure
 ) -> None:
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        match _responses(messages):
-            case 0:
-                return _call("delegate_task", "d1", agent_name="explore", task="look")
-            case 1:
-                return _text("waiting")
-            case _:
-                return _echo(messages)
+    configure(subagents={"timeout_seconds": 0.01})
+    # The clock stands still, so the soft deadline never precedes the timeout.
+    subagents = _offering("stuck", _waiting(asyncio.Event()), lambda: 0.0)
 
-    monkeypatch.setattr(subagents_module.settings.llm, "tool_output_max_chars", 300)
     await _turn(
-        monkeypatch,
+        use_prefix,
         run_prefix,
-        {
-            "question": chat,
-            "look": lambda _messages, _info: _text("found it" + "x" * 1000),
-        },
+        {"question": _delegating("stuck"), "look": _wait_then_echo},
+        subagents=subagents,
+    )
+    *_, reply = await _stored()
+
+    assert isinstance(reply, ModelResponse) and "exceeded" in (reply.text or "")
+
+
+async def test_a_report_is_no_prompt_of_the_user(
+    use_prefix: UsePrefix, run_prefix: RunPrefix, configure: Configure
+) -> None:
+    delegate = _delegating("explore")
+
+    def chat(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if _responses(messages) == 1:
+            return _text("waiting")
+
+        return delegate(messages, info)
+
+    configure(llm={"tool_output_max_chars": 300})
+    await _turn(
+        use_prefix,
+        run_prefix,
+        {"question": chat, "look": _answering("found it" + "x" * 1000)},
     )
     stored = await _stored()
     shown = await history.active_messages(_CONVERSATION)
@@ -619,7 +574,7 @@ async def test_a_report_is_no_prompt_of_the_user(
 
 
 async def test_a_subagent_refuses_what_would_ask(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    use_prefix: UsePrefix, run_prefix: RunPrefix
 ) -> None:
     sent: list[str] = []
 
@@ -629,13 +584,7 @@ async def test_a_subagent_refuses_what_would_ask(
         sent.append(text)
         return f"sent {text}"
 
-    _register(monkeypatch, "mailer", send)
-
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if _responses(messages) == 0:
-            return _call("delegate_task", "d1", agent_name="mailer", task="mail")
-
-        return _echo(messages)
+    subagents = _offering("mailer", send)
 
     def mailer(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if _responses(messages) == 0:
@@ -644,7 +593,11 @@ async def test_a_subagent_refuses_what_would_ask(
         return _echo(messages)
 
     chunks = await _turn(
-        monkeypatch, run_prefix, {"question": chat, "mail": mailer}, mode="write"
+        use_prefix,
+        run_prefix,
+        {"question": _delegating("mailer"), "look": mailer},
+        subagents=subagents,
+        mode="write",
     )
 
     # The write mode asks before any execution, which a subagent refuses rather than asking.
@@ -654,15 +607,16 @@ async def test_a_subagent_refuses_what_would_ask(
 
 
 async def test_the_turn_budget_bounds_the_tasks_it_started(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    monkeypatch: pytest.MonkeyPatch, use_prefix: UsePrefix, run_prefix: RunPrefix
 ) -> None:
     released = asyncio.Event()
     requests: list[int] = []
-    _register(monkeypatch, "looper", _waiting(released, "waited"))
+    subagents = _offering("looper", _waiting(released, "waited"))
+    delegate = _delegating("looper")
 
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def chat(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if _responses(messages) == 0:
-            return _call("delegate_task", "d1", agent_name="looper", task="loop")
+            return delegate(messages, info)
 
         released.set()
 
@@ -674,7 +628,12 @@ async def test_the_turn_budget_bounds_the_tasks_it_started(
         return _call("wait", f"w{len(requests)}")
 
     monkeypatch.setattr(turn, "turn_usage_limits", UsageLimits(request_limit=4))
-    await _turn(monkeypatch, run_prefix, {"question": chat, "loop": looper})
+    await _turn(
+        use_prefix,
+        run_prefix,
+        {"question": chat, "look": looper},
+        subagents=subagents,
+    )
     [task] = await tasks.list_conversation_tasks(_CONVERSATION)
 
     # The turn's two requests leave its task two, though the turn ended before it.
@@ -686,27 +645,28 @@ async def test_the_turn_budget_bounds_the_tasks_it_started(
     ("mode", "agent"), [("interactive", "explore"), ("write", "write")]
 )
 async def test_a_subagent_is_offered_no_withheld_tool(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix, mode: Mode, agent: str
+    use_prefix: UsePrefix,
+    run_prefix: RunPrefix,
+    configure: Configure,
+    mode: Mode,
+    agent: str,
 ) -> None:
     withheld = frozenset(
         {"grep", "list_documents", "delete_documents", "write_document"}
     )
     offered: set[str] = set()
 
-    def chat(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if _responses(messages) == 0:
-            return _call("delegate_task", "d1", agent_name=agent, task="look")
-
-        return _echo(messages)
-
     def subagent(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         offered.update(tool.name for tool in info.function_tools)
 
         return _text("done")
 
-    monkeypatch.setattr(subagents_module.settings.tools, "disabled", sorted(withheld))
+    configure(tools={"disabled": sorted(withheld)})
     await _turn(
-        monkeypatch, run_prefix, {"question": chat, "look": subagent}, mode=mode
+        use_prefix,
+        run_prefix,
+        {"question": _delegating(agent), "look": subagent},
+        mode=mode,
     )
 
     assert offered
@@ -714,7 +674,7 @@ async def test_a_subagent_is_offered_no_withheld_tool(
 
 
 def test_a_list_withholds_delegation_and_each_subagent(
-    monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    run_prefix: RunPrefix, configure: Configure
 ) -> None:
     conversations = subagents_module.SUBAGENTS["conversations"].tools[0]
     tool_names = {
@@ -723,7 +683,7 @@ def test_a_list_withholds_delegation_and_each_subagent(
 
     def offered(*withheld: str) -> set[str]:
         """The subagents a turn delegates to while the operator withholds *withheld*."""
-        monkeypatch.setattr(subagents_module.settings.tools, "disabled", list(withheld))
+        configure(tools={"disabled": list(withheld)})
 
         return {
             str(subagent.resolved_name)

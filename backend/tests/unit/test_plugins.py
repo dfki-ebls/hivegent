@@ -1,5 +1,6 @@
 """Plugins load from the entry points the operator enabled, held to the host's policy."""
 
+from collections.abc import Mapping, Sequence
 from importlib.metadata import EntryPoint
 
 import pytest
@@ -44,32 +45,24 @@ def silent(_host: api.Host) -> api.Plugin:
 _INSTALLED = {plugin.__name__: plugin for plugin in (lookup, broken, copycat, silent)}
 
 
-@pytest.fixture(autouse=True)
-def _entry_points(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install the plugins above, so none comes from the environment."""
-
-    def found(*, group: str, name: str) -> list[EntryPoint]:
-        return (
-            [EntryPoint(name, f"{__name__}:{name}", group)]
-            if name in _INSTALLED
-            else []
-        )
-
-    monkeypatch.setattr(loader, "entry_points", found)
+def _installed(*, group: str, name: str) -> list[EntryPoint]:
+    """The entry points of the plugins above, so none comes from the environment."""
+    return [EntryPoint(name, f"{__name__}:{name}", group)] if name in _INSTALLED else []
 
 
-def test_an_enabled_plugin_contributes_with_its_config() -> None:
-    (loaded,) = loader.load_plugins(["lookup"], {"lookup": {"base_url": "https://x"}})
+def _load(
+    enabled: Sequence[str], options: Mapping[str, Mapping[str, object]]
+) -> tuple[loader.LoadedPlugin, ...]:
+    return loader.load_plugins(enabled, options, _installed)
+
+
+def test_an_enabled_plugin_contributes_and_is_listed_by_effect() -> None:
+    (loaded,) = _load(["lookup"], {"lookup": {"base_url": "https://x"}})
     feature = capabilities._plugin_feature(loaded.name, loaded.plugin.features[0])
+    info = admin._plugin_info(loaded)
 
     assert feature.tool_names == {"lookup_term"}
     assert feature.modes == {"read", "write", "interactive"}
-
-
-def test_the_admin_listing_names_each_tool_by_its_effect() -> None:
-    (loaded,) = loader.load_plugins(["lookup"], {"lookup": {"base_url": "https://x"}})
-    info = admin._plugin_info(loaded)
-
     assert info.name == "lookup"
     assert [(f.id, f.tools) for f in info.features] == [
         ("lookup", {"lookup_term": "read"})
@@ -90,18 +83,18 @@ def test_the_boot_refuses_a_plugin_it_cannot_trust(
     enabled: list[str], options: dict[str, dict[str, object]], error: str
 ) -> None:
     with pytest.raises(ValueError, match=error):
-        loader.load_plugins(enabled, options)
+        _load(enabled, options)
 
 
 def test_a_refused_option_never_shows_its_value() -> None:
     with pytest.raises(ValueError, match="invalid plugins.config.lookup") as refused:
-        loader.load_plugins(["lookup"], {"lookup": {"base_url": "x", "key": "s3cret"}})
+        _load(["lookup"], {"lookup": {"base_url": "x", "key": "s3cret"}})
 
     assert "s3cret" not in str(refused.value)
 
 
 def test_a_plugin_tool_must_declare_its_effect() -> None:
-    (loaded,) = loader.load_plugins(["silent"], {})
+    (loaded,) = _load(["silent"], {})
 
     with pytest.raises(ValueError, match="declares no Effect"):
         capabilities._plugin_feature(loaded.name, loaded.plugin.features[0])
@@ -114,17 +107,13 @@ def test_a_plugin_tool_must_declare_its_effect() -> None:
         ([], "'lookup' of plugin 'copycat' is taken by plugin 'lookup'"),
     ],
 )
-def test_no_contribution_shadows_another(
-    monkeypatch: pytest.MonkeyPatch, built_in: list[str], error: str
-) -> None:
-    loaded = loader.load_plugins(
-        ["lookup", "copycat"], {"lookup": {"base_url": "https://x"}}
-    )
-    monkeypatch.setattr(loader, "plugins", lambda: loaded)
+def test_no_contribution_shadows_another(built_in: list[str], error: str) -> None:
+    loaded = _load(["lookup", "copycat"], {"lookup": {"base_url": "https://x"}})
 
     with pytest.raises(ValueError, match=error):
         _ = loader.merge(
             "feature",
             ((id, None) for id in built_in),
             lambda plugin: ((feature.id, None) for feature in plugin.plugin.features),
+            loaded,
         )

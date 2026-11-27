@@ -167,16 +167,22 @@ def _web_urls(tool_name: str, data: object) -> Iterator[str]:
                 yield from page.get("links", ())
 
 
-def record_known_urls(known: KnownUrls, messages: Iterable[ModelMessage]) -> None:
+def record_known_urls(
+    known: KnownUrls,
+    messages: Iterable[ModelMessage],
+    *,
+    fetch_enabled: bool = _fetch_enabled,
+) -> None:
     """Know the URLs a history holds from sources the model cannot write.
 
     Those are the user's prompts and the web tools' structured results, the
     same ones the tools record within a turn, so a link from an earlier turn
     can still be fetched.  The model's responses, compaction summaries among
     them, and the results of every other tool add nothing.
-    Without ``web_fetch`` nothing reads them, so the history is not scanned.
+    Without ``web_fetch`` (*fetch_enabled*, the operator's setting by default)
+    nothing reads them, so the history is not scanned.
     """
-    if not _fetch_enabled:
+    if not fetch_enabled:
         return
 
     parts = (

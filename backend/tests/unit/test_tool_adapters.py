@@ -143,9 +143,7 @@ def test_the_data_rides_as_a_chunk_named_by_its_call() -> None:
     assert chunk.encode(5) == BaseChunk.encode(chunk, 5)
     assert out.return_value == "x"
 
+    plain = with_data_chunk(tool_return("plain"), "call-1")
 
-def test_text_data_emits_no_chunk() -> None:
-    out = with_data_chunk(tool_return("plain"), "call-1")
-
-    assert out.metadata is None
-    assert out.return_value == "plain"
+    assert plain.metadata is None
+    assert plain.return_value == "plain"

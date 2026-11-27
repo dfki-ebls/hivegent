@@ -28,10 +28,11 @@ Public surface:
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from uuid import UUID
 
+import httpx2
 import logfire
 import sqlalchemy as sa
 from cbrkit.indexable import Pgvector, PgvectorRetriever, Search, Unscoped
@@ -45,14 +46,18 @@ from exar.ingest import limit_threads
 from exar.memory import GatedMemory
 from exar.policy import EffectPolicy
 from exar.typing import Hit
+from openai import AsyncOpenAI
 from pydantic_ai.embeddings import Embedder
 from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
+from pydantic_ai.providers import Provider
 
 from .config import reveal, settings
+from .config.llm import LlmProviderSettings
 from .config.retrieval import (
     LocalEmbeddingSettings,
     LocalRerankSettings,
     RemoteEmbeddingSettings,
+    RemoteRerankSettings,
 )
 from .db import documents as db_documents
 from .db.engine import session
@@ -60,6 +65,7 @@ from .db.models import Chunk, Document
 from .http_client import get_trusted_http_client
 from .llm import create_openai_provider
 from .reach import Reach
+from .security import OperatorUrl
 from .shared.formats import is_image_suffix
 from .tools.base import ToolFunc
 from .tools.entries import Part
@@ -106,10 +112,16 @@ class _AsyncLazy[T]:
         return await asyncio.shield(task)
 
 
-def _reranker() -> Rerank | None:
-    """The configured reranker, ``None`` when disabled."""
-    cfg = settings.rerank
+def _reranker(
+    cfg: LocalRerankSettings | RemoteRerankSettings | None,
+    providers: Mapping[str, LlmProviderSettings],
+    client: Callable[[OperatorUrl], httpx2.AsyncClient] = get_trusted_http_client,
+) -> Rerank | None:
+    """The reranker *cfg* configures, ``None`` when disabled.
 
+    A remote one borrows the provider of its endpoint from *providers*, and
+    reaches it through the *client* of its URL.
+    """
     if cfg is None:
         return None
 
@@ -122,11 +134,11 @@ def _reranker() -> Rerank | None:
         limit_threads(settings.compute.threads_per_worker)
         model = CrossEncoder(model=cfg.model, device=settings.compute.device)
     else:
-        provider = settings.llm.providers[cfg.endpoint]
+        provider = providers[cfg.endpoint]
         model = HTTP(
             model=cfg.model,
             url=provider.url("rerank"),
-            client=get_trusted_http_client(provider.base_url),
+            client=client(provider.base_url),
             api_key=reveal(provider.api_key),
         )
 
@@ -145,20 +157,22 @@ def _prefixed(
     return embed
 
 
-def _embedders() -> tuple[
-    EmbeddingFunc[str, NumpyArray], EmbeddingFunc[str, NumpyArray]
-]:
-    """The configured embedding model of documents and of queries.
+def _embedders(
+    cfg: LocalEmbeddingSettings | RemoteEmbeddingSettings,
+    providers: Mapping[str, LlmProviderSettings],
+    create_provider: Callable[
+        [LlmProviderSettings], Provider[AsyncOpenAI]
+    ] = create_openai_provider,
+) -> tuple[EmbeddingFunc[str, NumpyArray], EmbeddingFunc[str, NumpyArray]]:
+    """The embedding model *cfg* configures, of documents and of queries.
 
     Both share one model, so a local model loads its weights once, on the
-    first batch.
+    first batch.  A remote one borrows the provider of its endpoint from
+    *providers*, which *create_provider* connects.
     """
-    cfg = settings.embedding
-
     if isinstance(cfg, RemoteEmbeddingSettings):
         model = OpenAIEmbeddingModel(
-            cfg.model,
-            provider=create_openai_provider(settings.llm.providers[cfg.endpoint]),
+            cfg.model, provider=create_provider(providers[cfg.endpoint])
         )
         documents: EmbeddingFunc[str, NumpyArray] = PydanticAI(
             Embedder(model),
@@ -203,7 +217,7 @@ def _build_index() -> _Index:
     """Wire up the index.  Its table is Alembic's, so the storage creates nothing."""
     from .db.engine import get_engine
 
-    embed, embed_query = _embedders()
+    embed, embed_query = _embedders(settings.embedding, settings.llm.providers)
 
     return _Index(
         embed=embed,
@@ -219,7 +233,7 @@ def _build_index() -> _Index:
             tsvector_config=settings.embedding.text_search_config,
             scope=Unscoped.TABLE,
         ),
-        reranker=_reranker(),
+        reranker=_reranker(settings.rerank, settings.llm.providers),
     )
 
 
@@ -243,21 +257,33 @@ async def warm_index() -> None:
     lifespan so the models are resident before any request lands.  A remote
     model is not called, so an unreachable endpoint does not fail the boot.
     """
-    index = await _INDEX.get()
+    await _warm_up(await _INDEX.get(), settings.embedding, settings.rerank)
 
+
+async def _warm_up(
+    index: _Index,
+    embedding: LocalEmbeddingSettings | RemoteEmbeddingSettings,
+    rerank: LocalRerankSettings | RemoteRerankSettings | None,
+) -> None:
+    """Call the models of *index* that *embedding* and *rerank* run locally."""
     warm_ups: list[Awaitable[object]] = []
 
-    if isinstance(settings.embedding, LocalEmbeddingSettings):
+    if isinstance(embedding, LocalEmbeddingSettings):
         warm_ups.append(index.embed(["warm-up"]))
 
-    if index.reranker is not None and isinstance(settings.rerank, LocalRerankSettings):
+    if index.reranker is not None and isinstance(rerank, LocalRerankSettings):
         warm_ups.append(index.reranker.model("warm-up", ["warm-up"]))
 
     _ = await asyncio.gather(*warm_ups)
 
 
-async def index_document(document_id: UUID, chunks: Sequence[ingest.Chunk]) -> None:
-    """Atomically replace *document_id*'s chunk rows with *chunks*.
+async def index_document(
+    document_id: UUID,
+    chunks: Sequence[ingest.Chunk],
+    *,
+    storage: Pgvector[UUID, Chunk] | None = None,
+) -> None:
+    """Atomically replace *document_id*'s chunk rows with *chunks* in *storage*, the index's by default.
 
     Each chunk is passed to cbrkit as a :class:`Chunk` row keyed by its
     generated id, cbrkit derives the ``embedding`` from the row's ``text``
@@ -266,7 +292,7 @@ async def index_document(document_id: UUID, chunks: Sequence[ingest.Chunk]) -> N
 
     Empty *chunks* just deletes any existing rows for the document.
     """
-    storage = await _indexer()
+    storage = storage or await _indexer()
     where = Chunk.document_id == document_id
 
     if not chunks:
@@ -327,6 +353,7 @@ def chunk_memory(
     query_embedder: EmbeddingFunc[str, NumpyArray] | None = None,
     reranker: AsyncCbrFunc[UUID, str, float] | None = None,
     candidate_multiplier: int = 1,
+    retriever: Callable[..., AsyncCbrFunc[UUID, str, float]] = PgvectorRetriever,
 ) -> GatedMemory[UUID, Chunk]:
     """The chunks of *storage*, its scope included, as an `exar.typing.Memory` of chunk rows by chunk id.
 
@@ -343,12 +370,13 @@ def chunk_memory(
         reranker: Rescores the candidates of a search, none if None.
         candidate_multiplier: How many times the limit of a search the
             reranker rescores.
+        retriever: Builds the retrieval of a search over *storage*.
     """
     return GatedMemory(
         memory=IndexMemory[UUID, Chunk](
             storage=storage,
             retriever=lambda limit: [
-                PgvectorRetriever(
+                retriever(
                     storage=storage,
                     search=search,
                     query_embedder=query_embedder,

@@ -27,49 +27,41 @@ _USER = User(
 )
 
 
-def test_personal_path_resolves_to_user_store() -> None:
-    store, local = resolve_workspace_path(_USER, "~/docs/report.md")
-    assert store == HostGrant().workspace(UserScope("alice"))
-    assert local == "docs/report.md"
+@pytest.mark.parametrize(
+    ("path", "scope", "local"),
+    [
+        ("~/docs/report.md", UserScope("alice"), "docs/report.md"),
+        ("~", UserScope("alice"), ""),
+        ("@team/docs/report.md", GroupScope("team"), "docs/report.md"),
+        ("@team", GroupScope("team"), ""),
+        ("@readers/x.md", GroupScope("readers"), "x.md"),
+    ],
+)
+def test_a_scope_prefix_resolves_to_its_workspace(
+    path: str, scope: UserScope | GroupScope, local: str
+) -> None:
+    assert resolve_workspace_path(_USER, path) == (
+        HostGrant().workspace(scope),
+        local,
+    )
 
 
-def test_personal_scope_root_has_empty_local() -> None:
-    store, local = resolve_workspace_path(_USER, "~")
-    assert store == HostGrant().workspace(UserScope("alice"))
-    assert local == ""
-
-
-def test_bare_path_is_rejected() -> None:
-    # Personal documents must carry the explicit "~" prefix.
+@pytest.mark.parametrize(
+    ("path", "write", "status"),
+    [
+        ("report.md", False, 400),
+        ("@secret/x.md", False, 403),
+        ("@readers/x.md", True, 403),
+        ("/srv/a.md", True, 403),
+    ],
+)
+def test_a_path_without_the_grant_is_refused(
+    path: str, write: bool, status: int
+) -> None:
     with pytest.raises(HTTPException) as exc:
-        resolve_workspace_path(_USER, "report.md")
-    assert exc.value.status_code == 400
+        resolve_workspace_path(_USER, path, write=write)
 
-
-def test_group_path_resolves_to_group_store() -> None:
-    store, local = resolve_workspace_path(_USER, "@team/docs/report.md")
-    assert store == HostGrant().workspace(GroupScope("team"))
-    assert local == "docs/report.md"
-
-
-def test_group_scope_root_without_slash_has_empty_local() -> None:
-    store, local = resolve_workspace_path(_USER, "@team")
-    assert store == HostGrant().workspace(GroupScope("team"))
-    assert local == ""
-
-
-def test_read_only_group_allows_read_but_denies_write() -> None:
-    store, _ = resolve_workspace_path(_USER, "@readers/x.md")
-    assert store == HostGrant().workspace(GroupScope("readers"))
-    with pytest.raises(HTTPException) as exc:
-        resolve_workspace_path(_USER, "@readers/x.md", write=True)
-    assert exc.value.status_code == 403
-
-
-def test_non_member_group_is_forbidden() -> None:
-    with pytest.raises(HTTPException) as exc:
-        resolve_workspace_path(_USER, "@secret/x.md")
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == status
 
 
 def test_workspaces_carry_the_token_grant_in_scope_order() -> None:
@@ -92,14 +84,6 @@ def test_only_an_admin_writes_the_global_workspace() -> None:
         GlobalScope()
     )
     assert resolve_workspace_path(admin, "/srv/a.md", write=True)[0].writable
-
-    with pytest.raises(HTTPException) as exc:
-        resolve_workspace_path(_USER, "/srv/a.md", write=True)
-    assert exc.value.status_code == 403
-
-    # The write path itself refuses the read grant, not only the route.
-    with pytest.raises(AccessDenied):
-        locks.root_lock(Root.of(_USER.workspace("/srv")))
 
 
 def test_a_grant_is_minted_only_by_a_user_or_the_host() -> None:
@@ -142,8 +126,9 @@ def test_locate_refuses_a_symlink_out_of_the_workspace(data_dir: Path) -> None:
 def test_a_read_grant_is_refused_by_every_write_path() -> None:
     readers = _USER.workspace("@readers")
 
-    with pytest.raises(AccessDenied):
-        locks.root_lock(Root.of(readers))
+    for read_only in (readers, _USER.workspace("/srv")):
+        with pytest.raises(AccessDenied):
+            locks.root_lock(Root.of(read_only))
 
     with pytest.raises(AccessDenied):
         db_documents._writable_filter(readers)

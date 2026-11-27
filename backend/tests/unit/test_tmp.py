@@ -2,10 +2,11 @@
 
 import asyncio
 import os
-import time
+import threading
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import ANY
-from uuid import UUID
 
 import pytest
 from exar.tools import Retry
@@ -18,8 +19,6 @@ from hivegent import staging
 from hivegent.agents import invoke_agent_tool
 from hivegent.agents.common import UserDeps
 from hivegent.agents.tools.explore import (
-    grep,
-    jq,
     list_documents,
     query_table,
     read_document,
@@ -36,7 +35,6 @@ from hivegent.tools.base import mounts_of
 from hivegent.tools.changes import (
     ChangeRefused,
     Changeset,
-    ChangesetSummary,
     Delete,
     Move,
     Write,
@@ -44,10 +42,9 @@ from hivegent.tools.changes import (
 from hivegent.tools.changeset import PendingChanges
 from hivegent.tools.python import run_python
 from hivegent.tools.workspace_os import ChangesetLimits
-from hivegent.workspace import Gateway, Location, PlannedChangeset
+from hivegent.workspace import Gateway, Root
 from hivegent.workspace.changeset import apply as changeset_apply
-from hivegent.workspace.changeset import gateway
-from tests.helpers import LIMITS, label_id, owned
+from tests.helpers import LIMITS, FakeIndex, label_id, owned
 
 
 def _gateway(folder: Path) -> Gateway:
@@ -63,9 +60,9 @@ def _gateway(folder: Path) -> Gateway:
         ("c1", "/tmp/escape.py", 404),
     ],
 )
+@pytest.mark.usefixtures("memory_store")
 async def test_the_document_route_reads_an_owned_conversations_tmp(
     data_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
     conversation_id: str,
     filepath: str,
     status: int,
@@ -79,61 +76,39 @@ async def test_the_document_route_reads_an_owned_conversations_tmp(
         tmp_dir(data_dir, owned("c2")) / "report.py"
     )
 
-    async def lookup(user: User, cid: UUID) -> OwnedConversation | None:
-        return owned("c1", user) if user.id == "u" and cid == label_id("c1") else None
+    _ = await claim_conversation(owned("c1"))
+    _ = await claim_conversation(owned("c2", User("other")))
+    read = documents.get_document_content(
+        filepath, User("u"), label_id(conversation_id)
+    )
 
-    monkeypatch.setattr(documents, "owned_conversation", lookup)
-    user = User(id="u")
-
-    if status != 200:
-        with pytest.raises(HTTPException) as exc:
-            await documents.get_document_content(
-                filepath, user, label_id(conversation_id)
-            )
-
-        assert exc.value.status_code == status
+    if status == 200:
+        assert (await read).body == b"print('c1')"
 
         return
 
-    response = await documents.get_document_content(
-        filepath, user, label_id(conversation_id)
-    )
-    assert response.body == b"print('c1')"
+    with pytest.raises(HTTPException) as exc:
+        await read
 
-
-async def test_the_agent_tools_bind_the_mounts_of_the_run(data_dir: Path) -> None:
-    folder = tmp_dir(data_dir, owned("c1"))
-    folder.mkdir(parents=True)
-    (folder / "notes.md").write_text("needle\n")
-    deps = UserDeps(User("u"), "interactive", owned("c1"))
-
-    output = unpack(await invoke_agent_tool("grep", {"pattern": "needle"}, deps))
-
-    assert output.text == "/tmp/notes.md\n1:needle"
+    assert exc.value.status_code == status
 
 
 async def test_the_read_tools_reach_tmp(data_dir: Path) -> None:
     folder = tmp_dir(data_dir, owned("c1"))
     folder.mkdir(parents=True)
     (folder / "notes.md").write_text("needle\n")
-    (folder / "data.json").write_text('{"total": 41}')
     (folder / "rows.csv").write_text("x,y\n1,2\n")
-    paths = UserDeps(User("u"), "interactive", owned("c1")).search_paths()
+    deps = UserDeps(User("u"), "interactive", owned("c1"))
+    mounts = mounts_of(deps.search_paths())
 
-    read = await read_document(mounts_of(paths))([DocumentRead("/tmp/notes.md")])
-    found = await grep(mounts_of(paths))("needle")
-    listing = await list_documents(mounts_of(paths))("/tmp")
-    filtered = await jq(mounts_of(paths))(["/tmp/data.json"], ".total + 1")
-    table = await query_table(mounts_of(paths))(
-        ["/tmp/rows.csv"], ["SELECT x + y AS s FROM t"]
-    )
+    found = unpack(await invoke_agent_tool("grep", {"pattern": "needle"}, deps))
+    read = await read_document(mounts)([DocumentRead("/tmp/notes.md")])
+    listing = await list_documents(mounts)("/tmp")
+    table = await query_table(mounts)(["/tmp/rows.csv"], ["SELECT x + y AS s FROM t"])
 
+    assert found.text == "/tmp/notes.md\n1:needle"
     assert "needle" in read.return_value
-    assert "/tmp/notes.md" in found.return_value
-    assert all(
-        f"/tmp/{name}" in listing.return_value for name in ("data.json", "rows.csv")
-    )
-    assert "42" in filtered.return_value
+    assert "/tmp/rows.csv" in listing.return_value
     assert "3" in table.return_value
 
 
@@ -159,19 +134,40 @@ async def test_a_write_past_the_quota_is_refused_unless_it_frees_room(
 async def test_concurrent_spills_check_and_write_under_one_lock(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The first write is held until both spills reached the lock, so only the lock keeps the second from passing the quota check beside it."""
     monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
     folder = tmp_dir(data_dir, owned("c1"))
     write = changeset_apply._write_workspace_file
+    locked = changeset_apply._locked
+    arrived: list[Root] = []
+    both = asyncio.Event()
+    released = threading.Event()
 
-    def slow_write(staging: Path, name: str, data: bytes) -> Path:
-        time.sleep(0.02)
+    @asynccontextmanager
+    async def watched(*roots: Root) -> AsyncGenerator[None]:
+        arrived.extend(roots)
 
-        return write(staging, name, data)
+        if len(arrived) == 2:
+            both.set()
 
-    monkeypatch.setattr(changeset_apply, "_write_workspace_file", slow_write)
-    _ = await asyncio.gather(
+        async with locked(*roots):
+            yield
+
+    def held_write(
+        staging: Path, name: str, data: bytes, *, sync_folder: bool = True
+    ) -> Path:
+        _ = released.wait()
+
+        return write(staging, name, data, sync_folder=sync_folder)
+
+    monkeypatch.setattr(changeset_apply, "_locked", watched)
+    monkeypatch.setattr(changeset_apply, "_write_workspace_file", held_write)
+    spills = asyncio.gather(
         *(save_result(folder, f"result-{index}.txt", "x" * 4_000) for index in range(2))
     )
+    _ = await both.wait()
+    released.set()
+    _ = await spills
 
     files = [path for path in folder.rglob("*") if path.is_file()]
     assert len(files) == 1
@@ -276,18 +272,9 @@ async def test_a_program_renames_within_tmp_without_rewriting(data_dir: Path) ->
 
 
 async def test_a_program_stages_its_tmp_changes_with_the_workspace_s(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    data_dir: Path, index: FakeIndex
 ) -> None:
-    planned: list[Changeset[Location]] = []
-
-    async def plan(
-        changeset: Changeset[Location], **_options: object
-    ) -> PlannedChangeset:
-        planned.append(changeset)
-
-        return PlannedChangeset(changeset, ChangesetSummary())
-
-    monkeypatch.setattr(gateway, "plan_changeset", plan)
+    _ = index
     deps = UserDeps(User("u"), "interactive", owned("c1"))
     folder = tmp_dir(data_dir, owned("c1"))
     folder.mkdir(parents=True)
@@ -323,17 +310,23 @@ async def test_a_program_stages_its_tmp_changes_with_the_workspace_s(
             Write("/tmp/state.json", "2", "replace", ANY),
         )
     )
-    assert len(planned) == 1
     assert not (deps.user.home.path / "report.md").exists()
 
 
-def _age(*paths: Path, touched: float) -> None:
+NOW = 2_000_000_000.0
+"""The instant every sweep runs at, so a file is idle by its mtime alone."""
+
+STALE = NOW - settings.conversations.ttl_hours * 3600 - 60
+
+
+def _touch(*paths: Path, at: float) -> None:
     for path in paths:
-        os.utime(path, (touched, touched))
+        os.utime(path, (at, at), follow_symlinks=False)
 
 
-def _stale() -> float:
-    return time.time() - settings.conversations.ttl_hours * 3600 - 60
+def _idle(folder: Path) -> None:
+    """Age everything of *folder* past the sweep's ttl."""
+    _touch(*folder.rglob("*"), folder, at=STALE)
 
 
 @pytest.mark.usefixtures("memory_store")
@@ -348,14 +341,13 @@ async def test_the_sweep_removes_a_folder_only_once_all_of_it_is_idle(
         folder.mkdir(parents=True)
         (folder / "state.json").write_text("{}")
         _ = await staging.stage(owned(name), Changeset(()))
-        whole = owned(name).folder(data_dir)
-        _age(*whole.rglob("*"), whole, touched=_stale())
+        _idle(owned(name).folder(data_dir))
 
-    os.utime(tmp_dir(data_dir, owned("fresh-tmp")) / "state.json")
     changesets = owned("fresh-changeset").folder(data_dir) / staging.CHANGESETS_FOLDER
-    os.utime(next(changesets.iterdir()))
+    _touch(tmp_dir(data_dir, owned("fresh-tmp")) / "state.json", at=NOW)
+    _touch(next(changesets.iterdir()), at=NOW)
 
-    assert await sweep_conversations() == 1
+    assert await sweep_conversations(NOW) == 1
     assert sorted(path.name for path in root.iterdir()) == sorted(
         str(label_id(name)) for name in ("fresh-changeset", "fresh-tmp")
     )
@@ -369,11 +361,10 @@ async def test_each_user_has_their_own_folder_and_the_sweep_drops_an_empty_one(
     alice, bob = owned("c1", User("alice")), owned("c1", User("bob"))
     assert alice.folder(data_dir) != bob.folder(data_dir)
 
-    folder = tmp_dir(data_dir, alice)
-    folder.mkdir(parents=True)
-    _age(folder, folder.parent, touched=_stale())
+    tmp_dir(data_dir, alice).mkdir(parents=True)
+    _idle(alice.folder(data_dir))
 
-    assert await sweep_conversations() == 1
+    assert await sweep_conversations(NOW) == 1
     assert not OwnedConversation.user_root(data_dir, alice.owner).exists()
 
 
@@ -388,12 +379,33 @@ async def test_the_sweep_keeps_the_staged_changesets_of_an_existing_conversation
     tmp.mkdir(parents=True)
     (tmp / "state.json").write_text("{}")
     changeset_id = await staging.stage(conversation, Changeset(()))
-    folder = conversation.folder(data_dir)
-    _age(*folder.rglob("*"), folder, touched=_stale())
+    _idle(conversation.folder(data_dir))
 
-    assert await sweep_conversations() == 1
+    assert await sweep_conversations(NOW) == 1
     assert not tmp.exists()
     assert await staging.load_staged(conversation, changeset_id) == Changeset(())
+
+
+@pytest.mark.usefixtures("memory_store")
+async def test_the_sweep_keeps_a_folder_written_while_it_waits_on_the_lock(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_dir(data_dir, owned("c1"))
+    folder.mkdir(parents=True)
+    _idle(folder.parent)
+
+    class WriteFirst(asyncio.Lock):
+        async def __aenter__(self) -> None:
+            (folder / "active.txt").write_text("working")
+            _touch(folder / "active.txt", at=NOW)
+            await super().__aenter__()
+
+    monkeypatch.setattr(
+        "hivegent.conversation_files.root_lock", lambda _root: WriteFirst()
+    )
+
+    assert await sweep_conversations(NOW) == 0
+    assert (folder / "active.txt").read_text() == "working"
 
 
 async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:
@@ -403,27 +415,6 @@ async def test_a_reset_drops_every_conversation_folder(data_dir: Path) -> None:
     await reset_conversation_files()
 
     assert not (data_dir / "conversations").exists()
-
-
-@pytest.mark.usefixtures("memory_store")
-async def test_the_sweep_keeps_a_folder_written_while_it_waits_on_the_lock(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    folder = tmp_dir(data_dir, owned("c1"))
-    folder.mkdir(parents=True)
-    _age(folder.parent, folder, touched=_stale())
-
-    class WriteFirst(asyncio.Lock):
-        async def __aenter__(self) -> None:
-            (folder / "active.txt").write_text("working")
-            await super().__aenter__()
-
-    monkeypatch.setattr(
-        "hivegent.conversation_files.root_lock", lambda _root: WriteFirst()
-    )
-
-    assert await sweep_conversations() == 0
-    assert (folder / "active.txt").read_text() == "working"
 
 
 @pytest.mark.parametrize(("directory", "status"), [(False, 404), (True, 400)])

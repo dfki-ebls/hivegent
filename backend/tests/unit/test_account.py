@@ -2,7 +2,6 @@
 
 from contextlib import nullcontext
 from pathlib import Path
-from uuid import UUID
 from zipfile import ZipFile
 
 import pytest
@@ -10,22 +9,22 @@ from exar.typing import Changes, Update
 from fastapi import HTTPException
 
 from hivegent import conversation_files
+from hivegent.config import settings
 from hivegent.db import memory
 from hivegent.db.conversations import OwnedConversation
 from hivegent.delegations import TASKS_FOLDER
-from hivegent.server import export
-from hivegent.server.export import ExportPart, build_export
+from hivegent.server.export import ExportPart, ExportSources, build_export
 from hivegent.server.routes import account
 from hivegent.server.routes.conversations import history
 from hivegent.skills import library
 from hivegent.store import User, UserScope
-from hivegent.tmp import tmp_dir
+from hivegent.tmp import clear_tmp, tmp_dir
 from hivegent.types import ConversationArchive, MemoryPage
-from tests.helpers import label_id, owned
+from tests.helpers import ConversationRows, label_id, owned
 
 
 async def test_tmp_folders_go_by_the_conversation_ids_the_database_names(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    data_dir: Path, conversation_rows: ConversationRows
 ) -> None:
     """One conversation, clearing temporary files, and every one of them, folders before rows."""
     user = User(id="owner")
@@ -35,81 +34,54 @@ async def test_tmp_folders_go_by_the_conversation_ids_the_database_names(
         folder.mkdir(parents=True)
         (folder / "state.json").write_text("{}")
 
-    removed: list[UUID | str] = []
-
-    async def remove_row(conversation: OwnedConversation) -> bool:
-        assert not folders["c1"].exists()
-        removed.append(conversation.id)
-
-        return True
-
-    async def remove_rows(owner: User) -> None:
-        assert not any(folder.exists() for folder in folders.values())
-        removed.append(owner.id)
-
-    async def remaining(owner: User) -> list[OwnedConversation]:
-        return [owned("c2", owner), owned("never-ran", owner)]
-
-    monkeypatch.setattr(conversation_files, "remove_conversation", remove_row)
-    monkeypatch.setattr(conversation_files, "remove_owned_conversations", remove_rows)
-    monkeypatch.setattr(account, "owned_conversations", remaining)
-
     await history.delete_conversation(owned("c1", user))
     assert [cid for cid, folder in folders.items() if folder.exists()] == ["c2", "c3"]
 
-    assert (await account.delete_tmp(user)).files_removed == 1
+    # A conversation that never ran has no folder to count.
+    cleared = await clear_tmp([owned("c2", user), owned("never-ran", user)])
+    assert cleared == 1
     assert [cid for cid, folder in folders.items() if folder.exists()] == ["c3"]
 
     await history.delete_all_conversations_route(user)
     assert not any(folder.exists() for folder in folders.values())
-    assert removed == [label_id("c1"), "owner"]
+    assert conversation_rows.removed == [(str(label_id("c1")), False), ("owner", False)]
 
 
 async def test_a_folder_that_fails_to_go_keeps_its_row(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, conversation_rows: ConversationRows
 ) -> None:
     """So no later claim of the freed id reaches what the folder held."""
 
     def fail(_path: object) -> None:
         raise OSError
 
-    async def remove_row(_owned: object) -> bool:
-        pytest.fail("the row went before its folder")
-
     monkeypatch.setattr(conversation_files, "remove_path", fail)
-    monkeypatch.setattr(conversation_files, "remove_conversation", remove_row)
 
     with pytest.raises(OSError):
         await conversation_files.delete_conversation(owned("c1"))
 
+    assert conversation_rows.removed == []
+
 
 @pytest.mark.parametrize("stored", [False, True])
 async def test_a_replaced_conversation_keeps_its_folder_until_stored(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch, stored: bool
+    data_dir: Path, conversation_rows: ConversationRows, stored: bool
 ) -> None:
     """A failed import leaves the conversation whole, its files included."""
     folder = tmp_dir(data_dir, owned("c1"))
     folder.mkdir(parents=True)
 
-    async def import_conversation(*_args: object, **_kwargs: object) -> object:
-        assert folder.exists()
-
-        if not stored:
-            raise ValueError
-
-        return object()
-
-    monkeypatch.setattr(conversation_files, "import_conversation", import_conversation)
+    if not stored:
+        conversation_rows.import_error = ValueError()
 
     with nullcontext() if stored else pytest.raises(ValueError):
         await conversation_files.replace_conversation(owned("c1"), [])
 
+    assert conversation_rows.imported == [True]
     assert folder.exists() != stored
 
 
-async def test_the_export_holds_the_parts_asked_for(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_the_export_holds_the_parts_asked_for(data_dir: Path) -> None:
     """Each part on its own or all at once, without partial writes or symlinks."""
     user = User(id="owner")
     scope = UserScope(user.id)
@@ -140,13 +112,13 @@ async def test_the_export_holds_the_parts_asked_for(
     async def preferences(_owner: str) -> dict[str, str]:
         return {}
 
-    monkeypatch.setattr(export, "owned_conversations", conversations)
-    monkeypatch.setattr(export, "conversation_archive", archive)
-    monkeypatch.setattr(export, "load_memory", memory)
-    monkeypatch.setattr(export, "load_preferences", preferences)
+    sources = ExportSources(conversations, archive, memory, preferences)
 
     async def names(parts: frozenset[ExportPart]) -> list[str]:
-        with await build_export(user, parts) as spool, ZipFile(spool) as zipped:
+        with (
+            await build_export(user, parts, sources) as spool,
+            ZipFile(spool) as zipped,
+        ):
             return zipped.namelist()
 
     cid = conversation.id
@@ -165,9 +137,11 @@ async def test_the_export_holds_the_parts_asked_for(
 async def test_the_user_edits_their_memory_and_an_empty_page_clears_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The user writes their memory page whole, and shortens one over a lowered limit."""
+    """The user writes their memory page whole, and shortens one over the limit."""
     user = User(id="owner")
-    stored = "An oversized page."
+    limit = settings.limits.max_memory_chars
+    stored = "x" * (limit + 10)
+    shorter = "y" * (limit + 5)
     written: list[Changes[str, str]] = []
     cleared: list[User] = []
 
@@ -186,13 +160,12 @@ async def test_the_user_edits_their_memory_and_an_empty_page_clears_it(
     monkeypatch.setattr(memory, "user_memory", lambda _owner: Page())
     monkeypatch.setattr(memory, "clear_memory", clear)
     monkeypatch.setattr(account, "load_memory", load)
-    monkeypatch.setattr(account.settings.limits, "max_memory_chars", 5)
 
     assert (await account.get_memory(user)).content == stored
-    page = MemoryPage(content="Prefers metric.")
+    page = MemoryPage(content=shorter)
     assert await account.put_memory(page, user) == page
     assert [item.value for item in written[0].items if isinstance(item, Update)] == [
-        "Prefers metric."
+        shorter
     ]
 
     with pytest.raises(HTTPException):

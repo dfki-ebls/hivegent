@@ -54,25 +54,37 @@ async def test_a_large_still_is_downscaled() -> None:
     )
 
 
-@pytest.mark.parametrize("media_type", ["application/pdf", "image/svg+xml"])
-async def test_non_ingestible_type_is_rejected(media_type: str) -> None:
-    """A document, and an image no vision backend ingests, are both refused."""
+def _png() -> BinaryContent:
+    return BinaryContent(data=png_bytes(), media_type="image/png")
+
+
+@pytest.mark.parametrize(
+    ("content", "llm", "detail"),
+    [
+        (BinaryContent(b"x", media_type="application/pdf"), _SEEING, "workspace"),
+        (BinaryContent(b"x", media_type="image/svg+xml"), _SEEING, "workspace"),
+        (_png(), LlmConfig(model="m"), "does not accept images"),
+    ],
+    ids=["document", "image-no-backend-ingests", "model-without-vision"],
+)
+async def test_an_attachment_the_model_cannot_take_is_rejected(
+    content: BinaryContent, llm: LlmConfig, detail: str
+) -> None:
+    """Only ingestible images are taken, and only by a model whose catalog entry says `vision`, not by the composer hiding its button."""
     with pytest.raises(HTTPException) as exc:
-        await accept_attachments(
-            _request(BinaryContent(data=b"x", media_type=media_type)), llm=_SEEING
-        )
+        await accept_attachments(_request(content), llm=llm)
 
     assert exc.value.status_code == 400
-    assert "workspace" in str(exc.value.detail)
+    assert detail in str(exc.value.detail)
 
 
-async def test_oversized_image_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_oversized_image_is_rejected() -> None:
     """The cap is checked before the bytes are parsed as an image."""
-    monkeypatch.setattr(settings.limits, "max_attachment_bytes", 16)
+    oversized = b"x" * (settings.limits.max_attachment_bytes + 1)
 
     with pytest.raises(HTTPException) as exc:
         await accept_attachments(
-            _request(BinaryContent(data=b"x" * 32, media_type="image/png")),
+            _request(BinaryContent(data=oversized, media_type="image/png")),
             llm=_SEEING,
         )
 
@@ -80,37 +92,13 @@ async def test_oversized_image_is_rejected(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 async def test_more_images_than_the_gateway_takes_are_rejected() -> None:
-    """The count is the model's gateway cap, refused here rather than mid-stream.
-
-    A request over the per-request image cap is rejected whole by the serving
-    gateway, so the turn would fail once it was already running.
-    """
+    """The count is the gateway's cap, refused here rather than once the turn is running."""
     capped = LlmConfig(model="m", vision=True, max_images=1)
-    png = png_bytes()
 
-    await accept_attachments(
-        _request(BinaryContent(data=png, media_type="image/png")), llm=capped
-    )
+    await accept_attachments(_request(_png()), llm=capped)
 
     with pytest.raises(HTTPException) as exc:
-        await accept_attachments(
-            _request(
-                BinaryContent(data=png, media_type="image/png"),
-                BinaryContent(data=png, media_type="image/png"),
-            ),
-            llm=capped,
-        )
+        await accept_attachments(_request(_png(), _png()), llm=capped)
 
     assert exc.value.status_code == 400
     assert "At most 1 image" in str(exc.value.detail)
-
-
-async def test_a_model_without_vision_takes_no_images() -> None:
-    """The catalog's `vision` flag is the gate, not the composer hiding its button."""
-    with pytest.raises(HTTPException) as exc:
-        await accept_attachments(
-            _request(BinaryContent(data=png_bytes(), media_type="image/png")),
-            llm=LlmConfig(model="m"),
-        )
-
-    assert exc.value.status_code == 400

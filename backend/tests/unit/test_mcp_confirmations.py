@@ -1,6 +1,5 @@
 """Each MCP confirmation runs its call once, across replicas, by its nonce in PostgreSQL."""
 
-import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -38,7 +37,7 @@ async def test_a_nonce_is_spent_once(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(confirmations, "session", session)
     nonces = confirmations.PostgresNonces()
-    expiry = int(time.time()) + 60
+    expiry = 1_800_000_000
 
     assert await nonces.spend("a", expiry) is True
     assert await nonces.spend("a", expiry) is False

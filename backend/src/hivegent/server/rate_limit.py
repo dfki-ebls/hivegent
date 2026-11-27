@@ -14,9 +14,9 @@ its next token is back.
 """
 
 import math
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from time import monotonic
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.params import Depends as DependsParam
@@ -26,7 +26,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ..auth import CurrentPrincipal, user_from_claims
 from ..config import settings
-from ..config.limits import RateLimit, UserRateLimits
+from ..config.limits import RateLimit, RateLimitSettings, UserRateLimits
 from ..shared.l10n import Localized
 from ..store import User
 from .maintenance import check_maintenance
@@ -97,6 +97,8 @@ class Limit:
 
     select: Callable[[UserRateLimits], RateLimit]
     buckets: TokenBuckets = field(default_factory=TokenBuckets)
+    limits: Callable[[], RateLimitSettings] = lambda: settings.rate_limits
+    clock: Callable[[], float] = monotonic
 
     def spend(self, user: User) -> None:
         """Spend one of *user*'s tokens.
@@ -104,10 +106,10 @@ class Limit:
         Raises:
             HTTPException: 429 with ``Retry-After`` while the bucket is empty.
         """
-        limits = settings.rate_limits.teams if user.is_service else settings.rate_limits
-        limit = self.select(limits)
+        limits = self.limits()
+        limit = self.select(limits.teams if user.is_service else limits)
 
-        if wait := self.buckets.take(user.id, limit, time.monotonic()):
+        if wait := self.buckets.take(user.id, limit, self.clock()):
             seconds = math.ceil(wait)
             raise HTTPException(
                 status.HTTP_429_TOO_MANY_REQUESTS,
@@ -161,16 +163,18 @@ class McpAdmission:
 
     It runs behind FastMCP's authentication, so a request without a valid
     token passes on to be refused there, and *principal* names the caller of
-    one that has, ``None`` to read it from the token.
+    one that has, ``None`` to read it from the token.  *admission* refuses a
+    request the way :func:`admit` does.
     """
 
     app: ASGIApp
     principal: Callable[[], Awaitable[User]] | None = None
+    admission: Callable[[User], None] = admit
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and (user := await self._user(scope)) is not None:
             try:
-                admit(user)
+                self.admission(user)
             except StarletteHTTPException as exc:
                 response = await handle_problem(Request(scope), exc)
                 await response(scope, receive, send)

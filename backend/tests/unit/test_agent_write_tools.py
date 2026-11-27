@@ -1,13 +1,9 @@
 """Unit tests for the roots the agent's write tools reach and how each commits.
 
-The write tools search the personal workspace, the groups the user may write
-to, and ``/tmp``.  Each accepted path is routed back to the root that claimed
-it: a workspace's through the changeset gateway and its approval, ``/tmp``'s
-straight into the conversation's folder.
+A workspace's changes go through the changeset gateway and its approval, ``/tmp``'s straight into the conversation's folder.
 """
 
-import time
-from collections.abc import Sequence
+import math
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -36,29 +32,24 @@ from hivegent.agents.tools.write import (
     write_toolset,
 )
 from hivegent.config import settings
-from hivegent.db import documents as db_documents
 from hivegent.store import GlobalScope, GroupScope, User, UserScope
 from hivegent.tmp import tmp_dir
 from hivegent.tools.base import Direct, ToolFunc
 from hivegent.tools.changes import (
     ChangeReason,
-    ChangeRefused,
     Changeset,
     ChangesetSummary,
     FileDiff,
     Move,
     PathMove,
     TextEdit,
-    WorkspaceChanged,
     Write,
 )
 from hivegent.tools.changeset import AppliedChanges, PendingChanges
+from hivegent.tools.entries import ContentStat
 from hivegent.tools.mutations import DocumentMove
 from hivegent.types import DocumentFilter
-from hivegent.workspace import Location, PlannedChangeset
-from hivegent.workspace.changeset import gateway
-from hivegent.workspace.operations import Item, locations
-from tests.helpers import doc, owned, run_context
+from tests.helpers import FakeIndex, doc, owned, run_context
 
 
 def _tool(deps: UserDeps, name: str) -> ToolFunc:
@@ -72,9 +63,9 @@ def _tool(deps: UserDeps, name: str) -> ToolFunc:
 
 
 @pytest.fixture()
-def deps(data_dir: Path) -> UserDeps:
-    """Deps with one writable and one read-only group."""
-    _ = data_dir
+def deps(data_dir: Path, index: FakeIndex) -> UserDeps:
+    """Deps with one writable and one read-only group, over the in-memory index."""
+    _ = data_dir, index
     user = User(
         "u", read_groups=frozenset({"archive"}), write_groups=frozenset({"team"})
     )
@@ -82,51 +73,23 @@ def deps(data_dir: Path) -> UserDeps:
     return UserDeps(user=user, mode="interactive", conversation=owned("c1", user))
 
 
-@pytest.fixture()
-def routed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    """Record the ``(store_key, local_path)`` each workspace changeset is routed to.
-
-    A changeset reaching ``/tmp`` is applied for real.
-    """
-    calls: list[tuple[str, str]] = []
-    apply = gateway.apply_changeset
-
-    async def _apply(
-        items: Sequence[Item],
-        *,
-        host: bool = False,
-    ) -> gateway.AppliedChangeset:
-        if any(loc.root.store is None for loc in locations(items)):
-            return await apply(items, host=host)
-
-        calls.extend((loc.root.store_key, loc.path) for loc in locations(items))
-
-        return gateway.AppliedChangeset(
-            tuple("written" for _ in items), WorkspaceChanged(("~",))
-        )
-
-    monkeypatch.setattr(gateway, "apply_changeset", _apply)
-
-    return calls
-
-
 async def test_writes_to_the_addressed_workspace(
-    deps: UserDeps, routed: list[tuple[str, str]]
+    deps: UserDeps, index: FakeIndex
 ) -> None:
     tool = _tool(deps, "write_document")
 
-    assert (await tool("@team/notes/a.md", "hi")).metadata == "written"
-    assert (await tool("~/notes/a.md", "hi")).metadata == "written"
-    assert (await tool("notes/b.md", "hi")).metadata == "written"
-    assert routed == [
-        ("group:team", "notes/a.md"),
-        ("user:u", "notes/a.md"),
-        ("user:u", "notes/b.md"),
+    for path in ("@team/notes/a.md", "~/notes/a.md", "notes/b.md"):
+        _ = await tool(path, "hi")
+
+    assert sorted(index.rows) == [
+        ("group:team", "notes/a"),
+        ("user:u", "notes/a"),
+        ("user:u", "notes/b"),
     ]
 
 
 async def test_tmp_is_written_directly_and_a_program_there_is_pointed_at_run_python(
-    deps: UserDeps, routed: list[tuple[str, str]]
+    deps: UserDeps, index: FakeIndex
 ) -> None:
     """A `/tmp` `.py` is written to be run, so the receipt says how, edit included."""
     folder = tmp_dir(settings.data_dir, owned("c1"))
@@ -166,7 +129,7 @@ async def test_tmp_is_written_directly_and_a_program_there_is_pointed_at_run_pyt
             [DocumentMove("/tmp/report.py", "~/report.py")]
         )
 
-    assert routed == []
+    assert index.rows == {}
 
 
 async def test_tmp_refuses_what_would_outgrow_it(
@@ -184,30 +147,21 @@ async def test_tmp_refuses_what_would_outgrow_it(
     _ = await tool("/tmp/b.txt", "34")
 
 
-async def test_unknown_root_is_refused_with_the_roots_named(
-    deps: UserDeps, routed: list[tuple[str, str]]
+@pytest.mark.parametrize(
+    ("path", "message"),
+    [
+        ("@nope/a.md", r"addresses ~, @team, /tmp; give the full path"),
+        ("@archive/notes/a.md", "not accessible"),
+    ],
+)
+async def test_an_unknown_or_read_only_root_is_refused(
+    deps: UserDeps, index: FakeIndex, path: str, message: str
 ) -> None:
     """A sigil-led path is never read as relative, so it cannot land under ``~``."""
-    tool = _tool(deps, "write_document")
+    with pytest.raises(Retry, match=message):
+        await _tool(deps, "write_document")(path, "hi")
 
-    with pytest.raises(
-        Retry,
-        match=r"addresses ~, @team, /tmp; give the full path",
-    ):
-        await tool("@nope/a.md", "hi")
-
-    assert routed == []
-
-
-async def test_refuses_a_group_the_user_may_only_read(
-    deps: UserDeps, routed: list[tuple[str, str]]
-) -> None:
-    tool = _tool(deps, "write_document")
-
-    with pytest.raises(Retry, match="not accessible"):
-        await tool("@archive/notes/a.md", "hi")
-
-    assert routed == []
+    assert index.rows == {}
 
 
 def test_run_python_paths_end_with_the_conversation_s_tmp(
@@ -283,39 +237,32 @@ def _context(
         ({"code": None, "script_path": None}, "program is empty"),
         ({"code": "  ", "script_path": "\n"}, "program is empty"),
         ({"code": "1", "script_path": "/tmp/run.py"}, "both given"),
+        ({"code": "1 + 1"}, None),
+        ({"script_path": "/tmp/run.py"}, None),
+        ({"code": "", "script_path": "/tmp/run.py"}, None),
+        ({"code": "1 + 1", "script_path": " "}, None),
     ],
 )
-async def test_invalid_program_is_refused_before_it_runs(
-    deps: UserDeps, arguments: dict[str, str | None], message: str
+async def test_a_program_is_refused_only_when_empty_or_ambiguous(
+    deps: UserDeps, arguments: dict[str, str | None], message: str | None
 ) -> None:
+    """What a valid program changes is approved afterwards, through apply_changes."""
     tool = python_tools.python_toolset.build(probe_context()).tools["run_python"]
     validated = tool.function_schema.validator.validate_python(arguments)
     assert getattr(tool.args_validator, "__wrapped__", None) is (
         python_tools.validate_run_python
     )
+    validate = python_tools.validate_run_python(
+        _context(deps, "interactive"), **validated
+    )
+
+    if message is None:
+        await validate
+
+        return
 
     with pytest.raises(Retry, match=message):
-        await python_tools.validate_run_python(
-            _context(deps, "interactive"), **validated
-        )
-
-
-@pytest.mark.parametrize(
-    ("code", "script_path"),
-    [
-        ("1 + 1", None),
-        (None, "/tmp/run.py"),
-        ("", "/tmp/run.py"),
-        ("1 + 1", " "),
-    ],
-)
-async def test_a_program_runs_without_asking(
-    deps: UserDeps, code: str | None, script_path: str | None
-) -> None:
-    """What a program changes is approved afterwards, through apply_changes."""
-    await python_tools.validate_run_python(
-        _context(deps, "interactive"), code=code, script_path=script_path
-    )
+        await validate
 
 
 async def test_tmp_writes_skip_approval(deps: UserDeps) -> None:
@@ -405,17 +352,8 @@ def test_write_tools_gate_every_call_rather_than_the_tool() -> None:
 
 
 @pytest.fixture()
-def documents(deps: UserDeps, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Two documents in the personal workspace, with every row lookup stubbed."""
-
-    async def _no_metadata(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    async def _no_rows(*_args: object, **_kwargs: object) -> dict[object, object]:
-        return {}
-
-    monkeypatch.setattr(db_documents, "get_entry_metadata", _no_metadata)
-    monkeypatch.setattr(db_documents, "get_entries_metadata", _no_rows)
+def documents(deps: UserDeps) -> Path:
+    """Two documents in the personal workspace."""
     workspace_dir = deps.user.home.workspace_dir()
     (workspace_dir / "a.md").write_text("a")
     (workspace_dir / "b.md").write_text("b")
@@ -447,18 +385,11 @@ async def test_a_batch_of_moves_is_one_approval_of_the_planner_s_summary(
             "replaces": False,
         }
 
-    assert _asked(exc) == {
-        "creates": [],
-        "updates": [],
-        "moves": [
-            move("~/a.md", "~/notes/a.md"),
-            move("~/b.md", "@team/b.md"),
-            move("~/old", "~/archive", is_dir=True),
-        ],
-        "deletes": [],
-        "mkdirs": [],
-        "reasons": [],
-    }
+    assert _asked(exc)["moves"] == [
+        move("~/a.md", "~/notes/a.md"),
+        move("~/b.md", "@team/b.md"),
+        move("~/old", "~/archive", is_dir=True),
+    ]
 
 
 async def test_a_move_into_a_group_workspace_asks_only_in_interactive_mode(
@@ -495,42 +426,36 @@ async def test_a_batch_of_deletions_is_one_approval(
 
 _STAGED = Changeset((Move("~/a.md", "~/notes/a.md"), Write("~/notes/a.md", "A")))
 _SUMMARY = ChangesetSummary(
-    updates=(FileDiff("~/notes/a.md", "-a\n+A\n"),),
+    updates=(
+        FileDiff(
+            "~/notes/a.md",
+            "--- ~/notes/a.md\n+++ ~/notes/a.md\n@@ -1 +1 @@\n-a\n"
+            "\\ No newline at end of file\n+A\n\\ No newline at end of file\n",
+        ),
+    ),
     moves=(PathMove("~/a.md", "~/notes/a.md"),),
 )
 
 
-@pytest.fixture()
-def planned(monkeypatch: pytest.MonkeyPatch) -> list[Changeset[Location]]:
-    """Plan every changeset as valid with :data:`_SUMMARY`, recording each."""
-    calls: list[Changeset[Location]] = []
-
-    async def _plan(
-        changeset: Changeset[Location], **_options: object
-    ) -> PlannedChangeset:
-        calls.append(changeset)
-
-        return PlannedChangeset(changeset, _SUMMARY)
-
-    monkeypatch.setattr(gateway, "plan_changeset", _plan)
-
-    return calls
+def _files(workspace_dir: Path) -> dict[str, str]:
+    return {
+        path.relative_to(workspace_dir).as_posix(): path.read_text()
+        for path in sorted(workspace_dir.rglob("*"))
+        if path.is_file()
+    }
 
 
 async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
-    deps: UserDeps,
-    planned: list[Changeset[Location]],
-    routed: list[tuple[str, str]],
+    deps: UserDeps, documents: Path
 ) -> None:
     folder = tmp_dir(settings.data_dir, owned("c1"))
     with_tmp = Changeset((*_STAGED.operations, Write("/tmp/state.json", "{}")))
 
     staged = await program_writes(deps).commit(with_tmp)
-    applied = await program_writes(replace(deps, mode="write")).commit(_STAGED)
 
     # The `/tmp` half waits with the rest, so it lands whole or not at all.
     assert isinstance(staged, PendingChanges)
-    assert (staged.summary, staged.held) == (_SUMMARY, 1)
+    assert (staged.summary.moves, staged.held) == (_SUMMARY.moves, 1)
     assert (
         await staging.load_staged(owned("c1", deps.user), staged.changeset_id)
         == with_tmp
@@ -539,13 +464,12 @@ async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
         await staging.load_staged(owned("c2", deps.user), staged.changeset_id) is None
     )
     assert not (folder / "state.json").exists()
-    assert applied == AppliedChanges(("written", "written"))
-    assert len(planned) == 1
-    assert routed == [
-        ("user:u", "a.md"),
-        ("user:u", "notes/a.md"),
-        ("user:u", "notes/a.md"),
-    ]
+    assert _files(documents) == {"a.md": "a", "b.md": "b"}
+
+    applied = await program_writes(replace(deps, mode="write")).commit(_STAGED)
+
+    assert isinstance(applied, AppliedChanges) and len(applied.reports) == 2
+    assert _files(documents) == {"notes/a.md": "A", "b.md": "b"}
 
     # A program that changed only `/tmp` has nothing to approve.
     only_tmp = Changeset((Write("/tmp/state.json", "[]"),))
@@ -554,9 +478,7 @@ async def test_a_program_s_changes_are_staged_unless_nobody_need_approve(
 
 
 async def test_apply_changes_asks_once_then_applies_and_forgets(
-    deps: UserDeps,
-    planned: list[Changeset[Location]],
-    routed: list[tuple[str, str]],
+    deps: UserDeps, documents: Path
 ) -> None:
     reason = ChangeReason("remove", 2, "A duplicate of case 1.")
     staged = replace(_STAGED, reasons=(reason,))
@@ -567,33 +489,19 @@ async def test_apply_changes_asks_once_then_applies_and_forgets(
             _context(deps, "interactive"), changeset_id=changeset_id
         )
 
-    assert _asked(exc) == {
-        "creates": [],
-        "updates": [{"path": "~/notes/a.md", "diff": "-a\n+A\n"}],
-        "moves": [
-            {
-                "source": "~/a.md",
-                "destination": "~/notes/a.md",
-                "is_dir": False,
-                "replaces": False,
-            }
-        ],
-        "deletes": [],
-        "mkdirs": [],
-        "reasons": [{"action": "remove", "key": 2, "reason": "A duplicate of case 1."}],
-    }
+    asked = _asked(exc)
+    assert asked["updates"] == [
+        {"path": update.path, "diff": update.diff} for update in _SUMMARY.updates
+    ]
+    assert asked["reasons"] == [
+        {"action": "remove", "key": 2, "reason": "A duplicate of case 1."}
+    ]
 
     approved = _context(deps, "interactive", approved=True)
     await validate_apply_changes(approved, changeset_id=changeset_id)
-    result = await _tool(deps, "apply_changes")(changeset_id)
+    await _tool(deps, "apply_changes")(changeset_id)
 
-    assert result.metadata == "written\nwritten"
-    assert len(planned) == 1
-    assert routed == [
-        ("user:u", "a.md"),
-        ("user:u", "notes/a.md"),
-        ("user:u", "notes/a.md"),
-    ]
+    assert _files(documents) == {"notes/a.md": "A", "b.md": "b"}
 
     with pytest.raises(Retry, match="No staged changeset"):
         await _tool(deps, "apply_changes")(changeset_id)
@@ -618,17 +526,16 @@ async def test_a_staged_changeset_reaches_nothing_the_current_run_hides(
 
 
 async def test_a_stale_changeset_asks_for_a_new_run(
-    deps: UserDeps, monkeypatch: pytest.MonkeyPatch
+    deps: UserDeps, documents: Path
 ) -> None:
-    async def _stale(
-        _changeset: Changeset[Location], **_options: object
-    ) -> PlannedChangeset:
-        raise ChangeRefused(status_code=409, detail="'~/a.md' changed")
+    basis = ContentStat.from_path(documents / "a.md")
+    staged = Changeset((Write("~/a.md", "A", "replace", basis),))
+    changeset_id = await staging.stage(owned("c1", deps.user), staged)
+    (documents / "a.md").write_text("changed meanwhile")
 
-    monkeypatch.setattr(gateway, "plan_changeset", _stale)
-    changeset_id = await staging.stage(owned("c1", deps.user), _STAGED)
-
-    with pytest.raises(ModelRetry, match="changed. Run the program again"):
+    with pytest.raises(
+        ModelRetry, match="changed since it was read.*Run the program again"
+    ):
         await validate_apply_changes(
             _context(deps, "interactive"), changeset_id=changeset_id
         )
@@ -642,19 +549,21 @@ async def test_only_awaited_or_new_changesets_stay_staged(data_dir: Path) -> Non
     pending = DeferredToolRequests(
         approvals=[ToolCallPart("apply_changes", {"changeset_id": awaited}, "call-1")]
     )
-    started = time.time() + 60
 
-    await retain_awaited_changes(mine, pending, started)
+    # A turn that started after everything was staged, then one that started before it.
+    after, before = math.inf, 0.0
+
+    await retain_awaited_changes(mine, pending, after)
 
     assert await staging.load_staged(mine, awaited) == _STAGED
     assert await staging.load_staged(mine, orphan) is None
     assert await staging.load_staged(other, foreign) == _STAGED
 
     fresh = await staging.stage(mine, _STAGED)
-    await retain_awaited_changes(mine, None, started - 120)
+    await retain_awaited_changes(mine, None, before)
 
     assert await staging.load_staged(mine, fresh) == _STAGED
 
-    await retain_awaited_changes(mine, None, started)
+    await retain_awaited_changes(mine, None, after)
 
     assert not (mine.folder(data_dir) / staging.CHANGESETS_FOLDER).exists()

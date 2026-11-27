@@ -9,33 +9,29 @@ import pytest
 from exar.ingest import Offloaded, RecursiveChunker
 
 from hivegent import pipelines
-from hivegent.config import settings
 from hivegent.pipelines import check_pipelines, get_chunker
+from tests.conftest import Configure
 
 
-def test_pipeline_metadata_does_not_load_implementations() -> None:
+def test_pipeline_metadata_and_auto_routing_load_no_implementation() -> None:
+    """The registries stay dependency-free, which only a fresh interpreter can show."""
     code = (
         "import sys\n"
-        "from hivegent.pipelines import chunking_pipelines, conversion_pipelines\n"
+        "from hivegent.pipelines import chunking_pipelines, conversion_pipelines, get_converter\n"
         "chunking_pipelines()\n"
         "conversion_pipelines()\n"
-        "print('chonkie' in sys.modules, 'docling' in sys.modules)\n"
+        "get_converter('auto', 'report.docx')\n"
+        "print([m for m in ('chonkie', 'docling', 'anydoc') if m in sys.modules])\n"
     )
     result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=30,
+        [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True
     )
 
-    assert result.stdout.strip() == "False False"
+    assert result.stdout.strip() == "[]"
 
 
-def test_pipeline_options_come_from_the_operator_alone(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(settings.chunking, "pipelines", {"recursive": {"size": 512}})
+def test_pipeline_options_come_from_the_operator_alone(configure: Configure) -> None:
+    configure(chunking={"pipelines": {"recursive": {"size": 512}}})
     chunker = get_chunker("recursive")
 
     assert isinstance(chunker, Offloaded)
@@ -53,23 +49,23 @@ def test_pipeline_options_come_from_the_operator_alone(
     ],
 )
 def test_the_boot_refuses_options_no_pipeline_takes(
-    monkeypatch: pytest.MonkeyPatch, options: dict[str, dict[str, int]]
+    configure: Configure, options: dict[str, dict[str, int]]
 ) -> None:
     """A misspelled option or pipeline, or options to one without any, stop the boot."""
-    monkeypatch.setattr(settings.chunking, "pipelines", options)
+    configure(chunking={"pipelines": options})
 
     with pytest.raises(ValueError):
         check_pipelines()
 
 
 def test_the_boot_refuses_an_unavailable_pipeline_it_configures(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, configure: Configure
 ) -> None:
     missing = replace(
         pipelines.CHUNKERS["recursive"], dependencies=("hivegent_missing",)
     )
     monkeypatch.setattr(pipelines, "CHUNKERS", {"recursive": missing})
-    monkeypatch.setattr(settings.chunking, "pipelines", {"recursive": {}})
+    configure(chunking={"pipelines": {"recursive": {}}})
 
     with pytest.raises(ValueError, match="not available"):
         check_pipelines()

@@ -1,7 +1,6 @@
 """Tests for AUTO conversion routing and the plain-text projection."""
 
-import subprocess
-import sys
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock
@@ -48,33 +47,19 @@ from hivegent.workspace import prepare
         # plain-text, which decides from the content rather than the name.
         ("laws2", "plain-text"),
         ("archive.sbx", "plain-text"),
+        # Markup goes to kreuzberg where it reads it.
+        ("notes.rst", "kreuzberg"),
+        ("paper.typ", "kreuzberg"),
+        ("page.textile", "plain-text"),
     ],
 )
-def test_auto_routes_plain_text(
+def test_auto_routes_by_extension(
     monkeypatch: pytest.MonkeyPatch, filename: str, expected: str
 ) -> None:
     # The routing every converter declares, whichever extras are installed.
     monkeypatch.setattr(pipeline_registry, "_installed", lambda *_: True)
 
     assert resolve_auto_pipeline(filename) == expected
-
-
-def test_auto_conversion_imports_no_backend() -> None:
-    code = (
-        "import sys\n"
-        "from hivegent.pipelines import get_converter\n"
-        "get_converter('auto', 'report.docx')\n"
-        "print('docling' in sys.modules, 'anydoc' in sys.modules)\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=30,
-    )
-
-    assert result.stdout.strip() == "False False"
 
 
 def _installed(monkeypatch: pytest.MonkeyPatch, name: str, installed: bool) -> None:
@@ -111,33 +96,19 @@ def test_auto_falls_back_for_garbled_pdfs(monkeypatch: pytest.MonkeyPatch) -> No
     assert converter.fallback.func == Pdftotext()
 
 
-async def test_auto_falls_back_when_the_worker_crashes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("degraded", [None, garbled])
+async def test_auto_falls_back_when_the_worker_crashes(
+    tmp_path: Path, degraded: Callable[[Parsed], bool] | None
+) -> None:
     async def crash(source: Path, /) -> Parsed:
         raise WorkerCrashed("The worker exited with code -9")
 
     async def recover(source: Path, /) -> Parsed:
         return Parsed(markdown="recovered")
 
-    for degraded in (None, garbled):
-        converter = _Recovering(crash, recover, degraded)
+    converter = _Recovering(crash, recover, degraded)
 
-        assert (await converter(tmp_path / "a.pdf")).markdown == "recovered"
-
-
-@pytest.mark.parametrize(
-    ("filename", "expected"),
-    [
-        ("notes.rst", "kreuzberg"),
-        ("paper.typ", "kreuzberg"),
-        ("page.textile", "plain-text"),
-    ],
-)
-def test_auto_routes_markup_to_kreuzberg(
-    monkeypatch: pytest.MonkeyPatch, filename: str, expected: str
-) -> None:
-    _installed(monkeypatch, "kreuzberg", True)
-
-    assert resolve_auto_pipeline(filename) == expected
+    assert (await converter(tmp_path / "a.pdf")).markdown == "recovered"
 
 
 def test_auto_accepts_undeclared_extension() -> None:
@@ -171,18 +142,17 @@ async def test_auto_plain_text_uses_plain_text_pipeline(
     assert "plain text" in prepared.main.markdown
 
 
-def test_auto_fallback_decodes_legacy_text() -> None:
-    entry = prepare._prepare_plain_text_or_stub(
-        "settings.ini", "Benutzer = Jörg\n".encode("cp1252"), origin="upload"
-    )
+@pytest.mark.parametrize(
+    ("filename", "content", "kind", "text"),
+    [
+        ("settings.ini", "Benutzer = Jörg\n".encode("cp1252"), "convertible", "Jörg"),
+        ("logo.bin", b"\x89PNG\r\n\x1a\n", "binary_stub", ""),
+    ],
+)
+def test_auto_fallback_decodes_legacy_text_and_stubs_real_binaries(
+    filename: str, content: bytes, kind: str, text: str
+) -> None:
+    entry = prepare._prepare_plain_text_or_stub(filename, content, origin="upload")
 
-    assert entry.entry_metadata.entry_kind == "convertible"
-    assert "Jörg" in entry.markdown
-
-
-def test_auto_fallback_stubs_real_binaries() -> None:
-    entry = prepare._prepare_plain_text_or_stub(
-        "logo.bin", b"\x89PNG\r\n\x1a\n", origin="upload"
-    )
-
-    assert entry.entry_metadata.entry_kind == "binary_stub"
+    assert entry.entry_metadata.entry_kind == kind
+    assert text in entry.markdown

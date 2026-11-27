@@ -1,6 +1,7 @@
 """The title the aux model writes once a new conversation's first turn ended."""
 
 from collections.abc import Sequence
+from functools import partial
 from itertools import islice
 
 import pytest
@@ -32,32 +33,41 @@ _IMAGE = BinaryContent(b"\x89PNG", media_type="image/png")
     ids=["text", "attachment-only"],
 )
 async def test_a_stored_first_turn_is_titled_from_its_prompt_and_answer(
-    monkeypatch: pytest.MonkeyPatch,
     prompt: str | list[BinaryContent],
     claimed: str | None,
     read: list[str],
 ) -> None:
-    written: list[tuple[str, str | None, list[str]]] = []
+    generated: list[list[str]] = []
+    set_calls: list[tuple[str, str | None]] = []
 
     async def generate(messages: Sequence[ModelMessage], _llm: LlmConfig) -> str:
-        texts = list(islice(titles._texts(messages), 4))
-        written.append(("Bee dances", claimed, texts))
+        generated.append(list(islice(titles._texts(messages), 4)))
 
         return "Bee dances"
 
     async def set_title(
         _conversation: OwnedConversation, title: str, *, expected_title: str | None
     ) -> None:
-        assert written[-1][:2] == (title, expected_title)
+        set_calls.append((title, expected_title))
 
-    monkeypatch.setattr(titles, "_generate_title", generate)
-    monkeypatch.setattr(titles, "set_conversation_title", set_title)
     saved = SavedTurn()
     llm = LlmConfig(model="small")
+    title = partial(
+        titles.title_first_turn,
+        owned("c"),
+        saved,
+        llm,
+        claimed,
+        generate=generate,
+        set_title=set_title,
+    )
 
     # Nothing is titled before the turn is stored.
-    await titles.title_first_turn(owned("c"), saved, llm, claimed)
-    saved.messages = [ModelRequest(parts=[UserPromptPart(content=prompt)]), _ANSWER]
-    await titles.title_first_turn(owned("c"), saved, llm, claimed)
+    await title()
+    assert generated == []
 
-    assert written == [("Bee dances", claimed, [*read, "With a waggle dance."])]
+    saved.messages = [ModelRequest(parts=[UserPromptPart(content=prompt)]), _ANSWER]
+    await title()
+
+    assert generated == [[*read, "With a waggle dance."]]
+    assert set_calls == [("Bee dances", claimed)]

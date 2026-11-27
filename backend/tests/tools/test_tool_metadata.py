@@ -1,3 +1,4 @@
+import pytest
 from exar.mcp import Confirmations, server
 from exar.tools.files import GrepContextArg, GrepPatternArg, LsMaxDepthArg, LsPathArg
 from exar.tools.table import TableLimitArg
@@ -45,63 +46,63 @@ async def _mcp_tool(name: str) -> McpTool:
     return tool
 
 
-def test_agent_tool_takes_its_description_and_arguments_from_the_function() -> None:
-    tool = _tool(explore_toolset, "list_documents")
-    schema = tool.function_schema.json_schema
+@pytest.mark.parametrize(
+    ("tools", "name", "arguments"),
+    [
+        (
+            explore_toolset,
+            "list_documents",
+            {"path": LsPathArg, "max_depth": LsMaxDepthArg},
+        ),
+        (explore_toolset, "search", {"search_type": SearchTypeArg}),
+        (explore_toolset, "query_table", {"limit": TableLimitArg}),
+        (
+            python_toolset,
+            "run_python",
+            {"code": CodeArg, "script_path": PythonScriptPathArg},
+        ),
+    ],
+)
+def test_agent_tool_takes_its_arguments_from_the_function(
+    tools: AgentTools, name: str, arguments: dict[str, TypeForm[object]]
+) -> None:
+    schema = _tool(tools, name).function_schema.json_schema["properties"]
 
-    assert tool.description is not None
-    assert tool.description.startswith("List available documents with sizes and dates.")
-    assert schema["properties"]["path"]["description"] == _description(LsPathArg)
-    assert schema["properties"]["max_depth"]["description"] == _description(
-        LsMaxDepthArg
-    )
+    for argument, annotation in arguments.items():
+        assert schema[argument]["description"] == _description(annotation)
 
-
-def test_agent_search_tool_uses_consistent_search_type_name() -> None:
-    schema = _tool(explore_toolset, "search").function_schema.json_schema
-
-    assert "search_type" in schema["properties"]
-    assert "type" not in schema["properties"]
-    assert schema["properties"]["search_type"]["description"] == _description(
-        SearchTypeArg
-    )
-
-
-def test_agent_table_tool_exposes_configurable_limit() -> None:
-    schema = _tool(explore_toolset, "query_table").function_schema.json_schema
-
-    assert schema["properties"]["limit"]["description"] == _description(TableLimitArg)
+    assert "type" not in schema
 
 
 def test_agent_python_tool_describes_monty_constraints() -> None:
     tool = _tool(python_toolset, "run_python")
-    schema = tool.function_schema.json_schema
-    description = tool.description
 
-    assert description is not None
-    assert "Monty interpreter" in description
-    assert "subset of Python and its standard library" in description
-    assert schema["properties"]["code"]["description"] == _description(CodeArg)
-    assert schema["properties"]["script_path"]["description"] == _description(
-        PythonScriptPathArg
-    )
-    assert set(schema["properties"]) == {"code", "script_path", "args"}
+    assert tool.description is not None
+    assert "Monty interpreter" in tool.description
+    assert "subset of Python and its standard library" in tool.description
+    assert set(tool.function_schema.json_schema["properties"]) == {
+        "code",
+        "script_path",
+        "args",
+    }
 
 
-async def test_mcp_tool_reuses_the_agent_tool_description_and_arguments() -> None:
-    tool = await _mcp_tool("grep")
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [("grep", {"pattern": GrepPatternArg, "context": GrepContextArg}), ("jq", {})],
+)
+async def test_mcp_tool_reuses_the_agent_tool_description_and_arguments(
+    name: str, arguments: dict[str, TypeForm[object]]
+) -> None:
+    tool = await _mcp_tool(name)
 
-    assert tool.description == _tool(explore_toolset, "grep").description
-    assert tool.parameters["properties"]["pattern"]["description"] == _description(
-        GrepPatternArg
-    )
-    assert tool.parameters["properties"]["context"]["description"] == _description(
-        GrepContextArg
-    )
+    assert tool.name == name
+    assert tool.description == _tool(explore_toolset, name).description
 
-
-async def test_mcp_exposes_jq_named_by_the_document_reader() -> None:
-    assert (await _mcp_tool("jq")).name == "jq"
+    for argument, annotation in arguments.items():
+        assert tool.parameters["properties"][argument]["description"] == _description(
+            annotation
+        )
 
 
 def test_every_tool_call_is_bounded() -> None:

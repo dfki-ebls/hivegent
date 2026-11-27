@@ -1,6 +1,6 @@
 """The agent's tools served over MCP, from a client's side of the connection."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import pytest
@@ -15,11 +15,13 @@ from pydantic_ai import ModelRetry
 
 from hivegent.agents import capabilities
 from hivegent.agents.approval import APPROVED_CHANGES, changes_digest
+from hivegent.agents.capabilities import Feature
 from hivegent.mcp import adapter
 from hivegent.plugins import api
 from hivegent.store import User
 from hivegent.tools.changes import Changeset
 from hivegent.workspace import Gateway
+from tests.conftest import Configure
 
 
 @pytest.fixture(autouse=True)
@@ -33,8 +35,10 @@ def user(data_dir: Path) -> User:
     return user
 
 
-def _served(user: User) -> FastMCP:
-    """The agent's tools, every call made as *user*."""
+def _served(
+    user: User, features: Iterable[Feature] = adapter.SERVED_FEATURES
+) -> FastMCP:
+    """The tools of *features*, every call made as *user*."""
 
     async def caller(_token: AccessToken | None) -> User:
         return user
@@ -42,11 +46,26 @@ def _served(user: User) -> FastMCP:
     confirmations = Confirmations(key=b"test")
 
     return server(
-        adapter.agent_tools(caller, confirmations),
+        adapter.agent_tools(caller, confirmations, features),
         name="probe",
         policy=adapter.POLICY,
         confirmations=confirmations,
     )
+
+
+@pytest.fixture()
+def applied(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The locations of every changeset the gateway committed, which commits none for real."""
+    locations: list[str] = []
+
+    async def commit(_gateway: Gateway, changeset: Changeset[str]) -> str:
+        locations.extend(changeset.locations)
+
+        return "written"
+
+    monkeypatch.setattr(Gateway, "commit", commit)
+
+    return locations
 
 
 def _text(blocks: Sequence[ContentBlock]) -> str:
@@ -74,15 +93,9 @@ async def test_a_read_tool_runs_as_the_agent_s_and_tmp_is_out_of_reach(
 
 
 async def test_a_write_asks_then_applies_on_the_confirmed_retry(
-    monkeypatch: pytest.MonkeyPatch, user: User
+    user: User, applied: list[str]
 ) -> None:
     asked: list[str] = []
-    applied: list[str] = []
-
-    async def _commit(_gateway: Gateway, changeset: Changeset[str]) -> str:
-        applied.extend(changeset.locations)
-
-        return "written"
 
     async def _answer(
         message: str, _type: object, _params: ElicitRequestParams, _ctx: object
@@ -91,7 +104,6 @@ async def test_a_write_asks_then_applies_on_the_confirmed_retry(
 
         return len(asked) > 1
 
-    monkeypatch.setattr(Gateway, "commit", _commit)
     args = {"file_path": "~/report.md", "content": "hello"}
 
     async with Client(_served(user), elicitation_handler=_answer) as client:
@@ -105,45 +117,29 @@ async def test_a_write_asks_then_applies_on_the_confirmed_retry(
     assert _text(result.content) == "written"
 
 
-async def test_a_withheld_tool_is_neither_listed_nor_called(
-    monkeypatch: pytest.MonkeyPatch, user: User
+@pytest.mark.parametrize(
+    ("setting", "tool"), [("disabled", "grep"), ("sandbox_only", "search")]
+)
+async def test_a_withheld_or_sandbox_only_tool_is_not_listed(
+    configure: Configure, user: User, setting: str, tool: str
 ) -> None:
-    monkeypatch.setattr(adapter.settings.tools, "disabled", ["grep"])
+    """A sandbox-only tool is handed to a program alone, and a client is none."""
+    configure(tools={setting: [tool]})
 
     async with Client(_served(user)) as client:
-        names = {tool.name for tool in await client.list_tools()}
+        names = {listed.name for listed in await client.list_tools()}
 
-    assert "grep" not in names
+    assert tool not in names
     assert "read_document" in names
 
-    with pytest.raises(KeyError):
-        await adapter.invoke_agent_tool("grep", {"pattern": "x"}, adapter._deps(user))
-
-
-async def test_a_sandbox_only_tool_is_not_listed(
-    monkeypatch: pytest.MonkeyPatch, user: User
-) -> None:
-    """Only a program is handed it, and a client is none."""
-    monkeypatch.setattr(adapter.settings.tools, "sandbox_only", ["search"])
-
-    async with Client(_served(user)) as client:
-        names = {tool.name for tool in await client.list_tools()}
-
-    assert "search" not in names
-    assert "read_document" in names
+    if setting == "disabled":
+        with pytest.raises(KeyError):
+            await adapter.invoke_agent_tool(tool, {"pattern": "x"}, adapter._deps(user))
 
 
 async def test_an_approval_holds_only_for_the_changes_it_was_given_for(
-    monkeypatch: pytest.MonkeyPatch, user: User
+    user: User, applied: list[str]
 ) -> None:
-    applied: list[str] = []
-
-    async def _commit(_gateway: Gateway, changeset: Changeset[str]) -> str:
-        applied.extend(changeset.locations)
-
-        return "written"
-
-    monkeypatch.setattr(Gateway, "commit", _commit)
     args = {"file_path": "~/report.md", "content": "hello"}
 
     with pytest.raises(ModelRetry, match="no longer the ones the user approved"):
@@ -159,7 +155,7 @@ async def test_an_approval_holds_only_for_the_changes_it_was_given_for(
 
 
 async def test_a_plugin_tool_is_served_with_the_hints_of_its_effect(
-    monkeypatch: pytest.MonkeyPatch, user: User
+    user: User,
 ) -> None:
     @effect("execute")
     async def lookup_send(term: str) -> str:
@@ -169,9 +165,7 @@ async def test_a_plugin_tool_is_served_with_the_hints_of_its_effect(
     feature = capabilities._plugin_feature(
         "lookup", api.Feature(id="lookup", tools=[lookup_send])
     )
-    monkeypatch.setattr(adapter, "PLUGIN_FEATURE_IDS", frozenset({"lookup"}))
-    monkeypatch.setattr(adapter, "FEATURES", (feature,))
-    app = _served(user)
+    app = _served(user, (feature,))
 
     (tool,) = await app.list_tools()
 

@@ -1,10 +1,4 @@
-"""Unit tests for the copy-on-write workspace mount the sandbox runs against.
-
-Mostly exercised without a sandbox: the mount is an ordinary object, so the
-semantics that matter, what a program may see, read, and change, are asserted
-against its methods rather than through an interpreter that would only relay
-them.
-"""
+"""Unit tests for the copy-on-write workspace mount the sandbox runs against, asserted on its methods rather than through an interpreter."""
 
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
@@ -25,6 +19,8 @@ from hivegent.tools.workspace_os import (
 from hivegent.types import DocumentFilter
 from tests.helpers import doc
 
+_LIMITS = ChangesetLimits(max_operations=200, max_deletes=100, max_chars=10_000)
+
 
 @pytest.fixture()
 def workspace(tmp_path: Path) -> Path:
@@ -39,7 +35,12 @@ def workspace(tmp_path: Path) -> Path:
     return workspace
 
 
-def _mount(workspace: Path, *, writable: bool = False) -> WorkspaceOS:
+def _mount(
+    workspace: Path,
+    *,
+    writable: bool = False,
+    limits: ChangesetLimits = _LIMITS,
+) -> WorkspaceOS:
     """The mount a run gets, `/tmp` writable in every mode as it is there."""
     scoped = SearchPath.of(
         path=workspace,
@@ -54,9 +55,17 @@ def _mount(workspace: Path, *, writable: bool = False) -> WorkspaceOS:
     return WorkspaceOS(
         paths=(scoped, tmp),
         environ={},
-        limits=ChangesetLimits(max_operations=200, max_deletes=100, max_chars=10_000),
+        limits=limits,
         writable=(scoped, tmp) if writable else (tmp,),
     )
+
+
+def _limited(workspace: Path, operations: int, deletes: int, chars: int) -> WorkspaceOS:
+    limits = ChangesetLimits(
+        max_operations=operations, max_deletes=deletes, max_chars=chars
+    )
+
+    return _mount(workspace, writable=True, limits=limits)
 
 
 def _virtual(local: str) -> PurePosixPath:
@@ -126,26 +135,18 @@ def test_dispatch_mounts_tmp_and_refuses_every_other_absolute_path(
         _ = mount.dispatch("Path.write_text", (PurePosixPath("/var/x.txt"), "x"))
 
 
-def test_exact_budget_is_enforced_on_the_decoded_text(workspace: Path) -> None:
-    # The size pre-check is a conservative bound (four bytes per character), so
-    # ASCII text passes it well over the character budget and only the check on
-    # the decoded string is exact.
-    mount = _mount(workspace)
-    mount.max_document_chars = 4
-
-    with pytest.raises(MemoryError, match="~/notes.md"):
-        _ = mount.path_read_text(_virtual("notes.md"))
-
-
-def test_reading_many_documents_is_not_a_running_total(workspace: Path) -> None:
-    # The cap is per document because a decoded document is what the host
-    # holds, one at a time.  A run that reads the whole workspace is what the
-    # mount is for, so nothing may accumulate against it.
+def test_the_character_budget_is_exact_and_per_document(workspace: Path) -> None:
+    """The size pre-check is only a conservative bound, so the decoded text is what is capped, one document at a time."""
     mount = _mount(workspace)
     mount.max_document_chars = len("alpha\n")
 
-    for _ in range(50):
+    for _ in range(3):
         assert mount.path_read_text(_virtual("notes.md")) == "alpha\n"
+
+    mount.max_document_chars -= 1
+
+    with pytest.raises(MemoryError, match="~/notes.md"):
+        _ = mount.path_read_text(_virtual("notes.md"))
 
 
 def test_writes_are_staged_and_read_back_without_touching_the_disk(
@@ -208,7 +209,17 @@ def test_a_case_insensitive_workspace_keeps_one_key_per_file(workspace: Path) ->
 
 
 def test_removals_merge_into_listings(workspace: Path) -> None:
+    (workspace / "pkg" / "node_modules").mkdir(parents=True)
+    (workspace / "pkg" / "node_modules" / "lib.js").write_text("x")
+    (workspace / "pkg" / "out.md").write_text("x")
     mount = _mount(workspace, writable=True)
+
+    # What the program cannot see still keeps its directory from being removed.
+    mount.path_unlink(_virtual("pkg/out.md"))
+    assert mount.path_iterdir(_virtual("pkg")) == []
+
+    with pytest.raises(OSError, match="not empty"):
+        mount.path_rmdir(_virtual("pkg"))
 
     with pytest.raises(OSError, match="not empty"):
         mount.path_rmdir(_virtual("reports"))
@@ -221,6 +232,7 @@ def test_removals_merge_into_listings(workspace: Path) -> None:
         PurePosixPath("~/drafts"),
         PurePosixPath("~/notes.md"),
         PurePosixPath("~/picture.png"),
+        PurePosixPath("~/pkg"),
     ]
     assert mount.nodes["~/reports"] == Deleted()
     assert (workspace / "reports" / "q1.md").exists()
@@ -272,8 +284,7 @@ def test_read_mode_changes_nothing(workspace: Path) -> None:
 
 
 def test_limits_hold_across_the_run(workspace: Path) -> None:
-    mount = _mount(workspace, writable=True)
-    mount.limits = ChangesetLimits(max_operations=2, max_deletes=1, max_chars=10)
+    mount = _limited(workspace, 2, 1, 10)
 
     # `/tmp` answers to its own quota, not to what a run may stage.
     _ = mount.path_write_text(PurePosixPath("/tmp/scratch.txt"), "z" * 20)
@@ -288,32 +299,24 @@ def test_limits_hold_across_the_run(workspace: Path) -> None:
         mount.path_unlink(_virtual("reports/q1.md"))
 
 
-def test_a_new_directory_charges_one_operation(workspace: Path) -> None:
-    mount = _mount(workspace, writable=True)
-    mount.limits = ChangesetLimits(max_operations=1, max_deletes=1, max_chars=100)
+def test_only_a_directory_a_write_does_not_imply_charges_an_operation(
+    workspace: Path,
+) -> None:
+    mount = _limited(workspace, 1, 1, 100)
+    mount.path_mkdir(PurePosixPath("/tmp/a/b"), parents=True, exist_ok=False)
     mount.path_mkdir(_virtual("drafts"), parents=False, exist_ok=False)
     mount.path_mkdir(_virtual("drafts"), parents=False, exist_ok=True)
 
     with pytest.raises(PermissionError, match="paths"):
         mount.path_mkdir(_virtual("other"), parents=False, exist_ok=False)
 
-
-def test_a_write_into_new_directories_charges_only_the_write(workspace: Path) -> None:
-    mount = _mount(workspace, writable=True)
-    mount.limits = ChangesetLimits(max_operations=1, max_deletes=1, max_chars=100)
+    # The write is the one operation, whatever directories it creates.
+    mount = _limited(workspace, 1, 1, 100)
     _ = mount.path_write_text(_virtual("drafts/deep/new.txt"), "new")
 
     assert stage_changes(mount) == Changeset(
         (Write("~/drafts/deep/new.txt", "new", "create"),)
     )
-
-
-def test_tmp_directories_are_not_charged(workspace: Path) -> None:
-    mount = _mount(workspace, writable=True)
-    mount.limits = ChangesetLimits(max_operations=0, max_deletes=0, max_chars=100)
-    mount.path_mkdir(PurePosixPath("/tmp/a/b"), parents=True, exist_ok=False)
-
-    assert mount.path_is_dir(PurePosixPath("/tmp/a/b"))
 
 
 def test_a_path_leading_with_no_workspace_names_the_roots(workspace: Path) -> None:
@@ -328,18 +331,3 @@ def test_a_path_leading_with_no_workspace_names_the_roots(workspace: Path) -> No
     # roots would only muddle that.
     with pytest.raises(FileNotFoundError, match=r"^(?!.*leads with)"):
         _ = mount.path_read_text(_virtual("missing.md"))
-
-
-def test_a_directory_holding_what_the_program_cannot_see_is_not_removed(
-    workspace: Path,
-) -> None:
-    (workspace / "pkg" / "node_modules").mkdir(parents=True)
-    (workspace / "pkg" / "node_modules" / "lib.js").write_text("x")
-    (workspace / "pkg" / "out.md").write_text("x")
-    mount = _mount(workspace, writable=True)
-
-    mount.path_unlink(_virtual("pkg/out.md"))
-    assert mount.path_iterdir(_virtual("pkg")) == []
-
-    with pytest.raises(OSError, match="not empty"):
-        mount.path_rmdir(_virtual("pkg"))

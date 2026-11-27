@@ -287,6 +287,7 @@ class JobManager:
     max_owner_spool_bytes: int = field(
         default_factory=lambda: settings.jobs.max_owner_spool_bytes
     )
+    clock: Callable[[], float] = time.monotonic
     # Per owner, its jobs by id in the order they came, so a lookup by id
     # never reaches another owner's job.
     _jobs: dict[str, dict[str, _Job]] = field(default_factory=dict, init=False)
@@ -323,7 +324,7 @@ class JobManager:
         no token vouches for.
         """
         self._prune()
-        now = time.monotonic()
+        now = self.clock()
         job = _Job(
             id=str(uuid4()),
             kind=kind,
@@ -511,11 +512,11 @@ class JobManager:
         return sorted(jobs, key=lambda job: job.created_at)
 
     def _touch(self, job: _Job) -> None:
-        job.updated_at = time.monotonic()
+        job.updated_at = self.clock()
         self.publish(job.owner, job.view())
 
     def _prune(self) -> None:
-        cutoff = time.monotonic() - self.retain_seconds
+        cutoff = self.clock() - self.retain_seconds
 
         for owner, jobs in list(self._jobs.items()):
             for job_id, job in list(jobs.items()):

@@ -164,8 +164,7 @@ def _egress_transport(
 ) -> httpx2.AsyncBaseTransport:
     """Mint the proxied network transport for untrusted clients.
 
-    The one construction site for the ``trust_env=False`` invariant, and the
-    seam tests substitute to exercise the policy hook without a network.
+    The one construction site for the ``trust_env=False`` invariant.
     """
     limits = httpx2.Limits(
         max_connections=100,
@@ -272,13 +271,15 @@ def create_safe_async_client(
     follow_redirects: bool = False,
     max_redirects: int = 20,
     keepalive_expiry: float = 5.0,
+    transport: httpx2.AsyncBaseTransport | None = None,
 ) -> httpx2.AsyncClient:
     """Create a client that sends policy-checked requests through the proxy.
 
     The request hook runs for every redirect hop.  ``proxy_url`` is mandatory
-    and the transport is built here, so an untrusted client cannot silently
-    fall back to direct network access.  *keepalive_expiry* is how long an
-    idle pooled connection is kept, the pool sizes being HTTPX's defaults.
+    and the transport is built here unless one is given to carry the requests,
+    so an untrusted client cannot silently fall back to direct network access.
+    *keepalive_expiry* is how long an idle pooled connection is kept, the pool
+    sizes being HTTPX's defaults.
     The client is shared across callers, so it keeps no cookies.
     """
     if not proxy_url:
@@ -286,7 +287,7 @@ def create_safe_async_client(
 
     return _cookieless(
         httpx2.AsyncClient(
-            transport=_egress_transport(proxy_url, keepalive_expiry),
+            transport=transport or _egress_transport(proxy_url, keepalive_expiry),
             trust_env=False,
             event_hooks={"request": [_checking(policy)]},
             timeout=timeout,

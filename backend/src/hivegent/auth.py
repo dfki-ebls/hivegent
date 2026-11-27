@@ -49,6 +49,7 @@ __all__ = [
     "ASYMMETRIC_ALGORITHMS",
     "NOBODY",
     "PROBE",
+    "Clock",
     "Credential",
     "CurrentPrincipal",
     "CurrentUser",
@@ -58,6 +59,7 @@ __all__ = [
     "authenticate",
     "build_discovery_url",
     "check_kind",
+    "clock",
     "dev_user",
     "fetch_oidc_configuration",
     "get_current_principal",
@@ -71,6 +73,23 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+class Clock:
+    """The UNIX time and the waiting for it, the one seam through which everything here reads time."""
+
+    def now(self) -> float:
+        """The current UNIX time."""
+        return time.time()
+
+    async def until(self, at: float) -> None:
+        """Return once the UNIX time *at* passed."""
+        while (remaining := at - self.now()) > 0:
+            await asyncio.sleep(remaining)
+
+
+clock = Clock()
+"""The clock of this process, which a test replaces."""
 
 _INVALID_SIGNATURE = Localized(
     en="Invalid token signature", de="Ungültige Token-Signatur"
@@ -195,15 +214,17 @@ def _check_discovery(issuer: OperatorUrl, config: OIDCConfiguration) -> None:
         raise _misconfigured("jwks_uri is not on the issuer's origin")
 
 
-async def fetch_oidc_configuration(issuer: OperatorUrl) -> OIDCConfiguration:
-    """Fetch the discovery document of *issuer*, checked to be its own.
+async def fetch_oidc_configuration(
+    issuer: OperatorUrl, http: httpx2.AsyncClient
+) -> OIDCConfiguration:
+    """Fetch the discovery document of *issuer* through *http*, checked to be its own.
 
     Raises:
         HTTPException: 503 on transport failure, 500 on a malformed or
             foreign document.
     """
     try:
-        response = await get_trusted_http_client(issuer).get(
+        response = await http.get(
             build_discovery_url(issuer), timeout=settings.auth.jwks_timeout_seconds
         )
         response.raise_for_status()
@@ -243,7 +264,7 @@ class _SingleFlightCache[T]:
         return self._value
 
     def _fresh(self, *, force_refresh: bool) -> T | None:
-        now = time.time()
+        now = clock.now()
         min_interval = settings.auth.jwks_force_refresh_min_interval_seconds
         ttl = 0 if force_refresh else settings.auth.jwks_cache_ttl
 
@@ -266,7 +287,7 @@ class _SingleFlightCache[T]:
         async with self._lock:
             if (fresh := self._fresh(force_refresh=force_refresh)) is not None:
                 return fresh
-            self._attempted = time.time()
+            self._attempted = clock.now()
 
             try:
                 value = await refresh()
@@ -320,28 +341,38 @@ class JWKSFetcher:
     serves the cached keys instead of failing authenticated requests.
     Key-rotation safety is preserved by the kid-miss force-refresh path in
     :func:`authenticate`.
+
+    Args:
+        issuer: The configured issuer, ``None`` while there is none.
+        client: The client reaching an operator URL.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        issuer: Callable[[], OperatorUrl | None] = lambda: settings.auth.issuer,
+        client: Callable[[OperatorUrl], httpx2.AsyncClient] = get_trusted_http_client,
+    ) -> None:
+        self._issuer = issuer
+        self._client = client
         self._keys = _SingleFlightCache[_Keys]("JWKS")
 
-    @staticmethod
-    async def _fetch() -> _Keys:
+    async def _fetch(self) -> _Keys:
         """Fetch discovery, then the key set from its ``jwks_uri``.
 
         Raises:
             HTTPException: 503 on transport failure, 500 on a malformed or
                 foreign document or key set.
         """
-        issuer = settings.auth.issuer
+        issuer = self._issuer()
 
         if issuer is None:
             raise _misconfigured("OIDC issuer not configured")
 
-        config = await fetch_oidc_configuration(issuer)
+        http = self._client(issuer)
+        config = await fetch_oidc_configuration(issuer, http)
 
         try:
-            response = await get_trusted_http_client(issuer).get(
+            response = await http.get(
                 str(config.jwks_uri), timeout=settings.auth.jwks_timeout_seconds
             )
             response.raise_for_status()
@@ -392,6 +423,7 @@ def _should_refresh_jwks(token: str, key_set: KeySet) -> bool:
 def _claims_registry(issuer: str, audience: Collection[str]) -> JWTClaimsRegistry:
     """The claims every token must carry, ``iss`` equal to *issuer* byte for byte."""
     return JWTClaimsRegistry(
+        now=lambda: int(clock.now()),
         leeway=_LEEWAY_SECONDS,
         iss=ClaimsOption(essential=True, value=issuer),
         sub=ClaimsOption(essential=True),
@@ -563,7 +595,9 @@ class Credential:
     client: str
 
 
-async def authenticate(token: str, audience: Collection[str]) -> Credential:
+async def authenticate(
+    token: str, audience: Collection[str], fetcher: JWKSFetcher | None = None
+) -> Credential:
     """Verify *token* for one of *audience* and name its principal.
 
     The one verification the REST API, its streams, and ``/mcp`` share: an
@@ -574,11 +608,14 @@ async def authenticate(token: str, audience: Collection[str]) -> Credential:
     its principal (:data:`leases`), so work it started runs on while any
     client of the principal makes requests.
 
+    The issuer's keys come from *fetcher*, the process's own when ``None``.
+
     Raises:
         HTTPException: 401 for a refused token, logged with its reason, and
             500 or 503 when the issuer's keys cannot be had.
     """
-    keys = await _jwks_fetcher.get()
+    fetcher = fetcher or _jwks_fetcher
+    keys = await fetcher.get()
 
     try:
         decoded = jwt.decode(token, keys.key_set, algorithms=keys.algorithms)
@@ -586,7 +623,7 @@ async def authenticate(token: str, audience: Collection[str]) -> Credential:
         if not _should_refresh_jwks(token, keys.key_set):
             raise _rejected(f"signature: {e}", _INVALID_SIGNATURE) from e
 
-        keys = await _jwks_fetcher.get(force_refresh=True)
+        keys = await fetcher.get(force_refresh=True)
 
         try:
             decoded = jwt.decode(token, keys.key_set, algorithms=keys.algorithms)
@@ -659,19 +696,17 @@ def _client(claims: Mapping[str, Any]) -> str | None:
     return azp or client_id
 
 
-def _is_service(claims: Mapping[str, Any]) -> bool:
-    """Whether *claims* were issued to the configured service client, every other client being a person's."""
-    client = settings.auth.service_client_id
-
-    return client is not None and _client(claims) == client
-
-
-def user_from_claims(claims: Mapping[str, Any]) -> User:
+def user_from_claims(
+    claims: Mapping[str, Any],
+    *,
+    service_client_id: str | None = settings.auth.service_client_id,
+) -> User:
     """Build the :class:`User` that validated token *claims* describe.
 
     The one place claims become an identity, for the HTTP API and the MCP
     endpoint alike, so both grant the same groups with the same permissions.
-    A token of the service client becomes a service principal, whose groups
+    A token of the service client, *service_client_id* being the configured one by
+    default, becomes a service principal, whose groups
     and roles are never read, so its capabilities follow from its kind alone.
     The principal expires once :func:`authenticate` would refuse the token,
     its ``exp`` plus the leeway, so a stream it opens lasts exactly as long
@@ -685,7 +720,7 @@ def user_from_claims(claims: Mapping[str, Any]) -> User:
     exp = claims.get("exp")
     expires_at = float(exp) + _LEEWAY_SECONDS if isinstance(exp, int | float) else None
 
-    if _is_service(claims):
+    if service_client_id is not None and _client(claims) == service_client_id:
         return User(
             id=user_id, name=claims.get("name"), kind="service", expires_at=expires_at
         )
@@ -791,7 +826,7 @@ def refuse_expired(expires_at: float | None) -> None:
 
 def _lapsed(at: float | None) -> bool:
     """Whether the UNIX time *at* passed, never for ``None``."""
-    return at is not None and time.time() >= at
+    return at is not None and clock.now() >= at
 
 
 _RENEWAL_SECONDS = 60
@@ -866,11 +901,11 @@ class Lease:
 
     async def lapse(self) -> None:
         """Return once the lease lapsed, never while it has no expiry."""
-        while (at := self.expires_at) is None or at > time.time():
+        while (at := self.expires_at) is None or not _lapsed(at):
             if at is None:
                 await asyncio.get_running_loop().create_future()
             else:
-                await asyncio.sleep(at - time.time())
+                await clock.until(at)
 
 
 @dataclass(slots=True)
@@ -913,16 +948,37 @@ async def until_expiry[T](
     token that authorized it: its client reconnects with a fresh one, whose
     grants are read anew.
     """
-    while True:
-        try:
-            if expires_at is None:
-                event = await anext(events)
-            else:
-                event = await asyncio.wait_for(anext(events), expires_at - time.time())
-        except StopAsyncIteration, TimeoutError:
-            return
+    if expires_at is None:
+        async for event in events:
+            yield event
 
-        yield event
+        return
+
+    expiry = asyncio.ensure_future(clock.until(expires_at))
+
+    try:
+        while True:
+            pending = asyncio.ensure_future(anext(events))
+
+            try:
+                _ = await asyncio.wait(
+                    {pending, expiry}, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                if not pending.done():
+                    _ = pending.cancel()
+
+            if expiry.done() or pending.cancelled():
+                return
+
+            try:
+                event = pending.result()
+            except StopAsyncIteration:
+                return
+
+            yield event
+    finally:
+        _ = expiry.cancel()
 
 
 type CurrentPrincipal = Annotated[User, Depends(get_current_principal)]

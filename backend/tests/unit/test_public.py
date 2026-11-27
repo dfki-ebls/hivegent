@@ -6,9 +6,11 @@ from fastapi.routing import APIRoute
 
 from hivegent.auth import get_current_principal, get_current_user
 from hivegent.config import API_PREFIX, settings
+from hivegent.config.security import AuthSettings
+from hivegent.security import OperatorUrl
 from hivegent.server.routes import api_router, people_router
 from hivegent.server.routes.conversations import chat_router
-from hivegent.server.routes.public import config
+from hivegent.server.routes.public import frontend_config
 from hivegent.server.routes.public import router as public_router
 
 # The only endpoints reachable without authentication. The SPA fetches health
@@ -19,27 +21,23 @@ PUBLIC_PATHS = frozenset(
 )
 
 
-async def test_config_reports_oidc_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`/api/v1/config` echoes the issuer, frontend client id, and handbook from settings."""
-    monkeypatch.setattr(settings.auth, "issuer", "https://idp.example.com/oidc")
-    monkeypatch.setattr(settings.auth, "frontend_client_id", "hivegent-spa")
-    monkeypatch.setattr(settings, "docs_url", "/docs/")
+@pytest.mark.parametrize("issuer", [OperatorUrl("https://idp.example.com/oidc"), None])
+def test_config_reports_oidc_settings_when_an_issuer_is_set(
+    issuer: OperatorUrl | None,
+) -> None:
+    """`/api/v1/config` echoes the issuer, frontend client id, and handbook from settings, and without an issuer the SPA is told to mock the development user."""
+    auth = AuthSettings(issuer=issuer, frontend_client_id="hivegent-spa")
 
-    result = await config()
+    result = frontend_config(auth, "/docs/")
 
-    assert result.oidc is not None
-    assert result.oidc.issuer_uri == "https://idp.example.com/oidc"
-    assert result.oidc.client_id == "hivegent-spa"
     assert result.docs_url == "/docs/"
 
-
-async def test_config_without_issuer_serves_no_oidc(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Without an issuer the SPA is told to mock the development user."""
-    monkeypatch.setattr(settings.auth, "issuer", None)
-
-    assert (await config()).oidc is None
+    if issuer is None:
+        assert result.oidc is None
+    else:
+        assert result.oidc is not None
+        assert result.oidc.issuer_uri == issuer
+        assert result.oidc.client_id == "hivegent-spa"
 
 
 def test_only_the_listed_routes_are_public() -> None:

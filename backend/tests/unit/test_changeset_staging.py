@@ -12,7 +12,6 @@ from exar.tools import Retry
 from pydantic import TypeAdapter
 
 from hivegent import staging
-from hivegent.config import settings
 from hivegent.conversation_files import reset_conversation_files
 from hivegent.store import User
 from hivegent.tmp import TMP_PREFIX
@@ -199,9 +198,8 @@ def test_a_ragged_table_is_refused(mount: WorkspaceOS) -> None:
 
 
 async def test_a_staged_changeset_answers_only_its_conversation_and_its_own_id(
-    mount: WorkspaceOS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    mount: WorkspaceOS,
 ) -> None:
-    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     mount.path_unlink(_virtual("notes.md"))
     changes = _staged(mount)
 

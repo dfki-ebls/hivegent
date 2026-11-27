@@ -37,8 +37,12 @@ def test_database_offers_reading_tools_and_its_statements_to_its_groups(
 ) -> None:
     url = f"sqlite:///{tmp_path / 'erp.db'}"
 
-    with sa.create_engine(url).begin() as conn:
+    engine = sa.create_engine(url)
+
+    with engine.begin() as conn:
         _ = conn.exec_driver_sql("create table orders (id integer)")
+
+    engine.dispose()
 
     config = SqlDatabaseSettings.model_validate(
         {

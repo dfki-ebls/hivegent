@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cache
-from importlib.metadata import entry_points
+from importlib.metadata import EntryPoint, entry_points
 from typing import Any
 
 import httpx2
@@ -117,9 +117,13 @@ def _check(name: str, plugin: object) -> Plugin:
 
 
 def load_plugins(
-    enabled: Sequence[str], options: Mapping[str, Mapping[str, Any]]
+    enabled: Sequence[str],
+    options: Mapping[str, Mapping[str, Any]],
+    find: Callable[..., Sequence[EntryPoint]] = entry_points,
 ) -> tuple[LoadedPlugin, ...]:
     """Build every plugin in *enabled* with its *options*, in order.
+
+    The entry points come from *find*, which the installed packages answer by default.
 
     Raises:
         ValueError: For a malformed, missing, or ambiguous plugin, one that fails
@@ -137,7 +141,7 @@ def load_plugins(
         if not _NAME.fullmatch(name):
             raise ValueError(f"Plugin name {name!r} is not kebab-case")
 
-        found = entry_points(group=ENTRY_POINT_GROUP, name=name)
+        found = find(group=ENTRY_POINT_GROUP, name=name)
         if len(found) != 1:
             raise ValueError(
                 f"Plugin {name!r} is enabled but {len(found)} installed packages "
@@ -169,8 +173,11 @@ def merge[T](
     kind: str,
     built_in: Iterable[tuple[str, T]],
     contributed: Callable[[LoadedPlugin], Iterable[tuple[str, T]]],
+    installed: Iterable[LoadedPlugin] | None = None,
 ) -> dict[str, T]:
     """Merge the *built_in* contributions of *kind* with every plugin's, by id.
+
+    The plugins are the *installed* ones, the enabled ones when ``None``.
 
     No contribution shadows another, so the registries never depend on load order.
 
@@ -181,7 +188,10 @@ def merge[T](
     owners: dict[str, str] = {}
     sources = [
         ("Hivegent", built_in),
-        *((f"plugin {loaded.name!r}", contributed(loaded)) for loaded in plugins()),
+        *(
+            (f"plugin {loaded.name!r}", contributed(loaded))
+            for loaded in (plugins() if installed is None else installed)
+        ),
     ]
 
     for owner, entries in sources:

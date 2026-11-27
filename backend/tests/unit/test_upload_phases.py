@@ -5,38 +5,22 @@ in the file swap leaves a prior entry as it was, and a change made to what an
 upload replaces while it converts refuses the commit.
 """
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from cbrkit.io import COMPANION_SUFFIXES
 from PIL.PngImagePlugin import PngInfo
 
 from hivegent import workspace
-from hivegent.db import documents as db_documents
-from hivegent.db import engine as db_engine
-from hivegent.metadata import EntryMetadata
 from hivegent.store import Workspace
 from hivegent.tools.changes import ChangeRefused
 from hivegent.tools.entries import Part
 from hivegent.workspace import IndexingFailed, prepare
-from hivegent.workspace.changeset import apply as changeset_apply
-from tests.helpers import png_bytes
-
-
-class _Recorder:
-    """Minimal :class:`~hivegent.types.ProgressReporter` capturing stages."""
-
-    def __init__(self) -> None:
-        self.stages: list[str] = []
-
-    def set_stage(self, stage: str) -> None:
-        self.stages.append(stage)
-
-    def set_progress(self, current: int, total: int) -> None:
-        pass
+from tests.helpers import FakeIndex, png_bytes
 
 
 def _png_with_metadata() -> bytes:
@@ -47,56 +31,59 @@ def _png_with_metadata() -> bytes:
     return png_bytes(info)
 
 
+@dataclass(slots=True)
+class Caption:
+    """What the vision model answers, which a test may change, fail, or act on."""
+
+    text: str | None = "caption\n"
+    fails: bool = False
+    meanwhile: Callable[[], None] | None = None
+
+    async def __call__(self, *_args: object) -> str | None:
+        if self.fails:
+            raise RuntimeError("conversion failed")
+
+        if self.meanwhile:
+            self.meanwhile()
+
+        return self.text
+
+
 @pytest.fixture()
-def workspace_dir(user_store: Workspace, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """The workspace of *user_store*, with captioning, indexing, and SQL stubbed."""
+def caption(monkeypatch: pytest.MonkeyPatch) -> Caption:
+    """The vision model of every image, answering ``caption``."""
+    answer = Caption()
+    monkeypatch.setattr(prepare, "_build_image_description", answer)
 
-    async def describe(*_args: object, **_kwargs: object) -> str:
-        return "caption\n"
+    return answer
 
-    async def nothing(*_args: object, **_kwargs: object) -> None:
-        return None
 
-    async def no_rows(*_args: object, **_kwargs: object) -> dict[object, object]:
-        return {}
-
-    async def removed(*_args: object, **_kwargs: object) -> int:
-        return 0
-
-    @asynccontextmanager
-    async def no_transaction() -> AsyncGenerator[object]:
-        yield object()
-
-    monkeypatch.setattr(prepare, "_build_image_description", describe)
-    monkeypatch.setattr(changeset_apply, "chunk_and_index_document", nothing)
-    monkeypatch.setattr(db_documents, "get_entry_metadata", nothing)
-    monkeypatch.setattr(db_documents, "get_entries_metadata", no_rows)
-    monkeypatch.setattr(db_documents, "delete_document", removed)
-    monkeypatch.setattr(db_documents, "delete_subtree", removed)
-    monkeypatch.setattr(db_engine, "session", no_transaction)
+@pytest.fixture()
+def workspace_dir(user_store: Workspace, caption: Caption, index: FakeIndex) -> Path:
+    """The workspace of *user_store*, with its rows in the shared index and its images captioned."""
+    _ = caption, index
 
     return user_store.workspace_dir()
 
 
-async def test_image_upload_reports_stage_and_stores_sidecar(
+async def test_image_upload_reports_stage_and_stores_sidecar_and_original_verbatim(
     user_store: Workspace, workspace_dir: Path
 ) -> None:
-    recorder = _Recorder()
-    await workspace.upload(user_store, "photo.png", png_bytes(), ctx=recorder)
+    """The stored original keeps its ancillary chunks, sanitising is the model's job."""
+    raw, ctx = _png_with_metadata(), Mock()
 
-    assert "Generating image description" in recorder.stages
-    assert (workspace_dir / "photo.png").exists()
+    await workspace.upload(user_store, "photo.png", raw, ctx=ctx)
+
+    ctx.set_stage.assert_any_call("Generating image description")
+    assert (workspace_dir / "photo.png").read_bytes() == raw
     assert (workspace_dir / "photo.md").read_text() == "caption\n"
 
 
 async def test_undescribed_image_replaces_entry_without_sidecar(
-    user_store: Workspace, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, workspace_dir: Path, caption: Caption
 ) -> None:
-    async def undescribed(*_args: object, **_kwargs: object) -> None:
-        return None
-
     await workspace.upload(user_store, "photo.png", png_bytes())
-    monkeypatch.setattr(prepare, "_build_image_description", undescribed)
+    caption.text = None
     raw = _png_with_metadata()
     await workspace.upload(user_store, "photo.png", raw, overwrite=True)
 
@@ -105,12 +92,9 @@ async def test_undescribed_image_replaces_entry_without_sidecar(
 
 
 async def test_failed_index_leaves_files_for_reconcile(
-    user_store: Workspace, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, workspace_dir: Path, index: FakeIndex
 ) -> None:
-    async def boom(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("indexing failed")
-
-    monkeypatch.setattr(changeset_apply, "chunk_and_index_document", boom)
+    index.failing = {"photo"}
 
     with pytest.raises(IndexingFailed):
         await workspace.upload(user_store, "photo.png", png_bytes())
@@ -119,35 +103,16 @@ async def test_failed_index_leaves_files_for_reconcile(
     assert (workspace_dir / "photo.md").exists()
 
 
-async def test_image_upload_stores_original_verbatim(
-    user_store: Workspace, workspace_dir: Path
-) -> None:
-    """The stored original keeps its ancillary chunks; sanitising is the model's job."""
-    raw = _png_with_metadata()
-    await workspace.upload(user_store, "photo.png", raw)
-
-    assert (workspace_dir / "photo.png").read_bytes() == raw
-
-
 async def test_markdown_and_companion_original_land_as_one_entry(
-    user_store: Workspace, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, workspace_dir: Path, index: FakeIndex
 ) -> None:
-    indexed_originals: list[str | None] = []
-
-    async def fake_chunk(*_args: object, **kwargs: object) -> None:
-        metadata = kwargs["entry_metadata"]
-        assert isinstance(metadata, EntryMetadata)
-        indexed_originals.append(metadata.original_path)
-
-    monkeypatch.setattr(changeset_apply, "chunk_and_index_document", fake_chunk)
-
     await workspace.upload(
         user_store, "report.md", b"# Report\n", companion=("report.pdf", b"%PDF")
     )
 
     assert (workspace_dir / "report.md").read_text() == "# Report\n"
     assert (workspace_dir / "report.pdf").read_bytes() == b"%PDF"
-    assert indexed_originals == ["report.pdf"]
+    assert [e.original_path for e in index.indexed] == ["report.pdf"]
 
 
 async def test_upload_into_assets_is_refused(
@@ -229,16 +194,16 @@ async def test_an_upload_over_an_entry_keeps_or_takes_every_companion(
 
 
 async def test_reconvert_refuses_an_original_changed_meanwhile(
-    user_store: Workspace, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, workspace_dir: Path, caption: Caption
 ) -> None:
-    """Without a row, the original is found on disk, and a change during the conversion wins."""
+    """A change to the original during the conversion wins."""
     await workspace.upload(user_store, "photo.png", png_bytes())
+    caption.text = "new caption\n"
 
-    async def edited_meanwhile(*_args: object, **_kwargs: object) -> str:
-        (workspace_dir / "photo.png").write_bytes(b"edited meanwhile")
-        return "new caption\n"
+    def edit() -> None:
+        _ = (workspace_dir / "photo.png").write_bytes(b"edited meanwhile")
 
-    monkeypatch.setattr(prepare, "_build_image_description", edited_meanwhile)
+    caption.meanwhile = edit
 
     with pytest.raises(ChangeRefused) as exc:
         await workspace.reconvert(user_store, "photo.md")
@@ -262,7 +227,7 @@ async def test_upload_dates_the_entry_and_reconvert_keeps_it(
 
 
 async def test_reprocess_failure_preserves_existing_entry(
-    user_store: Workspace, workspace_dir: Path, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, workspace_dir: Path, caption: Caption
 ) -> None:
     """A failed reconversion leaves the prior entry intact, never destroyed.
 
@@ -273,10 +238,7 @@ async def test_reprocess_failure_preserves_existing_entry(
     await workspace.upload(user_store, "photo.png", png_bytes())
     original = (workspace_dir / "photo.png").read_bytes()
 
-    async def boom_prepare(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("conversion failed")
-
-    monkeypatch.setattr(changeset_apply, "prepare_upload", boom_prepare)
+    caption.fails = True
 
     with pytest.raises(RuntimeError):
         await workspace.replace_original(

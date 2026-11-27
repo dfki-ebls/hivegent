@@ -1,36 +1,24 @@
-"""Unit tests for workspace move/delete semantics through the changeset gateway.
+"""Unit tests for moves, deletes, and batches through the changeset gateway.
 
-These pin the rules that previously corrupted workspaces: moves are
-planned and validated before any rename (no torn entries), an existing
-directory destination means move-into (``mv`` semantics), SQL moves are
-scoped to exactly the entry (a same-named sibling directory keeps its
-rows), explicitly created directories survive emptying out, the items of
-one changeset may not overlap, and a failure anywhere restores every file
-and commits no row.
-
-The SQL layer is stubbed with a recording fake; the live-DB behaviour of
-the repository itself is covered by the dev-stack smoke tests.
+Moves are planned and validated before any rename, an existing directory
+destination means move-into, SQL moves are scoped to exactly the entry, the
+items of one changeset apply at once, and a failure anywhere restores every
+file and commits no row.  The SQL layer is the shared in-memory fake.
 """
 
-import asyncio
 import os
-from collections.abc import AsyncGenerator, Iterable
-from contextlib import aclosing, asynccontextmanager
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from collections.abc import Mapping
+from contextlib import aclosing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-from uuid import uuid4
 
 import pytest
 from cbrkit.io import COMPANION_SUFFIXES
 from pydantic import ValidationError
 
 from hivegent import workspace, workspace_events
-from hivegent.db import documents as db_documents
-from hivegent.db import engine as db_engine
-from hivegent.jobs import FeedReady, JobManager
-from hivegent.metadata import DocumentMetadata
+from hivegent.jobs import FeedReady
 from hivegent.server.models import ChangesRequest, MoveDestination
 from hivegent.server.routes import documents as documents_routes
 from hivegent.store import GroupScope, HostGrant, User, Workspace
@@ -53,847 +41,462 @@ from hivegent.tools.entries import (
     ContentStat,
     EntryPaths,
     Part,
-    stem_path_from_reference,
 )
 from hivegent.tools.workspace_os import WORKSPACE_MOUNT, WorkspaceOS
-from hivegent.workspace import Location, Root
-from hivegent.workspace.changeset import apply as changeset_apply
-from tests.helpers import LIMITS
+from hivegent.workspace import Gateway, Root
+from tests.helpers import LIMITS, FakeIndex, entry
 
 _USER = User(id="testuser")
-
-
-def _move(
-    src_store: Workspace, dst_store: Workspace, src: str, dst: str
-) -> Move[Location]:
-    return Move(Location(Root.of(src_store), src), Location(Root.of(dst_store), dst))
-
-
-async def _apply(*operations: Operation[Location]) -> workspace.AppliedChangeset:
-    return await workspace.apply_changeset(operations)
-
-
-async def _move_one(
-    src_store: Workspace, dst_store: Workspace, src: str, dst: str
-) -> workspace.AppliedChangeset:
-    return await _apply(_move(src_store, dst_store, src, dst))
-
-
-async def _delete_one(store: Workspace, path: str) -> workspace.AppliedChangeset:
-    return await _apply(Delete(Location(Root.of(store), path)))
-
-
-def _doc(stem: str, original_suffix: str | None = None) -> DocumentMetadata:
-    original = (
-        None
-        if original_suffix is None
-        else Part(stem, "original", original_suffix).path
-    )
-    return DocumentMetadata(
-        entry_kind="convertible",
-        stem_path=stem,
-        description_path=f"{stem}.md",
-        original_path=original,
-        assets_dir=None,
-        origin="upload",
-        generated_by="converter",
-        id=uuid4(),
-        pipeline="recursive",
-        created_at=datetime.now(UTC),
-        chunks=[],
-    )
+_LAYOUT = {"a.md": "a", "b.md": "b", "dir/c.md": "dir/c"}
+_PARK = ".changeset-park/"
+_GROUP = "@team/"
 
 
 @dataclass(slots=True)
-class FakeRepository:
-    """Recording stand-in for :mod:`hivegent.db.documents`."""
+class Ws:
+    """A personal and a group workspace on disk, one gateway over both, and the fake rows."""
 
-    docs: dict[str, DocumentMetadata] = field(default_factory=dict)
-    calls: list[tuple[str, ...]] = field(default_factory=list)
-    # Outcomes of every transaction the gateway opened.
-    transactions: list[str] = field(default_factory=list)
-    # A stem whose row move fails, to exercise the rollback.
-    failing_stem: str | None = None
-    # The descriptions reindexed after a commit, with the text indexed.
-    indexed: dict[str, str] = field(default_factory=dict)
+    store: Workspace
+    group_store: Workspace
+    root: Path
+    group: Path
+    index: FakeIndex
+    gateway: Gateway
 
-    async def index(
-        self,
-        store: Workspace,
-        path: str,
-        markdown: str,
-        *_args: object,
-        **_kwargs: object,
-    ) -> None:
-        self.indexed[path] = markdown
+    def put(self, files: Mapping[str, str | bytes]) -> None:
+        """Write *files*, a key ending in ``/`` being a directory and one leading with ``@team/`` the group's.
 
-    async def entry_metadata(self, store: Workspace, path: str) -> object:
-        return self.docs.get(stem_path_from_reference(path))
-
-    @property
-    def moves(self) -> list[tuple[str, ...]]:
-        """Every row move as ``(kind, source, destination, source store, destination store)``.
-
-        A moved row waits on a temporary stem between leaving and landing, so
-        the two halves are composed back into the move they make.
+        Every description gets a row, which :meth:`row` refines.
         """
-        parked: dict[str, tuple[str, str]] = {}
-        moves: list[tuple[str, ...]] = []
-        for name, src, dst, src_store, dst_store in (
-            c for c in self.calls if len(c) == 5
-        ):
-            if dst.startswith(".changeset-park/"):
-                parked[dst] = (src, src_store)
+        for name, content in files.items():
+            base, local = (
+                (self.group, name.removeprefix(_GROUP))
+                if name.startswith(_GROUP)
+                else (self.root, name)
+            )
+            path = base / local
+
+            if name.endswith("/"):
+                path.mkdir(parents=True, exist_ok=True)
+
+                continue
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+            if isinstance(content, bytes):
+                path.write_bytes(content)
             else:
-                origin, origin_store = parked.pop(src, (src, src_store))
-                moves.append((name, origin, dst, origin_store, dst_store))
-        return moves
+                path.write_text(content)
 
-    def moved(self) -> list[tuple[str, str, str]]:
-        return sorted((name, src, dst) for name, src, dst, *_stores in self.moves)
+            if local.endswith(".md") and ".assets/" not in local:
+                self.row(local.removesuffix(".md"), group=base is self.group)
 
-    @asynccontextmanager
-    async def session(self) -> AsyncGenerator[object]:
-        try:
-            yield object()
-        except BaseException:
-            self.transactions.append("rolled back")
-            raise
-        self.transactions.append("committed")
-
-    async def get_entry_metadata(
-        self, store: Workspace, reference: str
-    ) -> DocumentMetadata | None:
-        return self.docs.get(stem_path_from_reference(reference))
-
-    async def get_entries_metadata(
-        self, references: Iterable[tuple[Workspace, str]]
-    ) -> dict[tuple[Workspace, str], DocumentMetadata]:
-        stems = {(store, stem_path_from_reference(ref)) for store, ref in references}
-        return {
-            (store, stem): self.docs[stem] for store, stem in stems if stem in self.docs
-        }
-
-    async def move_document(
-        self,
-        src_store: Workspace,
-        src: str,
-        dst_store: Workspace,
-        dst: str,
-        *,
-        s: object = None,
-    ) -> bool:
-        assert s is not None
-        if src == self.failing_stem:
-            raise RuntimeError("simulated row failure")
-        self.calls.append(
-            ("move_document", src, dst, src_store.store_key, dst_store.store_key)
-        )
-        return True
-
-    async def move_subtree(
-        self,
-        src_store: Workspace,
-        src: str,
-        dst_store: Workspace,
-        dst: str,
-        *,
-        s: object = None,
+    def row(
+        self, stem: str, original_suffix: str | None = None, *, group: bool = False
     ) -> None:
-        assert s is not None
-        self.calls.append(
-            ("move_subtree", src, dst, src_store.store_key, dst_store.store_key)
+        self.index.add(
+            self.group_store if group else self.store, entry(stem, original_suffix)
         )
 
-    async def delete_subtree(
-        self, store: Workspace, prefix: str, *, s: object = None
-    ) -> int:
-        self.calls.append(("delete_subtree", prefix))
-        return 0
+    def tree(self) -> dict[str, str]:
+        """Every file by canonical-less path with its text, and every empty directory with a trailing slash."""
+        found: dict[str, str] = {}
 
-    async def delete_document(
-        self, store: Workspace, reference: str, *, s: object = None
-    ) -> bool:
-        self.calls.append(("delete_document", reference))
-        return True
+        for prefix, base in (("", self.root), (_GROUP, self.group)):
+            for path in sorted(base.rglob("*")):
+                key = prefix + path.relative_to(base).as_posix()
 
+                if path.is_file():
+                    found[key] = path.read_text(errors="replace")
+                elif not any(path.iterdir()):
+                    found[f"{key}/"] = ""
 
-@pytest.fixture()
-def repo(monkeypatch: pytest.MonkeyPatch) -> FakeRepository:
-    fake = FakeRepository()
-    monkeypatch.setattr(db_engine, "session", fake.session)
-    monkeypatch.setattr(changeset_apply, "chunk_and_index_document", fake.index)
-    monkeypatch.setattr(changeset_apply, "current_entry_metadata", fake.entry_metadata)
-    for name in (
-        "get_entry_metadata",
-        "get_entries_metadata",
-        "move_document",
-        "move_subtree",
-        "delete_subtree",
-        "delete_document",
-    ):
-        monkeypatch.setattr(db_documents, name, getattr(fake, name))
-    return fake
+        return found
+
+    async def apply(self, *operations: Operation[str]) -> workspace.AppliedChangeset:
+        return await self.gateway.apply(Changeset(operations))
+
+    async def plan(self, *operations: Operation[str]) -> workspace.PlannedChangeset:
+        return await self.gateway.plan(Changeset(operations))
 
 
 @pytest.fixture()
-def workspace_dir(user_store: Workspace) -> Path:
-    path = user_store.workspace_dir()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def ws(user_store: Workspace, index: FakeIndex) -> Ws:
+    group_store = HostGrant().workspace(GroupScope("team"))
+    roots = user_store.workspace_dir(), group_store.workspace_dir()
+
+    for path in roots:
+        path.mkdir(parents=True, exist_ok=True)
+
+    gateway = Gateway((Root.of(user_store), Root.of(group_store)))
+
+    return Ws(user_store, group_store, *roots, index, gateway)
 
 
 @pytest.fixture()
-def layout(workspace_dir: Path, repo: FakeRepository) -> Path:
-    for stem in ("a", "b", "dir/c"):
-        (workspace_dir / f"{stem}.md").parent.mkdir(parents=True, exist_ok=True)
-        (workspace_dir / f"{stem}.md").write_text(stem)
-        repo.docs[stem] = _doc(stem)
-    return workspace_dir
+def layout(ws: Ws) -> Ws:
+    ws.put(_LAYOUT)
+
+    return ws
 
 
-class TestMoveDocument:
-    @pytest.mark.parametrize("companion", ["b.pdf", "b.assets"])
-    async def test_rejects_an_original_or_assets_without_a_description(
-        self,
-        user_store: Workspace,
-        workspace_dir: Path,
-        repo: FakeRepository,
-        companion: str,
-    ) -> None:
-        (workspace_dir / "a.md").write_text("a")
-        target = workspace_dir / companion
-
-        if target.suffix == ".assets":
-            target.mkdir()
-        else:
-            target.write_bytes(b"%PDF")
-
-        with pytest.raises(ChangeRefused) as exc:
-            await _move_one(user_store, user_store, "a.md", "b.md")
-
-        assert exc.value.status_code == 409
-        assert (workspace_dir / "a.md").read_text() == "a"
-        assert target.exists()
-        assert repo.calls == []
-
-    async def test_moves_entry_with_original_and_leaves_sibling_directory(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        """Description and original move together while a same-named sibling
-        directory keeps its files and rows: exactly one ``move_document``, never
-        a subtree sweep that would hijack the directory's rows."""
-        (workspace_dir / "notes.md").write_text("desc")
-        (workspace_dir / "notes.pdf").write_bytes(b"%PDF")
-        (workspace_dir / "notes").mkdir()
-        (workspace_dir / "notes/inner.md").write_text("inner")
-        repo.docs["notes"] = _doc("notes", original_suffix=".pdf")
-
-        await _move_one(user_store, user_store, "notes.md", "archive/notes.md")
-
-        assert (workspace_dir / "archive/notes.md").is_file()
-        assert (workspace_dir / "archive/notes.pdf").is_file()
-        assert not (workspace_dir / "notes.md").exists()
-        assert not (workspace_dir / "notes.pdf").exists()
-        assert (workspace_dir / "notes/inner.md").is_file()
-        assert repo.moved() == [("move_document", "notes", "archive/notes")]
-
-    async def test_existing_directory_destination_moves_into_it(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        (workspace_dir / "report.md").write_text("r")
-        (workspace_dir / "report.pdf").write_bytes(b"%PDF")
-        (workspace_dir / "archive").mkdir()
-        repo.docs["report"] = _doc("report", original_suffix=".pdf")
-
-        await _move_one(user_store, user_store, "report.md", "archive")
-
-        assert (workspace_dir / "archive/report.md").is_file()
-        assert (workspace_dir / "archive/report.pdf").is_file()
-
-    async def test_conflict_is_detected_before_any_rename(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        """A blocked original target must not leave a half-moved (duplicated) entry."""
-        (workspace_dir / "data").write_text("bin")
-        (workspace_dir / "data.md").write_text("d")
-        (workspace_dir / "blocked/data").mkdir(parents=True)
-        repo.docs["data"] = _doc("data", original_suffix="")
-
-        with pytest.raises(ChangeRefused) as exc:
-            await _move_one(user_store, user_store, "data.md", "blocked/data.md")
-
-        assert exc.value.status_code == 409
-        assert (workspace_dir / "data.md").is_file()
-        assert (workspace_dir / "data").is_file()
-        assert repo.calls == []
-
-    async def test_dotted_stem_moves_intact(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        """A stem containing dots (``a.tar``) must reach SQL verbatim, not
-        re-stemmed down to ``a``."""
-        (workspace_dir / "a.tar.md").write_text("d")
-        (workspace_dir / "a.tar.gz").write_bytes(b"x")
-        repo.docs["a.tar"] = _doc("a.tar", original_suffix=".gz")
-
-        await _move_one(user_store, user_store, "a.tar.md", "dir/a.tar.md")
-
-        assert (workspace_dir / "dir/a.tar.md").is_file()
-        assert (workspace_dir / "dir/a.tar.gz").is_file()
-        assert repo.moved() == [("move_document", "a.tar", "dir/a.tar")]
+def _move(src: str, dst: str) -> Move[str]:
+    return Move(f"~/{src}", f"~/{dst}")
 
 
-class TestMoveDirectory:
-    async def test_existing_directory_destination_moves_into_it(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        (workspace_dir / "images").mkdir()
-        (workspace_dir / "images/x.md").write_text("x")
-        (workspace_dir / "archive").mkdir()
-
-        await _move_one(user_store, user_store, "images", "archive")
-
-        assert (workspace_dir / "archive/images/x.md").is_file()
-        assert repo.moved() == [("move_subtree", "images", "archive/images")]
-
-    async def test_move_into_own_subtree_is_rejected(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        (workspace_dir / "images").mkdir()
-
-        with pytest.raises(ChangeRefused) as exc:
-            await _move_one(user_store, user_store, "images", "images/sub")
-
-        assert exc.value.status_code == 400
-        assert (workspace_dir / "images").is_dir()
+def _delete(path: str) -> Delete[str]:
+    return Delete(f"~/{path}")
 
 
-class TestCrossStoreMove:
-    """Migrating between workspaces (personal ↔ group): the files relocate to
-    the destination store's workspace tree and the SQL owner flips with them."""
+@pytest.mark.parametrize(
+    ("files", "operations", "status", "match"),
+    [
+        pytest.param({}, (_move("a.md", "x.md"), _move("a.md", "y.md")), 400, "more than one change", id="source twice"),
+        pytest.param({}, (_move("a.md", "x.md"), _move("b.md", "x.md")), 400, "more than one change", id="destination twice"),
+        pytest.param({}, (_move("a.md", "x.md"), _delete("a.md")), 400, "more than one change", id="moved and deleted"),
+        pytest.param({}, (_move("a.md", "b.md"),), 409, "already exists", id="onto an entry"),
+        pytest.param({}, (_move("dir", "moved"), _move("a.md", "moved/c.md")), 409, "already exists", id="into a moved directory"),
+        pytest.param({}, (Write("~/x", "1"), Write("~/x/y.md", "2")), 409, "'~/x' is a file", id="file and directory"),
+        pytest.param({}, (_move("a.md", "x.md"), Write("~/x.txt", "x")), 409, "already exists", id="original onto a moved entry"),
+        pytest.param({}, (Write("~/b.txt", "x"),), 409, "already exists", id="original onto an entry"),
+        pytest.param({"b.pdf": b"%PDF"}, (_move("a.md", "b.md"),), 409, "already exists", id="orphan original"),
+        pytest.param({"b.assets/": ""}, (_move("a.md", "b.md"),), 409, "already exists", id="orphan assets"),
+        pytest.param({"data": b"bin", "data.md": "d", "blocked/data/": ""}, (_move("data.md", "blocked/data.md"),), 409, "already exists", id="blocked original"),
+        pytest.param({"@team/a.md": "theirs"}, (Move("~/a.md", "@team/a.md"),), 409, "already exists", id="occupied group destination"),
+        pytest.param({}, (_move("dir", "dir/sub"),), 400, None, id="into own subtree"),
+        pytest.param({}, (_delete(""),), 400, None, id="workspace root"),
+        pytest.param({}, (Delete("~/a.md", expect="dir"),), 404, "Directory not found", id="wrong kind"),
+        pytest.param({}, (_move("a.md", "x.md"), Delete("~/dir", expect="entry")), 404, "~/dir", id="folder as an entry"),
+        pytest.param({}, (CreateDir("~/a.md"),), 409, None, id="directory over a file"),
+        pytest.param({"report.assets/": ""}, (CreateDir("~/x.assets"),), 400, None, id="new assets directory"),
+        pytest.param({"report.assets/": ""}, (_move("report.assets", "elsewhere"),), 400, None, id="assets directory moved"),
+        pytest.param({"cars.csv": "1", "cars.csv.cbrkit.json": "{}"}, (Write("~/cars.csv.cbrkit.json", "{}"),), 400, None, id="sidecar written"),
+        pytest.param({"cars.csv": "1", "cars.csv.cbrkit.json": "{}"}, (_move("cars.csv.cbrkit.json", "x.cbrkit.json"),), 400, None, id="sidecar moved"),
+        pytest.param({"afile": "x"}, (Write("~/afile/doc.md", "hello"),), 409, None, id="below a file"),
+    ],
+)  # fmt: skip
+async def test_refused_changes_leave_everything_as_it_was(
+    layout: Ws,
+    files: Mapping[str, str | bytes],
+    operations: tuple[Operation[str], ...],
+    status: int,
+    match: str | None,
+) -> None:
+    layout.put(files)
+    before = layout.tree()
 
-    @pytest.fixture()
-    def group_store(self, data_dir: Path) -> Workspace:
-        _ = data_dir
-        return HostGrant().workspace(GroupScope("team"))
+    with pytest.raises(ChangeRefused, match=match) as exc:
+        await layout.apply(*operations)
 
-    async def test_document_relocates_to_group_workspace(
-        self,
-        user_store: Workspace,
-        workspace_dir: Path,
-        group_store: Workspace,
-        repo: FakeRepository,
-    ) -> None:
-        """A same-named cross-store move re-homes the entry: its files land in
-        the group tree, leave the personal one, and the owner flip is requested
-        for both the description row and its assets subtree."""
-        group_dir = group_store.workspace_dir()
-        (workspace_dir / "report.md").write_text("[a](report.assets/a.png)")
-        (workspace_dir / "report.pdf").write_bytes(b"%PDF")
-        (workspace_dir / "report.assets").mkdir()
-        (workspace_dir / "report.assets/a.png").write_bytes(b"img")
-        doc = _doc("report", original_suffix=".pdf")
-        repo.docs["report"] = doc.model_copy(update={"assets_dir": "report.assets"})
-
-        await _move_one(user_store, group_store, "report.md", "report.md")
-
-        assert (group_dir / "report.md").is_file()
-        assert (group_dir / "report.pdf").is_file()
-        assert (group_dir / "report.assets/a.png").is_file()
-        assert not (workspace_dir / "report.md").exists()
-        assert not (workspace_dir / "report.pdf").exists()
-        # Same basename → the asset references are untouched.
-        assert (group_dir / "report.md").read_text() == "[a](report.assets/a.png)"
-        assert [(name, *stores) for name, _src, _dst, *stores in repo.moves] == [
-            ("move_document", "user:testuser", "group:team"),
-            ("move_subtree", "user:testuser", "group:team"),
-        ]
-
-    async def test_document_blocked_by_existing_destination(
-        self,
-        user_store: Workspace,
-        workspace_dir: Path,
-        group_store: Workspace,
-        repo: FakeRepository,
-    ) -> None:
-        """A destination already occupied in the group is a 409, and nothing
-        leaves the source workspace."""
-        group_dir = group_store.workspace_dir()
-        (workspace_dir / "notes.md").write_text("mine")
-        (group_dir / "notes.md").write_text("theirs")
-        repo.docs["notes"] = _doc("notes")
-
-        with pytest.raises(ChangeRefused) as exc:
-            await _move_one(user_store, group_store, "notes.md", "notes.md")
-
-        assert exc.value.status_code == 409
-        assert (workspace_dir / "notes.md").read_text() == "mine"
-        assert repo.calls == []
-
-    async def test_directory_relocates_to_group_workspace(
-        self,
-        user_store: Workspace,
-        workspace_dir: Path,
-        group_store: Workspace,
-        repo: FakeRepository,
-    ) -> None:
-        group_dir = group_store.workspace_dir()
-        (workspace_dir / "shared").mkdir()
-        (workspace_dir / "shared/x.md").write_text("x")
-
-        await _move_one(user_store, group_store, "shared", "shared")
-
-        assert (group_dir / "shared/x.md").is_file()
-        assert not (workspace_dir / "shared").exists()
-        assert [(name, *stores) for name, _src, _dst, *stores in repo.moves] == [
-            ("move_subtree", "user:testuser", "group:team")
-        ]
+    assert exc.value.status_code == status
+    assert layout.tree() == before
+    assert layout.index.outcomes == []
 
 
-class TestNativeSemanticGuards:
-    """Operations that previously crashed with an ``OSError`` (a 500 to the
-    client) or silently corrupted the workspace now fail with clear 4xx."""
+@pytest.mark.parametrize(
+    ("stem", "suffix"), [("notes", ".pdf"), ("a.tar", ".gz")], ids=["plain", "dotted"]
+)
+async def test_an_entry_moves_whole_and_leaves_a_same_named_directory(
+    ws: Ws, stem: str, suffix: str
+) -> None:
+    ws.put({f"{stem}.md": "desc", f"{stem}{suffix}": b"%PDF", f"{stem}/inner.md": "i"})
+    ws.row(stem, suffix)
 
-    async def test_delete_directory_rejects_empty_path(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        """A bare scope root must not wipe the workspace while rows survive."""
-        (workspace_dir / "docs").mkdir()
-        (workspace_dir / "docs/a.md").write_text("a")
+    await ws.apply(_move(f"{stem}.md", f"archive/{stem}.md"))
 
-        with pytest.raises(ChangeRefused) as exc:
-            await _delete_one(user_store, "")
-
-        assert exc.value.status_code == 400
-        assert (workspace_dir / "docs/a.md").is_file()
-
-    async def test_delete_refuses_the_kind_it_does_not_expect(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        (workspace_dir / "a.md").write_text("a")
-
-        with pytest.raises(ChangeRefused, match="Directory not found"):
-            await _apply(Delete(Location(Root.of(user_store), "a.md"), expect="dir"))
-
-        assert (workspace_dir / "a.md").is_file()
-
-    async def test_upload_below_file_blocked_parent_is_409(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        """A destination whose parent component is a file is rejected up front
-        instead of surfacing as an ``OSError`` 500."""
-        (workspace_dir / "afile").write_text("x")
-        with pytest.raises(ChangeRefused) as exc:
-            await workspace.upload(user_store, "afile/doc.md", b"hello")
-        assert exc.value.status_code == 409
-
-    async def test_directory_api_refuses_assets_paths(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        """Hidden ``.assets`` storage cannot be created or renamed directly."""
-        (workspace_dir / "report.assets").mkdir()
-
-        with pytest.raises(ChangeRefused) as create_exc:
-            await _apply(CreateDir(Location(Root.of(user_store), "x.assets")))
-        with pytest.raises(ChangeRefused) as move_exc:
-            await _move_one(user_store, user_store, "report.assets", "elsewhere")
-
-        assert create_exc.value.status_code == 400
-        assert move_exc.value.status_code == 400
+    assert ws.tree() == {
+        f"archive/{stem}.md": "desc",
+        f"archive/{stem}{suffix}": "%PDF",
+        f"{stem}/inner.md": "i",
+    }
+    assert ws.index.moved() == [("move_document", stem, f"archive/{stem}")]
 
 
-class TestDeleteKeepsDirectories:
-    async def test_deleting_last_file_keeps_parent_directory(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        (workspace_dir / "keep").mkdir()
-        (workspace_dir / "keep/doc.md").write_text("body")
-        repo.docs["keep/doc"] = _doc("keep/doc")
-
-        await _delete_one(user_store, "keep/doc.md")
-
-        assert (workspace_dir / "keep").is_dir()
-        assert not (workspace_dir / "keep/doc.md").exists()
-
-    async def test_deletes_stray_original_without_row_or_description(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        """Hand-dropped binaries survive reconciliation, so the API must be
-        able to remove them despite having no SQL row and no description."""
-        (workspace_dir / "loose.bin").write_bytes(b"\x00")
-
-        await _delete_one(user_store, "loose.bin")
-
-        assert not (workspace_dir / "loose.bin").exists()
-
-    async def test_deletes_sibling_original_the_row_has_not_recorded(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        """The row is an index over the filesystem, so an original it does not
-        name yet is still part of the entry the inventory groups and shows."""
-        (workspace_dir / "notes.md").write_text("body")
-        (workspace_dir / "notes.pdf").write_bytes(b"%PDF")
-        repo.docs["notes"] = _doc("notes")
-
-        await _delete_one(user_store, "notes.md")
-
-        assert not (workspace_dir / "notes.md").exists()
-        assert not (workspace_dir / "notes.pdf").exists()
-
-
-class TestChangesets:
-    """Batches apply at once, all or nothing: sources as they are now, destinations as they end up."""
-
-    @pytest.mark.parametrize(
-        ("pairs", "deletes", "message"),
-        [
-            ([("a.md", "x.md"), ("a.md", "y.md")], [], "more than one change"),
-            ([("a.md", "x.md"), ("b.md", "x.md")], [], "more than one change"),
-            ([("a.md", "x.md")], ["a.md"], "more than one change"),
-            ([("a.md", "b.md")], [], "already exists"),
-            ([("dir", "moved"), ("a.md", "moved/c.md")], [], "already exists"),
-        ],
+async def test_an_existing_directory_destination_is_moved_into(ws: Ws) -> None:
+    ws.put(
+        {"report.md": "r", "report.pdf": b"%PDF", "images/x.md": "x", "archive/": ""}
     )
-    async def test_conflicting_items_are_refused_before_anything_changes(
-        self,
-        user_store: Workspace,
-        layout: Path,
-        repo: FakeRepository,
-        pairs: list[tuple[str, str]],
-        deletes: list[str],
-        message: str,
-    ) -> None:
-        operations = (
-            *(_move(user_store, user_store, src, dst) for src, dst in pairs),
-            *(Delete(Location(Root.of(user_store), path)) for path in deletes),
-        )
+    ws.row("report", ".pdf")
 
-        with pytest.raises(ChangeRefused, match=message):
-            await workspace.plan_changeset(Changeset(operations))
+    await ws.apply(_move("report.md", "archive"), _move("images", "archive"))
 
-        assert sorted(p.name for p in layout.iterdir()) == ["a.md", "b.md", "dir"]
-        assert repo.calls == []
+    assert ws.tree() == {
+        "archive/report.md": "r",
+        "archive/report.pdf": "%PDF",
+        "archive/images/x.md": "x",
+    }
+    assert ws.index.moved() == [
+        ("move_document", "report", "archive/report"),
+        ("move_subtree", "images", "archive/images"),
+    ]
 
-    async def test_written_files_and_new_originals_are_checked_in_the_final_state(
-        self, user_store: Workspace, layout: Path
-    ) -> None:
-        async def plan(*operations: Operation[Location]) -> workspace.PlannedChangeset:
-            return await workspace.plan_changeset(Changeset(operations))
 
-        # A file one item writes cannot be the directory another item fills.
-        with pytest.raises(ChangeRefused, match="'~/x' is a file"):
-            await plan(
-                Write(Location(Root.of(user_store), "x"), "1"),
-                Write(Location(Root.of(user_store), "x/y.md"), "2"),
-            )
-
-        # A new original's stem is taken by an entry a move lands on it.
-        with pytest.raises(ChangeRefused, match="already exists"):
-            await plan(
-                _move(user_store, user_store, "a.md", "x.md"),
-                Write(Location(Root.of(user_store), "x.txt"), "x"),
-            )
-
-        # And freed by a delete of the entry holding it now.
-        with pytest.raises(ChangeRefused, match="already exists"):
-            await plan(Write(Location(Root.of(user_store), "b.txt"), "x"))
-        _ = await plan(
-            Delete(Location(Root.of(user_store), "b.md")),
-            Write(Location(Root.of(user_store), "b.txt"), "x"),
-        )
-
-    @pytest.mark.parametrize(
-        ("pairs", "deletes", "expected"),
-        [
-            # A swap and a rotation, which no order of single moves can make.
-            (
-                [("a.md", "b.md"), ("b.md", "a.md")],
-                [],
-                {"a.md": "b", "b.md": "a", "dir/c.md": "dir/c"},
-            ),
-            (
-                [("a.md", "b.md"), ("b.md", "dir/c.md"), ("dir/c.md", "a.md")],
-                [],
-                {"a.md": "dir/c", "b.md": "a", "dir/c.md": "b"},
-            ),
-            # A chain, and a move onto a path the same call deletes.
-            (
-                [("a.md", "b.md"), ("b.md", "x.md")],
-                [],
-                {"b.md": "a", "x.md": "b", "dir/c.md": "dir/c"},
-            ),
-            ([("a.md", "b.md")], ["b.md"], {"b.md": "a", "dir/c.md": "dir/c"}),
-            # Moves and deletes inside a directory another move takes.
-            (
-                [("dir", "moved"), ("dir/c.md", "c.md")],
-                [],
-                {"a.md": "a", "b.md": "b", "c.md": "dir/c"},
-            ),
-            ([("dir", "moved")], ["dir/c.md"], {"a.md": "a", "b.md": "b"}),
-            (
-                [("a.md", "dir/a.md"), ("dir", "moved")],
-                [],
-                {"b.md": "b", "dir/a.md": "a", "moved/c.md": "dir/c"},
-            ),
-        ],
-    )
-    async def test_items_apply_at_once(
-        self,
-        user_store: Workspace,
-        layout: Path,
-        repo: FakeRepository,
-        pairs: list[tuple[str, str]],
-        deletes: list[str],
-        expected: dict[str, str],
-    ) -> None:
-        await _apply(
-            *(_move(user_store, user_store, src, dst) for src, dst in pairs),
-            *(Delete(Location(Root.of(user_store), path)) for path in deletes),
-        )
-
-        files = {
-            str(path.relative_to(layout)): path.read_text()
-            for path in layout.rglob("*.md")
+async def test_entries_and_directories_relocate_between_workspaces(ws: Ws) -> None:
+    ws.put(
+        {
+            "report.md": "[a](report.assets/a.png)",
+            "report.pdf": b"%PDF",
+            "report.assets/a.png": b"img",
+            "shared/x.md": "x",
         }
-        assert files == expected
-        assert repo.transactions == ["committed"]
+    )
+    ws.row("report", ".pdf")
 
-    async def test_a_swap_keeps_every_row(
-        self, user_store: Workspace, layout: Path, repo: FakeRepository
-    ) -> None:
-        await _apply(
-            _move(user_store, user_store, "a.md", "b.md"),
-            _move(user_store, user_store, "b.md", "a.md"),
+    await ws.apply(
+        Move("~/report.md", "@team/report.md"), Move("~/shared", "@team/shared")
+    )
+
+    assert ws.tree() == {
+        "@team/report.md": "[a](report.assets/a.png)",
+        "@team/report.pdf": "%PDF",
+        "@team/report.assets/a.png": "img",
+        "@team/shared/x.md": "x",
+    }
+    assert [(name, *stores) for name, _src, _dst, *stores in ws.index.moves] == [
+        ("move_document", "user:testuser", "group:team"),
+        ("move_subtree", "user:testuser", "group:team"),
+        ("move_subtree", "user:testuser", "group:team"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("files", "path", "left"),
+    [
+        pytest.param({"keep/doc.md": "body"}, "keep/doc.md", {"keep/": ""}, id="last file keeps its directory"),
+        pytest.param({"loose.bin": b"\x00"}, "loose.bin", {}, id="stray original"),
+        pytest.param({"notes.md": "b", "notes.pdf": b"%PDF"}, "notes.md", {}, id="original the row never recorded"),
+        pytest.param({"cars.csv": "p", "cars.csv.cbrkit.json": "{}"}, "cars.csv.cbrkit.json", {"cars.csv": "p"}, id="sidecar alone"),
+    ],
+)  # fmt: skip
+async def test_a_delete_takes_what_the_filesystem_groups_with_the_entry(
+    ws: Ws, files: Mapping[str, str | bytes], path: str, left: dict[str, str]
+) -> None:
+    ws.put(files)
+
+    await ws.apply(_delete(path))
+
+    assert ws.tree() == left
+
+
+@pytest.mark.parametrize(
+    ("operations", "expected"),
+    [
+        # A swap and a rotation, which no order of single moves can make.
+        ((_move("a.md", "b.md"), _move("b.md", "a.md")), {"a.md": "b", "b.md": "a", "dir/c.md": "dir/c"}),
+        ((_move("a.md", "b.md"), _move("b.md", "dir/c.md"), _move("dir/c.md", "a.md")), {"a.md": "dir/c", "b.md": "a", "dir/c.md": "b"}),
+        # A chain, and a move onto a path the same call deletes.
+        ((_move("a.md", "b.md"), _move("b.md", "x.md")), {"b.md": "a", "x.md": "b", "dir/c.md": "dir/c"}),
+        ((_move("a.md", "b.md"), _delete("b.md")), {"b.md": "a", "dir/c.md": "dir/c"}),
+        # Moves and deletes inside a directory another move takes.
+        ((_move("dir", "moved"), _move("dir/c.md", "c.md")), {"a.md": "a", "b.md": "b", "c.md": "dir/c", "moved/": ""}),
+        ((_move("dir", "moved"), _delete("dir/c.md")), {"a.md": "a", "b.md": "b", "moved/": ""}),
+        ((_move("a.md", "dir/a.md"), _move("dir", "moved")), {"b.md": "b", "dir/a.md": "a", "moved/c.md": "dir/c"}),
+        ((_move("a.md", "A.md"),), {"A.md": "a", "b.md": "b", "dir/c.md": "dir/c"}),
+        ((CreateDir("~/new/deep"),), {**_LAYOUT, "new/deep/": ""}),
+        # A delete frees the stem a new original claims.
+        ((_delete("b.md"), Write("~/b.txt", "x")), {"a.md": "a", "dir/c.md": "dir/c", "b.txt": "x", "b.md": "```txt\nx\n```\n"}),
+    ],
+)  # fmt: skip
+async def test_items_apply_at_once(
+    layout: Ws, operations: tuple[Operation[str], ...], expected: dict[str, str]
+) -> None:
+    await layout.apply(*operations)
+
+    assert layout.tree() == expected
+    # Every move keeps its row, a swap included.
+    assert len(layout.index.moved()) == sum(isinstance(o, Move) for o in operations)
+
+
+@pytest.mark.usefixtures("folded_case")
+async def test_a_case_insensitive_filesystem_sees_one_destination(layout: Ws) -> None:
+    with pytest.raises(ChangeRefused, match="more than one change"):
+        await layout.apply(_move("a.md", "X.md"), _move("b.md", "x.md"))
+
+
+async def test_a_write_follows_the_move_that_carries_its_file(layout: Ws) -> None:
+    """What a sandbox diff produces for a document renamed and then edited."""
+    await layout.apply(
+        Write("~/archive/a.md", "edited"),
+        _move("a.md", "archive/a.md"),
+        _move("dir", "moved"),
+        Write("~/moved/c.md", "also edited"),
+    )
+
+    assert layout.tree() == {
+        "archive/a.md": "edited",
+        "b.md": "b",
+        "moved/c.md": "also edited",
+    }
+    assert layout.index.moved() == [
+        ("move_document", "a", "archive/a"),
+        ("move_subtree", "dir", "moved"),
+    ]
+
+
+async def test_a_failed_row_change_restores_every_file(layout: Ws) -> None:
+    before = layout.tree()
+    layout.index.failing = {"b"}
+
+    with pytest.raises(RuntimeError, match="row failed to move"):
+        await layout.apply(
+            _move("a.md", "archive/a.md"),
+            _move("b.md", "archive/b.md"),
+            _delete("dir"),
         )
 
-        assert repo.moved() == [
-            ("move_document", "a", "b"),
-            ("move_document", "b", "a"),
-        ]
+    assert layout.index.outcomes == ["rolled back"]
+    assert layout.tree() == before
 
-    async def test_a_case_only_rename_renames(
-        self, user_store: Workspace, layout: Path, repo: FakeRepository
-    ) -> None:
-        await _move_one(user_store, user_store, "a.md", "A.md")
 
-        assert "A.md" in {path.name for path in layout.iterdir()}
-        assert "a.md" not in {path.name for path in layout.iterdir()}
-        assert repo.moved() == [("move_document", "a", "A")]
+async def test_a_replaced_file_fails_its_basis_despite_its_stat(layout: Ws) -> None:
+    """A same-size replacement with the old mtime is a new inode."""
+    live = layout.root / "a.md"
+    seen = ContentStat.from_path(live)
+    assert seen is not None
+    other = layout.root / "other"
+    other.write_text("z")
+    os.utime(other, ns=(seen.mtime_ns, seen.mtime_ns))
+    other.replace(live)
 
-    @pytest.mark.usefixtures("folded_case")
-    async def test_a_case_insensitive_filesystem_sees_one_destination(
-        self, user_store: Workspace, layout: Path, repo: FakeRepository
-    ) -> None:
-        with pytest.raises(ChangeRefused, match="more than one change"):
-            await workspace.plan_changeset(
-                Changeset(
-                    (
-                        _move(user_store, user_store, "a.md", "X.md"),
-                        _move(user_store, user_store, "b.md", "x.md"),
-                    )
-                )
-            )
+    with pytest.raises(ChangeRefused) as exc:
+        await layout.apply(Delete("~/a.md", seen))
 
-    async def test_an_empty_directory_is_created_once(
-        self, user_store: Workspace, layout: Path, repo: FakeRepository
-    ) -> None:
-        await _apply(CreateDir(Location(Root.of(user_store), "new/deep")))
+    assert exc.value.status_code == 409
 
-        assert (layout / "new/deep").is_dir()
-        with pytest.raises(ChangeRefused) as exc:
-            await _apply(CreateDir(Location(Root.of(user_store), "a.md")))
-        assert exc.value.status_code == 409
 
-    async def test_a_replaced_file_fails_its_basis_despite_its_stat(
-        self, user_store: Workspace, layout: Path, repo: FakeRepository
-    ) -> None:
-        """A same-size replacement with the old mtime is a new inode."""
-        live = layout / "a.md"
-        seen = ContentStat.from_path(live)
-        assert seen is not None
-        (layout / "other").write_text("z")
-        os.utime(layout / "other", ns=(seen.mtime_ns, seen.mtime_ns))
-        (layout / "other").replace(live)
+@pytest.mark.parametrize("operation", ["delete", "move"])
+@pytest.mark.parametrize("change", ["add", "edit", "replace"])
+async def test_staged_directories_reject_changed_contents_or_kind(
+    layout: Ws,
+    user_store: Workspace,
+    operation: Literal["delete", "move"],
+    change: Literal["add", "edit", "replace"],
+) -> None:
+    root = SearchPath.of(path=layout.root, target=user_store.scope.prefix, implied=True)
+    mount = WorkspaceOS(paths=(root,), writable=(root,), environ={}, limits=LIMITS)
+    directory = WORKSPACE_MOUNT / "~/dir"
 
-        with pytest.raises(ChangeRefused) as exc:
-            await _apply(Delete(Location(Root.of(user_store), "a.md"), seen))
+    if operation == "delete":
+        mount.path_unlink(directory / "c.md")
+        mount.path_rmdir(directory)
+    else:
+        mount.path_rename(directory, WORKSPACE_MOUNT / "~/moved")
 
-        assert exc.value.status_code == 409
+    staged = stage_changes(mount)
+    assert staged is not None
+    await layout.gateway.plan(staged)
 
-    @pytest.mark.parametrize("operation", ["delete", "move"])
-    @pytest.mark.parametrize("change", ["add", "edit", "replace"])
-    async def test_staged_directories_reject_changed_contents_or_kind(
-        self,
-        user_store: Workspace,
-        layout: Path,
-        repo: FakeRepository,
-        operation: Literal["delete", "move"],
-        change: Literal["add", "edit", "replace"],
-    ) -> None:
-        root = SearchPath.of(path=layout, target=user_store.scope.prefix, implied=True)
-        mount = WorkspaceOS(paths=(root,), writable=(root,), environ={}, limits=LIMITS)
-        directory = WORKSPACE_MOUNT / "~/dir"
+    match change:
+        case "add":
+            (layout.root / "dir/new.md").write_text("new")
+        case "edit":
+            (layout.root / "dir/c.md").write_text("updated")
+        case "replace":
+            (layout.root / "dir").rename(layout.root / "saved")
+            (layout.root / "dir").write_text("replacement")
 
-        if operation == "delete":
-            mount.path_unlink(directory / "c.md")
-            mount.path_rmdir(directory)
+    with pytest.raises(ChangeRefused) as exc:
+        await layout.gateway.apply(staged)
+
+    assert exc.value.status_code == 409
+    assert (layout.root / "dir").exists()
+    assert not (layout.root / "moved").exists()
+    assert layout.index.outcomes == []
+
+
+async def test_plan_summarizes_what_a_person_approves(layout: Ws) -> None:
+    layout.put({"b.pdf": b"%PDF"})
+
+    planned = await layout.plan(
+        _move("a.md", "b.md"),
+        _delete("b.md"),
+        _move("dir", "moved"),
+        Write("~/moved/c.md", "C"),
+        Write("~/new.md", "x\n"),
+        CreateDir("~/empty"),
+    )
+
+    assert planned.summary == ChangesetSummary(
+        creates=(
+            FileDiff("~/new.md", "--- /dev/null\n+++ ~/new.md\n@@ -0,0 +1 @@\n+x\n"),
+        ),
+        updates=(
+            FileDiff(
+                "~/moved/c.md",
+                "--- ~/moved/c.md\n+++ ~/moved/c.md\n@@ -1 +1 @@\n-dir/c\n"
+                "\\ No newline at end of file\n+C\n\\ No newline at end of file\n",
+            ),
+        ),
+        moves=(
+            PathMove("~/a.md", "~/b.md", replaces=True),
+            PathMove("~/dir", "~/moved", is_dir=True),
+        ),
+        deletes=("~/b.md", "~/b.pdf"),
+        mkdirs=("~/empty",),
+    )
+
+
+async def test_applied_paths_reach_every_client_of_the_agent(
+    layout: Ws, user_store: Workspace
+) -> None:
+    """Every client following the store follows the move to where it resolved, from one event."""
+    follows = {user_store.store_key: user_store.scope.prefix}
+
+    feed = workspace_events.manager.subscribe(["testuser"], follows)
+
+    async with aclosing(feed) as events:
+        assert isinstance(await anext(events), FeedReady)
+        applied = await layout.apply(Move("~/a.md", "~/dir"), _delete("b.md"))
+        event = await anext(events)
+
+    assert applied.changed == WorkspaceChanged(
+        scopes=("~",),
+        moves=(PathMove("~/a.md", "~/dir/a.md"),),
+        deletes=("~/b.md",),
+    )
+    assert event == applied.changed
+
+
+@pytest.mark.parametrize("delete", [False, True])
+async def test_every_companion_follows_its_subject(ws: Ws, delete: bool) -> None:
+    """An entry and a folder case base move, rename, and go with every part they have."""
+    entry = EntryPaths(
+        "cars",
+        frozenset({"description", "original", "assets", *COMPANION_SUFFIXES}),
+        ".csv",
+    )
+    tree = EntryPaths.tree("flows", COMPANION_SUFFIXES)
+
+    for path in (*entry.files, *tree.files):
+        if Part.of(path).kind == "assets" or path == "flows":
+            ws.put({f"{path}/a.json": "{}"})
         else:
-            mount.path_rename(directory, WORKSPACE_MOUNT / "~/moved")
+            ws.put({path: "{}"})
 
-        staged = stage_changes(mount)
-        assert staged is not None
-        gateway = workspace.Gateway((Root.of(user_store),))
-        await gateway.plan(staged)
+    ws.row("cars", ".csv")
 
-        match change:
-            case "add":
-                (layout / "dir/new.md").write_text("new")
-            case "edit":
-                (layout / "dir/c.md").write_text("updated")
-            case "replace":
-                (layout / "dir").rename(layout / "saved")
-                (layout / "dir").write_text("replacement")
-
-        with pytest.raises(ChangeRefused) as exc:
-            await gateway.apply(staged)
-
-        assert exc.value.status_code == 409
-        assert (layout / "dir").exists()
-        assert not (layout / "moved").exists()
-        assert repo.calls == []
-
-    async def test_plan_resolves_move_into_directory(
-        self, user_store: Workspace, layout: Path
-    ) -> None:
-        planned = await workspace.plan_changeset(
-            Changeset((_move(user_store, user_store, "a.md", "dir"),))
+    if delete:
+        await ws.apply(_delete("cars.md"), _delete("flows"))
+        landed: tuple[str, ...] = ()
+    else:
+        await ws.apply(
+            _move("cars.md", "archive/fleet.md"), _move("flows", "archive/graphs")
         )
+        landed = (*entry.at("archive/fleet").files, *tree.at("archive/graphs").files)
 
-        assert planned.changeset.operations == (
-            _move(user_store, user_store, "a.md", "dir/a.md"),
-        )
-
-    async def test_plan_summarizes_what_a_person_approves(
-        self, user_store: Workspace, layout: Path
-    ) -> None:
-        (layout / "b.pdf").write_bytes(b"%PDF")
-
-        planned = await workspace.plan_changeset(
-            Changeset(
-                (
-                    _move(user_store, user_store, "a.md", "b.md"),
-                    Delete(Location(Root.of(user_store), "b.md")),
-                    _move(user_store, user_store, "dir", "moved"),
-                    Write(Location(Root.of(user_store), "moved/c.md"), "C"),
-                    Write(Location(Root.of(user_store), "new.md"), "x\n"),
-                    CreateDir(Location(Root.of(user_store), "empty")),
-                )
-            )
-        )
-
-        assert planned.summary == ChangesetSummary(
-            creates=(
-                FileDiff(
-                    "~/new.md", "--- /dev/null\n+++ ~/new.md\n@@ -0,0 +1 @@\n+x\n"
-                ),
-            ),
-            updates=(
-                FileDiff(
-                    "~/moved/c.md",
-                    "--- ~/moved/c.md\n+++ ~/moved/c.md\n@@ -1 +1 @@\n-dir/c\n"
-                    "\\ No newline at end of file\n+C\n\\ No newline at end of file\n",
-                ),
-            ),
-            moves=(
-                PathMove("~/a.md", "~/b.md", replaces=True),
-                PathMove("~/dir", "~/moved", is_dir=True),
-            ),
-            deletes=("~/b.md", "~/b.pdf"),
-            mkdirs=("~/empty",),
-        )
-
-    async def test_applied_paths_reach_every_client_of_the_agent(
-        self,
-        user_store: Workspace,
-        layout: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Every client following the store follows the move to where it
-        resolved, not to the folder it named, from one event."""
-        feed = JobManager()
-        monkeypatch.setattr(workspace_events, "manager", feed)
-        agent = workspace.Gateway((Root.of(user_store),))
-        follows = {user_store.store_key: user_store.scope.prefix}
-
-        async with aclosing(feed.subscribe("testuser", follows)) as events:
-            assert isinstance(await anext(events), FeedReady)
-            applied = await agent.apply(
-                Changeset((Move("~/a.md", "~/dir"), Delete("~/b.md")))
-            )
-            event = await asyncio.wait_for(anext(events), 1.0)
-
-        assert applied.changed == WorkspaceChanged(
-            scopes=("~",),
-            moves=(PathMove("~/a.md", "~/dir/a.md"),),
-            deletes=("~/b.md",),
-        )
-        assert event == applied.changed
-
-    async def test_a_failed_row_change_restores_every_file(
-        self, user_store: Workspace, layout: Path, repo: FakeRepository
-    ) -> None:
-        repo.failing_stem = "b"
-
-        with pytest.raises(RuntimeError, match="simulated row failure"):
-            await _apply(
-                _move(user_store, user_store, "a.md", "archive/a.md"),
-                _move(user_store, user_store, "b.md", "archive/b.md"),
-                Delete(Location(Root.of(user_store), "dir")),
-            )
-
-        assert repo.transactions == ["rolled back"]
-        assert (layout / "a.md").read_text() == "a"
-        assert (layout / "b.md").read_text() == "b"
-        assert (layout / "dir/c.md").read_text() == "dir/c"
-        assert not (layout / "archive").exists()
-
-    async def test_a_write_follows_the_move_that_carries_its_file(
-        self,
-        user_store: Workspace,
-        layout: Path,
-        repo: FakeRepository,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """What a sandbox diff produces for a document renamed and then edited."""
-
-        async def _index(*_args: object, **_kwargs: object) -> None:
-            return None
-
-        monkeypatch.setattr(changeset_apply, "chunk_and_index_document", _index)
-
-        await _apply(
-            Write(Location(Root.of(user_store), "archive/a.md"), "edited"),
-            _move(user_store, user_store, "a.md", "archive/a.md"),
-            _move(user_store, user_store, "dir", "moved"),
-            Write(Location(Root.of(user_store), "moved/c.md"), "also edited"),
-        )
-
-        assert (layout / "archive/a.md").read_text() == "edited"
-        assert (layout / "moved/c.md").read_text() == "also edited"
-        assert not (layout / "a.md").exists()
-        assert repo.moved() == [
-            ("move_document", "a", "archive/a"),
-            ("move_subtree", "dir", "moved"),
-        ]
+    assert not [p for p in (*entry.files, *tree.files) if (ws.root / p).exists()]
+    assert [p for p in landed if (ws.root / p).exists()] == list(landed)
+    assert len(landed) == (0 if delete else 2 * len(COMPANION_SUFFIXES) + 4)
+    # A renamed description points at its renamed assets, so its chunks follow.
+    assert [e.description_path for e in ws.index.indexed] == (
+        [] if delete else ["archive/fleet.md"]
+    )
 
 
 class TestChangesRoute:
     """``POST /changes`` sends every operation of a request through one changeset."""
 
-    async def test_mixed_batch_applies_at_once(
-        self, layout: Path, repo: FakeRepository
-    ) -> None:
+    async def test_mixed_batch_applies_at_once(self, layout: Ws) -> None:
         request = ChangesRequest.model_validate(
             {
                 "operations": [
@@ -907,37 +510,13 @@ class TestChangesRoute:
 
         await documents_routes.apply_changes(request, _USER)
 
-        assert (layout / "x.md").read_text() == "a"
-        assert (layout / "moved/c.md").read_text() == "dir/c"
-        assert not (layout / "b.md").exists()
-        assert (layout / "new").is_dir()
-        assert repo.moved() == [
+        assert layout.tree() == {"x.md": "a", "moved/c.md": "dir/c", "new/": ""}
+        assert layout.index.moved() == [
             ("move_document", "a", "x"),
             ("move_subtree", "dir", "moved"),
         ]
-        assert ("delete_document", "b.md") in repo.calls
-        assert repo.transactions == ["committed"]
-
-    async def test_deleting_a_folder_as_an_entry_changes_nothing(
-        self, layout: Path, repo: FakeRepository
-    ) -> None:
-        request = ChangesRequest.model_validate(
-            {
-                "operations": [
-                    {"kind": "move", "source": "~/a.md", "destination": "~/x.md"},
-                    {"kind": "delete", "path": "~/dir", "expect": "entry"},
-                ]
-            }
-        )
-
-        with pytest.raises(ChangeRefused) as exc:
-            await documents_routes.apply_changes(request, _USER)
-
-        assert exc.value.status_code == 404
-        assert "~/dir" in str(exc.value.detail)
-        assert (layout / "a.md").is_file()
-        assert (layout / "dir/c.md").is_file()
-        assert repo.calls == []
+        assert layout.index.stems(layout.store) == ["moved/c", "x"]
+        assert layout.index.outcomes == ["committed"]
 
     @pytest.mark.parametrize(
         "operations",
@@ -952,7 +531,7 @@ class TestChangesRoute:
             ChangesRequest.model_validate({"operations": operations})
 
     async def test_single_item_shortcuts_go_through_the_changeset(
-        self, layout: Path, repo: FakeRepository
+        self, layout: Ws
     ) -> None:
         """Each shortcut is one operation of ``POST /changes``, kind checks included."""
         await documents_routes.move_document(
@@ -965,87 +544,8 @@ class TestChangesRoute:
         assert exc.value.status_code == 404
         await documents_routes.delete_directory("~/dir", _USER)
         await documents_routes.create_directory("~/new", _USER)
-
         # A directory that exists is what a repeated PUT asked for.
         await documents_routes.create_directory("~/new", _USER)
-        assert (layout / "x.md").read_text() == "a"
-        assert not (layout / "dir").exists()
-        assert (layout / "new").is_dir()
-        assert repo.moved() == [("move_document", "a", "x")]
 
-
-class TestSidecar:
-    @pytest.mark.parametrize("delete", [False, True])
-    async def test_every_companion_follows_its_subject(
-        self,
-        user_store: Workspace,
-        workspace_dir: Path,
-        repo: FakeRepository,
-        delete: bool,
-    ) -> None:
-        """An entry and a folder case base move, rename, and go with every part they have."""
-        entry = EntryPaths(
-            "cars",
-            frozenset({"description", "original", "assets", *COMPANION_SUFFIXES}),
-            ".csv",
-        )
-        folder = EntryPaths.tree("flows", COMPANION_SUFFIXES)
-
-        for path in (*entry.files, *folder.files):
-            if Part.of(path).kind == "assets" or path == "flows":
-                (workspace_dir / path).mkdir()
-                (workspace_dir / path / "a.json").write_text("{}")
-            else:
-                (workspace_dir / path).write_text("{}")
-
-        repo.docs["cars"] = _doc("cars", original_suffix=".csv")
-
-        if delete:
-            await _apply(
-                Delete(Location(Root.of(user_store), "cars.md")),
-                Delete(Location(Root.of(user_store), "flows")),
-            )
-            landed: tuple[str, ...] = ()
-        else:
-            await _apply(
-                _move(user_store, user_store, "cars.md", "archive/fleet.md"),
-                _move(user_store, user_store, "flows", "archive/graphs"),
-            )
-            landed = (
-                *entry.at("archive/fleet").files,
-                *folder.at("archive/graphs").files,
-            )
-
-        assert not [
-            path
-            for path in (*entry.files, *folder.files)
-            if (workspace_dir / path).exists()
-        ]
-        assert [path for path in landed if (workspace_dir / path).exists()] == list(
-            landed
-        )
-        assert len(landed) == (0 if delete else 2 * len(COMPANION_SUFFIXES) + 4)
-        # A renamed description points at its renamed assets, so its chunks follow.
-        assert list(repo.indexed) == ([] if delete else ["archive/fleet.md"])
-
-    async def test_is_never_written_or_moved_alone_but_deleted(
-        self, user_store: Workspace, workspace_dir: Path, repo: FakeRepository
-    ) -> None:
-        (workspace_dir / "cars.csv").write_text("price\n1\n")
-        (workspace_dir / "cars.csv.cbrkit.json").write_text("{}")
-        target = Location(Root.of(user_store), "cars.csv.cbrkit.json")
-
-        with pytest.raises(ChangeRefused) as written:
-            await _apply(Write(target, "{}"))
-
-        with pytest.raises(ChangeRefused) as moved:
-            await _move_one(
-                user_store, user_store, "cars.csv.cbrkit.json", "x.cbrkit.json"
-            )
-
-        assert (written.value.status_code, moved.value.status_code) == (400, 400)
-
-        await _delete_one(user_store, "cars.csv.cbrkit.json")
-
-        assert not (workspace_dir / "cars.csv.cbrkit.json").exists()
-        assert (workspace_dir / "cars.csv").is_file()
+        assert layout.tree() == {"x.md": "a", "b.md": "b", "new/": ""}
+        assert layout.index.moved() == [("move_document", "a", "x")]

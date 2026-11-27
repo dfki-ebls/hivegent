@@ -5,6 +5,7 @@ import time
 from functools import cache
 from typing import Literal
 
+import httpx2
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -206,12 +207,17 @@ def sign_provenance(
 
 
 async def detect_text(
-    config: TransparencySettings, provider: LlmProviderSettings, text: str
+    config: TransparencySettings,
+    provider: LlmProviderSettings,
+    text: str,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> TransparencyDetectionResponse:
-    """Detect the configured watermark at *provider* without retaining the submitted text."""
+    """Detect the configured watermark at *provider* through *http_client*, the shared one of its endpoint when ``None``, without retaining the submitted text."""
     api_key = reveal(provider.api_key)
+    client = http_client or get_trusted_http_client(provider.base_url)
+
     try:
-        response = await get_trusted_http_client(provider.base_url).post(
+        response = await client.post(
             provider.url(config.detector_path),
             json=_DetectorRequest(text=text).model_dump(),
             headers={"Authorization": f"Bearer {api_key}"} if api_key else None,

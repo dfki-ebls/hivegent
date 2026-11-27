@@ -24,7 +24,7 @@ last text, and :class:`BoundedReport` bounds what it reports.
 
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Self, override
 
@@ -92,21 +92,20 @@ policy, and a list withholds them by name like any tool.
 """
 
 
-_AUTO_BACKGROUND_SECONDS = 30
-"""How long the main agent waits on a task it delegated in the foreground before the task moves to the background."""
-
 _BACKGROUND = "background"
 
-_BACKGROUND_SCHEMA: dict[str, Any] = {
-    "type": "boolean",
-    "default": True,
-    "description": (
-        "Run the task in the background, the default, and get its report later, so you "
-        "and the user go on meanwhile. Set false only for a short task whose result you "
-        "need to go on, which moves to the background if it still runs after "
-        f"{_AUTO_BACKGROUND_SECONDS} seconds."
-    ),
-}
+
+def _background_schema() -> dict[str, Any]:
+    return {
+        "type": "boolean",
+        "default": True,
+        "description": (
+            "Run the task in the background, the default, and get its report later, so you "
+            "and the user go on meanwhile. Set false only for a short task whose result you "
+            "need to go on, which moves to the background if it still runs after "
+            f"{settings.subagents.auto_background_seconds:g} seconds."
+        ),
+    }
 
 
 def _offers_background(tool_def: ToolDefinition) -> bool:
@@ -122,7 +121,7 @@ def _background_by_default(tool_def: ToolDefinition) -> ToolDefinition:
     schema = tool_def.parameters_json_schema
     properties: dict[str, Any] = {
         **schema["properties"],
-        _BACKGROUND: _BACKGROUND_SCHEMA,
+        _BACKGROUND: _background_schema(),
     }
 
     return replace(
@@ -137,7 +136,7 @@ class BackgroundByDefault(AbstractCapability[UserDeps]):
     and the user with it, so its ``background`` argument defaults to true in
     the schema the model reads, and a call that leaves it out runs in the
     background.  A task the main agent waits for moves to the background
-    after ``_AUTO_BACKGROUND_SECONDS`` (`TaskControl.auto_background_after`),
+    after ``subagents.auto_background_seconds`` (`TaskControl.auto_background_after`),
     so it never blocks the user for long, while a short one returns its
     report in the same reply rather than in a turn it wakes.
     """
@@ -206,10 +205,12 @@ class ReportDeadline(AbstractCapability[UserDeps]):
     Args:
         steps: How many model requests the run makes before it reports.
         seconds: How long the run works before it reports, ``None`` for no bound.
+        clock: Reads the time *seconds* are counted on.
     """
 
     steps: int
     seconds: float | None = None
+    clock: Callable[[], float] = time.monotonic
     due: float = field(default=math.inf, init=False)
 
     @override
@@ -217,7 +218,7 @@ class ReportDeadline(AbstractCapability[UserDeps]):
         run = replace(self)
 
         if self.seconds is not None:
-            run.due = time.monotonic() + self.seconds
+            run.due = self.clock() + self.seconds
 
         return run
 
@@ -230,7 +231,7 @@ class ReportDeadline(AbstractCapability[UserDeps]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        if ctx.run_step >= self.steps or time.monotonic() >= self.due:
+        if ctx.run_step >= self.steps or self.clock() >= self.due:
             raise SkipToolExecution(_REPORT_NOW)
 
         return args
@@ -270,6 +271,7 @@ class Subagent:
         instructions: Its instructions, rendered in the user's language like the main agent's.
         extras: Capabilities beside its tools.
         writes: Whether it is offered only in the ``write`` mode, whose writes ask nothing.
+        clock: Reads the time its report deadline is counted on.
     """
 
     description: str
@@ -277,6 +279,7 @@ class Subagent:
     instructions: Sequence[Localized[str]] = ()
     extras: Sequence[AbstractCapability[UserDeps]] = ()
     writes: bool = False
+    clock: Callable[[], float] = time.monotonic
 
     def offered(self, name: str, deps: UserDeps) -> bool:
         """Whether a turn over *deps* offers it by *name*.
@@ -300,8 +303,11 @@ class Subagent:
         prefix: RunPrefix,
         shared: Sequence[AbstractCapability[UserDeps]],
         level: int,
+        subagents: Mapping[str, Subagent],
     ) -> SubAgent[UserDeps]:
         """The delegate for the turn of *prefix* at delegation *level*, run with the *shared* capabilities.
+
+        It delegates on to *subagents* in turn.
 
         Its own capabilities and the shared ones are the prefix its history
         is compacted under, so the summary keeps the cached prefix.  It
@@ -316,11 +322,12 @@ class Subagent:
                 instructions=[part[prefix.deps.language] for part in self.instructions],
             ),
             *self.extras,
-            *_delegation(prefix, level + 1, shared),
+            *_delegation(prefix, level + 1, shared, subagents),
         ]
         deadline = ReportDeadline(
             steps=settings.subagents.max_steps,
             seconds=None if timeout is None else _REPORT_SHARE * timeout,
+            clock=self.clock,
         )
         summary = replace(prefix, capabilities=[*own, *shared], instructions=None)
 
@@ -389,9 +396,12 @@ SUBAGENTS: Mapping[str, Subagent] = {
 
 
 def _delegation(
-    prefix: RunPrefix, level: int, shared: Sequence[AbstractCapability[UserDeps]]
+    prefix: RunPrefix,
+    level: int,
+    shared: Sequence[AbstractCapability[UserDeps]],
+    subagents: Mapping[str, Subagent],
 ) -> list[AbstractCapability[UserDeps]]:
-    """The capabilities a run at delegation *level* delegates with.
+    """The capabilities a run at delegation *level* delegates to *subagents* with.
 
     None beyond ``settings.subagents.max_depth``, while the deps withhold
     ``delegate_task``, or while they offer no subagent.
@@ -407,8 +417,8 @@ def _delegation(
         return []
 
     agents = [
-        subagent.delegate(name, prefix, shared, level)
-        for name, subagent in SUBAGENTS.items()
+        subagent.delegate(name, prefix, shared, level, subagents)
+        for name, subagent in subagents.items()
         if subagent.offered(name, deps)
     ]
 
@@ -422,7 +432,7 @@ def _delegation(
             contain_errors=True,
             max_depth=1 + limits.max_depth,
             task_control=TaskControl(
-                auto_background_after=_AUTO_BACKGROUND_SECONDS,
+                auto_background_after=limits.auto_background_seconds,
                 max_running_tasks=limits.max_running,
             ),
         ),
@@ -431,6 +441,10 @@ def _delegation(
     ]
 
 
-def delegation(prefix: RunPrefix) -> list[AbstractCapability[UserDeps]]:
-    """The capabilities by which the main agent of a turn of *prefix* delegates to the subagents."""
-    return _delegation(prefix, 1, (DenyUnanswered[UserDeps](message=_REFUSAL),))
+def delegation(
+    prefix: RunPrefix, subagents: Mapping[str, Subagent] = SUBAGENTS
+) -> list[AbstractCapability[UserDeps]]:
+    """The capabilities by which the main agent of a turn of *prefix* delegates to the *subagents*."""
+    return _delegation(
+        prefix, 1, (DenyUnanswered[UserDeps](message=_REFUSAL),), subagents
+    )

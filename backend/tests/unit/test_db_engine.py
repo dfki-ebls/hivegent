@@ -6,23 +6,21 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy.pool import NullPool, QueuePool
 
-from hivegent.config import settings
 from hivegent.config.infra import DatabaseSettings
 from hivegent.db import engine
+from tests.conftest import Configure
 
 
 @pytest.fixture(autouse=True)
-def _engines(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def _engines(configure: Configure) -> Iterator[None]:
     """Build the engines from a URL nothing connects to, and forget them after."""
-    monkeypatch.setattr(
-        settings,
-        "db",
-        DatabaseSettings(
+    configure(
+        db=DatabaseSettings(
             url=SecretStr("postgresql+psycopg://hivegent@localhost/hivegent"),
             pool_size=3,
             max_overflow=2,
             pool_timeout_seconds=4.0,
-        ),
+        )
     )
     yield
     engine.get_engine.cache_clear()

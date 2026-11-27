@@ -1,7 +1,7 @@
 """The titles the aux model writes, on demand and after a new conversation's first turn."""
 
 import logging
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from itertools import islice
 
 from exar.tools.files import BLOCK_SEP
@@ -107,17 +107,23 @@ async def title_first_turn(
     saved: SavedTurn,
     llm: LlmConfig,
     claimed: str | None,
+    *,
+    generate: Callable[
+        [Sequence[ModelMessage], LlmConfig], Awaitable[str | None]
+    ] = _generate_title,
+    set_title: Callable[..., Awaitable[object]] = set_conversation_title,
 ) -> None:
     """Title a new conversation with *llm* from its first turn, its prompt and answer, once *saved* holds it stored.
 
-    Never over a title the user set in place of the *claimed* one, ``None``
-    for a conversation claimed untitled.
+    The title is written by *generate* and stored by *set_title*.  Never over
+    a title the user set in place of the *claimed* one, ``None`` for a
+    conversation claimed untitled.
     """
     if saved.messages is None:
         return
 
-    if (title := await _generate_title(saved.messages, llm)) is not None:
-        await set_conversation_title(conversation, title, expected_title=claimed)
+    if (title := await generate(saved.messages, llm)) is not None:
+        await set_title(conversation, title, expected_title=claimed)
 
 
 @router.post(

@@ -9,7 +9,6 @@ lives in :mod:`~hivegent.server.turns`.
 """
 
 import logging
-import time
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -21,6 +20,7 @@ from collections.abc import (
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
+from time import monotonic
 from typing import Any, Literal, override
 
 from exar.helpers import shield_to_completion
@@ -216,6 +216,7 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     :data:`APPROVAL_ARGS_KEY` the same way, so the user approves those.
     """
 
+    clock: Callable[[], float] = monotonic
     _thinking_started_at: float | None = None
     _thinking_durations_ms: list[int] = field(default_factory=list[int])
 
@@ -243,7 +244,7 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseChunk]:
-        self._thinking_started_at = time.monotonic()
+        self._thinking_started_at = self.clock()
         async for chunk in super().handle_thinking_start(
             part, follows_thinking=follows_thinking
         ):
@@ -254,7 +255,7 @@ class ChatEventStream[DepsT, OutputT](VercelAIEventStream[DepsT, OutputT]):
     ) -> AsyncIterator[BaseChunk]:
         if self._thinking_started_at is not None:
             self._thinking_durations_ms.append(
-                round((time.monotonic() - self._thinking_started_at) * 1000)
+                round((self.clock() - self._thinking_started_at) * 1000)
             )
             self._thinking_started_at = None
 
@@ -299,7 +300,10 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
 
     An attachment's filename, which the base adapter drops, is kept as the
     identifier of its ``BinaryContent``, which no model reads in a user prompt.
+    The thinking of a turn is timed on *clock*.
     """
+
+    clock: Callable[[], float] = monotonic
 
     @classmethod
     @override
@@ -362,6 +366,7 @@ class ChatAdapter[DepsT, OutputT](VercelAIAdapter[DepsT, OutputT]):
             sdk_version=self.sdk_version,
             server_message_id=self.server_message_id,
             manage_system_prompt=self.manage_system_prompt,
+            clock=self.clock,
         )
 
     @cached_property

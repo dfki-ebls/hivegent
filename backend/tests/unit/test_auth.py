@@ -1,8 +1,8 @@
 """Unit tests for token verification and claim parsing."""
 
 import asyncio
-import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 import httpx2
@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from joserfc import jwt
 from joserfc.jwk import KeySet, OctKey, RSAKey
 from pydantic import HttpUrl, SecretStr
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, TextDeltaChunk
 from starlette.applications import Starlette
 
 from hivegent import auth
@@ -27,29 +28,60 @@ from hivegent.auth import (
 )
 from hivegent.config import settings
 from hivegent.mcp import build_mcp_app
-from hivegent.mcp.app import HivegentVerifier
+from hivegent.runs import Prepared, Runs
 from hivegent.security import OperatorUrl
 from hivegent.store import User
+from tests.conftest import Configure
+from tests.helpers import owned
 
 ISSUER = OperatorUrl("https://auth.example.com/oidc")
 JWKS_URI = f"{ISSUER}/certs"
 AUDIENCE = ["hivegent-api"]
 KEY = RSAKey.generate_key(2048, parameters={"kid": "rsa"})
 HMAC = OctKey.generate_key(parameters={"kid": "hmac"})
+NOW = 1_800_000_000
 
 type Discovery = dict[str, Any]
 
 
+class FakeClock(auth.Clock):
+    """Time that only the test moves, waking whoever waits for it."""
+
+    def __init__(self) -> None:
+        self.time = float(NOW)
+        self._moved = asyncio.Event()
+
+    def now(self) -> float:
+        return self.time
+
+    async def until(self, at: float) -> None:
+        while self.time < at:
+            _ = await self._moved.wait()
+
+    def advance_to(self, time: float) -> None:
+        self.time = time
+        self._moved.set()
+        self._moved = asyncio.Event()
+
+
+@pytest.fixture(autouse=True)
+def clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """Every test of this file reads the time the test sets."""
+    clock = FakeClock()
+    monkeypatch.setattr(auth, "clock", clock)
+
+    return clock
+
+
 def _claims(**changes: Any) -> dict[str, Any]:
-    now = int(time.time())
     claims = {
         "iss": ISSUER,
         "sub": "user-1",
         "aud": "hivegent-api",
         "azp": "hivegent-api",
         "typ": "Bearer",
-        "iat": now,
-        "exp": now + 300,
+        "iat": NOW,
+        "exp": NOW + 300,
     }
 
     return {k: v for k, v in {**claims, **changes}.items() if v is not None}
@@ -62,11 +94,26 @@ def _token(claims: dict[str, Any], alg: str = "RS256") -> str:
     return jwt.encode({"alg": alg, "kid": key.kid}, claims, key, algorithms=algorithms)
 
 
+@dataclass(slots=True)
+class Idp:
+    """The issuer's discovery document and keys, served by a mock transport."""
+
+    discovery: Discovery
+    client: httpx2.AsyncClient
+    fetcher: JWKSFetcher
+
+    def fetcher_for(self, issuer: str) -> JWKSFetcher:
+        """A fetcher configured with the *issuer*."""
+        return JWKSFetcher(lambda: OperatorUrl(issuer), lambda _: self.client)
+
+    async def verify(
+        self, token: str, fetcher: JWKSFetcher | None = None
+    ) -> auth.Credential:
+        return await authenticate(token, AUDIENCE, fetcher or self.fetcher)
+
+
 @pytest.fixture()
-async def idp(
-    monkeypatch: pytest.MonkeyPatch,
-) -> AsyncIterator[Callable[[Discovery], None]]:
-    """Serve the issuer's discovery and keys, the former changed by the returned function."""
+async def idp() -> AsyncIterator[Idp]:
     discovery: Discovery = {
         "issuer": ISSUER,
         "jwks_uri": JWKS_URI,
@@ -83,45 +130,37 @@ async def idp(
             case url:
                 raise AssertionError(f"unexpected URL {url!r}")
 
-    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    monkeypatch.setattr(auth, "get_trusted_http_client", lambda *_: client)
-    monkeypatch.setattr(auth, "_jwks_fetcher", JWKSFetcher())
-    monkeypatch.setattr(settings.auth, "issuer", ISSUER)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        idp = Idp(discovery, client, JWKSFetcher(lambda: ISSUER, lambda _: client))
 
-    async with client:
-        yield discovery.update
+        yield idp
 
 
-async def test_a_signed_token_names_its_principal(
-    idp: Callable[[Discovery], None],
+@pytest.mark.parametrize("configured", [ISSUER, f"{ISSUER}/"])
+async def test_a_token_of_the_discovered_issuer_names_its_principal(
+    idp: Idp, configured: str
 ) -> None:
-    """A token of the issuer, named byte for byte, names its principal, renewing its leases, and no other ``iss`` passes."""
+    """Both spellings of the configured issuer address one discovery document, whose issuer the tokens carry byte for byte."""
+    fetcher = idp.fetcher_for(configured)
+
+    assert (await idp.verify(_token(_claims()), fetcher)).user.id == "user-1"
+
+    with pytest.raises(HTTPException, match="iss"):
+        await idp.verify(_token(_claims(iss=f"{ISSUER}/")), fetcher)
+
+
+async def test_a_verified_token_renews_the_leases_of_its_principal(
+    idp: Idp,
+) -> None:
     with auth.leases.hold(User("user-1", expires_at=0)) as lease:
-        credential = await authenticate(_token(_claims()), AUDIENCE)
+        credential = await idp.verify(_token(_claims()))
 
-    assert credential.user.id == "user-1"
-    assert lease.expires_at is not None and lease.expires_at > time.time()
-
-    with pytest.raises(HTTPException, match="iss"):
-        await authenticate(_token(_claims(iss=f"{ISSUER}/")), AUDIENCE)
-
-
-async def test_a_configured_issuer_differing_by_a_trailing_slash_verifies_the_discovered_one(
-    idp: Callable[[Discovery], None], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Both spellings address one discovery document, whose issuer the tokens carry."""
-    monkeypatch.setattr(settings.auth, "issuer", OperatorUrl(f"{ISSUER}/"))
-
-    assert (await authenticate(_token(_claims()), AUDIENCE)).user.id == "user-1"
-
-    with pytest.raises(HTTPException, match="iss"):
-        await authenticate(_token(_claims(iss=f"{ISSUER}/")), AUDIENCE)
+    assert credential.user.expires_at is not None
+    assert lease.current.expires_at == credential.user.expires_at > NOW
 
 
 @pytest.mark.parametrize("alg", ["HS256", "none"])
-async def test_only_asymmetric_algorithms_are_accepted(
-    idp: Callable[[Discovery], None], alg: str
-) -> None:
+async def test_only_asymmetric_algorithms_are_accepted(idp: Idp, alg: str) -> None:
     """Whatever discovery advertises, a token signed by a shared secret or unsigned is refused."""
     if alg == "none":
         header = jwt.encode({"alg": "RS256"}, _claims(), KEY).split(".")[1]
@@ -130,7 +169,7 @@ async def test_only_asymmetric_algorithms_are_accepted(
         token = _token(_claims(), alg)
 
     with pytest.raises(HTTPException) as exc_info:
-        await authenticate(token, AUDIENCE)
+        await idp.verify(token)
 
     assert exc_info.value.status_code == 401
 
@@ -142,7 +181,7 @@ async def test_only_asymmetric_algorithms_are_accepted(
         _claims(iat=None),
         _claims(iss="https://evil.example.com"),
         _claims(aud="hivegent-api-x"),
-        _claims(exp=int(time.time()) - 3600),
+        _claims(exp=NOW - 3600),
         _claims(typ="ID"),
         _claims(typ=None),
         _claims(azp=None),
@@ -150,11 +189,11 @@ async def test_only_asymmetric_algorithms_are_accepted(
     ],
 )
 async def test_a_token_lacking_a_required_claim_is_refused(
-    idp: Callable[[Discovery], None], claims: dict[str, Any]
+    idp: Idp, claims: dict[str, Any]
 ) -> None:
     """The 401 names at most the claim, never the expected or received value."""
     with pytest.raises(HTTPException) as exc_info:
-        await authenticate(_token(claims), AUDIENCE)
+        await idp.verify(_token(claims))
 
     detail = str(exc_info.value.detail)
     assert exc_info.value.status_code == 401
@@ -173,25 +212,30 @@ async def test_a_token_lacking_a_required_claim_is_refused(
     ],
 )
 async def test_a_foreign_discovery_document_is_refused(
-    idp: Callable[[Discovery], None], discovery: Discovery
+    idp: Idp, discovery: Discovery
 ) -> None:
     """Another issuer, keys off the issuer's https origin, or no asymmetric algorithm."""
-    idp(discovery)
+    idp.discovery.update(discovery)
 
     with pytest.raises(HTTPException) as exc_info:
-        await authenticate(_token(_claims()), AUDIENCE)
+        await idp.verify(_token(_claims()))
 
     assert exc_info.value.status_code == 500
 
 
-async def test_mcp_tokens_name_the_advertised_resource(
-    idp: Callable[[Discovery], None], monkeypatch: pytest.MonkeyPatch
+async def test_mcp_advertises_the_resource_its_tokens_must_name(
+    configure: Configure,
 ) -> None:
-    """``/mcp`` verifies as the API does, for the resource its challenge and metadata advertise."""
-    monkeypatch.setattr(settings.mcp, "base_url", HttpUrl("https://hivegent.test/mcp"))
-    monkeypatch.setattr(settings.mcp, "mode", "remote")
-    monkeypatch.setattr(settings.mcp, "client_id", None)
-    monkeypatch.setattr(settings.mcp, "confirmation_key", SecretStr("k" * 32))
+    """The challenge and the metadata of ``/mcp`` name the resource, which is the audience its tokens carry."""
+    configure(
+        auth={"issuer": ISSUER},
+        mcp={
+            "base_url": HttpUrl("https://hivegent.test/mcp"),
+            "mode": "remote",
+            "client_id": None,
+            "confirmation_key": SecretStr("k" * 32),
+        },
+    )
     app = Starlette(routes=build_mcp_app().routes)
 
     async with httpx2.AsyncClient(
@@ -203,113 +247,154 @@ async def test_mcp_tokens_name_the_advertised_resource(
         resource = (await client.get(metadata_url)).json()["resource"]
 
     assert resource == "https://hivegent.test/mcp"
-    verifier = HivegentVerifier([resource])
-    assert await verifier.verify_token(_token(_claims())) is None
-    token = await verifier.verify_token(_token(_claims(aud=resource)))
-    assert token is not None and token.claims["sub"] == "user-1"
 
 
-async def test_get_jwks_serves_stale_keys_until_their_maximum_age() -> None:
+async def test_get_jwks_serves_stale_keys_until_their_maximum_age(
+    clock: FakeClock,
+) -> None:
     """A failed refresh falls back to the cached keys, retried after a pause, until they are too old to trust."""
-    fetcher = JWKSFetcher()
+    calls: list[str] = []
+
+    def unavailable(request: httpx2.Request) -> httpx2.Response:
+        calls.append(str(request.url))
+
+        return httpx2.Response(503)
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(unavailable))
+    fetcher = JWKSFetcher(lambda: ISSUER, lambda _: client)
     stale = auth._Keys(KeySet([KEY]), ["RS256"], ISSUER)
     fetcher._keys._value = stale
-    fetcher._keys._fetched = time.time() - settings.auth.jwks_cache_ttl
-    calls: list[None] = []
-
-    async def failing() -> auth._Keys:
-        calls.append(None)
-        raise HTTPException(503)
-
-    fetcher._fetch = failing  # pyright: ignore[reportAttributeAccessIssue]
+    fetcher._keys._fetched = clock.time - settings.auth.jwks_cache_ttl
 
     assert await fetcher.get() is stale
     assert await fetcher.get() is stale
     assert len(calls) == 1
 
-    fetcher._keys._fetched = time.time() - settings.auth.jwks_max_age_seconds
+    fetcher._keys._fetched = clock.time - settings.auth.jwks_max_age_seconds
 
     with pytest.raises(HTTPException):
         await fetcher.get()
 
 
-async def test_admin_is_a_role_not_a_group(idp: Callable[[Discovery], None]) -> None:
+async def test_admin_is_a_role_not_a_group(idp: Idp) -> None:
     """Admin derives from the roles claim, the same name in groups must not grant it."""
-    user = (
-        await authenticate(_token(_claims(groups=["admin", "eng:write"])), AUDIENCE)
-    ).user
+    user = (await idp.verify(_token(_claims(groups=["admin", "eng:write"])))).user
     assert not user.is_admin
     assert "admin" in user.all_groups
     assert "eng" in user.write_groups
 
-    user = (await authenticate(_token(_claims(roles=["admin"])), AUDIENCE)).user
+    user = (await idp.verify(_token(_claims(roles=["admin"])))).user
     assert user.is_admin
     assert not user.all_groups
 
 
-async def test_a_stream_ends_when_its_token_expires() -> None:
+async def test_a_stream_ends_when_its_token_expires(clock: FakeClock) -> None:
     """Events flow until the expiry, then the stream ends without waiting for more."""
 
     async def events() -> AsyncIterator[int]:
         yield 1
-        await asyncio.sleep(60)
+        _ = await asyncio.Event().wait()
         yield 2
 
-    seen = [event async for event in until_expiry(events(), time.time() + 0.05)]
+    stream = until_expiry(events(), NOW + 10)
 
-    assert seen == [1]
+    assert await anext(stream) == 1
+
+    clock.advance_to(NOW + 10)
+
+    with pytest.raises(StopAsyncIteration):
+        _ = await anext(stream)
 
 
-def test_claim_paths_walk_nested_mappings_and_union(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_a_lease_is_renewed_only_by_a_token_holding_its_grants() -> None:
+    eng = frozenset({"eng"})
+
+    with auth.leases.hold(User("a", read_groups=eng, expires_at=NOW + 10)) as lease:
+        auth.leases.renew(User("a", expires_at=NOW + 3600))
+        assert lease.current.expires_at == NOW + 10
+
+        auth.leases.renew(User("a", read_groups=eng, expires_at=NOW + 3600))
+        assert lease.current.expires_at == NOW + 3600
+
+
+async def test_a_turn_stops_once_no_request_renews_its_authorization(
+    clock: FakeClock,
 ) -> None:
+    """The lease outlives its token by the renewal window, and a narrower token leaves it to lapse."""
+    alice = User("alice", read_groups=frozenset({"eng"}), expires_at=NOW + 10)
+    conversation = owned("c1", alice)
+
+    async def turn() -> AsyncIterator[BaseChunk]:
+        yield chunk
+        _ = await asyncio.Event().wait()
+
+    chunk = TextDeltaChunk(id="t", delta="a")
+    run = Runs().start(conversation, alice, None, _prepared(turn()))
+    assert await anext(run.follow(alice)) == chunk
+    auth.leases.renew(User("alice", expires_at=NOW + 3600))
+
+    clock.advance_to(NOW + 10 + auth._RENEWAL_SECONDS)
+    await run.wait()
+
+    assert run.chunks == [chunk]
+
+
+async def _prepared(stream: AsyncIterator[BaseChunk]) -> Prepared:
+    return Prepared(stream, [])
+
+
+def test_claim_paths_walk_nested_mappings_and_union() -> None:
     """A path descends through nested mappings, and the entries of every path are unioned."""
     claims = {"groups": ["eng:write"], "custom": {"groups": ["team-kb:read"]}}
     assert auth._resolve_claim_path(claims, ["groups", "nope"]) is None
 
-    def parsed() -> dict[str, str | None]:
-        entries = auth._claim_entries(claims, settings.claims.groups)
+    def parsed(paths: list[list[str]]) -> dict[str, str | None]:
+        entries = auth._claim_entries(claims, paths)
         return {c.id: c.permission for c in parse_group_claims(entries)}
 
-    assert parsed() == {"eng": "write"}
-
-    monkeypatch.setattr(settings.claims, "groups", [["groups"], ["custom", "groups"]])
-
-    assert parsed() == {"eng": "write", "team-kb": "read"}
-
-
-def _parsed_group_claims(entries: list[Any]) -> list[GroupClaim]:
-    return list(parse_group_claims(entries))
+    assert parsed([["groups"]]) == {"eng": "write"}
+    assert parsed([["groups"], ["custom", "groups"]]) == {
+        "eng": "write",
+        "team-kb": "read",
+    }
 
 
-def test_string_entries_split_off_the_permission_suffix() -> None:
-    assert _parsed_group_claims(["eng:write", "sales:read", "ops"]) == [
-        GroupClaim("eng", permission="write"),
-        GroupClaim("sales", permission="read"),
-        GroupClaim("ops"),
-    ]
-
-
-def test_scim_objects_carry_id_and_display() -> None:
-    """RFC 7643 §4.1.2 shape: the ID is verbatim, so a ``:`` in it survives."""
-    assert _parsed_group_claims([{"value": "9uh:8ei", "display": "Engineering"}]) == [
-        GroupClaim("9uh:8ei", "Engineering")
-    ]
-
-
-def test_malformed_entries_are_skipped() -> None:
-    assert _parsed_group_claims([":write", "", 42, {"display": "x"}]) == []
-
-
-def test_the_service_client_is_a_service_whatever_it_claims(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [
+        (
+            ["eng:write", "sales:read", "ops"],
+            [
+                GroupClaim("eng", permission="write"),
+                GroupClaim("sales", permission="read"),
+                GroupClaim("ops"),
+            ],
+        ),
+        # RFC 7643 SCIM objects keep their ID verbatim, so a ``:`` in it survives.
+        (
+            [{"value": "9uh:8ei", "display": "Engineering"}],
+            [GroupClaim("9uh:8ei", "Engineering")],
+        ),
+        ([":write", "", 42, {"display": "x"}], []),
+    ],
+    ids=["strings", "scim", "malformed"],
+)
+def test_group_entries_parse_to_claims_and_malformed_ones_are_skipped(
+    entries: list[Any], expected: list[GroupClaim]
 ) -> None:
+    assert list(parse_group_claims(entries)) == expected
+
+
+def test_the_service_client_is_a_service_whatever_it_claims() -> None:
     """Its groups and roles are never read, so it sees the global workspace alone."""
-    monkeypatch.setattr(settings.auth, "service_client_id", "hivegent-bot")
     claims = {"sub": "bot", "groups": ["team:write"], "roles": ["admin"]}
 
-    bot = user_from_claims({**claims, "azp": "hivegent-bot"})
-    person = user_from_claims({**claims, "azp": "hivegent-spa"})
+    bot = user_from_claims(
+        {**claims, "azp": "hivegent-bot"}, service_client_id="hivegent-bot"
+    )
+    person = user_from_claims(
+        {**claims, "azp": "hivegent-spa"}, service_client_id="hivegent-bot"
+    )
 
     assert bot.is_service and not bot.is_admin and bot.workspaces(writable=True) == ()
     assert not person.is_service and person.is_admin

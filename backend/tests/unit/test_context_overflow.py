@@ -1,12 +1,4 @@
-"""Tests for context-window overflow classification.
-
-pydantic-ai files OpenAI's code and vLLM's wording itself, so only what it
-misses is pinned here: llama.cpp's error type and SGLang's prose, with captured
-bodies, and the empty response cut for length that `exar.pydantic_ai.compaction.is_context_overflow`
-tells from one that spent its cap thinking, driven through a real run (:func:`_run_error`)
-rather than restated, so an upstream change fails here instead of silently
-ending compaction.
-"""
+"""Tests for context-window overflow classification of what pydantic-ai misses itself."""
 
 import pytest
 from pydantic_ai import capture_run_messages
@@ -48,49 +40,47 @@ async def _run_error(
     return raised.value, sent
 
 
-def test_pydantic_ai_category() -> None:
-    error = ModelHTTPError.for_category(
-        ModelContextWindowExceededError, status_code=400, model_name="gpt-5.2"
-    )
+@pytest.mark.parametrize(
+    "error",
+    [
+        ModelHTTPError.for_category(
+            ModelContextWindowExceededError, status_code=400, model_name="gpt-5.2"
+        ),
+        # llama.cpp names the overflow in a structured type.
+        ModelHTTPError.for_category(
+            None,
+            status_code=400,
+            model_name="qwen3.8-27b",
+            body={"code": 400, "type": "exceed_context_size_error"},
+            provider_error_type="exceed_context_size_error",
+        ),
+        # SGLang's body is flat with a generic type, so only its message names the overflow.
+        ModelHTTPError(
+            status_code=400,
+            model_name="qwen3.5-27b",
+            body={
+                "message": "The input (5000 tokens) is longer than the model's context length (4096 tokens).",
+                "type": "BadRequest",
+                "code": 400,
+            },
+        ),
+    ],
+    ids=["pydantic-ai", "llama.cpp", "sglang"],
+)
+def test_an_overflow_is_told_from_the_error(error: ModelHTTPError) -> None:
     assert is_context_overflow(error, [])
 
 
-def test_llamacpp_structured_type() -> None:
-    error = ModelHTTPError.for_category(
-        None,
-        status_code=400,
-        model_name="qwen3.8-27b",
-        body={
-            "code": 400,
-            "message": (
-                "the request exceeds the available context size. try increasing "
-                "the context size or enable context shift"
-            ),
-            "type": "exceed_context_size_error",
-        },
-        provider_error_type="exceed_context_size_error",
-    )
-    assert is_context_overflow(error, [])
-
-
-def test_sglang_prose_body() -> None:
-    # SGLang's body is flat (no nested `error` object), with a numeric
-    # code and a generic type, only the message names the overflow.
-    error = ModelHTTPError(
-        status_code=400,
-        model_name="qwen3.5-27b",
-        body={
-            "object": "error",
-            "message": (
-                "The input (5000 tokens) is longer than the model's "
-                "context length (4096 tokens)."
-            ),
-            "type": "BadRequest",
-            "param": None,
-            "code": 400,
-        },
-    )
-    assert is_context_overflow(error, [])
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError("boom"),
+        ModelHTTPError(status_code=400, model_name="m", body={"message": "bad param"}),
+        UnexpectedModelBehavior("invalid tool call"),
+    ],
+)
+def test_unrelated_errors_pass_through(error: Exception) -> None:
+    assert not is_context_overflow(error, [])
 
 
 @pytest.mark.parametrize(
@@ -108,12 +98,3 @@ async def test_only_a_completion_without_room_is_an_overflow(
     error, sent = await _run_error(parts)
 
     assert is_context_overflow(error, sent) is no_room
-
-
-def test_unrelated_errors_pass_through() -> None:
-    assert not is_context_overflow(ValueError("boom"), [])
-    assert not is_context_overflow(
-        ModelHTTPError(status_code=400, model_name="m", body={"message": "bad param"}),
-        [],
-    )
-    assert not is_context_overflow(UnexpectedModelBehavior("invalid tool call"), [])

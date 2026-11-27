@@ -31,7 +31,7 @@ from ...auth import CurrentUser
 from ...config import settings
 from ...db.conversations import OwnedConversation, owned_conversation
 from ...db.documents import get_document, get_line_counts
-from ...jobs import JobContext, JobView, JobWork, manager
+from ...jobs import JobContext, JobManager, JobView, JobWork, manager
 from ...shared.l10n import Localized, format_bytes
 from ...store import User, Workspace
 from ...tmp import TMP_PREFIX, tmp_dir, tmp_root
@@ -149,6 +149,7 @@ async def _spooled(
     *,
     limit: int,
     too_large: Callable[[int], Localized[str]],
+    jobs: JobManager = manager,
 ) -> AsyncGenerator[Path]:
     """Persist an upload to a temp file so a queued job needn't pin it in RAM.
 
@@ -161,14 +162,14 @@ async def _spooled(
     live in the transient folder emptied at boot (:func:`~hivegent.files.reset_transient`), so
     a restart that cuts a job short cannot leak them.  The user's unfinished
     jobs bound how many and how large these may be
-    (:meth:`~hivegent.jobs.JobManager.reserve`), the room held from before the
+    (:meth:`~hivegent.jobs.JobManager.reserve` of *jobs*), the room held from before the
     copy until the block ends, in which the caller submits its job, so
     parallel uploads cannot all pass the bound.  The file is removed when the
     block raises.
     """
     enforce_upload_size(file, limit=limit, too_large=too_large)
 
-    if (reservation := manager.reserve(user.id, file.size or 0)) is None:
+    if (reservation := jobs.reserve(user.id, file.size or 0)) is None:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, _TOO_MANY_JOBS.current)
 
     def _write() -> Path:
@@ -193,7 +194,7 @@ async def _spooled(
             spool.unlink(missing_ok=True)
             raise
     finally:
-        manager.release(reservation)
+        jobs.release(reservation)
 
 
 class DocumentJobKind(StrEnum):

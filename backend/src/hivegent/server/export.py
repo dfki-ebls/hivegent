@@ -9,12 +9,14 @@ error, never a truncated archive.
 """
 
 import asyncio
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
+from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from cbrkit.io import is_partial
@@ -46,7 +48,9 @@ from .turns import ui_id
 from .vercel import dump_transcript
 
 __all__ = [
+    "DATABASE",
     "ExportPart",
+    "ExportSources",
     "build_export",
     "conversation_archive",
     "export_filename",
@@ -141,12 +145,30 @@ def _files(root: Path, prefix: str) -> dict[str, Path]:
     }
 
 
-async def _conversations(user: User) -> dict[str, Path | str]:
+@dataclass(frozen=True, slots=True)
+class ExportSources:
+    """Where an export reads what the database keeps of a person, the database by default."""
+
+    conversations: Callable[[User], Awaitable[Sequence[OwnedConversation]]] = (
+        owned_conversations
+    )
+    archive: Callable[[OwnedConversation], Awaitable[ConversationArchive | None]] = (
+        conversation_archive
+    )
+    memory: Callable[[User], Awaitable[str | None]] = load_memory
+    preferences: Callable[[str], Awaitable[Mapping[str, Any]]] = load_preferences
+
+
+DATABASE = ExportSources()
+"""The sources reading the database."""
+
+
+async def _conversations(user: User, sources: ExportSources) -> dict[str, Path | str]:
     members: dict[str, Path | str] = {}
 
     # One at a time, so a long history never holds many connections of the pool.
-    for conversation in await owned_conversations(user):
-        archive = await conversation_archive(conversation)
+    for conversation in await sources.conversations(user):
+        archive = await sources.archive(conversation)
 
         if archive is None:
             continue
@@ -163,22 +185,22 @@ async def _conversations(user: User) -> dict[str, Path | str]:
     return members
 
 
-async def _members(user: User, part: ExportPart) -> _Members:
+async def _members(user: User, part: ExportPart, sources: ExportSources) -> _Members:
     scope = UserScope(user.id)
 
     match part:
         case ExportPart.DOCUMENTS:
             return await asyncio.to_thread(_files, user.home.path, part)
         case ExportPart.CONVERSATIONS:
-            return await _conversations(user)
+            return await _conversations(user, sources)
         case ExportPart.MEMORY:
-            memory = await load_memory(user)
+            memory = await sources.memory(user)
 
             return {} if memory is None else {"memory.md": memory}
         case ExportPart.SKILLS:
             return await asyncio.to_thread(_files, library(scope).path, part)
         case ExportPart.PREFERENCES:
-            preferences = Preferences.stored(await load_preferences(user.id))
+            preferences = Preferences.stored(await sources.preferences(user.id))
 
             return {"preferences.json": preferences.model_dump_json(indent=2)}
 
@@ -195,9 +217,9 @@ def _write(members: _Members, archive: ZipFile) -> None:
 
 
 async def build_export(
-    user: User, parts: Collection[ExportPart]
+    user: User, parts: Collection[ExportPart], sources: ExportSources = DATABASE
 ) -> SpooledTemporaryFile[bytes]:
-    """The ZIP archive of the *parts* of what *user* owns, rewound for reading.
+    """The ZIP archive of the *parts* of what *user* owns read from *sources*, rewound for reading.
 
     Raises:
         AccessDenied: For a service principal, which owns nothing.
@@ -207,7 +229,7 @@ async def build_export(
 
     for part in ExportPart:
         if part in parts:
-            members |= await _members(user, part)
+            members |= await _members(user, part, sources)
 
     return await asyncio.to_thread(build_zip, partial(_write, members), ZIP_DEFLATED)
 

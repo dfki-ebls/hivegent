@@ -138,8 +138,8 @@ def _sweepable(folder: Path, owners: Mapping[UUID, str]) -> Path:
     return folder
 
 
-async def sweep_conversations() -> int:
-    """Remove what conversation folders hold untouched for ``conversations.ttl_hours``, returning how many went.
+async def sweep_conversations(now: float | None = None) -> int:
+    """Remove what conversation folders hold untouched for ``conversations.ttl_hours`` before *now*, returning how many went.
 
     A folder is idle when nothing anywhere below it changed, and a folder a
     deletion took meanwhile counts as touched.  An idle folder whose
@@ -152,7 +152,9 @@ async def sweep_conversations() -> int:
     if not root.is_dir():
         return 0
 
-    cutoff = time.time() - settings.conversations.ttl_hours * 3600
+    cutoff = (time.time() if now is None else now) - (
+        settings.conversations.ttl_hours * 3600
+    )
 
     def due() -> list[Path]:
         return [

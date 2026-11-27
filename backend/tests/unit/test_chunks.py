@@ -1,98 +1,51 @@
 """Unit tests for document chunking coordination."""
 
-from datetime import UTC, datetime
-from uuid import UUID, uuid4
-
 import pytest
 
 from hivegent import chunks
-from hivegent.metadata import DocumentMetadata, EntryMetadata
+from hivegent.metadata import EntryMetadata
 from hivegent.store import Workspace
+from tests.helpers import FakeIndex, entry
+
+ENTRY = entry("doc")
 
 
-def _entry_metadata() -> EntryMetadata:
-    return EntryMetadata(
-        entry_kind="user_markdown",
-        stem_path="doc",
-        description_path="doc.md",
-        original_path=None,
-        assets_dir=None,
-        origin="upload",
-        generated_by="user",
+async def _chunk_and_index(store: Workspace, metadata: EntryMetadata = ENTRY) -> None:
+    await chunks.chunk_and_index_document(
+        store, "doc.md", "body", stat=None, entry_metadata=metadata
     )
 
 
-def _document_metadata(pipeline: str) -> DocumentMetadata:
-    return DocumentMetadata(
-        **_entry_metadata().model_dump(),
-        id=uuid4(),
-        pipeline=pipeline,
-        created_at=datetime.now(UTC),
-        chunks=[],
-        content_digest=None,
-    )
+async def test_chunk_and_index_stamps_the_digest_last(
+    user_store: Workspace, index: FakeIndex
+) -> None:
+    await _chunk_and_index(user_store)
+
+    state = index.rows[user_store.store_key, "doc"].state
+    assert state.content_digest is not None
+    assert [e.stem_path for e in index.indexed] == ["doc"]
 
 
 async def test_chunk_and_index_does_not_stamp_digest_after_index_failure(
-    user_store: Workspace, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, index: FakeIndex
 ) -> None:
-    stamped: list[UUID] = []
+    index.failing = {"doc"}
 
-    async def upsert_document(
-        store: Workspace, entry: EntryMetadata, pipeline: str, line_count: int
-    ) -> DocumentMetadata:
-        _ = store, entry, line_count
-        return _document_metadata(pipeline)
+    with pytest.raises(RuntimeError, match="chunks failed to write"):
+        await _chunk_and_index(user_store)
 
-    async def index_document(document_id: UUID, raw_chunks: object) -> None:
-        _ = document_id, raw_chunks
-        raise RuntimeError("index failed")
-
-    async def set_content_state(document_id: UUID, digest: str, stat: object) -> None:
-        _ = digest, stat
-        stamped.append(document_id)
-
-    monkeypatch.setattr(chunks.db_documents, "upsert_document", upsert_document)
-    monkeypatch.setattr(chunks.retrieval, "index_document", index_document)
-    monkeypatch.setattr(chunks.db_documents, "set_content_state", set_content_state)
-
-    with pytest.raises(RuntimeError, match="index failed"):
-        await chunks.chunk_and_index_document(
-            user_store,
-            "doc.md",
-            "body",
-            stat=None,
-            entry_metadata=_entry_metadata(),
-        )
-
-    assert not stamped
+    assert index.rows[user_store.store_key, "doc"].state.content_digest is None
 
 
 async def test_a_failing_chunker_leaves_the_document_row_untouched(
-    user_store: Workspace, monkeypatch: pytest.MonkeyPatch
+    user_store: Workspace, index: FakeIndex, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    upserted: list[str] = []
-
-    async def upsert_document(
-        store: Workspace, entry: EntryMetadata, pipeline: str, line_count: int
-    ) -> DocumentMetadata:
-        _ = store, entry, line_count
-        upserted.append(pipeline)
-        return _document_metadata(pipeline)
-
     async def chunk(text: str) -> list[object]:
         raise RuntimeError(f"cannot chunk {text}")
 
-    monkeypatch.setattr(chunks.db_documents, "upsert_document", upsert_document)
     monkeypatch.setattr(chunks, "get_chunker", lambda _pipeline: chunk)
 
     with pytest.raises(RuntimeError, match="cannot chunk"):
-        await chunks.chunk_and_index_document(
-            user_store,
-            "doc.md",
-            "body",
-            stat=None,
-            entry_metadata=_entry_metadata(),
-        )
+        await _chunk_and_index(user_store)
 
-    assert not upserted
+    assert index.rows == {}

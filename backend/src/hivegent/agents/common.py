@@ -5,6 +5,7 @@ import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, date, datetime
 from functools import cache
 from typing import Self, TypedDict, override
 
@@ -197,6 +198,8 @@ class UserDeps:
     # would otherwise repeat.
     roots: tuple[SearchPath, ...] | None = None
     skill_roots: tuple[SearchPath, ...] | None = None
+    # What the run reads the date from, which the date note it appends tells.
+    today: Callable[[], date] = lambda: datetime.now(UTC).date()
 
     def __post_init__(self) -> None:
         if self.conversation is not None and self.conversation.owner != self.user.id:

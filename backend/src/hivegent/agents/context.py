@@ -11,7 +11,6 @@ framed in the user's turn and never in the system prompt.
 """
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
 
 from exar.pydantic_ai import RunNote
 from pydantic_ai import RunContext
@@ -37,7 +36,7 @@ _MODE_NOTES: Mapping[Mode, Localized[str]] = {
 
 
 def _date_note(ctx: RunContext[UserDeps]) -> str:
-    return date_note(datetime.now(UTC).date())[ctx.deps.language]
+    return date_note(ctx.deps.today())[ctx.deps.language]
 
 
 def _mode_note(ctx: RunContext[UserDeps]) -> str:

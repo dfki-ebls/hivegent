@@ -18,7 +18,7 @@ the caller's policy lists (``agents.policy.listed``).
 """
 
 import inspect
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Annotated, Any, override
 
@@ -46,7 +46,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from ..agents import UserDeps, invoke_agent_tool
 from ..agents.approval import APPROVED_CHANGES, changes_digest
-from ..agents.capabilities import FEATURES, PLUGIN_FEATURE_IDS
+from ..agents.capabilities import FEATURES, PLUGIN_FEATURE_IDS, Feature
 from ..agents.common import run_context
 from ..agents.policy import host_policy, listed
 from ..auth import PROBE, user_from_claims
@@ -54,13 +54,20 @@ from ..config import settings
 from ..store import User
 from ..tools.changes import ChangesetSummary
 
-__all__ = ["POLICY", "Caller", "agent_tools", "token_user"]
+__all__ = ["POLICY", "SERVED_FEATURES", "Caller", "agent_tools", "token_user"]
 
 _FEATURES = frozenset({"explore", "write"})
 """The built-in features served, the ones that need neither a conversation nor a sandbox.
 
 Every plugin feature is served beside them, since a plugin tool needs neither.
 """
+
+SERVED_FEATURES: tuple[Feature, ...] = tuple(
+    feature
+    for feature in FEATURES
+    if feature.id in _FEATURES or feature.id in PLUGIN_FEATURE_IDS
+)
+"""The features whose tools are served, the built-in ones of :data:`_FEATURES` and the plugins'."""
 
 _MODE = "interactive"
 """The mode of every served call, in which a workspace write asks the user first."""
@@ -179,27 +186,32 @@ def _prepared(tool: Tool[UserDeps], deps: UserDeps) -> ToolDefinition | None:
     return result
 
 
-def _served() -> list[tuple[ToolDefinition, ToolAnnotations]]:
-    """Every tool of :data:`_FEATURES` and the plugins that its ``prepare`` hook and :data:`POLICY` leave."""
+def _served(
+    features: Iterable[Feature],
+) -> list[tuple[ToolDefinition, ToolAnnotations]]:
+    """Every tool of *features* that its ``prepare`` hook and :data:`POLICY` leave."""
     # No hook may depend on who calls, so the probe names no one.
     probe = _deps(PROBE)
 
     return [
         (tool_def, annotations(action.effect))
-        for feature in FEATURES
-        if feature.id in _FEATURES or feature.id in PLUGIN_FEATURE_IDS
+        for feature in features
         for tool in feature.tools.build(run_context(probe)).tools.values()
         if (tool_def := _prepared(tool, probe)) is not None
         and POLICY(action := definition_action(tool_def)) != "deny"
     ]
 
 
-def agent_tools(caller: Caller, confirm: Confirmations) -> ToolFactory:
-    """The served tools of each request, every one called as the *caller* its access token names.
+def agent_tools(
+    caller: Caller,
+    confirm: Confirmations,
+    features: Iterable[Feature] = SERVED_FEATURES,
+) -> ToolFactory:
+    """The tools of *features* served to each request, every one called as the *caller* its access token names.
 
     A write the gate asks about asks the user through *confirm*.
     """
-    served = _served()
+    served = _served(features)
 
     async def tools(token: AccessToken | None) -> list[AgentTool]:
         # Resolved once per request off the event loop, as a turn's are, rather than by every read tool.

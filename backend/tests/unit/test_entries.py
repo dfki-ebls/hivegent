@@ -1,12 +1,6 @@
 """Unit tests for logical stem-entry path derivation and its SQL projection.
 
-The repository never stores ``original_path`` directly: it reduces it to
-``Document.original_suffix`` on write and reconstructs the path on read. For an
-original whose pathlib suffix is empty (an extension-less upload (``abc``) or a
-dotfile (``.env``)), the old encoding collapsed that to ``NULL`` and lost the
-original, which silently broke delete, move, reconvert, and replace_original
-(all of which branch on ``metadata.original_path``). These tests pin the full
-round-trip so the projection cannot regress.
+An original whose pathlib suffix is empty (``abc`` or ``.env``) once collapsed to ``NULL`` in the stored columns and lost the original, so these pin the round-trip.
 """
 
 import pytest
@@ -26,15 +20,10 @@ from hivegent.tools.entries import (
 
 
 def _project(entry: EntryMetadata) -> EntryMetadata:
-    """Round-trip *entry* through the repository's column projection.
-
-    Mirrors production exactly: ``_EntryColumns.from_entry`` reduces the entry
-    to its stored columns, those populate an in-memory row, and
-    ``_entry_from_row`` reconstructs the metadata, the same lossy seam the bug
-    lived in.
-    """
+    """Round-trip *entry* through the repository's column projection."""
     columns = _EntryColumns.from_entry(entry)
     row = Document(stem_path=entry.stem_path, **columns.as_values())
+
     return _entry_from_row(row)
 
 
@@ -66,19 +55,17 @@ def _converted_entry(filepath: str) -> EntryMetadata:
 def test_original_survives_sql_projection(
     filepath: str, stem: str, description: str
 ) -> None:
-    """The original path reconstructs verbatim through the column projection."""
     assert stem_path_from_reference(filepath) == stem
     assert Part(stem, "description").path == description
 
     reconstructed = _project(_converted_entry(filepath))
     assert reconstructed.stem_path == stem
     assert reconstructed.description_path == description
-    # The defect: empty-suffix originals came back as ``None`` here.
     assert reconstructed.original_path == filepath
 
 
-def test_markdown_entry_has_no_original_after_projection() -> None:
-    """A markdown-authored entry stays original-less end to end (not ``""``)."""
+def test_an_entry_without_an_original_stays_so_after_projection() -> None:
+    """``None`` (no original) stays distinct from ``""`` (an extension-less one)."""
     entry = EntryMetadata(
         entry_kind="user_markdown",
         stem_path="notes/memo",
@@ -88,27 +75,18 @@ def test_markdown_entry_has_no_original_after_projection() -> None:
         origin="upload",
         generated_by="user",
     )
+
     assert _EntryColumns.from_entry(entry).original_suffix is None
     assert _project(entry).original_path is None
-
-
-def test_stored_suffix_distinguishes_absent_from_empty() -> None:
-    """``None`` (no original) and ``""`` (extension-less original) stay distinct."""
-    assert _original_suffix(None) is None
-    assert _original_suffix("abc") == ""
-    assert _original_suffix(".env") == ""
-    assert _original_suffix("report.pdf") == ".pdf"
-
-    assert Part("abc", "original", "").path == "abc"
-    assert Part("docs/report", "original", ".pdf").path == "docs/report.pdf"
+    assert [_original_suffix(path) for path in ("abc", ".env", "report.pdf")] == [
+        "",
+        "",
+        ".pdf",
+    ]
 
 
 def test_subtree_filter_excludes_equal_stem_and_escapes_wildcards() -> None:
-    """The subtree filter matches children only, with LIKE wildcards escaped.
-
-    A stem equal to the prefix is the same-named sibling document
-    (``notes.md`` next to ``notes/``) and must never be swept along.
-    """
+    """A stem equal to the prefix is the same-named sibling document (``notes.md`` beside ``notes/``), never swept along."""
     sql = str(
         stem_subtree_filter("100%_a").compile(compile_kwargs={"literal_binds": True})
     )

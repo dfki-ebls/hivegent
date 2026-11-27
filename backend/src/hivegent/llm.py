@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
+import httpx2
 from exar.agents import call
 from exar.pydantic_ai import PydanticAiAgent
 from openai import AsyncOpenAI
@@ -64,16 +65,20 @@ __all__ = [
 ]
 
 
-def create_openai_client(provider: LlmProviderSettings) -> AsyncOpenAI:
-    """Create an OpenAI SDK client for *provider* on the shared client."""
+def create_openai_client(
+    provider: LlmProviderSettings, http_client: httpx2.AsyncClient | None = None
+) -> AsyncOpenAI:
+    """Create an OpenAI SDK client for *provider* on *http_client*, the shared one for its endpoint when ``None``."""
     return OpenAIProvider(
         api_key=reveal(provider.api_key),
         base_url=provider.base_url,
-        http_client=get_trusted_http_client(provider.base_url),
+        http_client=http_client or get_trusted_http_client(provider.base_url),
     ).client
 
 
-def create_openai_provider(provider: LlmProviderSettings) -> Provider[AsyncOpenAI]:
+def create_openai_provider(
+    provider: LlmProviderSettings, http_client: httpx2.AsyncClient | None = None
+) -> Provider[AsyncOpenAI]:
     """The pydantic-ai provider of an operator endpoint, named for its runtime.
 
     Only OpenAI's own API takes pydantic-ai's OpenAI provider, which profiles,
@@ -81,7 +86,7 @@ def create_openai_provider(provider: LlmProviderSettings) -> Provider[AsyncOpenA
     and any other runtime an OpenAI-compatible one named after it, so no
     self-hosted model is mistaken for an OpenAI one of the same name.
     """
-    client = create_openai_client(provider)
+    client = create_openai_client(provider, http_client)
     runtime = provider.inference_provider
 
     match runtime:
@@ -227,8 +232,9 @@ def create_openai_chat_model(
     *,
     family: ModelFamily | None = None,
     context_window: int | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> OpenAIChatModel:
-    """Build an :class:`OpenAIChatModel` bound to the shared client.
+    """Build an :class:`OpenAIChatModel` bound to *http_client*, the shared client of the endpoint when ``None``.
 
     The provider profiles the model by its served name
     (:func:`create_openai_provider`), the vLLM and Ollama ones by the families
@@ -254,7 +260,7 @@ def create_openai_chat_model(
 
     return OpenAIChatModel(
         model,
-        provider=create_openai_provider(provider),
+        provider=create_openai_provider(provider, http_client),
         profile=profile or None,
         settings=_MODEL_SETTINGS,
     )

@@ -58,13 +58,13 @@ from hivegent.agents.tools import (
     explore_toolset,
     memory_toolset,
 )
-from hivegent.config import settings
 from hivegent.config.llm import LlmModelSettings
 from hivegent.llm_config import LlmConfig, chat_llm
 from hivegent.prompts import FENCE_TAG
 from hivegent.shared.l10n import current_language, use_language
 from hivegent.store import User
 from hivegent.tmp import tmp_dir
+from tests.conftest import Configure
 from tests.helpers import catalog, in_run, owned, run_context
 
 _TRUNCATED_CALL = ToolCallPart(
@@ -200,15 +200,14 @@ async def test_a_model_without_vision_is_sent_no_image() -> None:
 
 
 async def test_a_model_with_its_own_image_cap_limits_a_run_on_it(
-    monkeypatch: pytest.MonkeyPatch,
+    configure: Configure,
 ) -> None:
     """A catalog model's `max_images` replaces the global cap on the runs on it."""
     llm = catalog()
     llm.models["small"] = LlmModelSettings(
         provider="local", model="small", vision=True, max_images=1
     )
-    monkeypatch.setattr(settings, "llm", llm)
-    monkeypatch.setattr(settings.multimodal, "max_images", 3)
+    configure(llm=llm, multimodal={"max_images": 3})
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=[_image(), _image(), _image()])])
     ]
@@ -298,31 +297,29 @@ async def test_a_result_too_large_to_show_is_saved_and_read_back(
         await SavedResults(folder).read("/tmp/state.txt")
 
 
-async def test_data_too_large_for_the_frontend_is_dropped(data_dir: Path) -> None:
-    result = with_data_chunk(
+async def test_data_too_large_for_the_frontend_is_dropped_and_a_small_result_passes(
+    data_dir: Path,
+) -> None:
+    large = with_data_chunk(
         tool_return([_Row("x" * 1_000) for _ in range(100)], "short"), None
     )
-
-    spilled = await _spill(result)
+    spilled = await _spill(large)
 
     assert isinstance(spilled, ToolReturn)
     assert spilled.return_value == "short"
     assert spilled.metadata is None
-    assert not (data_dir / "conversations").exists()
 
+    small = with_data_chunk(tool_return([_Row("a")], "a"), None)
 
-async def test_a_result_that_fits_passes_untouched(data_dir: Path) -> None:
-    result = with_data_chunk(tool_return([_Row("a")], "a"), None)
-
-    assert await _spill(result) is result
+    assert await _spill(small) is small
     assert not (data_dir / "conversations").exists()
 
 
 async def test_saved_results_stay_within_the_tmp_cap(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    data_dir: Path, configure: Configure
 ) -> None:
     """The oldest saved result makes room, and one that cannot fit is only clamped."""
-    monkeypatch.setattr(settings.tmp, "max_bytes", 6_000)
+    configure(tmp={"max_bytes": 6_000})
     results = tmp_dir(data_dir, owned("c1")) / ".tool-results"
 
     first = _saved(

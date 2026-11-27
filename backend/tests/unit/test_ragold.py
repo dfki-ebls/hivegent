@@ -20,20 +20,23 @@ from hivegent.server.routes.conversations.history import export_ragold_route
 from hivegent.shared.zips import member_mtime
 from hivegent.store import User, Workspace
 
+from ..conftest import Configure
 from ..helpers import owned
 
 SCHEMA = Path(__file__).parents[3] / "schemas" / "ragold.json"
 
 
 @pytest.fixture(autouse=True)
-def _ragold(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
+def _ragold(
+    monkeypatch: pytest.MonkeyPatch, data_dir: Path, configure: Configure
+) -> None:
     """Enable the export over a workspace that has no database rows."""
 
     async def no_metadata(_store: Workspace, _reference: str) -> EntryMetadata | None:
         return None
 
     _ = data_dir
-    monkeypatch.setattr(settings.ragold, "url", HttpUrl("https://ragold.test"))
+    configure(ragold={"url": HttpUrl("https://ragold.test")})
     monkeypatch.setattr(db_documents, "get_entry_metadata", no_metadata)
 
 
@@ -56,7 +59,7 @@ def _request(**changes: object) -> RagoldRequest:
 
 
 async def test_archive_matches_the_ragold_schema() -> None:
-    """The zip ships originals, markdown-only entries, and a schema-valid envelope."""
+    """The zip ships originals, markdown-only entries with their mtime, and a schema-valid envelope."""
     user = User("u", name="Ada")
     workspace = user.home.workspace_dir()
     original = b"%PDF-1.7 bees"
@@ -78,27 +81,20 @@ async def test_archive_matches_the_ragold_schema() -> None:
         data = json.loads(archive.read("annotations.json"))
         jsonschema.validate(data, json.loads(SCHEMA.read_text()))
         documents = data["documents"]
-        (document_id,) = (
-            key
-            for key, document in documents.items()
-            if document["name"] == "report.pdf"
-        )
-
-        assert archive.read(f"files/{document_id}/report.pdf") == original
-        assert documents[document_id]["sha256"] == hashlib.sha256(original).hexdigest()
-        assert {document["name"] for document in documents.values()} == {
-            "report.pdf",
-            "notes.md",
-        }
-        (notes,) = (
-            info for info in archive.infolist() if info.filename.endswith("/notes.md")
-        )
-        assert notes.date_time == (1980, 1, 1, 0, 0, 0)
-        assert member_mtime(notes) == 0
-        assert archive.read(notes) == b"Notes"
+        by_name = {document["name"]: key for key, document in documents.items()}
         (annotation,) = data["annotations"].values()
+        (notes,) = (i for i in archive.infolist() if i.filename.endswith("/notes.md"))
+
+        assert set(by_name) == {"report.pdf", "notes.md"}
+        assert archive.read(f"files/{by_name['report.pdf']}/report.pdf") == original
+        assert (
+            documents[by_name["report.pdf"]]["sha256"]
+            == hashlib.sha256(original).hexdigest()
+        )
+        assert (notes.date_time, member_mtime(notes)) == ((1980, 1, 1, 0, 0, 0), 0)
+        assert archive.read(notes) == b"Notes"
         assert annotation["passages"] == [
-            {"documentId": document_id, "text": "Bees", "grade": "needed"}
+            {"documentId": by_name["report.pdf"], "text": "Bees", "grade": "needed"}
         ]
         assert annotation["keyFacts"] == [{"text": "Bees", "importance": "must"}]
         assert (data["author"], data["project"]) == ("Ada", "Hivegent")

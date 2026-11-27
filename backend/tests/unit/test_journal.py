@@ -27,18 +27,30 @@ def _journal(data_dir: Path) -> tuple[Path, _Journal]:
     return root, journal
 
 
-async def test_the_boot_rolls_back_a_change_a_crash_interrupted(
+@pytest.mark.parametrize(
+    ("xid", "committed"),
+    [(None, False), ("7", False), ("7", True)],
+    ids=["unprepared", "rows rolled back", "rows committed"],
+)
+async def test_the_boot_follows_the_rows_of_a_change_a_crash_interrupted(
     data_dir: Path,
+    transaction_status: dict[str, bool],
+    xid: str | None,
+    committed: bool,
 ) -> None:
+    """A change in flight is not kept, and once its rows are prepared the files follow their transaction."""
     root, journal = _journal(data_dir)
 
-    # A change in flight is not kept.
+    if xid:
+        journal.prepare(xid)
+        transaction_status[xid] = committed
+
     assert kept_changes() == []
 
     await recover_changesets()
 
-    assert (root / "a.md").read_text() == "old"
-    assert (root / "b.md").read_text() == "kept"
+    assert (root / "a.md").read_text() == ("new" if committed else "old")
+    assert (root / "b.md").exists() != committed
     assert not journal.staging.exists()
     assert not journal.log.exists()
 
@@ -87,37 +99,12 @@ async def test_a_failed_rollback_keeps_its_backups_for_the_boot_to_finish(
     assert not journal.staging.exists()
 
 
-@pytest.mark.parametrize("committed", [True, False])
-async def test_the_boot_follows_the_rows_of_a_prepared_change(
-    data_dir: Path,
-    committed_transactions: set[str],
-    committed: bool,
-) -> None:
-    """A crash between the rows' commit and the journal's leaves the files as the rows' transaction says."""
-    root, journal = _journal(data_dir)
-    journal.prepare("7")
-
-    if committed:
-        committed_transactions.add("7")
-
-    await recover_changesets()
-
-    assert (root / "a.md").read_text() == ("new" if committed else "old")
-    assert (root / "b.md").exists() != committed
-    assert not journal.staging.exists()
-    assert not journal.log.exists()
-
-
 async def test_the_boot_keeps_a_change_whose_transaction_postgresql_forgot(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    data_dir: Path,
 ) -> None:
     root, journal = _journal(data_dir)
     journal.prepare("7")
 
-    async def forgotten(xid: str) -> None:
-        return None
-
-    monkeypatch.setattr(paths.db_changes, "committed", forgotten)
     await recover_changesets()
 
     assert (root / "a.md").read_text() == "new"
@@ -153,14 +140,14 @@ def test_the_boot_removes_only_the_staging_areas_no_journal_names(
 def test_housekeeping_sweeps_old_partial_files_anywhere_but_spares_young_ones(
     data_dir: Path,
 ) -> None:
+    now = 1_000_000.0
     old = data_dir / "conversations" / "u" / "c" / ".~0123456789abcdef.partial"
     young = data_dir / "workspace" / "user:u" / ".~fedcba9876543210.partial"
 
-    for path in (old, young):
+    for path, age in ((old, 2 * paths._PARTIAL_GRACE), (young, 1)):
         path.parent.mkdir(parents=True)
         _ = path.write_text("x")
+        os.utime(path, (now - age, now - age))
 
-    os.utime(old, (0, 0))
-
-    assert paths.sweep_partials(data_dir) == 1
+    assert paths.sweep_partials(data_dir, now) == 1
     assert not old.exists() and young.exists()

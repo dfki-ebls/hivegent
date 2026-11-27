@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 
 from pydantic import (
     Field,
+    NonNegativeFloat,
     PositiveFloat,
     PositiveInt,
     SecretStr,
@@ -296,6 +297,8 @@ class SubagentSettings(Section):
     run at once, and ``max_cost`` the cost in US dollars a turn's agents and
     the subagents it started may spend together, ``None`` for no bound.  It counts only the usage of models
     pydantic-ai can price, so the request limit alone bounds a self-hosted one.
+    ``auto_background_seconds`` is how long the main agent waits on a task it
+    delegated in the foreground before the task moves to the background.
     """
 
     enabled: bool = True
@@ -304,6 +307,7 @@ class SubagentSettings(Section):
     max_depth: PositiveInt = 1
     max_running: PositiveInt = 8
     max_cost: Annotated[Decimal, Field(gt=0)] | None = None
+    auto_background_seconds: NonNegativeFloat = 30.0
 
 
 class MultimodalSettings(Section):

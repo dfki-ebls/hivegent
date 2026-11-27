@@ -1,8 +1,10 @@
-"""Memory: edited in place and reported when a conversation or compaction window starts."""
+"""Memory: edited in place, approved before a write, and reported when a conversation or compaction window starts."""
 
 import pytest
+from exar.memory import InMemoryMemory
 from exar.tools import Retry
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -12,7 +14,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from hivegent.agents import invoke_agent_tool
 from hivegent.agents.common import UserDeps
+from hivegent.agents.tools import memory
 from hivegent.agents.tools.memory import MEMORY_NOTE, edit_memory, memory_toolset
 from hivegent.store import User
 
@@ -60,3 +64,29 @@ async def test_the_memory_is_reported_once_per_window() -> None:
         for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == "read_memory"
     ] == ["- likes tea", "- likes tea"]
+
+
+@pytest.fixture()
+def page(monkeypatch: pytest.MonkeyPatch) -> InMemoryMemory[str, str]:
+    """The memory of ``u``, which every call reads and writes in place of the database's."""
+    page = InMemoryMemory[str, str](entries={"u": "- tea"})
+    monkeypatch.setattr(memory, "user_memory", lambda _user: page)
+
+    return page
+
+
+async def test_write_memory_asks_even_in_write_mode(
+    page: InMemoryMemory[str, str],
+) -> None:
+    """A write outside the gateway is reviewed in every mode, and only an approved call saves."""
+    deps = UserDeps(user=User(id="u"), mode="write")
+    args = {"content": "- green"}
+
+    with pytest.raises(ApprovalRequired):
+        await invoke_agent_tool("write_memory", args, deps)
+
+    assert await page.read(["u"]) == {"u": "- tea"}
+
+    await invoke_agent_tool("write_memory", args, deps, approved=True)
+
+    assert await page.read(["u"]) == {"u": "- tea\n- green"}

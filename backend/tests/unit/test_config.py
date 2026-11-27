@@ -1,6 +1,6 @@
-"""Unit tests for config sanitization functions."""
+"""Unit tests for config sanitization and settings loading."""
 
-import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -13,111 +13,102 @@ from hivegent.config import (
 )
 from hivegent.config.llm import LlmSettings
 from hivegent.config.observability import TransparencySettings
-from hivegent.config.retrieval import RemoteEmbeddingSettings
+from hivegent.config.retrieval import LocalEmbeddingSettings, RemoteEmbeddingSettings
 from hivegent.config.root import CONFIG_FILE_ENV_VAR
 from hivegent.config.security import AuthSettings
 
-
-class TestSanitizeDocumentPath:
-    """Tests for sanitize_document_path."""
-
-    def test_valid_simple(self) -> None:
-        assert sanitize_document_path("report.md") == "report.md"
-
-    def test_valid_nested(self) -> None:
-        assert sanitize_document_path("projects/report.md") == "projects/report.md"
-
-    def test_rejects_absolute(self) -> None:
-        with pytest.raises(ValueError, match="relative"):
-            sanitize_document_path("/etc/passwd")
-
-    def test_rejects_dot_dot(self) -> None:
-        with pytest.raises(ValueError, match="unsafe segment"):
-            sanitize_document_path("../secret.md")
-
-    def test_rejects_the_name_of_a_partial_file(self) -> None:
-        with pytest.raises(ValueError, match="unsafe segment"):
-            sanitize_document_path("dir/.~0123456789abcdef.partial")
-
-    def test_rejects_null_bytes(self) -> None:
-        with pytest.raises(ValueError, match="null bytes"):
-            sanitize_document_path("file\x00.md")
-
-    def test_rejects_empty(self) -> None:
-        with pytest.raises(ValueError, match="empty"):
-            sanitize_document_path("")
-
-    def test_normalizes_dot_prefix(self) -> None:
-        # PurePosixPath normalizes "./file.md" to "file.md"
-        assert sanitize_document_path("./file.md") == "file.md"
-
-    def test_normalizes_backslashes(self) -> None:
-        assert sanitize_document_path("dir\\file.md") == "dir/file.md"
-
-    def test_normalizes_decomposed_characters(self) -> None:
-        # Escapes rather than literals: this file is saved precomposed, so
-        # spelling both sides out would compare NFC with NFC and assert
-        # nothing.  A macOS upload arrives decomposed while a model can only
-        # ever emit the precomposed form, and both must reach the same path.
-        assert sanitize_document_path("dir/SU\u0308VOA.md") == "dir/S\u00dcVOA.md"
-
-    def test_keeps_compatibility_characters(self) -> None:
-        # NFC, never NFKC: folding compatibility characters would silently
-        # rename the document to "file.md".
-        assert sanitize_document_path("\ufb01le.md") == "\ufb01le.md"
+LOCAL = "http://127.0.0.1:8000/v1"
 
 
-class TestSanitizeUserId:
-    """Tests for sanitize_user_id."""
-
-    def test_valid(self) -> None:
-        assert sanitize_user_id("alice") == "alice"
-
-    def test_valid_with_numbers(self) -> None:
-        assert sanitize_user_id("user-123_test") == "user-123_test"
-
-    def test_rejects_empty(self) -> None:
-        with pytest.raises(ValueError, match="empty"):
-            sanitize_user_id("")
-
-    def test_rejects_special_chars(self) -> None:
-        with pytest.raises(ValueError, match="Invalid user ID"):
-            sanitize_user_id("user@domain")
+type Load = Callable[..., Settings]
 
 
-class TestSanitizeGroupId:
-    """Tests for sanitize_group_id."""
+@pytest.fixture()
+def load(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Load:
+    """``Settings(embedding=embedding)`` as loaded from *toml* and *env*, which only that call sees.
 
-    def test_valid(self) -> None:
-        assert sanitize_group_id("engineering") == "engineering"
+    The credentials of the host are kept out of it, unless *env* names them.
+    """
 
-    def test_rejects_empty(self) -> None:
-        with pytest.raises(ValueError, match="empty"):
-            sanitize_group_id("")
+    def settings(
+        toml: str | None = None,
+        *,
+        embedding: LocalEmbeddingSettings | RemoteEmbeddingSettings | None = None,
+        **env: str,
+    ) -> Settings:
+        with monkeypatch.context() as patch:
+            patch.delenv("CREDENTIALS_DIRECTORY", raising=False)
 
-    def test_rejects_slashes(self) -> None:
-        with pytest.raises(ValueError, match="Invalid group ID"):
-            sanitize_group_id("group/sub")
+            if toml is not None:
+                config = tmp_path / "config.toml"
+                config.write_text(toml)
+                patch.setenv(CONFIG_FILE_ENV_VAR, str(config))
+
+            for name, value in env.items():
+                patch.setenv(name, value)
+
+            if embedding is None:
+                return Settings()
+
+            return Settings(embedding=embedding)
+
+    return settings
 
 
-def test_toml_config_overrides_defaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("projects/report.md", "projects/report.md"),
+        ("./file.md", "file.md"),
+        ("dir\\file.md", "dir/file.md"),
+        # Escapes, as the file is saved precomposed: a macOS upload arrives
+        # decomposed and a model emits the precomposed form, both must meet.
+        ("dir/SÜVOA.md", "dir/SÜVOA.md"),
+        # NFC and never NFKC, which would rename the document to "file.md".
+        ("ﬁle.md", "ﬁle.md"),
+    ],
+)
+def test_document_paths_are_normalized(path: str, expected: str) -> None:
+    assert sanitize_document_path(path) == expected
+
+
+@pytest.mark.parametrize(
+    ("path", "error"),
+    [
+        ("/etc/passwd", "relative"),
+        ("../secret.md", "unsafe segment"),
+        ("dir/.~0123456789abcdef.partial", "unsafe segment"),
+        ("file\x00.md", "null bytes"),
+        ("", "empty"),
+    ],
+)
+def test_unsafe_document_paths_are_rejected(path: str, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        sanitize_document_path(path)
+
+
+@pytest.mark.parametrize(
+    ("sanitize", "name", "error"),
+    [
+        (sanitize_user_id, "", "empty"),
+        (sanitize_user_id, "user@domain", "Invalid user ID"),
+        (sanitize_group_id, "", "empty"),
+        (sanitize_group_id, "group/sub", "Invalid group ID"),
+    ],
+)
+def test_invalid_ids_are_rejected(
+    sanitize: Callable[[str], str], name: str, error: str
 ) -> None:
-    """TOML file overrides listed fields; env vars win; unlisted keep defaults."""
-    for key in [
-        k for k in os.environ if k.startswith("HIVEGENT_") and k != CONFIG_FILE_ENV_VAR
-    ]:
-        monkeypatch.delenv(key, raising=False)
+    with pytest.raises(ValueError, match=error):
+        sanitize(name)
 
-    config = tmp_path / "config.toml"
-    config.write_text(
+
+def test_toml_config_overrides_defaults(load: Load) -> None:
+    """TOML file overrides listed fields, env vars win, unlisted keep defaults."""
+    settings = load(
         'data_dir = "/srv/hivegent"\n\n[network]\nconnect_timeout_seconds = 12.5\n',
-        encoding="utf-8",
+        HIVEGENT_NETWORK__WEB_TIMEOUT_SECONDS="7",
     )
-    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(config))
-    monkeypatch.setenv("HIVEGENT_NETWORK__WEB_TIMEOUT_SECONDS", "7")
-
-    settings = Settings()
 
     assert settings.data_dir == Path("/srv/hivegent")
     assert settings.network.connect_timeout_seconds == 12.5
@@ -125,31 +116,28 @@ def test_toml_config_overrides_defaults(
     assert settings.limits.max_file_size_bytes == 50 * 1024 * 1024
 
 
-def test_credential_files_override_toml(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A file in ``$CREDENTIALS_DIRECTORY`` supplies a nested secret setting."""
+def test_credential_files_supply_nested_secrets(load: Load, tmp_path: Path) -> None:
     (tmp_path / "hivegent.TRANSPARENCY__SECRET_KEY").write_text("x" * 32 + "\n")
-    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
-    monkeypatch.setenv("HIVEGENT_TRANSPARENCY__ENDPOINT", "local")
-    monkeypatch.setenv("HIVEGENT_TRANSPARENCY__DETECTOR_PATH", "/detect")
-    monkeypatch.setenv(
-        "HIVEGENT_LLM__PROVIDERS__LOCAL__BASE_URL", "http://localhost/v1"
-    )
-    monkeypatch.setenv("HIVEGENT_TRANSPARENCY__REPORT_ISSUER", "https://hivegent.test")
 
-    transparency = Settings().transparency
+    transparency = load(
+        CREDENTIALS_DIRECTORY=str(tmp_path),
+        HIVEGENT_TRANSPARENCY__ENDPOINT="local",
+        HIVEGENT_TRANSPARENCY__DETECTOR_PATH="/detect",
+        HIVEGENT_LLM__PROVIDERS__LOCAL__BASE_URL=LOCAL,
+        HIVEGENT_TRANSPARENCY__REPORT_ISSUER="https://hivegent.test",
+    ).transparency
 
     assert transparency is not None
     assert transparency.secret_key.get_secret_value() == "x" * 32
     assert "x" * 32 not in repr(transparency)
+
     with pytest.raises(ValueError, match="secret_key"):
         TransparencySettings.model_validate(
             {**transparency.model_dump(), "secret_key": "too-short"}
         )
 
 
-def test_remote_embedding_names_a_catalog_endpoint() -> None:
+def test_remote_embedding_names_a_catalog_endpoint(load: Load) -> None:
     """A remote embedder borrows a provider's credentials, so it must name one that exists."""
     with pytest.raises(ValueError, match="endpoint"):
         RemoteEmbeddingSettings.model_validate(
@@ -157,71 +145,57 @@ def test_remote_embedding_names_a_catalog_endpoint() -> None:
         )
 
     with pytest.raises(ValueError, match="unknown provider"):
-        Settings(
+        _ = load(
             embedding=RemoteEmbeddingSettings(
                 provider="openai", endpoint="nope", model="m", dimension=8
             )
         )
 
 
-def test_a_family_needs_a_runtime_that_takes_it() -> None:
+@pytest.mark.parametrize(
+    ("runtime", "accepted"),
+    [
+        ("llama.cpp", True),
+        ("sglang", True),
+        ("openai-compatible", True),
+        ("vllm", False),
+    ],
+)
+def test_a_family_needs_a_runtime_that_takes_it(runtime: str, accepted: bool) -> None:
     """vLLM profiles a model by its served name, so a family there would be silently ignored."""
     catalog = {
         "models": {"chat": {"provider": "local", "model": "m", "family": "qwen"}},
         "default": "chat",
+        "providers": {"local": {"base_url": LOCAL, "inference_provider": runtime}},
     }
 
-    for runtime in ("llama.cpp", "sglang", "openai-compatible"):
-        provider = {
-            "base_url": "http://127.0.0.1:8000/v1",
-            "inference_provider": runtime,
-        }
-        _ = LlmSettings.model_validate({**catalog, "providers": {"local": provider}})
-
-    with pytest.raises(ValueError, match="ignores"):
-        provider = {
-            "base_url": "http://127.0.0.1:8000/v1",
-            "inference_provider": "vllm",
-        }
-        _ = LlmSettings.model_validate({**catalog, "providers": {"local": provider}})
+    if accepted:
+        _ = LlmSettings.model_validate(catalog)
+    else:
+        with pytest.raises(ValueError, match="ignores"):
+            _ = LlmSettings.model_validate(catalog)
 
 
+@pytest.mark.parametrize(
+    ("toml", "env", "error"),
+    [
+        ('[llm]\nmodel = "gpt"\n', {}, r"llm\.model"),
+        ("", {"HIVEGENT_SECURITY__USER_URLS": "[]"}, r"security\.user_urls"),
+        ("", {"HIVEGENT_AUTH_ISSUER": "https://idp.test"}, "HIVEGENT_AUTH_ISSUER"),
+    ],
+    ids=["toml", "nested env", "flat env"],
+)
 def test_a_removed_setting_stops_the_boot_naming_it(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    load: Load, toml: str, env: dict[str, str], error: str
 ) -> None:
     """Unknown keys are refused in every section, from the TOML file and the environment."""
-    for name in os.environ:
-        if name.startswith("HIVEGENT_"):
-            monkeypatch.delenv(name)
-
-    config = tmp_path / "config.toml"
-    config.write_text('[llm]\nmodel = "gpt"\n')
-    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(config))
-
-    with pytest.raises(ValueError, match=r"llm\.model"):
-        _ = Settings()
-
-    config.write_text("")
-    monkeypatch.setenv("HIVEGENT_SECURITY__USER_URLS", "[]")
-
-    with pytest.raises(ValueError, match=r"security\.user_urls"):
-        _ = Settings()
-
-    monkeypatch.delenv("HIVEGENT_SECURITY__USER_URLS")
-    monkeypatch.setenv("HIVEGENT_AUTH_ISSUER", "https://idp.test")
-
-    with pytest.raises(ValueError, match="HIVEGENT_AUTH_ISSUER"):
-        _ = Settings()
+    with pytest.raises(ValueError, match=error):
+        _ = load(toml, **env)
 
 
-def test_a_named_config_file_must_exist(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """``HIVEGENT_CONFIG_FILE`` naming no file stops the boot instead of reading nothing."""
-    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(tmp_path / "missing.toml"))
-
+def test_a_named_config_file_must_exist(load: Load, tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="missing.toml"):
-        _ = Settings()
+        _ = load(**{CONFIG_FILE_ENV_VAR: str(tmp_path / "missing.toml")})
 
 
 @pytest.mark.parametrize(

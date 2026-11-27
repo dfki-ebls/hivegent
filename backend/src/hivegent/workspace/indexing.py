@@ -4,8 +4,7 @@ The idempotent ingest that re-derives one entry's SQL state from its on-disk
 bytes.  It runs its chunk + embed + upsert step to completion under a cancel so
 the workspace markdown is never left without its SQL rows.
 
-This module owns the chunk/index primitives (:func:`chunk_and_index_document`
-and :func:`delete_chunked_document`), which sibling modules import directly.
+Sibling modules import :func:`chunk_and_index_document` from here.
 """
 
 import asyncio
@@ -23,7 +22,6 @@ from exar.text import NOT_TEXT_REASON, decode
 from ..chunks import chunk_and_index_document, chunking
 from ..config import settings
 from ..db import documents as db_documents
-from ..db.documents import delete_document as delete_chunked_document
 from ..metadata import EntryMetadata
 from ..pipelines import chunker_fingerprint
 from ..store import Workspace
@@ -142,7 +140,7 @@ async def _sync_entry_from_disk_locked(
 
     if stat is None:
         # Entry gone on disk: drop the row if one exists (chunks cascade).
-        return await delete_chunked_document(store, description)
+        return await db_documents.delete_document(store, description)
 
     if state is None:
         state = await db_documents.get_entry_state(store, description)

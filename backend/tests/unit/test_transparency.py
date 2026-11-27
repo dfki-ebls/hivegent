@@ -3,6 +3,7 @@
 import hashlib
 import json
 
+import httpx2
 import pytest
 from joserfc import jws
 from joserfc.jwk import OKPKey
@@ -33,41 +34,6 @@ ROTATED = CONFIG.model_copy(
 )
 
 
-class _Response:
-    def __init__(self, *, is_watermarked: bool, num_scored_tokens: int) -> None:
-        self.is_watermarked = is_watermarked
-        self.num_scored_tokens = num_scored_tokens
-
-    def raise_for_status(self) -> None:
-        pass
-
-    def json(self) -> dict[str, object]:
-        return {
-            "score": 8.1,
-            "p_value": 0.0001,
-            "num_scored_tokens": self.num_scored_tokens,
-            "is_watermarked": self.is_watermarked,
-        }
-
-
-class _Client:
-    def __init__(self, response: _Response) -> None:
-        self.response = response
-
-    async def post(
-        self,
-        url: str,
-        *,
-        json: object,
-        headers: object,
-    ) -> _Response:
-        assert url == "https://inference.test/llmhop/proxy/watermark/detect"
-        assert headers == {"Authorization": "Bearer provider-key"}
-        assert json == {"text": "marked text"}
-
-        return self.response
-
-
 def _verified(
     token: str, config: TransparencySettings = CONFIG
 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -83,17 +49,31 @@ def _verified(
 
 @pytest.mark.parametrize("issuer", [ISSUER, f"{ISSUER}/hivegent"])
 async def test_detection_report_is_verifiable_and_contains_only_a_hash(
-    monkeypatch, issuer: str
+    issuer: str,
 ) -> None:
     """A positive result is signed with the key derived from the app secret, below the issuer's path."""
-    monkeypatch.setattr(
-        transparency,
-        "get_trusted_http_client",
-        lambda *_: _Client(_Response(is_watermarked=True, num_scored_tokens=250)),
-    )
-    config = CONFIG.model_copy(update={"report_issuer": HttpUrl(issuer)})
 
-    result = await transparency.detect_text(config, PROVIDER, "marked text")
+    def detector(request: httpx2.Request) -> httpx2.Response:
+        assert (
+            str(request.url) == "https://inference.test/llmhop/proxy/watermark/detect"
+        )
+        assert request.headers["Authorization"] == "Bearer provider-key"
+        assert json.loads(request.content) == {"text": "marked text"}
+
+        return httpx2.Response(
+            200,
+            json={
+                "score": 8.1,
+                "p_value": 0.0001,
+                "num_scored_tokens": 250,
+                "is_watermarked": True,
+            },
+        )
+
+    config = CONFIG.model_copy(update={"report_issuer": HttpUrl(issuer)})
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(detector))
+
+    result = await transparency.detect_text(config, PROVIDER, "marked text", client)
     header, claims = _verified(result.signed_report, config)
 
     assert result.status == "detected"

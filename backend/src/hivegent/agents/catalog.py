@@ -49,15 +49,20 @@ USER_HEADER = "X-Hivegent-User"
 """The header naming who calls a server set to ``forward_user``, and nothing else of them."""
 
 
-def caller_id(user: User) -> str:
+def caller_id(
+    user: User, service_client_id: str | None = settings.auth.service_client_id
+) -> str:
     """Who *user* is to a server told who calls: the token's subject, a service its client id.
 
     >>> caller_id(User("alice"))
     'alice'
+    >>> caller_id(User("svc", kind="service"), "teams-bridge")
+    'teams-bridge'
     """
-    client = settings.auth.service_client_id
+    if user.is_service and service_client_id is not None:
+        return service_client_id
 
-    return client if user.is_service and client is not None else user.id
+    return user.id
 
 
 def _unavailable(server_id: str, ctx: RunContext[UserDeps]) -> str:
@@ -144,7 +149,9 @@ def _stdio_toolset(server_id: str, config: StdioMcpServer) -> MCPToolset[UserDep
 
 
 def _http_toolsets(
-    server_id: str, config: HttpMcpServer
+    server_id: str,
+    config: HttpMcpServer,
+    create_client: Callable[..., httpx2.AsyncClient],
 ) -> tuple[MCPToolset[UserDeps], MCPToolset[UserDeps] | None]:
     """The toolset of a server over Streamable HTTP, and the one a call connects through when it is told who calls.
 
@@ -177,7 +184,7 @@ def _http_toolsets(
     # An operator endpoint, so the direct client confined to it, its issuer,
     # and the endpoints the issuer's metadata names, which carries the
     # headers to the server alone.
-    client = create_trusted_http_client(
+    client = create_client(
         url,
         *(() if oauth is None else (oauth.issuer,)),
         timeout=httpx2.Timeout(config.timeout_seconds, read=None),
@@ -237,8 +244,13 @@ class CatalogServer:
     client: McpClient[UserDeps]
 
     @classmethod
-    def build(cls, server_id: str, config: McpServer) -> Self:
-        """The server *config* describes, not yet connected.
+    def build(
+        cls,
+        server_id: str,
+        config: McpServer,
+        create_client: Callable[..., httpx2.AsyncClient] = create_trusted_http_client,
+    ) -> Self:
+        """The server *config* describes, not yet connected, its HTTP client made by *create_client*.
 
         Raises:
             ValueError: For an SSE endpoint, since only Streamable HTTP is spoken.
@@ -250,7 +262,7 @@ class CatalogServer:
                 _client(server_id, config, _stdio_toolset(server_id, config)),
             )
 
-        toolset, caller = _http_toolsets(server_id, config)
+        toolset, caller = _http_toolsets(server_id, config, create_client)
 
         return cls(server_id, config, _client(server_id, config, toolset, caller))
 

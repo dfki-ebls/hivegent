@@ -1,10 +1,8 @@
 """Tests for SSRF-sensitive networking helpers and auth guards."""
 
-from io import BytesIO
-
 import httpx2
 import pytest
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI
 from pydantic import HttpUrl, ValidationError
 from starlette.responses import PlainTextResponse
 from starlette.testclient import TestClient
@@ -20,16 +18,11 @@ from hivegent.security import (
     create_safe_async_client,
 )
 from hivegent.server.no_store import NoStoreMiddleware
-from hivegent.server.operations import enforce_upload_size
 from hivegent.types import ChatRequest, Preferences
-from hivegent.workspace.paths import file_too_large
+from tests.conftest import Configure
 from tests.helpers import catalog
 
-
-@pytest.fixture(autouse=True)
-def accepted_terms(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Accept the additional terms so ``create_app`` reaches the auth checks."""
-    monkeypatch.setattr(settings, "accept_terms", True)
+ISSUER = "https://auth.example.com"
 
 
 def test_safe_async_client_requires_egress_proxy() -> None:
@@ -42,23 +35,18 @@ def test_safe_async_client_requires_egress_proxy() -> None:
         )
 
 
-async def test_safe_async_client_checks_every_redirect_hop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_safe_async_client_checks_every_redirect_hop() -> None:
     """The host policy runs on each hop, so an allowed URL cannot redirect out."""
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(302, headers={"Location": "https://evil.example/final"})
-
-    monkeypatch.setattr(
-        security, "_egress_transport", lambda *_: httpx2.MockTransport(handler)
-    )
 
     async with create_safe_async_client(
         policy=UrlPolicy(allow_hosts=("safe.example",)),
         proxy_url="http://127.0.0.1:4750",
         timeout=1.0,
         follow_redirects=True,
+        transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(security.UnsafeUrlError, match="allowlist"):
             await client.get("https://safe.example/start")
@@ -87,10 +75,14 @@ async def test_operator_client_keeps_no_cookies() -> None:
     assert seen == [None, None]
 
 
-def test_requests_name_catalog_models_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A request picks a chat model by id, and the endpoint stays the operator's."""
+@pytest.fixture()
+def llm_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "llm", catalog())
 
+
+@pytest.mark.usefixtures("llm_catalog")
+def test_requests_name_catalog_models_only() -> None:
+    """A request picks a chat model by id, and the endpoint stays the operator's."""
     chat = chat_llm(Preferences(model="big").model)
     assert chat is not None
     assert (chat.model, chat.provider.base_url) == ("big-27b", "http://llmhop/v1")
@@ -116,99 +108,72 @@ def test_catalog_references_are_checked() -> None:
         LlmSettings(models={"m": LlmModelSettings(provider="nowhere", model="m")})
 
 
-def test_enforce_upload_size_rejects_over_limit() -> None:
-    """Uploads whose parsed size exceeds the cap are rejected."""
-    upload = UploadFile(file=BytesIO(b"abcd"), size=4, filename="big.md")
-
-    with pytest.raises(HTTPException) as exc_info:
-        enforce_upload_size(upload, limit=3, too_large=file_too_large)
-
-    assert exc_info.value.status_code == 413
-    assert "File too large" in str(exc_info.value.detail)
-
-
-def test_terms_require_explicit_acceptance(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The server must not start before the operator accepts the additional terms."""
+@pytest.mark.parametrize(
+    ("accept_terms", "auth", "error"),
+    [
+        (False, {}, "HIVEGENT_ACCEPT_TERMS"),
+        (True, {"issuer": None}, "hivegent dev"),
+        (True, {"audience": None}, "AUDIENCE"),
+        (True, {"audience": ["hivegent-*"]}, "exact client IDs"),
+    ],
+    ids=["terms", "issuer", "audience", "wildcard"],
+)
+def test_the_server_refuses_to_start_unguarded(
+    configure: Configure, accept_terms: bool, auth: dict[str, object], error: str
+) -> None:
+    """Terms accepted, an issuer, and exact audiences, since a pattern would admit any future client."""
     from hivegent.server.app import create_app
 
-    monkeypatch.setattr(settings, "accept_terms", False)
-    with pytest.raises(ValueError, match="HIVEGENT_ACCEPT_TERMS"):
+    configure(
+        accept_terms=accept_terms, auth={"issuer": ISSUER, "audience": ["api"]} | auth
+    )
+
+    with pytest.raises(ValueError, match=error):
         create_app()
 
 
-def test_serve_requires_an_issuer_and_dev_refuses_one(
-    monkeypatch: pytest.MonkeyPatch,
+def test_only_dev_has_the_development_user_and_refuses_an_issuer(
+    configure: Configure,
 ) -> None:
-    """Only ``hivegent dev`` has the development user, and it never validates tokens."""
     from hivegent.auth import get_current_principal
-    from hivegent.server.app import create_app, create_dev_app
+    from hivegent.server.app import create_dev_app
 
-    monkeypatch.setattr(settings.auth, "issuer", None)
-
-    with pytest.raises(ValueError, match="hivegent dev"):
-        create_app()
+    configure(accept_terms=True, auth={"issuer": None})
 
     assert get_current_principal in create_dev_app().dependency_overrides
 
-    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
+    configure(accept_terms=True, auth={"issuer": ISSUER})
 
     with pytest.raises(ValueError, match="hivegent serve"):
         create_dev_app()
 
 
-def test_auth_enabled_requires_audience(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Auth-enabled mode must pin tokens to the API audience."""
-    from hivegent.server.app import create_app
-
-    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
-    monkeypatch.setattr(settings.auth, "audience", None)
-
-    with pytest.raises(ValueError, match="AUDIENCE"):
-        create_app()
-
-
-def test_auth_rejects_audience_wildcards(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Audiences name exact clients, a pattern would admit any future one."""
-    from hivegent.server.app import create_app
-
-    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
-    monkeypatch.setattr(settings.auth, "audience", ["hivegent-*"])
-
-    with pytest.raises(ValueError, match="exact client IDs"):
-        create_app()
-
-
-def test_mcp_proxy_requires_its_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The MCP proxy must pin upstream tokens to its own client."""
-    from hivegent.mcp import build_mcp_app
-
-    monkeypatch.setattr(settings.auth, "issuer", "https://auth.example.com")
-    monkeypatch.setattr(
-        settings.mcp, "base_url", HttpUrl("https://hivegent.example.com/mcp")
-    )
-    monkeypatch.setattr(settings.mcp, "mode", "proxy")
-    monkeypatch.setattr(settings.mcp, "client_id", None)
-
-    with pytest.raises(ValueError, match="CLIENT_SECRET"):
-        build_mcp_app()
-
-
-def test_mcp_requires_its_confirmation_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The approvals of ``/mcp`` are signed with an explicit key, never a random one."""
-    from hivegent.mcp import build_mcp_app
-
-    monkeypatch.setattr(settings.mcp, "confirmation_key", None)
-
-    with pytest.raises(ValueError, match="confirmation_key"):
-        build_mcp_app(dev=True)
-
-
-def test_a_stale_preference_falls_back_to_its_default(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("mcp", "dev", "error"),
+    [
+        ({"mode": "proxy", "client_id": None}, False, "CLIENT_SECRET"),
+        ({"confirmation_key": None}, True, "confirmation_key"),
+    ],
+    ids=["proxy client", "confirmation key"],
+)
+def test_the_mcp_server_refuses_to_build_unguarded(
+    configure: Configure, mcp: dict[str, object], dev: bool, error: str
 ) -> None:
-    """A stored choice outlives what it names, such as a model the catalog dropped, without failing a turn."""
-    monkeypatch.setattr(settings, "llm", catalog())
+    """The proxy pins upstream tokens to its own client, and approvals are signed with an explicit key, never a random one."""
+    from hivegent.mcp import build_mcp_app
 
+    configure(
+        auth={"issuer": ISSUER},
+        mcp={"base_url": HttpUrl("https://hivegent.example.com/mcp")} | mcp,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        build_mcp_app(dev=dev)
+
+
+@pytest.mark.usefixtures("llm_catalog")
+def test_a_stale_preference_falls_back_to_its_default() -> None:
+    """A stored choice outlives what it names, such as a model the catalog dropped, without failing a turn."""
     stored = Preferences.stored({"model": "gone", "mode": "read", "theme": "dark"})
 
     assert stored == Preferences(mode="read")

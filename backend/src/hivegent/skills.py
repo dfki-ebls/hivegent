@@ -609,8 +609,12 @@ def _staging() -> Path:
     return path
 
 
-def _write(files: Mapping[str, bytes], target: Path) -> None:
-    """Put *files* at *target* in one rename, replacing the skill there, durably."""
+def _write(
+    files: Mapping[str, bytes],
+    target: Path,
+    rename: Callable[[Path, Path], object] = durable_rename,
+) -> None:
+    """Put *files* at *target* in one *rename*, replacing the skill there, durably."""
     staged = _staging()
 
     try:
@@ -624,13 +628,13 @@ def _write(files: Mapping[str, bytes], target: Path) -> None:
         retired = staged / "retired"
 
         if target.exists():
-            durable_rename(target, retired)
+            rename(target, retired)
 
         try:
-            durable_rename(fresh, target)
+            rename(fresh, target)
         except BaseException:
             if retired.exists():
-                durable_rename(retired, target)
+                rename(retired, target)
 
             raise
 

@@ -3,12 +3,13 @@
 from fastapi import APIRouter
 
 from ...config import API_PREFIX, settings
+from ...config.security import AuthSettings
 from ...transparency import public_jwks
 from ...types import FrontendConfigResponse, OidcPublicConfig, TransparencyJwks
 from ..problems import PROBLEM_RESPONSES
 from .transparency import TransparencyConfigured
 
-__all__ = ["router"]
+__all__ = ["frontend_config", "router"]
 
 router = APIRouter(prefix=API_PREFIX, responses=PROBLEM_RESPONSES)
 
@@ -24,6 +25,18 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def frontend_config(auth: AuthSettings, docs_url: str | None) -> FrontendConfigResponse:
+    """The configuration of the browser SPA for the *auth* settings and the handbook at *docs_url*."""
+    return FrontendConfigResponse(
+        oidc=None
+        if auth.issuer is None
+        else OidcPublicConfig(
+            issuer_uri=auth.issuer, client_id=auth.frontend_client_id
+        ),
+        docs_url=docs_url,
+    )
+
+
 @router.get("/config")
 async def config() -> FrontendConfigResponse:
     """Serve the browser SPA's runtime configuration.
@@ -35,16 +48,7 @@ async def config() -> FrontendConfigResponse:
     mocks.  Unauthenticated (the SPA fetches it before login) and carries only
     public values.
     """
-    issuer = settings.auth.issuer
-
-    return FrontendConfigResponse(
-        oidc=None
-        if issuer is None
-        else OidcPublicConfig(
-            issuer_uri=issuer, client_id=settings.auth.frontend_client_id
-        ),
-        docs_url=settings.docs_url,
-    )
+    return frontend_config(settings.auth, settings.docs_url)
 
 
 @router.get("/transparency/jwks")

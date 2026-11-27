@@ -7,6 +7,7 @@ like an id that is no UUID, and a message id the history holds is refused
 before the run.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
@@ -16,10 +17,12 @@ from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 from hivegent.agents import RunPrefix
 from hivegent.db import conversations as db
 from hivegent.db.conversations import OwnedConversation, queries
+from hivegent.runs import runs
 from hivegent.server.routes.conversations import deps, history, turn
 from hivegent.server.turns import stamp
 from hivegent.store import User
@@ -69,18 +72,25 @@ async def test_only_an_owned_or_an_absent_id_opens(
 
 
 @pytest.mark.parametrize(
-    ("conversation_id", "opened"),
+    ("conversation_id", "owner", "opened"),
     [
-        (str(_ID).upper(), True),
-        ("V1StGXR8_Z5jdHi6B-myT", False),
-        ("../" + str(_ID), False),
+        (str(_ID).upper(), None, True),
+        ("V1StGXR8_Z5jdHi6B-myT", None, False),
+        ("../" + str(_ID), None, False),
+        (str(_ID), _BOB, False),
     ],
-    ids=["uppercase", "other-form", "unsafe"],
+    ids=["uppercase", "other-form", "unsafe", "foreign"],
 )
 async def test_a_path_id_opens_by_its_canonical_uuid(
-    memory_store: InMemoryConversationStore, conversation_id: str, opened: bool
+    memory_store: InMemoryConversationStore,
+    conversation_id: str,
+    owner: User | None,
+    opened: bool,
 ) -> None:
-    """Another spelling of a UUID names its folder canonically, anything else answers 404."""
+    """Another spelling of a UUID names its folder canonically, anything else, another user's id included, answers 404."""
+    if owner is not None:
+        await _claimed(owner)
+
     if not opened:
         with pytest.raises(HTTPException) as raised:
             await deps._opened_conversation(conversation_id, _ALICE)
@@ -109,18 +119,6 @@ async def test_an_absent_id_has_no_messages_yet(
     )
 
 
-async def test_another_users_id_answers_404(
-    memory_store: InMemoryConversationStore,
-) -> None:
-    """The messages route included, so its URL shows as not found."""
-    await _claimed(_BOB)
-
-    with pytest.raises(HTTPException) as raised:
-        await deps._opened_conversation(str(_ID), _ALICE)
-
-    assert raised.value.status_code == 404
-
-
 def _chat_request(message_id: str) -> ChatRequest:
     return ChatRequest.model_validate(
         {
@@ -134,10 +132,6 @@ def _chat_request(message_id: str) -> ChatRequest:
             ],
         }
     )
-
-
-class _Reached(Exception):
-    """Raised where the turn would start its run."""
 
 
 _TAKEN = "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
@@ -156,9 +150,9 @@ _TAKEN = "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b"
 )
 async def test_a_turn_claims_its_id_only_once_every_check_passed(
     memory_store: InMemoryConversationStore,
-    monkeypatch: pytest.MonkeyPatch,
     data_dir: Path,
     run_prefix: RunPrefix,
+    use_prefix: Callable[[RunPrefix], None],
     message_id: str,
     exists: bool,
     foreign: bool,
@@ -169,9 +163,6 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
     A refused request also leaves no `/tmp` for a conversation without a record.
     """
 
-    def run(*_args: object, **_kwargs: object) -> None:
-        raise _Reached
-
     if exists:
         await _claimed(User("u"), _TAKEN)
 
@@ -179,22 +170,23 @@ async def test_a_turn_claims_its_id_only_once_every_check_passed(
         # Claimed by another user since the request opened the id.
         await _claimed(_BOB)
 
-    async def build_run_prefix(*_args: object) -> RunPrefix:
-        return run_prefix
+    use_prefix(run_prefix)
+    conversation = owned(str(_ID))
+    chat = turn.create_conversation_chat(
+        (conversation, exists),
+        User("u"),
+        _chat_request(message_id),
+        Request({"type": "http", "headers": []}),
+    )
 
-    monkeypatch.setattr(turn, "build_run_prefix", build_run_prefix)
-    monkeypatch.setattr(turn, "run_and_persist", run)
+    if status:
+        with pytest.raises(HTTPException) as refused:
+            await chat
 
-    with pytest.raises(HTTPException if status else _Reached) as raised:
-        await turn.create_conversation_chat(
-            (owned(str(_ID)), exists),
-            User("u"),
-            _chat_request(message_id),
-            Request({"type": "http", "headers": []}),
-        )
-
-    if isinstance(raised.value, HTTPException):
-        assert raised.value.status_code == status
+        assert refused.value.status_code == status
+    else:
+        assert isinstance(await chat, StreamingResponse)
+        await runs.cancel(conversation)
 
     record = await memory_store.read_record(str(_ID))
     assert (record is not None) is (exists or foreign or status is None)

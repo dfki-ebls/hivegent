@@ -37,18 +37,14 @@ def _probe_filters(logger: logging.Logger) -> list[_EndpointFilter]:
     return [f for f in logger.filters if isinstance(f, _EndpointFilter)]
 
 
-def test_probe_filter_drops_only_health(access_logger: logging.Logger) -> None:
-    """`/api/v1/health` is dropped; other paths (incl. `/api/v1/healthz`) pass."""
+def test_probe_filter_drops_only_health_however_often_installed(
+    access_logger: logging.Logger,
+) -> None:
+    """`/api/v1/health` is dropped and other paths (incl. `/api/v1/healthz`) pass, with one filter however often it is installed."""
+    install_probe_access_filter()
     install_probe_access_filter()
     (probe_filter,) = _probe_filters(access_logger)
 
     assert probe_filter.filter(_record("/api/v1/health")) is False
     assert probe_filter.filter(_record("/api/v1/documents")) is True
     assert probe_filter.filter(_record("/api/v1/healthz")) is True
-
-
-def test_install_is_idempotent(access_logger: logging.Logger) -> None:
-    """Repeated installation attaches the filter only once."""
-    install_probe_access_filter()
-    install_probe_access_filter()
-    assert len(_probe_filters(access_logger)) == 1

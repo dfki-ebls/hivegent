@@ -1,7 +1,5 @@
 """Tests for the chat request contract and the problems it is refused with."""
 
-from uuid import uuid4
-
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -71,7 +69,11 @@ def test_a_refusal_is_a_problem() -> None:
 
 def test_a_message_names_the_documents_it_is_about() -> None:
     """The selection rides on the user message, and one that does not validate is refused."""
-    message = {"id": str(uuid4()), "role": "user", "parts": []}
+    message = {
+        "id": "6f1c2b9e-2222-4333-8444-555566667777",
+        "role": "user",
+        "parts": [],
+    }
     selection = {"included": [{"path": "~/handbook", "directory": True}]}
 
     def post(documents: object) -> int:

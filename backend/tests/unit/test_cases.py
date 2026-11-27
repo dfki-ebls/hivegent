@@ -27,6 +27,10 @@ _BPMN = """<?xml version="1.0" encoding="UTF-8"?>
 _CARS = "model,price,fuel\nGolf,20000,petrol\nPolo,15000,diesel\nPassat,35000,petrol\n"
 
 
+def _open(tmp_path: Path, name: str, cache: CaseBaseCache):
+    return open_case_base((SearchPath.of(tmp_path),), name, Limits(), cache=cache)
+
+
 async def test_ranks_records_by_example_without_writing_and_caches_by_content(
     tmp_path: Path,
 ) -> None:
@@ -46,14 +50,15 @@ async def test_ranks_records_by_example_without_writing_and_caches_by_content(
     )
     assert sorted(path.name for path in tmp_path.iterdir()) == ["cars.csv"]
 
-    first = open_case_base(paths, "cars.csv", Limits(), cache=cache)
-    assert open_case_base(paths, "cars.csv", Limits(), cache=cache) is not first
-    assert open_case_base(paths, "cars.csv", Limits(), cache=cache).cases is first.cases
+    first = _open(tmp_path, "cars.csv", cache)
+
+    assert _open(tmp_path, "cars.csv", cache) is not first
+    assert _open(tmp_path, "cars.csv", cache).cases is first.cases
 
     # A sidecar is never read, so it neither changes the configuration nor the cache key.
     (tmp_path / "cars.csv.cbrkit.json").write_text(dumps(first.config))
 
-    assert open_case_base(paths, "cars.csv", Limits(), cache=cache).cases is first.cases
+    assert _open(tmp_path, "cars.csv", cache).cases is first.cases
 
     with pytest.raises(Retry, match="does not fit"):
         await tool("cars.csv", query={"colour": "red"})
@@ -63,21 +68,19 @@ def test_the_cache_drops_the_least_recently_used_beyond_its_bytes(
     tmp_path: Path,
 ) -> None:
     """Each case base weighs at least its share of the bytes, so a cache of two entries keeps two."""
-    paths = (SearchPath.of(tmp_path),)
     cache = CaseBaseCache(max_bytes=2 * 1024 * 1024, max_entries=2)
 
     for name in ("a.csv", "b.csv", "c.csv"):
         (tmp_path / name).write_text(_CARS)
 
-    a, b = (
-        open_case_base(paths, name, Limits(), cache=cache)
-        for name in ("a.csv", "b.csv")
-    )
-    assert open_case_base(paths, "a.csv", Limits(), cache=cache).cases is a.cases
+    a, b = (_open(tmp_path, name, cache) for name in ("a.csv", "b.csv"))
 
-    _ = open_case_base(paths, "c.csv", Limits(), cache=cache)
-    assert open_case_base(paths, "a.csv", Limits(), cache=cache).cases is a.cases
-    assert open_case_base(paths, "b.csv", Limits(), cache=cache).cases is not b.cases
+    assert _open(tmp_path, "a.csv", cache).cases is a.cases
+
+    _ = _open(tmp_path, "c.csv", cache)
+
+    assert _open(tmp_path, "a.csv", cache).cases is a.cases
+    assert _open(tmp_path, "b.csv", cache).cases is not b.cases
 
 
 async def test_ranks_graphs_of_a_folder_without_reading_sidecars_as_cases(

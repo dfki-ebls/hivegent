@@ -1,12 +1,13 @@
 """The vector search scope and the chunk writes, compiled but never run."""
 
 from collections.abc import Collection, Mapping
-from uuid import UUID, uuid4
+from uuid import UUID
 
-import pytest
 import sqlalchemy as sa
+from cbrkit.indexable import Pgvector, Unscoped
 from exar import ingest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from hivegent import retrieval
 from hivegent.db.documents import accessible_chunks
@@ -17,6 +18,7 @@ from hivegent.types import DocumentFilter
 from tests.helpers import doc, folder
 
 _USER = User("u", read_groups=frozenset({"team"}))
+_DOCUMENT = UUID(int=1)
 
 
 def _compiled(clause: sa.ColumnElement[bool]) -> tuple[str, Mapping[str, object]]:
@@ -49,32 +51,35 @@ def test_scope_hiding_every_store_matches_nothing() -> None:
     assert sql.endswith("WHERE false OR false OR false)")
 
 
-async def test_index_document_replaces_the_document_s_chunks_by_uuid(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_index_document_replaces_the_document_s_chunks_by_uuid() -> None:
     calls: list[tuple[sa.ColumnElement[bool], Mapping[UUID, Chunk]]] = []
 
-    class _Storage:
+    class Storage(Pgvector[UUID, Chunk]):
         async def replace_where(
             self, where: sa.ColumnElement[bool], data: Mapping[UUID, Chunk]
         ) -> Collection[UUID]:
             calls.append((where, data))
+
             return list(data)
 
-    async def storage() -> _Storage:
-        return _Storage()
-
-    monkeypatch.setattr(retrieval, "_indexer", storage)
-    document_id = uuid4()
-
+    storage = Storage(
+        engine=create_async_engine("postgresql+psycopg://"),
+        model=Chunk,
+        index_type="sparse",
+        value_column=Chunk.text.key,
+        tsvector_column=Chunk.tsv.key,
+        scope=Unscoped.TABLE,
+    )
     await retrieval.index_document(
-        document_id, [ingest.Chunk(text="t", start=0, end=1, tokens=1)]
+        _DOCUMENT,
+        [ingest.Chunk(text="t", start=0, end=1, tokens=1)],
+        storage=storage,
     )
 
     ((where, data),) = calls
 
     assert _compiled(where) == (
         "chunks.document_id = %(document_id_1)s::UUID",
-        {"document_id_1": document_id},
+        {"document_id_1": _DOCUMENT},
     )
     assert all(isinstance(key, UUID) for key in data)

@@ -14,17 +14,17 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import pytest
-from exar.memory import InMemoryMemory
 from pydantic_ai import FunctionToolset, RunContext
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -43,7 +43,6 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
 from hivegent.agents import RunPrefix, UserDeps, build_capabilities
-from hivegent.agents.tools import memory
 from hivegent.db.conversations import OwnedConversation
 from hivegent.runs import runs
 from hivegent.server.routes.conversations import compaction, history, turn
@@ -62,20 +61,104 @@ type Script = Callable[[Sequence[ModelMessage]], Stream]
 
 @dataclass
 class _Tree:
-    """The conversation a scenario drives, and whether its record exists yet."""
+    """The conversation a scenario drives, its turns, and whether its record exists yet."""
 
     conversation: OwnedConversation
+    use_prefix: Callable[[RunPrefix], None]
+    run_prefix: RunPrefix
     exists: bool = False
+    second_streamed: asyncio.Event = field(default_factory=asyncio.Event)
+    """Set once the client received the result of the second lookup."""
+
+    def prefix(self, script: Script, **changes: Any) -> RunPrefix:
+        """The run prefix whose model streams *script*, over the tools of :func:`_toolset`."""
+        extra = [Capability(toolsets=[_toolset(self.second_streamed)])]
+        deps = self.run_prefix.deps
+
+        return replace(
+            self.run_prefix,
+            model=_model(script),
+            capabilities=build_capabilities(deps, extra=extra),
+            **changes,
+        )
+
+    async def messages(self) -> list[dict[str, Any]]:
+        """The conversation as a client loads it."""
+        return UI_MESSAGES.dump_python(
+            await history.active_messages(self.conversation),
+            mode="json",
+            by_alias=True,
+        )
+
+    async def turn(
+        self,
+        prefix: RunPrefix,
+        sent: dict[str, Any] | None,
+        *,
+        stop_after: int | None = None,
+        **body: Any,
+    ) -> list[dict[str, Any]]:
+        """Run one turn sending *sent*, returning the chunks its client receives."""
+
+        self.use_prefix(prefix)
+        request = ChatRequest.model_validate(
+            {
+                "id": str(self.conversation.id),
+                "messages": [sent] if sent else [],
+                **body,
+            }
+        )
+        response = await turn.create_conversation_chat(
+            (self.conversation, self.exists),
+            _USER,
+            request,
+            Request({"type": "http", "headers": []}),
+        )
+        assert isinstance(response, StreamingResponse)
+        chunks: list[dict[str, Any]] = []
+
+        async for encoded in response.body_iterator:
+            chunks.extend(
+                sse_chunks(
+                    encoded if isinstance(encoded, str) else bytes(encoded).decode()
+                )
+            )
+
+            if any(_streams_second_lookup(chunk) for chunk in chunks):
+                self.second_streamed.set()
+
+            if stop_after is not None and len(chunks) == stop_after:
+                await runs.cancel(self.conversation)
+
+        self.exists = True
+
+        return chunks
+
+    async def submit(
+        self, prefix: RunPrefix, name: str, text: str, **options: Any
+    ) -> list[dict[str, Any]]:
+        """Run the turn asking *text* and pin it as the fixture *name*."""
+        sent = _prompt(text, name)
+        initial = [*await self.messages(), sent]
+        chunks = await self.turn(prefix, sent, **options)
+        _record(name, initial, chunks)
+
+        return chunks
 
 
-def _toolset() -> FunctionToolset[UserDeps]:
+def _streams_second_lookup(chunk: dict[str, Any]) -> bool:
+    return chunk["type"] == "tool-output-available" and chunk["toolCallId"] == "c2"
+
+
+def _toolset(second_streamed: asyncio.Event) -> FunctionToolset[UserDeps]:
     """Tools a script calls: one that answers, one that asks for approval, one that fails."""
     tools = FunctionToolset[UserDeps]()
 
     @tools.tool_plain(metadata={"effect": "read"})
     async def lookup(term: str) -> str:
-        """Look *term* up, the first term last, so calls finish out of order."""
-        await asyncio.sleep(0.05 if term == "a" else 0)
+        """Look *term* up, the first term once the second one reached the client, so calls finish out of order."""
+        if term == "a":
+            await second_streamed.wait()
 
         return f"found {term}"
 
@@ -171,17 +254,18 @@ async def _failing(_messages: Sequence[ModelMessage]) -> Stream:
     yield _call("boom", {}, "b1")
 
 
+def _refused(messages: Sequence[ModelMessage]) -> bool:
+    """Whether the window refuses *messages*, a history with no compaction to shrink it."""
+    return len(messages) > 2 and not any(
+        isinstance(part, CompactionPart) for m in messages for part in m.parts
+    )
+
+
 def _overflowing(script: Script) -> Script:
     """*script*, but the context window refuses its first prompt after a compaction-free history."""
 
     async def stream(messages: Sequence[ModelMessage]) -> Stream:
-        compacted = any(
-            isinstance(m, ModelRequest)
-            and any(type(p).__name__ == "CompactionPart" for p in m.parts)
-            for m in messages
-        )
-
-        if len(messages) > 2 and not compacted:
+        if _refused(messages):
             raise OVERFLOW
 
         async for delta in script(messages):
@@ -192,76 +276,12 @@ def _overflowing(script: Script) -> Script:
 
 @pytest.fixture()
 def tree(
-    monkeypatch: pytest.MonkeyPatch,
     data_dir: Path,
     memory_store: InMemoryConversationStore,
+    run_prefix: RunPrefix,
+    use_prefix: Callable[[RunPrefix], None],
 ) -> _Tree:
-    tree = _Tree(owned("parity"))
-
-    def no_memory(user: User) -> InMemoryMemory[str, str]:
-        return InMemoryMemory()
-
-    monkeypatch.setattr(memory, "user_memory", no_memory)
-
-    return tree
-
-
-def _prefix(run_prefix: RunPrefix, script: Script) -> RunPrefix:
-    return replace(
-        run_prefix,
-        model=_model(script),
-        capabilities=build_capabilities(
-            run_prefix.deps, extra=[Capability(toolsets=[_toolset()])]
-        ),
-    )
-
-
-async def _messages(tree: _Tree) -> list[dict[str, Any]]:
-    """The conversation as a client loads it."""
-    return UI_MESSAGES.dump_python(
-        await history.active_messages(tree.conversation), mode="json", by_alias=True
-    )
-
-
-async def _turn(
-    tree: _Tree,
-    monkeypatch: pytest.MonkeyPatch,
-    prefix: RunPrefix,
-    sent: dict[str, Any] | None,
-    *,
-    stop_after: int | None = None,
-    **body: Any,
-) -> list[dict[str, Any]]:
-    """Run one turn sending *sent*, returning the chunks its client receives."""
-
-    async def build_run_prefix(*_args: object) -> RunPrefix:
-        return prefix
-
-    monkeypatch.setattr(turn, "build_run_prefix", build_run_prefix)
-    request = ChatRequest.model_validate(
-        {"id": str(tree.conversation.id), "messages": [sent] if sent else [], **body}
-    )
-    response = await turn.create_conversation_chat(
-        (tree.conversation, tree.exists),
-        _USER,
-        request,
-        Request({"type": "http", "headers": []}),
-    )
-    assert isinstance(response, StreamingResponse)
-    chunks: list[dict[str, Any]] = []
-
-    async for encoded in response.body_iterator:
-        chunks.extend(
-            sse_chunks(encoded if isinstance(encoded, str) else bytes(encoded).decode())
-        )
-
-        if stop_after is not None and len(chunks) == stop_after:
-            await runs.cancel(tree.conversation)
-
-    tree.exists = True
-    await asyncio.sleep(0)
-
-    return chunks
+    return _Tree(owned("parity"), use_prefix, run_prefix)
 
 
 def _prompt(text: str, id: str) -> dict[str, Any]:
@@ -332,43 +352,19 @@ def _record(
     assert path.read_text() == text, f"{path.name} is stale, set UPDATE_FIXTURES=1"
 
 
-async def _submit(
-    tree: _Tree,
-    monkeypatch: pytest.MonkeyPatch,
-    prefix: RunPrefix,
-    name: str,
-    text: str,
-    **options: Any,
-) -> list[dict[str, Any]]:
-    sent = _prompt(text, name)
-    initial = [*await _messages(tree), sent]
-    chunks = await _turn(tree, monkeypatch, prefix, sent, **options)
-    _record(name, initial, chunks)
-
-    return chunks
-
-
 @pytest.mark.parametrize(
     ("name", "script"),
     [("text", _text), ("tools", _tools), ("question", _question), ("error", _failing)],
 )
 async def test_a_turn_ends_as_it_reloads(
-    tree: _Tree,
-    monkeypatch: pytest.MonkeyPatch,
-    run_prefix: RunPrefix,
-    name: str,
-    script: Script,
+    tree: _Tree, name: str, script: Script
 ) -> None:
-    await _submit(tree, monkeypatch, _prefix(run_prefix, script), name, "Go.")
+    await tree.submit(tree.prefix(script), name, "Go.")
 
 
-async def test_an_attachment_keeps_its_filename(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
+async def test_an_attachment_keeps_its_filename(tree: _Tree) -> None:
     """The stored turn names an attached image as the client sent it."""
-    prefix = _prefix(
-        replace(run_prefix, llm=replace(run_prefix.llm, vision=True)), _text
-    )
+    vision = replace(tree.run_prefix.llm, vision=True)
     sent = _prompt("Look.", "attachment")
     sent["parts"].append(
         {
@@ -378,21 +374,19 @@ async def test_an_attachment_keeps_its_filename(
             "url": f"data:image/png;base64,{base64.b64encode(png_bytes()).decode()}",
         }
     )
-    initial = [*await _messages(tree), sent]
-    _record("attachment", initial, await _turn(tree, monkeypatch, prefix, sent))
+    initial = [*await tree.messages(), sent]
+    chunks = await tree.turn(tree.prefix(_text, llm=vision), sent)
+    _record("attachment", initial, chunks)
 
 
 @pytest.mark.parametrize("race_at_claim", [False, True], ids=["after-open", "at-claim"])
 async def test_a_racing_turn_appends_to_the_history_it_replays(
-    tree: _Tree,
-    monkeypatch: pytest.MonkeyPatch,
-    run_prefix: RunPrefix,
-    race_at_claim: bool,
+    tree: _Tree, monkeypatch: pytest.MonkeyPatch, race_at_claim: bool
 ) -> None:
     """A stale existence check or a lost claim cannot replace the active transcript."""
-    prefix = _prefix(run_prefix, _text)
-    await _turn(tree, monkeypatch, prefix, _prompt("Hi.", "first"))
-    before = await _messages(tree)
+    prefix = tree.prefix(_text)
+    await tree.turn(prefix, _prompt("Hi.", "first"))
+    before = await tree.messages()
     tree.exists = False
 
     async def absent(_conversation: OwnedConversation) -> None:
@@ -403,18 +397,16 @@ async def test_a_racing_turn_appends_to_the_history_it_replays(
             racing.setattr(turn, "load_conversation", absent)
             racing.setattr(history, "load_conversation", absent)
 
-        await _turn(tree, monkeypatch, prefix, _prompt("Again.", "second"))
+        await tree.turn(prefix, _prompt("Again.", "second"))
 
-    assert (await _messages(tree))[:-2] == before
+    assert (await tree.messages())[:-2] == before
 
 
-async def test_a_continued_turn_ends_as_it_reloads(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
-    prefix = _prefix(run_prefix, _approval)
-    await _submit(tree, monkeypatch, prefix, "approval", "Write x.")
+async def test_a_continued_turn_ends_as_it_reloads(tree: _Tree) -> None:
+    prefix = tree.prefix(_approval)
+    await tree.submit(prefix, "approval", "Write x.")
 
-    *_, paused = await _messages(tree)
+    *_, paused = await tree.messages()
     paused["parts"] = [
         {
             **part,
@@ -425,50 +417,32 @@ async def test_a_continued_turn_ends_as_it_reloads(
         else part
         for part in paused["parts"]
     ]
-    initial = [*(await _messages(tree))[:-1], paused]
-    chunks = await _turn(tree, monkeypatch, prefix, paused, messageId=paused["id"])
+    initial = [*(await tree.messages())[:-1], paused]
+    chunks = await tree.turn(prefix, paused, messageId=paused["id"])
     _record("approval-continued", initial, chunks)
 
 
-async def test_an_overtaken_approval_reloads_as_it_was_left(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
-    await _submit(
-        tree, monkeypatch, _prefix(run_prefix, _approval), "abandon", "Write x."
-    )
-    await _submit(
-        tree, monkeypatch, _prefix(run_prefix, _text), "abandoned", "Never mind."
-    )
+async def test_an_overtaken_approval_reloads_as_it_was_left(tree: _Tree) -> None:
+    await tree.submit(tree.prefix(_approval), "abandon", "Write x.")
+    await tree.submit(tree.prefix(_text), "abandoned", "Never mind.")
 
 
-async def test_a_compacted_turn_ends_as_it_reloads(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
-    await _submit(tree, monkeypatch, _prefix(run_prefix, _text), "compact-first", "Hi.")
-    await _submit(
-        tree,
-        monkeypatch,
-        _prefix(run_prefix, _overflowing(_text)),
-        "compacted",
-        "Again.",
-    )
+async def test_a_compacted_turn_ends_as_it_reloads(tree: _Tree) -> None:
+    await tree.submit(tree.prefix(_text), "compact-first", "Hi.")
+    await tree.submit(tree.prefix(_overflowing(_text)), "compacted", "Again.")
 
 
-async def test_a_stopped_turn_ends_as_it_reloads(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
+async def test_a_stopped_turn_ends_as_it_reloads(tree: _Tree) -> None:
     async def hanging(_messages: Sequence[ModelMessage]) -> Stream:
         yield "Partial"
         await asyncio.Event().wait()
         yield "never"
 
-    await _submit(
-        tree, monkeypatch, _prefix(run_prefix, hanging), "stopped", "Go.", stop_after=4
-    )
+    await tree.submit(tree.prefix(hanging), "stopped", "Go.", stop_after=4)
 
 
 async def test_a_turn_that_was_not_stored_keeps_what_it_streamed(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    tree: _Tree, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only the turn's own write settles it, so a failed one leaves the client its turn to retry."""
 
@@ -476,93 +450,69 @@ async def test_a_turn_that_was_not_stored_keeps_what_it_streamed(
         raise RuntimeError("database down")
 
     monkeypatch.setattr(compaction.store, "save", failing)
-    chunks = await _turn(
-        tree, monkeypatch, _prefix(run_prefix, _text), _prompt("Go.", "unsaved")
-    )
+    chunks = await tree.turn(tree.prefix(_text), _prompt("Go.", "unsaved"))
 
     assert all(chunk["type"] != TURN_CHUNK_TYPE for chunk in chunks)
     assert chunks[-1]["type"] == "error"
 
 
-async def test_a_regenerated_turn_ends_as_it_reloads(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
-    prefix = _prefix(run_prefix, _text)
-    await _submit(tree, monkeypatch, prefix, "regenerate-first", "Hi.")
+async def test_a_regenerated_turn_ends_as_it_reloads(tree: _Tree) -> None:
+    prefix = tree.prefix(_text)
+    await tree.submit(prefix, "regenerate-first", "Hi.")
 
-    *asked, answer = await _messages(tree)
-    chunks = await _turn(
-        tree,
-        monkeypatch,
-        prefix,
-        None,
-        trigger="regenerate-message",
-        messageId=answer["id"],
+    *asked, answer = await tree.messages()
+    chunks = await tree.turn(
+        prefix, None, trigger="regenerate-message", messageId=answer["id"]
     )
     _record("regenerated", asked, chunks)
 
 
-async def test_an_edited_turn_ends_as_it_reloads(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
-    prefix = _prefix(run_prefix, _text)
-    await _submit(tree, monkeypatch, prefix, "edit-first", "Hi.")
+async def test_an_edited_turn_ends_as_it_reloads(tree: _Tree) -> None:
+    prefix = tree.prefix(_text)
+    await tree.submit(prefix, "edit-first", "Hi.")
 
-    *before, asked, _ = await _messages(tree)
+    *before, asked, _ = await tree.messages()
     edited = _prompt("Hello instead.", "edited")
-    chunks = await _turn(tree, monkeypatch, prefix, edited, messageId=asked["id"])
+    chunks = await tree.turn(prefix, edited, messageId=asked["id"])
     _record("edited", [*before, edited], chunks)
 
 
-async def test_a_turn_after_the_compact_button_ends_as_it_reloads(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
+async def test_a_turn_after_the_compact_button_ends_as_it_reloads(tree: _Tree) -> None:
     """The summary stays in the reply it compacted, the next turn after it."""
-    prefix = _prefix(run_prefix, _text)
-    await _submit(tree, monkeypatch, prefix, "compact-button-first", "Hi.")
+    prefix = tree.prefix(_text)
+    await tree.submit(prefix, "compact-button-first", "Hi.")
 
-    initial = await _messages(tree)
-    chunks = await _turn(tree, monkeypatch, prefix, None, compact=True)
+    initial = await tree.messages()
+    chunks = await tree.turn(prefix, None, compact=True)
     _record("compact-button", initial, chunks)
-    await _submit(tree, monkeypatch, prefix, "after-compact-button", "Again.")
+    await tree.submit(prefix, "after-compact-button", "Again.")
 
 
 async def test_a_regenerate_keeps_the_compaction_made_for_its_prompt(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
+    tree: _Tree,
 ) -> None:
     """The summary covers only the history before the prompt, so a regenerate reuses it rather than overflowing again."""
     refused: list[None] = []
 
     async def counted(messages: Sequence[ModelMessage]) -> Stream:
-        if len(messages) > 2 and not any(
-            type(p).__name__ == "CompactionPart" for m in messages for p in m.parts
-        ):
+        if _refused(messages):
             refused.append(None)
 
         async for delta in _overflowing(_text)(messages):
             yield delta
 
-    prefix = _prefix(run_prefix, counted)
-    await _turn(tree, monkeypatch, _prefix(run_prefix, _text), _prompt("Hi.", "keep-1"))
-    await _turn(tree, monkeypatch, prefix, _prompt("Again.", "keep-2"))
+    prefix = tree.prefix(counted)
+    await tree.turn(tree.prefix(_text), _prompt("Hi.", "keep-1"))
+    await tree.turn(prefix, _prompt("Again.", "keep-2"))
     assert len(refused) == 1
 
-    *_, answer = await _messages(tree)
-    await _turn(
-        tree,
-        monkeypatch,
-        prefix,
-        None,
-        trigger="regenerate-message",
-        messageId=answer["id"],
-    )
+    *_, answer = await tree.messages()
+    await tree.turn(prefix, None, trigger="regenerate-message", messageId=answer["id"])
 
     assert len(refused) == 1
 
 
-async def test_a_turn_runs_as_its_conversation(
-    tree: _Tree, monkeypatch: pytest.MonkeyPatch, run_prefix: RunPrefix
-) -> None:
+async def test_a_turn_runs_as_its_conversation(tree: _Tree) -> None:
     """Its messages and spans name the conversation, not an id pydantic-ai made up."""
     seen: list[str | None] = []
 
@@ -570,8 +520,7 @@ async def test_a_turn_runs_as_its_conversation(
         seen.extend(m.conversation_id for m in messages)
         yield "Hi."
 
-    deps = replace(run_prefix.deps, conversation=tree.conversation)
-    prefix = replace(_prefix(run_prefix, script), deps=deps)
-    await _turn(tree, monkeypatch, prefix, _prompt("Go.", "go"))
+    deps = replace(tree.run_prefix.deps, conversation=tree.conversation)
+    await tree.turn(tree.prefix(script, deps=deps), _prompt("Go.", "go"))
 
     assert set(seen) == {str(tree.conversation.id)}

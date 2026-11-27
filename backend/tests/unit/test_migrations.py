@@ -34,11 +34,19 @@ def _migration(name: str) -> ModuleType:
     return module
 
 
-_STORE = "20261123_1200_65f6705faca2_conversation_store.py"
+STORE = _migration("20261123_1200_65f6705faca2_conversation_store.py")
+Node = STORE.Node
 
 
 def _dump(message: ModelMessage) -> dict[str, Any]:
     return ModelMessagesTypeAdapter.dump_python([message], mode="json")[0]
+
+
+def _ui_ids(record: Any) -> dict[UUID, str]:
+    return {
+        entry.old_id: entry.payload["metadata"]["__pydantic_ai__"]["ui_message_id"]
+        for entry in record.entries
+    }
 
 
 _PROMPT = ModelRequest(parts=[UserPromptPart("q1")])
@@ -73,8 +81,6 @@ def test_a_paused_turn_gets_the_requests_it_awaits(ran_beside: bool) -> None:
 
 def test_a_tree_becomes_a_store_record() -> None:
     """The newest leaf heads the record, UI ids ride on the messages, and the paused requests move to the record."""
-    migration = _migration(_STORE)
-    node = migration.Node
     prompt, old, answer, paused = (UUID(int=i) for i in range(1, 5))
     stored = _dump(_ALONE)
     stored["metadata"] = {
@@ -86,23 +92,19 @@ def test_a_tree_becomes_a_store_record() -> None:
         },
     }
 
-    record = migration.record(
+    record = STORE.record(
         [
-            node(prompt, None, _dump(_PROMPT)),
-            node(old, prompt, _dump(ModelResponse(parts=[TextPart("old")]))),
-            node(answer, prompt, _dump(ModelResponse(parts=[TextPart("new")]))),
-            node(paused, answer, stored),
+            Node(prompt, None, _dump(_PROMPT)),
+            Node(old, prompt, _dump(ModelResponse(parts=[TextPart("old")]))),
+            Node(answer, prompt, _dump(ModelResponse(parts=[TextPart("new")]))),
+            Node(paused, answer, stored),
         ]
     )
     ids = {entry.old_id: entry for entry in record.entries}
-    ui_ids = {
-        entry.old_id: entry.payload["metadata"]["__pydantic_ai__"]["ui_message_id"]
-        for entry in record.entries
-    }
 
     assert record.head_id == ids[paused].id
     assert record.branches == [ids[old].id]
-    assert ui_ids == {
+    assert _ui_ids(record) == {
         prompt: str(prompt),
         old: str(old),
         answer: str(answer),
@@ -114,23 +116,18 @@ def test_a_tree_becomes_a_store_record() -> None:
 
 def test_a_compaction_ahead_of_a_prompt_stays_in_the_reply_before() -> None:
     """It showed at the end of the reply before its prompt, so it keeps that reply's id."""
-    migration = _migration(_STORE)
-    node = migration.Node
     q1, a1, q2, a2, compaction = (UUID(int=i) for i in range(1, 6))
 
-    record = migration.record(
+    record = STORE.record(
         [
-            node(q1, None, _dump(_PROMPT)),
-            node(a1, q1, _dump(ModelResponse(parts=[TextPart("a1")]))),
-            node(q2, compaction, _dump(_PROMPT)),
-            node(a2, q2, _dump(ModelResponse(parts=[TextPart("a2")]))),
-            node(compaction, a1, _dump(ModelResponse(parts=[CompactionPart("gist")]))),
+            Node(q1, None, _dump(_PROMPT)),
+            Node(a1, q1, _dump(ModelResponse(parts=[TextPart("a1")]))),
+            Node(q2, compaction, _dump(_PROMPT)),
+            Node(a2, q2, _dump(ModelResponse(parts=[TextPart("a2")]))),
+            Node(compaction, a1, _dump(ModelResponse(parts=[CompactionPart("gist")]))),
         ]
     )
-    ui_ids = {
-        entry.old_id: entry.payload["metadata"]["__pydantic_ai__"]["ui_message_id"]
-        for entry in record.entries
-    }
+    ui_ids = _ui_ids(record)
 
     assert ui_ids[compaction] == str(a1)
     assert ui_ids[a2] == str(a2)
@@ -139,24 +136,22 @@ def test_a_compaction_ahead_of_a_prompt_stays_in_the_reply_before() -> None:
 @pytest.mark.parametrize("through_prompt", [False, True])
 def test_a_parent_cycle_is_refused(through_prompt: bool) -> None:
     """Also when a prompt in the cycle ends the walk to a UI message, and a leaf hangs off it."""
-    migration = _migration(_STORE)
     one, two, leaf = (UUID(int=i) for i in range(1, 4))
     reply = _dump(ModelResponse(parts=[TextPart("a")]))
     first = _dump(_PROMPT) if through_prompt else reply
 
     with pytest.raises(ValueError, match="own ancestor"):
-        migration.record(
+        STORE.record(
             [
-                migration.Node(one, two, first),
-                migration.Node(two, one, reply),
-                migration.Node(leaf, one, reply),
+                Node(one, two, first),
+                Node(two, one, reply),
+                Node(leaf, one, reply),
             ]
         )
 
 
 def test_a_subagent_history_becomes_its_transcript() -> None:
     """The steps of the stored history replace it, as a turn now stores them."""
-    migration = _migration(_STORE)
     history = [
         _PROMPT,
         ModelResponse(parts=[ThinkingPart("t"), ToolCallPart("grep", {}, "g")]),
@@ -169,7 +164,7 @@ def test_a_subagent_history_becomes_its_transcript() -> None:
         "id": "d1",
         "data": {"explore": ModelMessagesTypeAdapter.dump_python(history, mode="json")},
     }
-    [entry] = migration.record([migration.Node(UUID(int=1), None, stored)]).entries
+    [entry] = STORE.record([Node(UUID(int=1), None, stored)]).entries
     [request] = ModelMessagesTypeAdapter.validate_python([entry.payload])
     [part] = request.parts
     assert isinstance(part, ToolReturnPart)
@@ -186,17 +181,16 @@ def test_a_subagent_history_becomes_its_transcript() -> None:
 
 def test_a_request_keeps_only_instructions_it_changes() -> None:
     """They leave every payload, and a request keeps them where they differ from its parent's, ``''`` for none."""
-    migration = _migration(_STORE)
     root, reply, same, other, unset = (UUID(int=i) for i in range(1, 6))
     nodes = [
-        migration.Node(same, reply, _dump(replace(_PROMPT, instructions="p"))),
-        migration.Node(other, reply, _dump(replace(_PROMPT, instructions="q"))),
-        migration.Node(unset, other, _dump(_PROMPT)),
-        migration.Node(root, None, _dump(replace(_PROMPT, instructions="p"))),
-        migration.Node(reply, root, _dump(ModelResponse(parts=[TextPart("a")]))),
+        Node(same, reply, _dump(replace(_PROMPT, instructions="p"))),
+        Node(other, reply, _dump(replace(_PROMPT, instructions="q"))),
+        Node(unset, other, _dump(_PROMPT)),
+        Node(root, None, _dump(replace(_PROMPT, instructions="p"))),
+        Node(reply, root, _dump(ModelResponse(parts=[TextPart("a")]))),
     ]
 
-    entries = migration.record(nodes).entries
+    entries = STORE.record(nodes).entries
 
     assert not any("instructions" in entry.payload for entry in entries)
     assert {entry.old_id: entry.instructions for entry in entries} == {

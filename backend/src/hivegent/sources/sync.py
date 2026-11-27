@@ -66,7 +66,8 @@ from ..tools.entries import (
 )
 from ..workspace import IndexingFailed, Location, RowChange, Upload, apply_changeset
 from ..workspace.operations import Item, Root
-from .catalog import CLIENTS, SOURCES, MirroredSource
+from . import catalog
+from .catalog import CLIENTS, MirroredSource
 
 __all__ = [
     "SWEEP_FLOOR",
@@ -789,7 +790,7 @@ async def _schedule() -> NoReturn:
         _wake.clear()
 
         try:
-            for source in SOURCES.values():
+            for source in catalog.SOURCES.values():
                 if source.id in _tasks:
                     continue
 
@@ -829,7 +830,7 @@ async def prune_sources(*, keep_held: bool = True) -> None:
     the configuration loses nothing, and ``hivegent reset sources`` drops it.
     No user sees a source no longer configured, so nothing it keeps is searched.
     """
-    gone, kept = await db_sources.prune_sources(SOURCES, keep_held=keep_held)
+    gone, kept = await db_sources.prune_sources(catalog.SOURCES, keep_held=keep_held)
 
     if gone:
         logger.info("Dropped the sources no longer configured: %s", ", ".join(gone))
@@ -841,13 +842,13 @@ async def prune_sources(*, keep_held: bool = True) -> None:
             ", ".join(kept),
         )
 
-    await asyncio.to_thread(_prune_mirrors, {*SOURCES, *kept})
+    await asyncio.to_thread(_prune_mirrors, {*catalog.SOURCES, *kept})
 
 
 @asynccontextmanager
 async def sources_lifespan() -> AsyncGenerator[None]:
     """Sync the sources in the background while the app runs and close their clients after."""
-    if not SOURCES:
+    if not catalog.SOURCES:
         yield
         return
 

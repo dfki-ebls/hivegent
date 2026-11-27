@@ -245,6 +245,11 @@ class Delegations:
         """Stop the tasks of every conversation of *user*."""
         await self._stop(c for c in self._keepers if c.owner == user.id)
 
+    async def idle(self, conversation: OwnedConversation) -> None:
+        """Return once the conversation's task owner closed, which it does once no turn, task, or report remains."""
+        if (keeper := self._keepers.get(conversation)) is not None:
+            _ = await asyncio.gather(keeper, return_exceptions=True)
+
     async def aclose(self) -> None:
         """Stop every task and close every owner."""
         await self._stop(list(self._keepers))

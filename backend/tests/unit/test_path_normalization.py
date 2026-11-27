@@ -2,26 +2,25 @@
 
 from pathlib import Path
 
+import pytest
 from exar.tools.common import near_miss_hint
 
 from hivegent.reconcile import _references
 
 
-class TestNearMissHint:
-    """Tests for the refusal hint that names an equivalent sibling."""
+@pytest.mark.parametrize("missing", ["other.md", "gone/doc.md"])
+def test_the_hint_is_empty_without_an_equivalent_sibling(
+    tmp_path: Path, missing: str
+) -> None:
+    (tmp_path / "Report.md").write_text("x")
 
-    def test_names_a_case_only_sibling(self, tmp_path: Path) -> None:
-        # The bare "not found" a model got one step after seeing the file in a
-        # listing was unactionable; naming the real spelling makes it fixable.
-        (tmp_path / "Report.md").write_text("x")
-        assert "Report.md" in near_miss_hint(tmp_path / "report.md")
+    assert near_miss_hint(tmp_path / missing) == ""
 
-    def test_empty_without_an_equivalent_sibling(self, tmp_path: Path) -> None:
-        (tmp_path / "Report.md").write_text("x")
-        assert near_miss_hint(tmp_path / "other.md") == ""
 
-    def test_empty_when_the_parent_is_missing(self, tmp_path: Path) -> None:
-        assert near_miss_hint(tmp_path / "gone" / "doc.md") == ""
+def test_the_hint_names_a_case_only_sibling(tmp_path: Path) -> None:
+    (tmp_path / "Report.md").write_text("x")
+
+    assert "Report.md" in near_miss_hint(tmp_path / "report.md")
 
 
 def test_vendor_directories_are_not_indexed(tmp_path: Path) -> None:

@@ -2,7 +2,6 @@
 
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
-from uuid import UUID
 
 import pytest
 from pydantic_ai.messages import (
@@ -57,9 +56,6 @@ async def test_search_conversation_searches_the_current_conversation(
     user = User("u")
     current = owned("current", user)
 
-    async def found(user: User, conversation_id: UUID) -> OwnedConversation | None:
-        return current if conversation_id == current.id else None
-
     async def search(
         conversation: OwnedConversation,
         query: str,
@@ -71,7 +67,6 @@ async def test_search_conversation_searches_the_current_conversation(
         prompt = ModelRequest(parts=[UserPromptPart(content="What is the total?")])
         return [(0, text) for text in render(prompt)]
 
-    monkeypatch.setattr(tools, "owned_conversation", found)
     monkeypatch.setattr(tools, "_search_conversation", search)
     ctx = run_context(UserDeps(user=user, mode="interactive", conversation=current))
 

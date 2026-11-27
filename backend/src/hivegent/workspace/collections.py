@@ -20,12 +20,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import groupby
 from pathlib import Path
-from typing import Self
+from typing import Protocol, Self
 
 from exar.helpers import bounded_as_completed
 from exar.text import NOT_TEXT_REASON, decode
 
 from ..config import sanitize_document_path, settings
+from ..metadata import EntryOrigin
 from ..shared.l10n import Localized, format_bytes
 from ..shared.zips import member_mtime
 from ..store import Workspace
@@ -47,11 +48,28 @@ from .uploads import upload
 from .wikilinks import preprocess_markdown
 
 __all__ = [
+    "Uploader",
     "process_collection",
     "validate_collection_archive",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+class Uploader(Protocol):
+    """What lands one file of a collection, as :func:`~hivegent.workspace.uploads.upload` does."""
+
+    async def __call__(
+        self,
+        store: Workspace,
+        filepath: str,
+        content: bytes,
+        *,
+        modified_at: datetime,
+        origin: EntryOrigin,
+        companion: tuple[str, bytes] | None,
+    ) -> None: ...
+
 
 # One short, user-facing reason per failure class, shown in the job tray and
 # grouped there by reason.  Per-file exception detail is logged, not surfaced.
@@ -426,13 +444,15 @@ async def process_collection(
     store: Workspace,
     archive_path: Path,
     dest_dir: str = "",
+    *,
+    upload: Uploader = upload,
 ) -> AsyncGenerator[CollectionProgressEvent | CollectionCompleteEvent]:
     """Process a ZIP collection, yielding per-file progress events.
 
     Re-validates the archive against the limits before extracting (the same
     cheap central-directory scan the request path runs up front), so extraction
     is never reached for an unsafe archive, even when called directly.  Each
-    file then flows through :func:`upload`, which converts it without the
+    file then flows through *upload*, by default :func:`~hivegent.workspace.uploads.upload`, which converts it without the
     workspace lock and holds it only to commit, so the rest of the workspace
     stays responsive while a large collection processes, and a cancel mid-run
     drops only the file being converted while earlier files survive.
