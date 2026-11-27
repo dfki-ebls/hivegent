@@ -34,6 +34,7 @@ from ..metadata import EntryGeneratedBy, EntryKind, EntryMetadata, EntryOrigin
 from ..pipelines import (
     AUTO,
     PLAIN_TEXT,
+    converter_fingerprint,
     get_converter,
     plain_text,
     resolve_auto_pipeline,
@@ -150,6 +151,7 @@ def _derived_entry(
     generated_by: EntryGeneratedBy,
     origin: EntryOrigin,
     assets_dir: str | None = None,
+    converter: str | None = None,
 ) -> _PreparedEntry:
     """Build a prepared entry whose original is *filepath* and *markdown* its projection.
 
@@ -171,6 +173,7 @@ def _derived_entry(
             entry_kind=entry_kind,
             origin=origin,
             generated_by=generated_by,
+            converter=converter,
         ),
     )
 
@@ -304,13 +307,14 @@ async def _prepare_video(
 
 
 def _prepare_plain_text_or_stub(
-    filepath: str, content: bytes, *, origin: EntryOrigin
+    filepath: str, content: bytes, *, origin: EntryOrigin, converter: str | None
 ) -> _PreparedEntry:
     """Prepare AUTO input as plain text or a metadata-only binary stub.
 
     Supported Unicode and Western text is prepared as a searchable plain-text
     document, while unsupported or binary-looking bytes get a metadata-only
-    stub.
+    stub.  Either is stamped with the fingerprint *converter* of the converter
+    AUTO routed the file to, so a stub is converted again once it changes.
     """
     entry_kind: EntryKind = "convertible"
     generated_by: EntryGeneratedBy = "converter"
@@ -333,6 +337,7 @@ def _prepare_plain_text_or_stub(
         entry_kind=entry_kind,
         generated_by=generated_by,
         origin=origin,
+        converter=converter,
     )
 
 
@@ -466,12 +471,18 @@ async def _prepare_convertible(
         # Skip the converter's temp-file round trip: AUTO already falls back
         # to the same projection (or a stub) for anything it cannot decode.
         return PreparedUpload(
-            main=_prepare_plain_text_or_stub(filepath, content, origin=origin)
+            main=_prepare_plain_text_or_stub(
+                filepath,
+                content,
+                origin=origin,
+                converter=converter_fingerprint(plain_text()),
+            )
         )
 
     # Describing the extracted assets is background work, which `llm.aux` opts into.
     describe = background_llm() is not None
     converter = _build_converter(conversion_pipeline, basename, describe=describe)
+    stamp = converter_fingerprint(converter)
 
     try:
         result = await _convert_source(
@@ -483,7 +494,9 @@ async def _prepare_convertible(
                 status_code=500, detail=_conversion_failed(str(exc)).current
             ) from exc
 
-        main = _prepare_plain_text_or_stub(filepath, content, origin=origin)
+        main = _prepare_plain_text_or_stub(
+            filepath, content, origin=origin, converter=stamp
+        )
 
         # Text the converter refused is still indexed, so only a stub is worth
         # a warning.
@@ -539,6 +552,7 @@ async def _prepare_convertible(
         generated_by="converter",
         origin=origin,
         assets_dir=assets_dir if has_assets else None,
+        converter=stamp,
     )
     return PreparedUpload(main=main, assets=assets, asset_entries=asset_entries)
 

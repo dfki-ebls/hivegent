@@ -457,6 +457,9 @@ class Document(Timestamped, Base):
     # row for re-indexing.
     content_digest: Mapped[str | None]
     chunker: Mapped[str | None]
+    # The fingerprint of the converter the original was routed to for the
+    # markdown (`exar.ingest.fingerprint`), none for markdown no converter made.
+    converter: Mapped[str | None]
     # Line count of the markdown, written eagerly at row insert (a pure function
     # of the content) and surfaced to the frontend so a coverage map can place
     # partial reads without re-reading the file.

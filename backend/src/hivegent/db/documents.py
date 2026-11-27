@@ -157,6 +157,7 @@ def _entry_from_row(doc: Document) -> EntryMetadata:
         assets_dir=Part(doc.stem_path, "assets").path if doc.has_assets else None,
         origin=doc.origin.value,  # type: ignore[arg-type]
         generated_by=doc.generated_by.value,  # type: ignore[arg-type]
+        converter=doc.converter,
     )
 
 
@@ -434,6 +435,7 @@ class _EntryColumns:
     entry_kind: EntryKind
     origin: Origin
     generated_by: GeneratedBy
+    converter: str | None
 
     @classmethod
     def from_entry(cls, entry: EntryMetadata) -> Self:
@@ -444,6 +446,7 @@ class _EntryColumns:
             entry_kind=EntryKind(entry.entry_kind),
             origin=Origin(entry.origin),
             generated_by=GeneratedBy(entry.generated_by),
+            converter=entry.converter,
         )
 
     def as_values(self) -> dict[str, Any]:

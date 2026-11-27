@@ -159,6 +159,7 @@ def _build_entry_metadata(
     entry_kind: EntryKind,
     origin: EntryOrigin,
     generated_by: EntryGeneratedBy,
+    converter: str | None = None,
 ) -> EntryMetadata:
     """Build the canonical metadata for a logical entry."""
     return EntryMetadata(
@@ -169,6 +170,7 @@ def _build_entry_metadata(
         assets_dir=assets_dir,
         origin=origin,
         generated_by=generated_by,
+        converter=converter,
     )
 
 
@@ -214,6 +216,7 @@ def _entry_metadata_from_disk(
         entry_kind=existing.entry_kind if existing else kind,
         origin=existing.origin if existing else origin,
         generated_by=existing.generated_by if existing else generated_by,
+        converter=existing.converter if existing else None,
     )
 
 

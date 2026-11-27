@@ -142,6 +142,7 @@ Die Debug-Konsolen für Tools und Chats sind standardmäßig aus, `debug.enable 
 - Standbilder, die das View-Tool liest und die an den Chat angehängt werden, werden auf 1024 px verkleinert.
 - Jede temporäre Datei liegt unter `<data_dir>/.transient`, dem temporären Verzeichnis des Servers und seiner Worker, das der Start leert.
 - Der Chunker `markdown` teilt einen Abschnitt, eine Tabelle oder einen Codeblock, der länger als seine `size` (Standard 2048) ist, und behält die Bilder eines Abschnitts, sodass ein damit gechunktes Dokument anders gechunkt wird, sobald es sich ändert oder neu gechunkt wird.
+- Jedes ab jetzt konvertierte Dokument verzeichnet den Konverter und die Optionen, mit denen es erstellt wurde, die zuvor konvertierten verzeichnen keine.
 
 ## Konversationsspeicher
 

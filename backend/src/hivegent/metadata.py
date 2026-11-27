@@ -101,6 +101,11 @@ class EntryMetadata(BaseModel):
         default="user",
         description="How the markdown content was produced",
     )
+    converter: str | None = Field(
+        default=None,
+        exclude=True,
+        description="Fingerprint of the converter that produced the markdown, internal to the index",
+    )
 
 
 class DocumentMetadata(EntryMetadata):

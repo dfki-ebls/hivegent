@@ -141,6 +141,7 @@ The tool and chat debug consoles are off by default, set `debug.enable = true` t
 - Still images read by the View tool and attached to the chat are downscaled to 1024 px.
 - Every temporary file lies below `<data_dir>/.transient`, the temporary directory of the server and its workers, which the boot empties.
 - The `markdown` chunker splits a passage, table, or code block longer than its `size` (default 2048) and keeps the images of a passage, so a document chunked with it chunks differently once it changes or is rechunked.
+- Every document converted from now on records the converter and options it was made with, while those converted before record none.
 
 ## Conversation store
 

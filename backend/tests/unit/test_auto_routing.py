@@ -18,7 +18,14 @@ from exar.ingest import (
 )
 
 from hivegent import pipelines
-from hivegent.pipelines import AUTO, _Recovering, get_converter, resolve_auto_pipeline
+from hivegent.pipelines import (
+    AUTO,
+    _Recovering,
+    converter_fingerprint,
+    get_converter,
+    plain_text,
+    resolve_auto_pipeline,
+)
 from hivegent.shared import pipeline_registry
 from hivegent.workspace import prepare
 
@@ -139,6 +146,7 @@ async def test_auto_plain_text_uses_plain_text_pipeline(
 
     assert prepared.main is not None
     assert prepared.main.entry_metadata.entry_kind == "convertible"
+    assert prepared.main.entry_metadata.converter == converter_fingerprint(plain_text())
     assert "plain text" in prepared.main.markdown
 
 
@@ -152,7 +160,27 @@ async def test_auto_plain_text_uses_plain_text_pipeline(
 def test_auto_fallback_decodes_legacy_text_and_stubs_real_binaries(
     filename: str, content: bytes, kind: str, text: str
 ) -> None:
-    entry = prepare._prepare_plain_text_or_stub(filename, content, origin="upload")
+    entry = prepare._prepare_plain_text_or_stub(
+        filename, content, origin="upload", converter=None
+    )
 
     assert entry.entry_metadata.entry_kind == kind
     assert text in entry.markdown
+
+
+def test_converter_fingerprint_names_the_converter_auto_routed_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pipeline_registry, "_installed", lambda *_: True)
+    converter = get_converter(AUTO, filename="report.docx")
+
+    assert isinstance(converter, _Recovering)
+    assert converter_fingerprint(converter) == converter_fingerprint(converter.primary)
+
+
+def test_converter_fingerprint_is_none_for_a_converter_pydantic_cannot_dump() -> None:
+    class Arbitrary:
+        async def __call__(self, source: Path, /) -> Parsed:
+            return Parsed(markdown=source.name)
+
+    assert converter_fingerprint(Arbitrary()) is None

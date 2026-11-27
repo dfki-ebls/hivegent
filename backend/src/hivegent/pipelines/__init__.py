@@ -90,6 +90,7 @@ __all__ = [
     "chunker_fingerprint",
     "chunking_pipelines",
     "conversion_pipelines",
+    "converter_fingerprint",
     "get_chunker",
     "get_converter",
     "plain_text",
@@ -659,6 +660,21 @@ def get_converter(
     return _recovering(converter, filename) if pipeline == AUTO else converter
 
 
+def converter_fingerprint(converter: AsyncParser | Parser) -> str | None:
+    """The fingerprint of *converter*, of the one AUTO routed to for one with its fallback, see `exar.ingest.fingerprint`.
+
+    None for a converter pydantic cannot dump, such as a plugin's of an arbitrary class.
+    """
+    try:
+        return fingerprint(
+            converter.primary if isinstance(converter, _Recovering) else converter
+        )
+    except TypeError:
+        logger.warning("%r has no fingerprint", converter, exc_info=True)
+
+        return None
+
+
 def plain_text() -> PlainText:
     """The `PLAIN_TEXT` converter with the operator's options, for projecting text in process."""
     return configure(PlainText, settings.conversion.pipelines.get(PLAIN_TEXT, {}), HOST)
@@ -666,11 +682,7 @@ def plain_text() -> PlainText:
 
 @cache
 def chunker_fingerprint(pipeline: str) -> str:
-    """The fingerprint of the chunker *pipeline* names with the operator's options, see `exar.ingest.fingerprint`.
-
-    It changes with the options, not with the code of exar, so an update that
-    chunks otherwise ships a migration clearing the stamps of the documents.
-    """
+    """The fingerprint of the chunker *pipeline* names with the operator's options, see `exar.ingest.fingerprint`."""
     return fingerprint(get_chunker(pipeline))
 
 

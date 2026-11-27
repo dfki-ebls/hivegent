@@ -94,11 +94,12 @@ uv run alembic upgrade head
 uv run alembic check
 ```
 
-An update of exar or cbrkit that chunks or embeds otherwise ships a revision that clears the stamps of every document, which the fingerprints of the index cannot notice, since they cover options and not code:
+A converter or chunker that outputs otherwise for the same options, exar's or hivegent's own, raises its `revision` (`exar.ingest.Revised`), which its fingerprint counts.
+A code change no fingerprint notices, such as of how cbrkit embeds, ships a revision that clears the stamps of every document:
 
 ```python
 def upgrade() -> None:
-    # exar 1.2 splits sentences otherwise, so every document is chunked again.
+    # cbrkit 2 embeds otherwise, so every document is embedded again.
     op.execute("UPDATE documents SET content_digest = NULL, chunker = NULL")
 ```
 
@@ -210,7 +211,9 @@ The operator owns every pipeline: a document is converted and chunked with `auto
 The tree under `data/workspace/<store_key>/` is authoritative for document content, and the `documents` and `chunks` rows are a derived index.
 `workspace.sync_entries_from_disk` is the one idempotent ingest path, which re-chunks only when the `content_digest` of the text or the `chunker` fingerprint of the options of its chunking pipeline (`pipelines.chunker_fingerprint`, after `exar.ingest.fingerprint`) changed, behind a `tools.entries.ContentStat` pre-filter that can cost a read but never misses a change.
 The digest, fingerprint, and stat are cleared together by `upsert_document` and stamped together by `set_content_state` once the chunks are durable, so a null digest means "not indexed yet".
-The fingerprints cover options, not code, so an update that chunks or embeds otherwise ships a revision clearing the stamps (see the migrations above), while `hivegent reindex [--workspace <key>]` clears them ad hoc, such as to recover one workspace.
+The fingerprints cover options and the revisions of the components, so another update that chunks or embeds otherwise ships a revision clearing the stamps (see the migrations above), while `hivegent reindex [--workspace <key>]` clears them ad hoc, such as to recover one workspace.
+A converted entry or stub also stamps the fingerprint of the converter its original was routed to (`converter`, `pipelines.converter_fingerprint`), null where unknown, which nothing compares yet, since converting again belongs in a background job rather than the boot.
+The fingerprints leave out the options exar marks `RUNTIME`, such as threads and limits, so tuning the host converts and chunks nothing again.
 A description with no prior row is stamped `origin = imported`.
 
 `reconcile.reconcile_store` runs at boot over every entry on disk and every row, and drops rows whose description vanished.
