@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { RunPythonTool } from "@/components/chat/tools/run-python";
 import { DocumentDialog } from "@/components/document-dialog";
@@ -6,8 +6,9 @@ import { ImageRef } from "@/components/image-ref";
 import { WorkspaceImage } from "@/components/workspace-image";
 import { AssetMedia } from "@/components/documents/asset-media";
 import type { ToolPart } from "@/lib/chat/tool-part";
-import { createTestChat, renderWithChat } from "@/test/chat";
+import { renderWithChat } from "@/test/chat";
 import { stubLayout } from "@/test/layout";
+import { settle } from "@/test/render";
 
 const { requestBlob, requestText } = vi.hoisted(() => ({
   requestBlob: vi.fn<(url: string) => Promise<Blob>>(),
@@ -49,8 +50,10 @@ describe("RunPythonTool", () => {
     renderWithChat(<RunPythonTool part={finished} metadata={null} prompt={false} />);
     fireEvent.click(screen.getByText(/Run Python/));
     fireEvent.click(screen.getByRole("button", { name: "View source" }));
+    await settle();
 
-    expect(await screen.findByText("print(1)")).toBeTruthy();
+    // The highlighter may or may not have split the line into tokens yet.
+    expect(screen.getByRole("dialog").textContent).toContain("print(1)");
     expect(requestText).toHaveBeenCalledWith(
       expect.stringContaining("/api/v1/documents/%2Ftmp/report.py?conversation_id=c1"),
       "fetchDocumentContent",
@@ -134,20 +137,17 @@ describe("temporary document previews", () => {
         static override revokeObjectURL = vi.fn<typeof URL.revokeObjectURL>();
       },
     );
-    requestBlob.mockClear().mockResolvedValue(new Blob());
+    requestBlob.mockResolvedValue(new Blob());
 
-    renderWithChat(preview, createTestChat());
+    renderWithChat(preview);
+    await settle();
 
-    await waitFor(() =>
-      expect(requestBlob).toHaveBeenLastCalledWith(
-        "/api/v1/documents/%2Ftmp/image.png?conversation_id=c1",
-        "fetchDocumentAsset",
-        { signal: expect.any(AbortSignal) },
-      ),
+    expect(requestBlob).toHaveBeenLastCalledWith(
+      "/api/v1/documents/%2Ftmp/image.png?conversation_id=c1",
+      "fetchDocumentAsset",
+      { signal: expect.any(AbortSignal) },
     );
-    expect((await screen.findByRole("img", { name: "Preview" })).getAttribute("src")).toBe(
-      "blob:preview",
-    );
+    expect(screen.getByRole("img", { name: "Preview" }).getAttribute("src")).toBe("blob:preview");
   });
 
   it("loads complete temporary text with its owning conversation", async () => {
@@ -157,8 +157,9 @@ describe("temporary document previews", () => {
     renderWithChat(
       <DocumentDialog open onOpenChange={() => {}} filename="/tmp/notes.md" initialFullDoc />,
     );
+    await settle();
 
-    expect(await screen.findByText("Temporary document contents")).toBeTruthy();
+    expect(screen.getByText("Temporary document contents")).toBeTruthy();
     expect(requestText).toHaveBeenLastCalledWith(
       expect.stringContaining("/api/v1/documents/%2Ftmp/notes.md?conversation_id=c1"),
       "fetchDocumentContent",

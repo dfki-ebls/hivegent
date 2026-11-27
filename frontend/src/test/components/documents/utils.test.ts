@@ -1,26 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { documentReadMap, readSpans } from "@/components/documents/utils";
 import type { FetchedChunk } from "@/lib/chunks";
 
-const readChunk = (startLine: number, endLine: number): FetchedChunk => ({
-  id: `r:${startLine}-${endLine}`,
+const partialRead: FetchedChunk = {
+  id: "r",
   filename: "report.md",
   content: "x",
   origin: "read",
-  position: { type: "line_range", startLine, endLine },
-});
+  position: { type: "line_range", startLine: 1, endLine: 40 },
+};
 
-describe("documentReadMap", () => {
-  it("does not render a partial read as full coverage when the length is known", () => {
-    const segments = documentReadMap(readSpans([readChunk(1, 40)]), 200);
-
-    expect(segments).toEqual([{ start: 0, end: 0.2 }]);
-  });
-
-  it("hides the bar (no segments) when the document length is unknown", () => {
-    const segments = documentReadMap(readSpans([readChunk(1, 40)]));
-
-    expect(segments).toEqual([]);
-  });
+it("maps a partial read to its share of the document, and to none when the length is unknown", () => {
+  expect(documentReadMap(readSpans([partialRead]), 200)).toEqual([{ start: 0, end: 0.2 }]);
+  expect(documentReadMap(readSpans([partialRead]))).toEqual([]);
 });

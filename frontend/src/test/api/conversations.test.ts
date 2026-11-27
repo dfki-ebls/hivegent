@@ -1,18 +1,19 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { expect, it, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import {
   type ConversationSummary,
+  FEED_REFETCH_DELAY_MS,
   conversationMutations,
   conversationQueries,
   getConversationMessages,
   syncConversationQueries,
 } from "@/api/conversations";
-import { type FeedHandlers, subscribeJobs } from "@/api/jobs";
+import type { subscribeJobs } from "@/api/jobs";
 import { syncTaskQueries, taskQueries } from "@/api/tasks";
-import { useJobsStore } from "@/stores/jobs-store";
-import { createQueryWrapper, createTestQueryClient } from "@/test/render";
+import { startFeed } from "@/test/feed";
+import { createQueryWrapper, createTestQueryClient, settle } from "@/test/render";
 
 vi.mock("@/api/jobs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/jobs")>()),
@@ -41,28 +42,15 @@ const summary = (id: string): ConversationSummary => ({
   updated_at: "2025-01-01T00:00:00Z",
 });
 
-function startFeed(): Promise<FeedHandlers> {
-  const feed = Promise.withResolvers<FeedHandlers>();
-  vi.mocked(subscribeJobs).mockImplementation(async (handlers) => {
-    feed.resolve(handlers);
-    await new Promise<never>(() => {});
-  });
-  useJobsStore.setState({ started: false });
-  useJobsStore.getState().start();
-
-  return feed.promise;
-}
-
 it("refetches the list after a delete and once for a burst of feed events", async () => {
   requestJson
     .mockResolvedValueOnce({ conversations: [summary(A), summary(B)] })
     .mockResolvedValueOnce({ conversations: [summary(B)] })
     .mockResolvedValueOnce({ conversations: [] });
   requestVoid.mockResolvedValue();
-  const feed = startFeed();
   const client = createTestQueryClient();
-  const unsubscribe = syncConversationQueries(client);
-
+  onTestFinished(syncConversationQueries(client));
+  const feed = await startFeed();
   const { result } = renderHook(
     () => ({
       list: useQuery(conversationQueries.list()),
@@ -71,22 +59,22 @@ it("refetches the list after a delete and once for a burst of feed events", asyn
     { wrapper: createQueryWrapper(client) },
   );
 
-  await waitFor(() => expect(result.current.list.data).toHaveLength(2));
-  await act(() => result.current.remove.mutateAsync(A));
+  await settle();
+  expect(result.current.list.data).toHaveLength(2);
 
+  await act(() => result.current.remove.mutateAsync(A));
   expect(requestVoid).toHaveBeenCalledWith(
     expect.stringContaining(`/api/v1/conversations/${A}`),
     "delete",
     { method: "DELETE" },
   );
-  await waitFor(() => expect(result.current.list.data).toEqual([summary(B)]));
+  expect(result.current.list.data).toEqual([summary(B)]);
 
-  const { onConversationsChanged } = await feed;
-  act(() => [1, 2, 3].forEach(() => onConversationsChanged()));
+  act(() => [1, 2, 3].forEach(() => feed.onConversationsChanged()));
+  await settle(FEED_REFETCH_DELAY_MS);
 
-  await waitFor(() => expect(result.current.list.data).toEqual([]));
+  expect(result.current.list.data).toEqual([]);
   expect(requestJson).toHaveBeenCalledTimes(3);
-  unsubscribe();
 });
 
 it("validates the stored messages a chat starts from", async () => {
@@ -106,15 +94,18 @@ it("validates the stored messages a chat starts from", async () => {
 });
 
 it("invalidates every transcript of the conversation for a task event", async () => {
-  const feed = startFeed();
   const client = createTestQueryClient();
   const transcript = taskQueries.messages(C1, "finished").queryKey;
   client.setQueryData(transcript, []);
-  const unsubscribe = syncTaskQueries(client, C1);
-  const { onConversationActivity } = await feed;
+  onTestFinished(syncTaskQueries(client, C1));
+  const feed = await startFeed();
 
-  onConversationActivity({ type: "conversation-activity", conversation_id: C1, kind: "tasks" });
+  feed.onConversationActivity({
+    type: "conversation-activity",
+    conversation_id: C1,
+    kind: "tasks",
+  });
+  await vi.advanceTimersByTimeAsync(FEED_REFETCH_DELAY_MS);
 
-  await waitFor(() => expect(client.getQueryState(transcript)?.isInvalidated).toBe(true));
-  unsubscribe();
+  expect(client.getQueryState(transcript)?.isInvalidated).toBe(true);
 });

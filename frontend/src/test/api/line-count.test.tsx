@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { documentQueries } from "@/api/documents";
-import { createQueryWrapper } from "@/test/render";
+import { createQueryWrapper, settle } from "@/test/render";
 
 const { requestJson } = vi.hoisted(() => ({
   requestJson:
@@ -27,7 +27,9 @@ describe("documentQueries.lineCount", () => {
       { wrapper: createQueryWrapper() },
     );
 
-    await waitFor(() => expect(result.current).toEqual([40, null]));
+    await settle();
+
+    expect(result.current).toEqual([40, null]);
     expect(requestJson).toHaveBeenCalledOnce();
     expect(requestJson.mock.calls[0]?.[3]?.body).toBe(
       JSON.stringify({ files: ["a.md", "tmp.md"] }),

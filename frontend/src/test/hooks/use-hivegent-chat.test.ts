@@ -1,11 +1,11 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { UIMessageChunk } from "ai";
 import { expect, it, vi } from "vitest";
 
 import { useHivegentChat } from "@/hooks/chat/use-hivegent-chat";
 import type { ChatMessage } from "@/lib/chat/message";
 import { onConversationActivity } from "@/stores/jobs-store";
-import { createQueryWrapper } from "@/test/render";
+import { createQueryWrapper, settle } from "@/test/render";
 
 const { chatFetch } = vi.hoisted(() => ({
   chatFetch: vi.fn<typeof import("@/api/client").chatFetch>(),
@@ -44,7 +44,6 @@ it.each<[UIMessageChunk, boolean]>([
 });
 
 it("follows a turn the feed announces while the chat streams once it settled", async () => {
-  chatFetch.mockClear();
   const user: ChatMessage = { id: "u1", role: "user", parts: [{ type: "text", text: "Hi" }] };
   const turn = (text: string) =>
     sse(
@@ -73,12 +72,14 @@ it("follows a turn the feed announces while the chat streams once it settled", a
   });
 
   act(() => void result.current.sendMessage(user));
-  await waitFor(() => expect(chatFetch).toHaveBeenCalledOnce());
+  await settle();
+
+  expect(chatFetch).toHaveBeenCalledOnce();
+
   act(() => vi.mocked(onConversationActivity).mock.lastCall?.[2]());
   settled.resolve();
+  await settle();
 
-  await waitFor(() =>
-    expect(result.current.messages.at(-1)?.parts).toEqual([{ type: "text", text: "Reported" }]),
-  );
+  expect(result.current.messages.at(-1)?.parts).toEqual([{ type: "text", text: "Reported" }]);
   expect(chatFetch.mock.lastCall?.[0]).toMatch(/\/stream$/);
 });

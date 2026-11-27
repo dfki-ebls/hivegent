@@ -1,165 +1,69 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, expect, it } from "vitest";
 
+import type { FetchedChunk } from "@/lib/chunks";
 import { useFetchedDocumentsStore } from "@/stores/fetched-documents-store";
 
-describe("useFetchedDocumentsStore", () => {
-  beforeEach(() => {
-    useFetchedDocumentsStore.getState().clearAll();
+type NewChunk = Omit<FetchedChunk, "id">;
+
+const store = () => useFetchedDocumentsStore.getState();
+const lineChunk = (line: number, extra: Partial<NewChunk> = {}): NewChunk => ({
+  filename: "report.md",
+  content: `line ${line}`,
+  origin: "search",
+  position: { type: "line", line },
+  ...extra,
+});
+
+beforeEach(() => store().clearAll());
+
+it("groups chunks under their document and deduplicates identical ones", () => {
+  store().addChunk(lineChunk(1));
+  store().addChunk(lineChunk(1));
+  store().addChunk(lineChunk(2));
+
+  expect(store().chunks.size).toBe(2);
+  expect(store().documents.size).toBe(1);
+  expect(store().documents.get("report.md")?.chunkIds).toHaveLength(2);
+});
+
+it("keeps the same read of distinct tool calls apart", () => {
+  store().addChunk(lineChunk(1, { origin: "read", sourceId: "call-1" }));
+  store().addChunk(lineChunk(1, { origin: "read", sourceId: "call-2" }));
+
+  expect(store().chunks.size).toBe(2);
+});
+
+it("records the document length a read or a full fetch reports", () => {
+  const range: NewChunk["position"] = { type: "line_range", startLine: 1, endLine: 40 };
+  store().addChunk(lineChunk(1, { origin: "read", position: range }), 200);
+  store().markFullDocument("full.md", "a\nb\nc\n", "read", "s1", 3);
+
+  expect(store().documents.get("report.md")?.totalLines).toBe(200);
+  expect(store().documents.get("full.md")).toMatchObject({
+    fullContent: "a\nb\nc\n",
+    totalLines: 3,
   });
+});
 
-  describe("addChunk", () => {
-    it("adds a chunk and creates its parent document", () => {
-      useFetchedDocumentsStore.getState().addChunk({
-        filename: "report.md",
-        content: "hello",
-        origin: "search",
-        position: { type: "line", line: 1 },
-      });
+it("marks a document with chunks as fully fetched, and an unchanged mark changes nothing", () => {
+  store().addChunk(lineChunk(1));
+  store().markFullDocument("report.md", "full", "read");
+  const before = store();
+  store().markFullDocument("report.md", "full", "read");
 
-      const state = useFetchedDocumentsStore.getState();
-      expect(state.chunks.size).toBe(1);
-      expect(state.documents.size).toBe(1);
+  expect(store().documents.get("report.md")?.fullContent).toBe("full");
+  expect(store().documents.get("report.md")?.chunkIds.length).toBeGreaterThanOrEqual(2);
+  expect(store().documents).toBe(before.documents);
+  expect(store().chunks).toBe(before.chunks);
+});
 
-      const doc = state.documents.get("report.md");
-      expect(doc).toBeDefined();
-      expect(doc!.filename).toBe("report.md");
-      expect(doc!.chunkIds).toHaveLength(1);
-    });
+it("claims a payload once until the store is cleared", () => {
+  const payload = [{ file_path: "a.md" }];
 
-    it("deduplicates chunks with the same id", () => {
-      const chunk = {
-        filename: "report.md",
-        content: "hello",
-        origin: "search" as const,
-        position: { type: "line" as const, line: 1 },
-      };
+  expect(store().claimOutput(payload)).toBe(true);
+  expect(store().claimOutput(payload)).toBe(false);
 
-      useFetchedDocumentsStore.getState().addChunk(chunk);
-      useFetchedDocumentsStore.getState().addChunk(chunk);
+  store().clearAll();
 
-      const state = useFetchedDocumentsStore.getState();
-      expect(state.chunks.size).toBe(1);
-    });
-
-    it("records the document length from a partial read's total_lines", () => {
-      useFetchedDocumentsStore.getState().addChunk(
-        {
-          filename: "report.md",
-          content: "head",
-          origin: "read",
-          position: { type: "line_range", startLine: 1, endLine: 40 },
-        },
-        200,
-      );
-
-      expect(useFetchedDocumentsStore.getState().documents.get("report.md")!.totalLines).toBe(200);
-    });
-
-    it("appends a second chunk to the same document", () => {
-      useFetchedDocumentsStore.getState().addChunk({
-        filename: "report.md",
-        content: "a",
-        origin: "search",
-        position: { type: "line", line: 1 },
-      });
-      useFetchedDocumentsStore.getState().addChunk({
-        filename: "report.md",
-        content: "b",
-        origin: "search",
-        position: { type: "line", line: 2 },
-      });
-
-      const state = useFetchedDocumentsStore.getState();
-      expect(state.documents.size).toBe(1);
-      expect(state.documents.get("report.md")!.chunkIds).toHaveLength(2);
-    });
-  });
-
-  describe("markFullDocument", () => {
-    it("creates a document marked as fully fetched", () => {
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full content", "read");
-
-      const state = useFetchedDocumentsStore.getState();
-      const doc = state.documents.get("report.md");
-      expect(doc).toBeDefined();
-      expect(doc!.fullContent).toBe("full content");
-    });
-
-    it("records the line count the backend reported", () => {
-      useFetchedDocumentsStore
-        .getState()
-        .markFullDocument("report.md", "a\nb\nc\n", "read", "s1", 3);
-
-      expect(useFetchedDocumentsStore.getState().documents.get("report.md")!.totalLines).toBe(3);
-    });
-
-    it("marks an existing document as fully fetched", () => {
-      useFetchedDocumentsStore.getState().addChunk({
-        filename: "report.md",
-        content: "chunk",
-        origin: "search",
-        position: { type: "line", line: 1 },
-      });
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "read");
-
-      const doc = useFetchedDocumentsStore.getState().documents.get("report.md");
-      expect(doc!.fullContent).toBe("full");
-      expect(doc!.chunkIds.length).toBeGreaterThanOrEqual(2);
-    });
-
-    it("returns identical state references when called with unchanged args", () => {
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "read");
-      const before = useFetchedDocumentsStore.getState();
-
-      useFetchedDocumentsStore.getState().markFullDocument("report.md", "full", "read");
-      const after = useFetchedDocumentsStore.getState();
-
-      expect(after.documents).toBe(before.documents);
-      expect(after.chunks).toBe(before.chunks);
-    });
-  });
-
-  describe("tool evidence", () => {
-    it("keeps repeated reads from distinct tool calls", () => {
-      const store = useFetchedDocumentsStore.getState();
-      const base = {
-        filename: "report.md",
-        origin: "read" as const,
-        position: { type: "line" as const, line: 1 },
-      };
-
-      store.addChunk({ ...base, content: "before", sourceId: "call-1" });
-      store.addChunk({ ...base, content: "after", sourceId: "call-2" });
-
-      expect(useFetchedDocumentsStore.getState().chunks.size).toBe(2);
-    });
-  });
-
-  describe("clearAll", () => {
-    it("resets both maps", () => {
-      useFetchedDocumentsStore.getState().addChunk({
-        filename: "f.md",
-        content: "c",
-        origin: "read",
-        position: { type: "line", line: 1 },
-      });
-      useFetchedDocumentsStore.getState().clearAll();
-
-      const state = useFetchedDocumentsStore.getState();
-      expect(state.chunks.size).toBe(0);
-      expect(state.documents.size).toBe(0);
-    });
-  });
-
-  describe("claimOutput", () => {
-    it("claims a payload once until the store is cleared", () => {
-      const payload = [{ file_path: "a.md" }];
-      const { claimOutput, clearAll } = useFetchedDocumentsStore.getState();
-
-      expect(claimOutput(payload)).toBe(true);
-      expect(claimOutput(payload)).toBe(false);
-      clearAll();
-      expect(useFetchedDocumentsStore.getState().claimOutput(payload)).toBe(true);
-    });
-  });
+  expect(store().claimOutput(payload)).toBe(true);
 });

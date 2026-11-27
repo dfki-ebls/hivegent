@@ -1,24 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { legacySystemMessage } from "@/migrations/legacy-system-message";
 
 const stored = (state: object) => JSON.stringify({ state, version: 0 });
 
-describe("legacySystemMessage", () => {
-  it("keeps a chosen custom system message", () => {
-    expect(
-      legacySystemMessage(stored({ personality: "custom", customSystemMessage: " Be brief. " })),
-    ).toBe("Be brief.");
-  });
-
-  it("ignores built-in personalities, an empty message, and garbage", () => {
-    expect(
-      legacySystemMessage(stored({ personality: "concise", customSystemMessage: "Be brief." })),
-    ).toBeUndefined();
-    expect(
-      legacySystemMessage(stored({ personality: "custom", customSystemMessage: " " })),
-    ).toBeUndefined();
-    expect(legacySystemMessage(stored({ expandedItems: ["~"] }))).toBeUndefined();
-    expect(legacySystemMessage("{")).toBeUndefined();
-  });
+it.each([
+  [stored({ personality: "custom", customSystemMessage: " Be brief. " }), "Be brief."],
+  [stored({ personality: "concise", customSystemMessage: "Be brief." }), undefined],
+  [stored({ personality: "custom", customSystemMessage: " " }), undefined],
+  [stored({ expandedItems: ["~"] }), undefined],
+  ["{", undefined],
+])("reads the custom system message of %s as %j", (persisted, expected) => {
+  expect(legacySystemMessage(persisted)).toBe(expected);
 });

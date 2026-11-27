@@ -32,7 +32,7 @@ it("opens the user menu with the settings and links its entries", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace" }));
 
-  expect(await screen.findByText("ada@example.com")).toBeTruthy();
+  expect(screen.getByText("ada@example.com")).toBeTruthy();
   expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe("/settings");
   // The server says who is an admin, and these settings never loaded.
   expect(screen.queryByRole("menuitem", { name: "Administration" })).toBeNull();

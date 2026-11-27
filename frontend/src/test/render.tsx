@@ -1,6 +1,7 @@
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { vi } from "vitest";
 
 import { createQueryClient } from "@/lib/query-client";
 
@@ -23,3 +24,12 @@ export function createQueryWrapper(client = createTestQueryClient()) {
 export function renderWithQueries(ui: ReactNode) {
   return render(ui, { wrapper: createQueryWrapper() });
 }
+
+/**
+ * Advance the fake clock by *ms*, which runs every due timer and settles every promise
+ * that resolves without outside input, inside `act` so React shows the result.
+ */
+export const settle = (ms = 0) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+/** One animation frame of the fake clock, which Base UI waits for before it unmounts a closed popup. */
+export const FRAME_MS = 16;

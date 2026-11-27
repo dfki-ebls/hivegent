@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import { uploadDocument } from "@/api/documents";
 import { HttpError } from "@/api/client";
 import type { JobView } from "@/api/jobs";
-import { uploadDocument } from "@/api/documents";
 import { useUploadQueue } from "@/stores/upload-queue-store";
 
 vi.mock("@/api/documents", () => ({
@@ -23,7 +23,7 @@ interface PendingUpload {
 
 let pending: PendingUpload[] = [];
 
-const makeJob = (id: string): JobView => ({
+const job = (id: string): JobView => ({
   id,
   kind: "document.upload",
   title: id,
@@ -35,73 +35,78 @@ const makeJob = (id: string): JobView => ({
   updated_at: 0,
 });
 
-const items = () => Object.values(useUploadQueue.getState().items);
+const queue = () => useUploadQueue.getState();
+const items = () => Object.values(queue().items);
+const enqueue = (...names: string[]) =>
+  queue().enqueueFiles(
+    "~",
+    names.map((name) => new File(["x"], name)),
+  );
+const settle = () => vi.advanceTimersByTimeAsync(0);
 
-describe("useUploadQueue", () => {
-  beforeEach(() => {
-    pending = [];
-    vi.clearAllMocks();
-    useUploadQueue.setState({ items: {} });
-    vi.mocked(uploadDocument).mockImplementation((_path, _file, opts) => {
-      return new Promise<JobView>((resolve, reject) => {
+beforeEach(() => {
+  pending = [];
+  useUploadQueue.setState({ items: {} });
+  vi.mocked(uploadDocument).mockImplementation(
+    (_path, _file, opts) =>
+      new Promise<JobView>((resolve, reject) => {
         pending.push({ resolve, reject, signal: opts?.signal });
         opts?.signal?.addEventListener("abort", () =>
           reject(new DOMException("aborted", "AbortError")),
         );
-      });
-    });
-  });
+      }),
+  );
+});
 
-  it("appends new files without aborting uploads already in flight", async () => {
-    useUploadQueue.getState().enqueueFiles("~", [new File(["a"], "a.pdf")]);
-    await vi.waitFor(() => expect(pending).toHaveLength(1));
+// An upload left running would hold one of the queue's slots for the next test.
+afterEach(async () => {
+  items().forEach((item) => queue().cancel(item.id));
+  await settle();
+});
 
-    // Dropping more files while the first is still uploading must not cancel it.
-    useUploadQueue.getState().enqueueFiles("~", [new File(["b"], "b.pdf")]);
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
-    expect(pending[0]?.signal?.aborted).toBe(false);
+it("appends new files without aborting uploads in flight and drops them once handed to a job", async () => {
+  enqueue("a.pdf");
+  enqueue("b.pdf");
 
-    // Both hand off to a job and leave the queue.
-    pending[0]?.resolve(makeJob("j1"));
-    pending[1]?.resolve(makeJob("j2"));
-    await vi.waitFor(() => expect(items()).toHaveLength(0));
-    expect(uploadDocument).toHaveBeenCalledTimes(2);
-  });
+  expect(pending).toHaveLength(2);
+  expect(pending[0]?.signal?.aborted).toBe(false);
 
-  it("skips re-dropping a file already in the queue", async () => {
-    useUploadQueue.getState().enqueueFiles("~", [new File(["x"], "dup.pdf")]);
-    await vi.waitFor(() => expect(pending).toHaveLength(1));
+  pending[0]?.resolve(job("j1"));
+  pending[1]?.resolve(job("j2"));
+  await settle();
 
-    useUploadQueue.getState().enqueueFiles("~", [new File(["x"], "dup.pdf")]);
+  expect(items()).toHaveLength(0);
+});
 
-    expect(items()).toHaveLength(1);
-    expect(uploadDocument).toHaveBeenCalledTimes(1);
-  });
+it("skips re-dropping a file already in the queue", () => {
+  enqueue("dup.pdf", "dup.pdf");
+  enqueue("dup.pdf");
 
-  it("marks a failed transfer as retryable and re-queues it on retry", async () => {
-    useUploadQueue.getState().enqueueFiles("~", [new File(["x"], "f.pdf")]);
-    await vi.waitFor(() => expect(pending).toHaveLength(1));
-    pending[0]?.reject(new Error("network down"));
+  expect(items()).toHaveLength(1);
+  expect(uploadDocument).toHaveBeenCalledTimes(1);
+});
 
-    let id = "";
-    await vi.waitFor(() => {
-      const item = items()[0];
-      expect(item).toMatchObject({ status: "failed", error: "network down" });
-      id = item?.id ?? "";
-    });
+it("marks a failed transfer as retryable and uploads it again on retry", async () => {
+  enqueue("f.pdf");
+  pending[0]?.reject(new Error("network down"));
+  await settle();
 
-    useUploadQueue.getState().retry(id);
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
-  });
+  expect(items()[0]).toMatchObject({ status: "failed", error: "network down" });
 
-  it("retries a rate-limited transfer once its Retry-After passed", async () => {
-    useUploadQueue.getState().enqueueFiles("~", [new File(["x"], "r.pdf")]);
-    await vi.waitFor(() => expect(pending).toHaveLength(1));
-    pending[0]?.reject(new HttpError("slow down", 429, 0));
+  queue().retry(items()[0]?.id ?? "");
 
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
-    expect(items()[0]?.status).toBe("uploading");
-    pending[1]?.resolve(makeJob("j"));
-    await vi.waitFor(() => expect(items()).toHaveLength(0));
-  });
+  expect(pending).toHaveLength(2);
+});
+
+it("uploads a rate-limited transfer again once its Retry-After passed", async () => {
+  enqueue("r.pdf");
+  pending[0]?.reject(new HttpError("slow down", 429, 3));
+  await vi.advanceTimersByTimeAsync(2999);
+
+  expect(pending).toHaveLength(1);
+
+  await vi.advanceTimersByTimeAsync(1);
+
+  expect(pending).toHaveLength(2);
+  expect(items()[0]?.status).toBe("uploading");
 });

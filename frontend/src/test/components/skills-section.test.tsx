@@ -1,9 +1,9 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
 import type { SkillInfo } from "@/api/skills";
 import { SkillsSection } from "@/components/skills-section";
-import { renderWithQueries } from "@/test/render";
+import { renderWithQueries, settle } from "@/test/render";
 
 const { requestJson, requestVoid, skill } = vi.hoisted(() => ({
   requestJson: vi.fn<
@@ -55,38 +55,38 @@ vi.mock("@/api/skills", async (importOriginal) => {
 
 it("lists skills by scope, uploads only to a library, and deletes behind a confirmation", async () => {
   renderWithQueries(<SkillsSection />);
+  await settle();
 
-  expect(await screen.findByText("Does pdf.")).toBeTruthy();
+  expect(screen.getByText("Does pdf.")).toBeTruthy();
   expect(screen.getByText("The folder holds no SKILL.md.")).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Upload ZIP" })).toHaveLength(1);
 
   fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+  await settle();
 
-  await waitFor(() =>
-    expect(requestVoid).toHaveBeenCalledExactlyOnceWith(
-      expect.stringMatching(/\/skills\/~\/count$/),
-      "deleteSkill",
-      { method: "DELETE" },
-    ),
+  expect(requestVoid).toHaveBeenCalledExactlyOnceWith(
+    expect.stringMatching(/\/skills\/~\/count$/),
+    "deleteSkill",
+    { method: "DELETE" },
   );
 });
 
 it("writes a new skill whose SKILL.md follows its name", async () => {
   renderWithQueries(<SkillsSection />);
+  await settle();
 
-  fireEvent.click(await screen.findByRole("button", { name: "New Skill" }));
-  fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "csv-check" } });
+  fireEvent.click(screen.getByRole("button", { name: "New Skill" }));
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "csv-check" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await settle();
 
-  await waitFor(() =>
-    expect(requestJson).toHaveBeenCalledWith(
-      expect.stringMatching(/\/skills\/~\/csv-check$/),
-      "saveSkillDocument",
-      expect.anything(),
-      expect.objectContaining({ method: "POST" }),
-    ),
+  const [url, , , init] =
+    requestJson.mock.calls.find(([, label]) => label === "saveSkillDocument") ?? [];
+
+  expect(url).toMatch(/\/skills\/~\/csv-check$/);
+  expect(init).toMatchObject({ method: "POST" });
+  expect(JSON.parse(typeof init?.body === "string" ? init.body : "{}").content).toContain(
+    "name: csv-check\n",
   );
-  const body = requestJson.mock.calls.find(([, label]) => label === "saveSkillDocument")?.[3]?.body;
-  expect(JSON.parse(typeof body === "string" ? body : "{}").content).toContain("name: csv-check\n");
 });

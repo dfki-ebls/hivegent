@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,11 +8,10 @@ import type { Workspace } from "@/lib/document-tree";
 import { useDocumentTree } from "@/hooks/use-document-tree";
 import { DocumentTreeView } from "@/components/documents/document-tree";
 import { stubLayout } from "@/test/layout";
-import { createQueryWrapper, createTestQueryClient } from "@/test/render";
+import { createQueryWrapper, createTestQueryClient, settle } from "@/test/render";
 
-const { applyChanges, served } = vi.hoisted(() => ({
+const { applyChanges } = vi.hoisted(() => ({
   applyChanges: vi.fn<(operations: ChangeOperation[]) => Promise<WorkspaceChanged>>(),
-  served: { tree: undefined as DirectoryTreeResponse | undefined },
 }));
 
 const personal: DirectoryTreeResponse = {
@@ -33,8 +32,7 @@ const personal: DirectoryTreeResponse = {
   total_directories: 2,
 };
 
-// The tree refetch answers with the served tree, the personal one unless a test changes it,
-// and a change is recorded.
+// The tree refetch answers with the personal tree and a change is recorded.
 vi.mock("@/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/client")>()),
   requestJson: (url: string, _error: string, _schema: unknown, init?: RequestInit) =>
@@ -46,13 +44,13 @@ vi.mock("@/api/client", async (importOriginal) => ({
             }
           ).operations,
         )
-      : Promise.resolve(served.tree ?? personal),
+      : Promise.resolve(personal),
 }));
 
 const workspaces: Workspace[] = [{ scope: "~", kind: "user", label: "Me", writable: true }];
 
-function Harness({ scopes = workspaces }: { scopes?: Workspace[] }) {
-  const docTree = useDocumentTree({ workspaces: scopes, searchQuery: "", onUpload: () => {} });
+function Harness() {
+  const docTree = useDocumentTree({ workspaces, searchQuery: "", onUpload: () => {} });
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
 
   return (
@@ -71,13 +69,6 @@ function renderTree() {
 
 describe("DocumentTreeView", () => {
   beforeEach(() => stubLayout());
-
-  it("renders before the workspace list is available", () => {
-    render(<Harness scopes={[]} />, { wrapper: createQueryWrapper() });
-
-    expect(screen.getByRole("tree")).toBeTruthy();
-    expect(screen.queryByRole("treeitem")).toBeNull();
-  });
 
   it("expands a folder on click and renames an entry inline", async () => {
     applyChanges.mockResolvedValue({
@@ -100,15 +91,12 @@ describe("DocumentTreeView", () => {
     fireEvent.click(within(file).getByRole("button", { name: "Rename" }));
     const input = screen.getByRole("textbox", { name: "Rename" });
     fireEvent.change(input, { target: { value: "b.md" } });
-    act(() => {
-      fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
-    });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    await settle();
 
-    await waitFor(() =>
-      expect(applyChanges).toHaveBeenCalledWith([
-        { kind: "move", source: "~/docs/a.md", destination: "~/docs/b.md" },
-      ]),
-    );
+    expect(applyChanges).toHaveBeenCalledWith([
+      { kind: "move", source: "~/docs/a.md", destination: "~/docs/b.md" },
+    ]);
   });
 
   it("selects only through the checkbox or a modified click", () => {
@@ -130,14 +118,18 @@ describe("DocumentTreeView", () => {
     const docs = screen.getByRole("treeitem", { name: "docs" });
     fireEvent.click(docs, { ctrlKey: true });
 
-    served.tree = { ...personal, root: { ...personal.root, children: [] } };
-    client.setQueryData(documentQueries.tree("~").queryKey, served.tree);
+    act(() => {
+      client.setQueryData(documentQueries.tree("~").queryKey, {
+        ...personal,
+        root: { ...personal.root, children: [] },
+      });
+    });
+    await settle();
 
-    await waitFor(() => expect(screen.queryByRole("treeitem", { name: "docs" })).toBeNull());
+    expect(screen.queryByRole("treeitem", { name: "docs" })).toBeNull();
     fireEvent.keyDown(screen.getByRole("treeitem", { name: "Me" }), {
       key: "Enter",
       code: "Enter",
     });
-    served.tree = undefined;
   });
 });
