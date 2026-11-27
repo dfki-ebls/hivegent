@@ -340,6 +340,6 @@ dockerTools.streamLayeredImage {
   meta = {
     description = "Hivegent container with inbound and outbound proxies";
     maintainers = with lib.maintainers; [ mirkolenz ];
-    platforms = lib.platforms.linux;
+    platforms = [ "x86_64-linux" ];
   };
 }

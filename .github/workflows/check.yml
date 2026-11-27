@@ -19,16 +19,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   check:
-    name: Flake check (${{ matrix.system }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - system: x86_64-linux
-            runner: ubuntu-24.04
-          - system: aarch64-linux
-            runner: ubuntu-24.04-arm
+    name: Flake check
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:

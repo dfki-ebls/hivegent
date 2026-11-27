@@ -49,8 +49,8 @@ jobs:
             semantic-release-major-tag@0.3
             conventional-changelog-conventionalcommits@9
 
-  # The release commit bumps every version, so its checks build the images and
-  # SBOMs again, natively per platform, which leaves the publish job only substitutes.
+  # The release commit bumps every version, so its checks build the image and
+  # SBOM again, which leaves the publish job only substitutes.
   check-release:
     uses: $/.github/workflows/check.yml
     needs: release

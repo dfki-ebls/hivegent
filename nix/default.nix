@@ -63,12 +63,12 @@
         inherit (config.packages.backend.passthru.tests) pytest;
       };
       legacyPackages = {
-        # Pushes and signs the multi-platform image index, with each platform's
-        # SBOM attested to its image.  It spans systems, so it is no package.
+        # Pushes and signs the image index, with the SBOM attested to the image.
+        # It refers to the x86_64-linux image from any system, so it is no package.
         docker-manifest = inputs'.flocken.legacyPackages.mkDockerManifest {
           github.enable = true;
-          # Every system's image, each carrying its SBOM as `passthru.sbom`.
-          images = lib.catAttrs "docker" (lib.attrValues inputs.self.packages);
+          # The image carries its SBOM as `passthru.sbom`.
+          images = [ inputs.self.packages.x86_64-linux.docker ];
           # `latest` and the version tags cover the release branch.
           autoTags.branch = false;
           cosign.enable = true;
@@ -108,12 +108,11 @@
           ];
         };
       }
-      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+      // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
         # All-in-one container (backend + Caddy proxy/SPA under dinit); see
         # `docker.nix`. The database stays external (the upstream `pgvector`
-        # image, wired up in `compose.yaml`). Linux-only: the image embeds a
-        # Linux closure, so build it on a Linux host or remote builder
-        # (`nix build .#packages.x86_64-linux.docker`).
+        # image, wired up in `compose.yaml`). x86_64-linux only: build it on
+        # such a host or remote builder (`nix build .#packages.x86_64-linux.docker`).
         # `bridge` is threaded in but off by default; build the bridge-enabled
         # variant with `docker.override { enableBridge = true; }`.
         # The SBOM is attached here, where `.override` re-applies it, so a
