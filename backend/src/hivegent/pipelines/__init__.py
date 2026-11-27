@@ -104,12 +104,11 @@ PLAIN_TEXT = "plain-text"
 NO_CHUNKING = "none"
 """The chunker that keeps a document whole, for generated descriptions."""
 
-DEFAULT_CHUNKING = "recursive"
+DEFAULT_CHUNKING = "markdown"
 """What AUTO chunks with.
 
-Dependency-free, markdown/prose-aware, size-bounded, and fast enough to chunk
-multi-megabyte documents in well under a second, so there is no document size
-at which a lower-quality fallback pays off.
+Every converter yields Markdown, which tree-sitter parses fast enough that the
+chunks follow its sections and blocks for documents of any size.
 """
 
 _ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -357,16 +356,16 @@ CHUNKERS: Mapping[str, ChunkerPipeline] = _registry(
         "recursive": Pipeline(
             label=Localized(en="Recursive", de="Rekursiv"),
             description=Localized(
-                en="Hierarchical splitting by headings, paragraphs, and sentences",
-                de="Hierarchische Aufteilung nach Überschriften, Absätzen und Sätzen",
+                en="Splits by paragraphs, then sentences, then words, until chunks fit",
+                de="Teilt nach Absätzen, dann Sätzen, dann Wörtern, bis die Chunks passen",
             ),
             build=_threaded(RecursiveChunker),
         ),
         "markdown": Pipeline(
             label=Localized(en="Markdown", de="Markdown"),
             description=Localized(
-                en="Parses markdown into semantic elements (text, tables, code)",
-                de="Zerlegt Markdown in semantische Elemente (Text, Tabellen, Code)",
+                en="Splits Markdown by its sections and blocks, such as paragraphs, lists, and tables",
+                de="Teilt Markdown nach Abschnitten und Blöcken wie Absätzen, Listen und Tabellen",
             ),
             build=_threaded(MarkdownChunker),
         ),
