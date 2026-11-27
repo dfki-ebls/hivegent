@@ -13,7 +13,7 @@ dependencies = [
   "cbrkit[bpmn,http,pgvector,pydantic-ai,transformers]",
   "chonkie>=1,<2",
   "cryptography>=50,<51",
-  "exar[anydoc,cbrkit,chonkie,eval,media,pdf-inspector,table,web]",
+  "exar[anydoc,cbrkit,chonkie,email,eval,media,pdf-inspector,table,web]",
   "fastapi[standard]>=0.165,<1",
   "fastmcp>=4,<5",
   "httpx2>=2,<3",

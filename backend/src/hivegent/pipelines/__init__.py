@@ -28,7 +28,9 @@ from exar.ingest import (
     AsyncChunker,
     AsyncParser,
     Docling,
+    Email,
     Host,
+    Json,
     Kreuzberg,
     MarkdownChunker,
     MarkItDown,
@@ -57,6 +59,7 @@ from exar.ingest import (
 from pydantic import BaseModel
 
 from ..config import settings
+from ..llm_config import decision_llm
 from ..plugins.loader import LoadedPlugin, merge
 from ..shared.formats import LLM_MEDIA_TYPES, match_file_extension
 from ..shared.l10n import Localized
@@ -199,14 +202,22 @@ def _vision(options: Mapping[str, Any], host: Host) -> AsyncParser:
 
 
 def _threaded[A, R](
-    cls: type[SyncComponent[A, R]],
+    cls: type[SyncComponent[A, R]], /, **defaults: Any
 ) -> Callable[[Mapping[str, Any], Host], Offloaded[A, R]]:
-    """Builds the cheap *cls* to run in a thread rather than a worker process.
+    """Builds the cheap *cls* with *defaults* to run in a thread rather than a worker process.
 
     So it never queues behind conversions or counts toward a worker's
     `worker_max_tasks`, whose replacement reloads the conversion models.
     """
-    return lambda options, host: offloaded(cls)(options, replace(host, executor=None))
+    build = offloaded(cls, **defaults)
+
+    return lambda options, host: build(options, replace(host, executor=None))
+
+
+def _coref(options: Mapping[str, Any], host: Host) -> AsyncChunker:
+    from .coref import MarkdownCoref
+
+    return configure(MarkdownCoref, options, host)
 
 
 def _slumber(options: Mapping[str, Any], host: Host) -> AsyncChunker:
@@ -304,6 +315,26 @@ CONVERTERS: Mapping[str, ConverterPipeline] = _registry(
             extensions=frozenset({".pdf"}),
             dependencies=("pdf_oxide",),
         ),
+        # Explicit choices only, never AUTO's, which routes these formats elsewhere.
+        "email": ConverterPipeline(
+            label=Localized(en="Email", de="E-Mail"),
+            description=Localized(
+                en="Emails with their subject, senders, recipients, date, body, and attachment names",
+                de="E-Mails mit Betreff, Absendern, Empfängern, Datum, Text und Namen der Anhänge",
+            ),
+            build=_threaded(Email),
+            extensions=frozenset({".eml"}),
+            dependencies=("markdownify",),
+        ),
+        "json": ConverterPipeline(
+            label=Localized(en="JSON Tables", de="JSON-Tabellen"),
+            description=Localized(
+                en="JSON and JSON Lines as tables, a row per object and a column per key",
+                de="JSON und JSON Lines als Tabellen, eine Zeile je Objekt und eine Spalte je Schlüssel",
+            ),
+            build=_threaded(Json),
+            extensions=frozenset({".json", ".jsonl", ".ndjson"}),
+        ),
         "llm": ConverterPipeline(
             label=Localized(en="LLM", de="LLM"),
             description=Localized(
@@ -368,6 +399,26 @@ CHUNKERS: Mapping[str, ChunkerPipeline] = _registry(
                 de="Teilt Markdown nach Abschnitten und Blöcken wie Absätzen, Listen und Tabellen",
             ),
             build=_threaded(MarkdownChunker),
+        ),
+        "markdown-context": Pipeline(
+            label=Localized(en="Markdown with Context", de="Markdown mit Kontext"),
+            description=Localized(
+                en="Like Markdown, every chunk starting with the headings of its sections so it reads on its own",
+                de="Wie Markdown, wobei jeder Chunk mit den Überschriften seiner Abschnitte beginnt und so für sich verständlich ist",
+            ),
+            build=_threaded(MarkdownChunker, context=True),
+        ),
+        # Only once the operator opts in with `llm.decision`, which judges every boundary.
+        "markdown-coref": Pipeline(
+            label=Localized(
+                en="Markdown with Coreference", de="Markdown mit Koreferenz"
+            ),
+            description=Localized(
+                en="Like Markdown, joining chunks that refer back to the one before them, as the decision model judges",
+                de="Wie Markdown, wobei Chunks, die sich auf den vorherigen beziehen, nach Urteil des Entscheidungsmodells verbunden werden",
+            ),
+            build=_coref,
+            requires=lambda: decision_llm() is not None,
         ),
         "semantic": Pipeline(
             label=Localized(en="Semantic", de="Semantisch"),

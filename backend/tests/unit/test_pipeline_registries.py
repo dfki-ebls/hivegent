@@ -9,7 +9,11 @@ import pytest
 from exar.ingest import Offloaded, RecursiveChunker
 
 from hivegent import pipelines
-from hivegent.pipelines import check_pipelines, get_chunker
+from hivegent.pipelines import (
+    check_pipelines,
+    get_chunker,
+    resolve_auto_pipeline,
+)
 from tests.conftest import Configure
 
 
@@ -93,3 +97,35 @@ def test_whole_chunking_runs_inline() -> None:
     # Descriptions are chunked whole without queueing behind conversions in the pool.
     whole = get_chunker("none")
     assert isinstance(whole, Offloaded) and whole.executor is None
+
+
+def test_auto_never_routes_to_the_explicit_converters() -> None:
+    routed = {resolve_auto_pipeline(name) for name in ("a.eml", "a.json", "a.jsonl")}
+
+    assert routed.isdisjoint({"email", "json"})
+
+
+async def test_coref_chunking_needs_the_decision_model(
+    monkeypatch: pytest.MonkeyPatch, configure: Configure
+) -> None:
+    from exar.typing import Question
+
+    from hivegent.llm_config import LlmConfig
+    from hivegent.pipelines import coref
+
+    configure(llm={"decision": None})
+
+    assert not pipelines.CHUNKERS["markdown-coref"].available()
+
+    async def pronoun(question: Question) -> float:
+        return float("<current>\nIt " in question.text)
+
+    monkeypatch.setattr(coref, "decision_llm", lambda: LlmConfig(model="judge"))
+    monkeypatch.setattr(coref, "judge_from_config", lambda _: pronoun)
+    paris = "Paris is a large city in the north of France."
+    museums = "It is old and famous for its many museums."
+    rome = "Rome is an old city in the middle of Italy."
+    text = f"{paris}\n\n{museums}\n\n{rome}"
+    chunks = await coref.MarkdownCoref(size=128, base=64)(text)
+
+    assert [chunk.text.strip() for chunk in chunks] == [f"{paris}\n\n{museums}", rome]
