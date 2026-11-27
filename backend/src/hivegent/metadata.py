@@ -118,11 +118,3 @@ class DocumentMetadata(EntryMetadata):
         default=None,
         description="Media type the original's name declares, else the description's",
     )
-    content_digest: str | None = Field(
-        default=None,
-        description=(
-            "Full SHA-256 digest of the chunked markdown. Lets the reconciler "
-            "and the future shell fold-back skip re-indexing an entry whose "
-            "on-disk bytes are unchanged."
-        ),
-    )
