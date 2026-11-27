@@ -88,6 +88,7 @@ service_client_id = "hivegent-bot"
   Ein entfernter Embedder braucht außerdem `model` und dessen Ausgabegröße `dimension`.
   `embedding.query_prefix` und `embedding.document_prefix` stellen voran, was das Modell erwartet, etwa `"query: "` und `"passage: "` für e5-Modelle, oder eine Anweisung wie `"Instruct: Given a question, retrieve passages that answer it\nQuery:"` vor den Anfragen von Qwen3-Embedding-Modellen.
   `embedding.request` geht an jede Anfrage, etwa `extra_body = { truncate_prompt_tokens = -1 }`, womit vLLM zu lange Texte selbst kürzt.
+  Eine Änderung bettet die gespeicherten Chunks nicht neu ein, führen Sie also `hivegent reindex` aus, wenn sie die Vektoren verändert, wie es `truncate` und `extra_body` können.
   Nur OpenAIs eigene Modelle werden clientseitig auf ihre 8192 Tokens gekürzt, da nur ihr Tokenizer bekannt ist, daher muss jeder andere Server zu lange Texte selbst kürzen oder lehnt sie ab.
 - `db.url`: die PostgreSQL-Verbindungszeichenfolge.
   Die mitgelieferte Datenbank hat pgvector bereits aktiviert.

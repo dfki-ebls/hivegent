@@ -72,7 +72,8 @@ class RemoteEmbeddingSettings(_EmbeddingSettings, ProviderEndpoint):
     or ``extra_body`` (e.g. ``{"truncate_prompt_tokens": -1}`` for vLLM).
     Only OpenAI's own models are cut to their ``8192`` tokens client-side,
     since only their tokenizer is known, so a self-hosted server truncates
-    over-long texts itself or refuses them."""
+    over-long texts itself or refuses them.  A change re-embeds nothing, so
+    ``hivegent reindex`` follows one that alters the vectors."""
 
 
 def _embedding_provider(
