@@ -107,7 +107,9 @@ def _rewrite_link(
             rel = _relative_link(resolved, source_dir)
             return f"![{alias}]({rel})"
         binary_attachments.add(resolved)
-        resolved = str(PurePosixPath(resolved).with_suffix(".md"))
+
+    # Every target lands as its `<stem>.md` description, a markdown one too.
+    resolved = str(PurePosixPath(resolved).with_suffix(DOCUMENT_EXTENSION))
 
     return f"[{alias}]({_relative_link(resolved, source_dir)})"
 
@@ -177,7 +179,7 @@ def preprocess_markdown(
         if path.startswith(("http://", "https://", "data:")):
             return m.group(0)
         resolved = _resolve_target(path, source_dir, collection_files)
-        if resolved and PurePosixPath(resolved).suffix.lower() != DOCUMENT_EXTENSION:
+        if resolved and PurePosixPath(resolved).suffix != DOCUMENT_EXTENSION:
             suffix = PurePosixPath(resolved).suffix.lower()
             if suffix in IMAGE_EXTENSIONS:
                 images.add(resolved)

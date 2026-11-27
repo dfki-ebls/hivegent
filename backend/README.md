@@ -745,6 +745,7 @@ Every call only stats the files and reads them on a miss or to plan a change, so
 ### Companions follow their subject by construction
 
 `tools.entries.Part` is the one relation between a subject, a stem with the suffix of its original, and every file that belongs to it: the description `<stem>.md`, the original, the `.assets` payload, and the cbrkit companions of a case base (sidecar, cache, and lock, cbrkit's `io.companion` and `io.subject`).
+Every path entering the backend passes `config.sanitize_document_path`, which lowercases a markdown suffix, so a description is only ever spelled `<stem>.md` and `Part.of` inverts `Part.path` for it.
 `Part.path` derives each companion from the subject and `Part.of` is its inverse, naming the subject and kind of any path, so no seam spells a suffix or matches paths itself.
 `EntryPaths` is a subject with the kinds it has, and every unit the gateway moves, deletes, or lands is one, a directory or plain file being a subject whose original is itself (`EntryPaths.tree`), so relocating a unit only changes its stem and every companion follows.
 A cbrkit companion is no document, the tree and the listings hide them, and a write, an upload, or a standalone move of one is refused, while a delete may take one alone, such as a leftover sidecar, an upload over the original keeps them, and one of another suffix takes them with the entry it supersedes.

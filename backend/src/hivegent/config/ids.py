@@ -6,6 +6,7 @@ from uuid import UUID
 
 from cbrkit.io import is_partial
 
+from ..shared.formats import DOCUMENT_EXTENSION
 from ..shared.l10n import Localized
 from ..shared.text import normalize_unicode
 
@@ -142,8 +143,12 @@ def parse_uuid(value: str) -> UUID | None:
 def sanitize_document_path(path: str) -> str:
     """Sanitize a document path to prevent path traversal attacks.
 
-    Normalizes the path to POSIX forward slashes and Unicode NFC, and rejects
-    unsafe patterns.
+    Normalizes the path to POSIX forward slashes, Unicode NFC, and the
+    lowercase markdown suffix, so a description is always ``<stem>.md``,
+    and rejects unsafe patterns.
+
+    >>> sanitize_document_path("docs/Report.MD")
+    'docs/Report.md'
 
     Args:
         path: The relative document path to sanitize.
@@ -177,5 +182,10 @@ def sanitize_document_path(path: str) -> str:
         # Reserved for interrupted writes, which the boot sweeps away.
         if is_partial(segment):
             raise ValueError(_unsafe_segment(segment).current)
+
+    pure = PurePosixPath(normalized)
+
+    if pure.suffix.lower() == DOCUMENT_EXTENSION:
+        return pure.with_suffix(DOCUMENT_EXTENSION).as_posix()
 
     return normalized

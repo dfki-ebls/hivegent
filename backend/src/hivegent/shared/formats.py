@@ -98,8 +98,12 @@ VIDEO_MEDIA_TYPES: dict[str, str] = {
 
 
 def is_markdown_suffix(suffix: str) -> bool:
-    """Return whether *suffix* matches the markdown document extension."""
-    return suffix.lower() == DOCUMENT_EXTENSION
+    """Return whether *suffix* is the markdown document extension, spelled as :func:`~hivegent.config.sanitize_document_path` canonicalizes it.
+
+    >>> is_markdown_suffix(".md"), is_markdown_suffix(".MD")
+    (True, False)
+    """
+    return suffix == DOCUMENT_EXTENSION
 
 
 def is_image_suffix(suffix: str) -> bool:
@@ -175,9 +179,10 @@ def projection_for(filename: str) -> EntryProjection:
     >>> projection_for("photo.png") is EntryProjection.IMAGE
     True
     """
-    suffix = Path(filename).suffix.lower()
-    if is_markdown_suffix(suffix):
+    if is_markdown_suffix(Path(filename).suffix):
         return EntryProjection.MARKDOWN
+
+    suffix = Path(filename).suffix.lower()
     if is_image_suffix(suffix) and suffix not in _TEXT_IMAGE_SUFFIXES:
         return EntryProjection.IMAGE
     if _is_video_suffix(suffix):

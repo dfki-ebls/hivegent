@@ -246,12 +246,11 @@ def _stage_converted(staging: Path, converted: _Converted) -> list[_WorkspaceCha
     and an original the model could not describe keeps no stale description.
     """
     prepared, stem = converted.prepared, converted.stem_path
-    main = prepared.main
-    assets_dir = Part(stem, "assets").path
+    description, assets_dir = Part(stem, "description").path, Part(stem, "assets").path
     changes = [
-        _WorkspaceChange(Part(stem, "description").path, None)
-        if main is None
-        else _WorkspaceChange(main.description_path, staging / main.description_path)
+        _WorkspaceChange(
+            description, None if prepared.main is None else staging / description
+        )
     ]
 
     for asset in prepared.assets:
